@@ -1,0 +1,55 @@
+@page "/logs"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject Litos.Api.Logs.LogStore Store
+@implements IDisposable
+@using Litos.Api.Logs
+
+<h1>Logs</h1>
+
+<p class="section-hint">
+    Warnings and errors from this app, newest first — e.g. Telegram long-polling failures that
+    would otherwise only show up in the container's own stdout. Cleared on restart.
+</p>
+
+@if (_entries.Count == 0)
+{
+    <p class="empty-state">No warnings or errors logged yet.</p>
+}
+else
+{
+    <div class="key-list">
+        @foreach (var entry in _entries)
+        {
+            <div class="approval-card">
+                <p>
+                    <span class="tool-name">@entry.Level</span>
+                    @entry.Timestamp.ToLocalTime().ToString("g") — @entry.Category
+                </p>
+                <p>@entry.Message</p>
+                @if (entry.Exception is { } ex)
+                {
+                    <pre>@ex</pre>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private IReadOnlyList<LogEntry> _entries = [];
+
+    protected override void OnInitialized()
+    {
+        _entries = [.. Store.List().Reverse()];
+        Store.Added += OnAdded;
+    }
+
+    private void OnAdded(LogEntry _) => InvokeAsync(() =>
+    {
+        _entries = [.. Store.List().Reverse()];
+        StateHasChanged();
+    });
+
+    public void Dispose() => Store.Added -= OnAdded;
+}

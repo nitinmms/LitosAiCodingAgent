@@ -1,0 +1,21 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:Litos.Gui"
+        x:Class="Litos.Gui.ListPickerWindow"
+        Title="Select"
+        Icon="avares://Litos.Gui/Assets/AppIcon.png"
+        Width="640" Height="420"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E"
+        CanResize="False">
+  <Grid RowDefinitions="Auto,*" Margin="12">
+    <TextBox Name="FilterBox" Grid.Row="0" PlaceholderText="Type to filter..." Margin="0,0,0,8" />
+    <ListBox Name="ItemsList" Grid.Row="1">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="local:ListPickerWindow+ListPickerItem">
+          <TextBlock Text="{Binding Label}" TextWrapping="Wrap" />
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </Grid>
+</Window>

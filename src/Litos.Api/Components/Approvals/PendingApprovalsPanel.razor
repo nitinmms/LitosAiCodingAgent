@@ -1,0 +1,70 @@
+@implements IDisposable
+@inject Litos.Tools.Shell.PendingApprovalStore Store
+@using Litos.Tools.Shell
+
+<section class="settings-section">
+    <h2>Pending approvals</h2>
+    <p class="section-hint">
+        Ask-mode tool calls waiting on a decision — Telegram's in-chat buttons resolve their own
+        entries automatically for both native and MCP tools. Only a deployment with no Telegram
+        bridge configured at all needs this panel to ever resolve. Auto-denies after 10 minutes if
+        nobody responds.
+    </p>
+
+    @if (_pending.Count == 0)
+    {
+        <p class="empty-state">No pending approvals.</p>
+    }
+    else
+    {
+        <div class="key-list">
+            @foreach (var approval in _pending)
+            {
+                <div class="approval-card">
+                    <p>
+                        <span class="tool-name">@approval.Preview.ToolName</span>
+                        requested @approval.RequestedAt.ToLocalTime().ToString("g")
+                    </p>
+                    <p>@approval.Preview.Summary</p>
+                    @if (approval.Preview.DiffOrCommand is { Length: > 0 } detail)
+                    {
+                        <pre>@detail</pre>
+                    }
+                    <div class="field-row">
+                        <button class="approve" @onclick="() => Resolve(approval.Id, ApprovalDecision.Approve)">Approve</button>
+                        <button class="deny" @onclick="() => Resolve(approval.Id, ApprovalDecision.Deny)">Deny</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private IReadOnlyList<PendingApproval> _pending = [];
+
+    protected override void OnInitialized()
+    {
+        _pending = Store.List();
+        Store.Added += OnChanged;
+        Store.Resolved += OnResolved;
+    }
+
+    private void OnChanged(PendingApproval _) => Refresh();
+
+    private void OnResolved(Guid _) => Refresh();
+
+    private void Refresh() => InvokeAsync(() =>
+    {
+        _pending = Store.List();
+        StateHasChanged();
+    });
+
+    private void Resolve(Guid id, ApprovalDecision decision) => Store.Resolve(id, decision);
+
+    public void Dispose()
+    {
+        Store.Added -= OnChanged;
+        Store.Resolved -= OnResolved;
+    }
+}

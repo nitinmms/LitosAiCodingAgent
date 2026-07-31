@@ -1,0 +1,295 @@
+@page "/mcp"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject IServiceProvider Services
+@using Litos.Api.Components.Approvals
+@using Litos.Tools.Mcp
+@using Litos.Tools.Shell
+
+<h1>MCP servers</h1>
+
+<p class="section-hint">
+    Model Context Protocol servers whose tools appear alongside Litos's own built-in tools.
+    Adding, enabling, disabling, editing, or removing a server takes effect without a restart —
+    a background reconciler picks up the change within a few seconds and retries an unreachable
+    server automatically. A turn already in progress keeps whatever tools it started with; only
+    the next turn sees the change. Default/per-tool permission changes also apply live, the next
+    time that tool is called.
+</p>
+
+<section class="settings-section">
+    <h2>Configured servers</h2>
+
+    @if (_config.Servers.Count == 0)
+    {
+        <p class="empty-state">No MCP servers configured yet.</p>
+    }
+    else
+    {
+        <div class="key-list">
+            @foreach (var server in _config.Servers)
+            {
+                var status = StatusFor(server.Name);
+                <div class="approval-card">
+                    <p>
+                        <span class="tool-name">@server.Name</span>
+                        <span class="badge @StatusBadgeClass(status)">@StatusLabel(status)</span>
+                        <span class="badge @(server.Enabled ? "success" : "idle")">@(server.Enabled ? "Enabled" : "Disabled")</span>
+                    </p>
+                    <p class="section-hint">
+                        @(server.Transport == McpTransportKind.Stdio
+                            ? $"{server.Command} {string.Join(' ', server.Args ?? [])}"
+                            : server.Url)
+                    </p>
+
+                    <div class="key-row">
+                        <label>Default permission</label>
+                        @RenderPermissionButtons(server.DefaultPermission, p => SetDefaultPermission(server.Name, p))
+                    </div>
+
+                    @{
+                        var connection = ConnectionFor(server.Name);
+                    }
+                    @if (connection is { Status: McpConnectionStatus.Connected })
+                    {
+                        <div class="key-list">
+                            @foreach (var tool in connection.Tools)
+                            {
+                                var fullName = $"mcp__{server.Name}__{tool.Name}";
+                                <div class="key-row">
+                                    <label>@tool.Name</label>
+                                    @RenderPermissionButtons(server.PermissionFor(fullName), p => SetToolOverride(server.Name, fullName, p))
+                                </div>
+                            }
+                        </div>
+                    }
+                    else if (connection is { Status: McpConnectionStatus.Unreachable, Error: { } error })
+                    {
+                        <p class="inline-notice">Unreachable: @error</p>
+                    }
+
+                    <div class="field-row">
+                        <button class="@(server.Enabled ? "deny" : "approve")" @onclick="() => ToggleEnabled(server.Name)">
+                            @(server.Enabled ? "Disable" : "Enable")
+                        </button>
+                        <button class="deny" @onclick="() => RemoveServer(server.Name)">Remove</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</section>
+
+<section class="settings-section">
+    <h2>Add a server</h2>
+
+    <div class="field-row">
+        <div>
+            <label for="mcp-name">Name</label>
+            <input id="mcp-name" @bind="_newName" placeholder="e.g. filesystem" />
+        </div>
+        <div>
+            <label for="mcp-transport">Transport</label>
+            <select id="mcp-transport" @bind="_newTransport">
+                <option value="@McpTransportKind.Stdio">Stdio (local command)</option>
+                <option value="@McpTransportKind.Http">HTTP</option>
+            </select>
+        </div>
+    </div>
+
+    @if (_newTransport == McpTransportKind.Stdio)
+    {
+        <div class="field-row">
+            <div>
+                <label for="mcp-command">Command</label>
+                <input id="mcp-command" @bind="_newCommand" placeholder="npx" />
+            </div>
+            <div>
+                <label for="mcp-args">Args (space-separated)</label>
+                <input id="mcp-args" @bind="_newArgs" placeholder="-y @@modelcontextprotocol/server-filesystem /workspace" />
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="field-row">
+            <div>
+                <label for="mcp-url">URL</label>
+                <input id="mcp-url" @bind="_newUrl" placeholder="https://example.com/mcp" />
+            </div>
+        </div>
+    }
+
+    <button class="primary" @onclick="AddServer">Add server</button>
+
+    @if (_message is not null)
+    {
+        <p class="settings-message">@_message</p>
+    }
+</section>
+
+<PendingApprovalsPanel />
+
+@code {
+    private McpConfigStore? _store;
+    private McpToolProvider? _provider;
+    private McpConfig _config = McpConfig.Empty;
+
+    private string _newName = "";
+    private McpTransportKind _newTransport = McpTransportKind.Stdio;
+    private string _newCommand = "";
+    private string _newArgs = "";
+    private string _newUrl = "";
+    private string? _message;
+
+    protected override void OnInitialized()
+    {
+        _store = Services.GetService(typeof(McpConfigStore)) as McpConfigStore;
+        _provider = Services.GetService(typeof(McpToolProvider)) as McpToolProvider;
+        if (_store is not null)
+            _config = _store.Current;
+    }
+
+    private McpConnectionStatus? StatusFor(string serverName) => ConnectionFor(serverName)?.Status;
+
+    private McpServerConnection? ConnectionFor(string serverName) =>
+        _provider?.Connections.FirstOrDefault(c => c.ServerName == serverName);
+
+    private static string StatusLabel(McpConnectionStatus? status) => status switch
+    {
+        McpConnectionStatus.Connected => "Connected",
+        McpConnectionStatus.Connecting => "Connecting…",
+        McpConnectionStatus.Unreachable => "Unreachable",
+        _ => "Not started",
+    };
+
+    private static string StatusBadgeClass(McpConnectionStatus? status) => status switch
+    {
+        McpConnectionStatus.Connected => "success",
+        McpConnectionStatus.Connecting => "warning",
+        McpConnectionStatus.Unreachable => "deny",
+        _ => "idle",
+    };
+
+    private void AddServer()
+    {
+        if (_store is null)
+            return;
+
+        var name = _newName.Trim();
+        if (name.Length == 0)
+        {
+            _message = "A server name is required.";
+            return;
+        }
+
+        var definition = new McpServerDefinition(
+            Name: name,
+            Transport: _newTransport,
+            Command: _newTransport == McpTransportKind.Stdio ? _newCommand.Trim() : null,
+            Args: _newTransport == McpTransportKind.Stdio
+                ? _newArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : null,
+            Env: null,
+            Url: _newTransport == McpTransportKind.Http ? _newUrl.Trim() : null,
+            Enabled: true,
+            DefaultPermission: ToolPermission.Ask,
+            ToolOverrides: null);
+
+        try
+        {
+            _store.Update(cfg => cfg with { Servers = [.. cfg.Servers, definition] });
+            _config = _store.Current;
+            _newName = "";
+            _newCommand = "";
+            _newArgs = "";
+            _newUrl = "";
+            _message = $"Added '{name}'. Connecting…";
+        }
+        catch (McpConfigValidationException ex)
+        {
+            _message = ex.Message;
+        }
+    }
+
+    private void RemoveServer(string name)
+    {
+        if (_store is null)
+            return;
+
+        _store.Update(cfg => cfg with { Servers = [.. cfg.Servers.Where(s => s.Name != name)] });
+        _config = _store.Current;
+        _message = $"Removed '{name}'.";
+    }
+
+    private void ToggleEnabled(string name)
+    {
+        if (_store is null)
+            return;
+
+        _store.Update(cfg => cfg with
+        {
+            Servers = [.. cfg.Servers.Select(s => s.Name == name ? s with { Enabled = !s.Enabled } : s)],
+        });
+        _config = _store.Current;
+        _message = _config.Servers.First(s => s.Name == name).Enabled ? "Connecting…" : "Disabled.";
+    }
+
+    private void SetDefaultPermission(string name, ToolPermission permission)
+    {
+        if (_store is null)
+            return;
+
+        _store.Update(cfg => cfg with
+        {
+            Servers = [.. cfg.Servers.Select(s => s.Name == name ? s with { DefaultPermission = permission } : s)],
+        });
+        _config = _store.Current;
+    }
+
+    private void SetToolOverride(string serverName, string fullToolName, ToolPermission permission)
+    {
+        if (_store is null)
+            return;
+
+        _store.Update(cfg => cfg with
+        {
+            Servers = [.. cfg.Servers.Select(s => s.Name != serverName
+                ? s
+                : s with
+                {
+                    ToolOverrides = new Dictionary<string, ToolPermission>(s.ToolOverrides ?? new Dictionary<string, ToolPermission>())
+                    {
+                        [fullToolName] = permission,
+                    },
+                })],
+        });
+        _config = _store.Current;
+    }
+
+    /// <summary>Same three-way Deny/Ask/Full control as TelegramSetup.razor's
+    /// RenderPermissionButtons — copy-paste rather than extracted to a shared helper, matching
+    /// this codebase's "extract on the third use" convention.</summary>
+    private RenderFragment RenderPermissionButtons(ToolPermission current, Action<ToolPermission> onSelect) => builder =>
+    {
+        var i = 0;
+        builder.OpenElement(i++, "div");
+        builder.AddAttribute(i++, "class", "permission-group");
+        foreach (var (permission, cssClass, label) in PermissionButtonSpecs)
+        {
+            builder.OpenElement(i++, "button");
+            builder.AddAttribute(i++, "class", current == permission ? cssClass : "");
+            builder.AddAttribute(i++, "onclick", EventCallback.Factory.Create(this, () => onSelect(permission)));
+            builder.AddContent(i++, label);
+            builder.CloseElement();
+        }
+        builder.CloseElement();
+    };
+
+    private static readonly (ToolPermission Permission, string CssClass, string Label)[] PermissionButtonSpecs =
+    [
+        (ToolPermission.Deny, "deny", "Deny"),
+        (ToolPermission.Ask, "warning", "Ask"),
+        (ToolPermission.Full, "approve", "Full"),
+    ];
+}

@@ -1,0 +1,30 @@
+@page "/login"
+@layout Litos.Api.Components.Layout.LoginLayout
+@inject NavigationManager Nav
+
+<div class="login-card">
+    <img src="app-icon.png" alt="Litos" />
+    <h1>Sign in to Litos.Api</h1>
+
+    <form method="post" action="/auth/login">
+        <label for="token">Admin token</label>
+        <input type="password" id="token" name="token" autocomplete="current-password" autofocus />
+        <button type="submit" class="primary">Sign in</button>
+    </form>
+
+    @if (_showError)
+    {
+        <p class="login-error">Invalid admin token. Please try again.</p>
+    }
+</div>
+
+@code {
+    private bool _showError;
+
+    protected override void OnInitialized()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        _showError = query.ContainsKey("error");
+    }
+}

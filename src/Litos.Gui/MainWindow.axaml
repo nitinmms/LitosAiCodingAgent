@@ -1,0 +1,96 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Litos.Gui.MainWindow"
+        Title="LitosAiAgent"
+        Icon="avares://Litos.Gui/Assets/AppIcon.png"
+        Width="900" Height="640"
+        Background="#1E1E1E">
+  <Window.Styles>
+    <Style Selector="Button.StatusBarLink">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.StatusBarLink:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.StatusBarLink:pointerover TextBlock.StatusBarLabel">
+      <Setter Property="TextDecorations" Value="Underline" />
+    </Style>
+    <Style Selector="Button.CopyButton">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="4,2" />
+      <Setter Property="Margin" Value="0,4,0,0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+      <Setter Property="Foreground" Value="#9A9A9A" />
+    </Style>
+    <Style Selector="Button.CopyButton:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.CopyButton:pointerover">
+      <Setter Property="Foreground" Value="WhiteSmoke" />
+    </Style>
+  </Window.Styles>
+  <Grid RowDefinitions="*,Auto">
+    <ScrollViewer Grid.Row="0" Name="TranscriptScroll"
+                  VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Name="TranscriptPanel" Spacing="10" HorizontalAlignment="Stretch" Margin="16,16,16,16" />
+    </ScrollViewer>
+
+    <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto" Margin="16">
+      <Border Grid.Row="0" Name="StagingStrip" IsVisible="False"
+              Background="#252526" CornerRadius="6" Padding="8"
+              Margin="0,0,0,8">
+        <WrapPanel Name="StagingPanel" Orientation="Horizontal" />
+      </Border>
+
+      <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto">
+        <Button Grid.Column="0" Name="CommandMenuButton" Content="/" Width="32"
+                ToolTip.Tip="Invokes slash commands" />
+        <TextBox Name="InputBox" Grid.Column="1" Margin="8,0,0,0"
+                  PlaceholderText="Type a message and press Enter..."
+                  AcceptsReturn="False" />
+        <Button Name="SendButton" Grid.Column="2" Content="Send" Margin="8,0,0,0" />
+      </Grid>
+
+      <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,8,0,0">
+        <Button Grid.Column="0" Name="ChangeDirectoryButton"
+                Classes="StatusBarLink" HorizontalAlignment="Left" HorizontalContentAlignment="Left"
+                ToolTip.Tip="Working directory — click to change">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="📁" Margin="0,0,4,0" />
+            <TextBlock Name="WorkingDirectoryText" Classes="StatusBarLabel" Foreground="#9A9A9A" TextTrimming="CharacterEllipsis" />
+          </StackPanel>
+        </Button>
+        <StackPanel Grid.Column="1" Name="StatusBarWorkingIndicator" Orientation="Horizontal" Margin="8,0,0,0"
+                    VerticalAlignment="Center" IsVisible="False" ToolTip.Tip="Agent is working">
+          <ProgressBar Width="32" Height="6" IsIndeterminate="True" VerticalAlignment="Center" />
+          <TextBlock Text="Working…" Classes="StatusBarLabel" Foreground="#9A9A9A" Margin="4,0,0,0" />
+        </StackPanel>
+        <StackPanel Grid.Column="2" Name="ContextUsagePanel" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center"
+                    ToolTip.Tip="Context used">
+          <ProgressBar Name="ContextUsageBar" Width="48" Height="6" Minimum="0" Maximum="1" VerticalAlignment="Center" />
+          <TextBlock Name="ContextUsageText" Classes="StatusBarLabel" Foreground="#9A9A9A" Margin="4,0,0,0" />
+        </StackPanel>
+        <Button Grid.Column="3" Name="ProviderButton" Classes="StatusBarLink" Margin="8,0,0,0"
+                ToolTip.Tip="Provider — click to switch">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="🔌" Margin="0,0,4,0" />
+            <TextBlock Name="ProviderText" Classes="StatusBarLabel" Foreground="#9A9A9A" />
+          </StackPanel>
+        </Button>
+        <Button Grid.Column="4" Name="ModelButton" Classes="StatusBarLink" Margin="8,0,0,0"
+                ToolTip.Tip="Model — click to switch">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="🤖" Margin="0,0,4,0" />
+            <TextBlock Name="ModelText" Classes="StatusBarLabel" Foreground="#9A9A9A" />
+          </StackPanel>
+        </Button>
+      </Grid>
+    </Grid>
+  </Grid>
+</Window>

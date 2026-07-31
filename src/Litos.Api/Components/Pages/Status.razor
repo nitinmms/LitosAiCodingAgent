@@ -1,0 +1,34 @@
+@page "/"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject AgentWorker Worker
+
+<h1>Status</h1>
+
+<dl class="stat-grid">
+    <div>
+        <dt>Provider</dt>
+        <dd>@Worker.ProviderName</dd>
+    </div>
+    <div>
+        <dt>Model</dt>
+        <dd>@(Worker.Model ?? "(resolving…)")</dd>
+    </div>
+    <div>
+        <dt>Started</dt>
+        <dd>@Worker.StartedAt.ToLocalTime().ToString("g")</dd>
+    </div>
+    <div>
+        <dt>Turn</dt>
+        <dd>
+            @if (Worker.IsTurnActive)
+            {
+                <span class="badge active">Active</span>
+            }
+            else
+            {
+                <span class="badge idle">Idle</span>
+            }
+        </dd>
+    </div>
+</dl>

@@ -1,0 +1,502 @@
+:root {
+    --bg: #1e1e1e;
+    --panel: #252526;
+    --panel-raised: #2d2d30;
+    --border: #3c3c3c;
+    --text: whitesmoke;
+    --text-muted: #9a9a9a;
+    --accent: #29b6f6;
+    --accent-strong: #0d47a1;
+    --danger: #e05252;
+    --danger-strong: #a83a3a;
+    --success: #3fb56e;
+    --success-strong: #2e8b57;
+    --warning: #e0a83a;
+    --warning-strong: #a87a1e;
+    --radius: 8px;
+    --font: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+.page {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* Top nav — mirrors Litos.Gui's dark toolbar / status-bar chrome */
+.topbar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 10px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+}
+
+.topbar .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 16px;
+    color: var(--text);
+    margin-right: auto;
+}
+
+.topbar .brand img {
+    width: 24px;
+    height: 24px;
+}
+
+.topbar nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.topbar nav a {
+    color: var(--text-muted);
+    padding: 6px 12px;
+    border-radius: var(--radius);
+}
+
+.topbar nav a:hover {
+    color: var(--text);
+    background: var(--panel-raised);
+    text-decoration: none;
+}
+
+.topbar nav a.active {
+    color: var(--text);
+    background: var(--panel-raised);
+}
+
+.topbar form {
+    margin: 0;
+}
+
+main {
+    flex: 1;
+    padding: 28px 32px;
+    max-width: 880px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0 0 20px;
+    color: var(--text);
+}
+
+/* Buttons */
+button, .btn {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--panel-raised);
+    color: var(--text);
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+button:hover {
+    background: #383840;
+    border-color: #4a4a4a;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+button:disabled:hover {
+    background: var(--panel-raised);
+    border-color: var(--border);
+}
+
+button.primary:disabled:hover {
+    background: var(--accent-strong);
+}
+
+button.approve:disabled:hover {
+    background: var(--success-strong);
+}
+
+button.deny:disabled:hover {
+    background: var(--danger-strong);
+}
+
+button:focus-visible, .btn:focus-visible,
+a:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+button.primary {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: white;
+}
+
+button.primary:hover {
+    background: #1565c0;
+}
+
+button.approve {
+    background: var(--success-strong);
+    border-color: var(--success-strong);
+    color: white;
+}
+
+button.approve:hover {
+    background: #37a05f;
+}
+
+button.deny {
+    background: var(--danger-strong);
+    border-color: var(--danger-strong);
+    color: white;
+}
+
+button.deny:hover {
+    background: #c24545;
+}
+
+button.warning {
+    background: var(--warning-strong);
+    border-color: var(--warning-strong);
+    color: white;
+}
+
+button.warning:hover {
+    background: #c28f28;
+}
+
+/* A row of Deny/Ask/Full-style buttons where only the active choice is filled — the other two
+   stay outline-only so the current state reads at a glance without three solid blocks of color
+   competing for attention. */
+.permission-group {
+    display: flex;
+    gap: 6px;
+}
+
+.permission-group button:not(.deny):not(.warning):not(.approve) {
+    background: transparent;
+}
+
+/* Forms */
+label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+input[type="text"], input[type="password"] {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+}
+
+input[type="text"]:focus, input[type="password"]:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* Status page definition list rendered as a stat grid */
+dl.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin: 0;
+}
+
+dl.stat-grid > div {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+}
+
+dl.stat-grid dt {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+dl.stat-grid dd {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.badge.idle {
+    background: rgba(154, 154, 154, 0.15);
+    color: var(--text-muted);
+}
+
+.badge.active {
+    background: rgba(41, 182, 246, 0.15);
+    color: var(--accent);
+}
+
+.badge.success {
+    background: rgba(63, 181, 110, 0.15);
+    color: var(--success);
+}
+
+.badge.warning {
+    background: rgba(224, 168, 58, 0.15);
+    color: var(--warning);
+}
+
+/* Approvals */
+.approval-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 14px;
+}
+
+.approval-card .tool-name {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.approval-card pre {
+    background: #151515;
+    border-radius: 6px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 13px;
+    color: #d4d4d4;
+    margin: 10px 0;
+}
+
+.approval-card .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.empty-state {
+    color: var(--text-muted);
+    padding: 32px 0;
+    text-align: center;
+}
+
+/* Login page */
+.login-shell {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.login-card {
+    width: 100%;
+    max-width: 340px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+}
+
+.login-card img {
+    width: 56px;
+    height: 56px;
+    margin-bottom: 12px;
+}
+
+.login-card h1 {
+    font-size: 18px;
+    margin-bottom: 24px;
+}
+
+.login-card form {
+    text-align: left;
+}
+
+.login-card button {
+    width: 100%;
+    margin-top: 16px;
+}
+
+.login-error {
+    color: var(--danger);
+    font-size: 13px;
+    margin-top: 12px;
+}
+
+/* Settings */
+.settings-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 20px;
+}
+
+.settings-section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 4px;
+}
+
+.section-hint {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: 0 0 16px;
+}
+
+.section-hint code {
+    background: var(--panel-raised);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.inline-notice {
+    background: rgba(41, 182, 246, 0.1);
+    border: 1px solid rgba(41, 182, 246, 0.3);
+    color: var(--accent);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    font-size: 13px;
+    margin: 0 0 16px;
+}
+
+.field-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+}
+
+.field-row select {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--panel-raised);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+}
+
+.field-row select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.field-row input {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--panel-raised);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+}
+
+.field-row input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.field-row input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.settings-section > button {
+    margin-top: 14px;
+}
+
+.key-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.key-row {
+    display: grid;
+    grid-template-columns: 120px 1fr auto;
+    align-items: center;
+    gap: 12px;
+}
+
+.key-row label {
+    margin: 0;
+    text-transform: capitalize;
+    color: var(--text);
+    font-size: 14px;
+}
+
+.key-row input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+input[type="checkbox"] {
+    accent-color: var(--success);
+    width: 16px;
+    height: 16px;
+    vertical-align: middle;
+}
+
+.settings-message {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-top: 14px;
+}

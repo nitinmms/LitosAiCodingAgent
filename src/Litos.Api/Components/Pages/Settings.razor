@@ -1,0 +1,175 @@
+@page "/settings"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject AgentWorker Worker
+@inject Litos.Host.LitosConfig Config
+@using Litos.Agent.Providers
+@using Litos.Host
+
+<h1>Settings</h1>
+
+<section class="settings-section">
+    <h2>Provider &amp; model</h2>
+    <p class="section-hint">Applies immediately to the next turn. A turn already in progress keeps running on its original provider.</p>
+
+    @if (Worker.IsTurnActive)
+    {
+        <p class="inline-notice">A turn is currently in progress — you can still change these; the change takes effect on the next turn.</p>
+    }
+
+    <div class="field-row">
+        <div>
+            <label for="provider">Provider</label>
+            <select id="provider" @bind="_selectedProvider" @bind:after="OnProviderChangedAsync" disabled="@_busy">
+                @foreach (var p in Worker.AvailableProviders)
+                {
+                    <option value="@p">@p</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label for="model">Model</label>
+            <input id="model" list="model-options" @bind="_modelInput" @bind:event="oninput"
+                   placeholder="Type to filter…" disabled="@(_busy || _models.Count == 0)" autocomplete="off" />
+            <datalist id="model-options">
+                @foreach (var m in _models)
+                {
+                    <option value="@m.Id">@m.DisplayName</option>
+                }
+            </datalist>
+        </div>
+    </div>
+
+    <button class="primary" @onclick="ApplyModel" disabled="@(_busy || _modelInput == _selectedModel)">Apply model</button>
+
+    @if (_providerMessage is not null)
+    {
+        <p class="settings-message">@_providerMessage</p>
+    }
+</section>
+
+<section class="settings-section">
+    <h2>API keys</h2>
+    <p class="section-hint">Saved to <code>~/.litos/config.json</code>. New or changed keys take effect after restarting the container — they are not picked up live.</p>
+
+    <div class="key-list">
+        @foreach (var provider in _allKeyProviders)
+        {
+            <div class="key-row">
+                <label for="key-@provider">@provider</label>
+                <input type="password" id="key-@provider" autocomplete="off"
+                       value="@_keyEdits.GetValueOrDefault(provider, "")"
+                       placeholder="@(Config.GetApiKey(provider) is not null ? "•••• (already set)" : "not set")"
+                       @oninput="e => _keyEdits[provider] = (string)e.Value!" />
+                @if (LitosConfig.IsSetByEnvironmentVariable(provider))
+                {
+                    <span class="badge warning" title="An environment variable currently overrides this key. A saved value here won't be used until that variable is removed and the container restarts.">env var overrides</span>
+                }
+            </div>
+        }
+    </div>
+
+    <button class="primary" @onclick="SaveKeys">Save keys</button>
+
+    @if (_keysMessage is not null)
+    {
+        <p class="settings-message">@_keysMessage</p>
+    }
+</section>
+
+@code {
+    private static readonly string[] _allKeyProviders = ["anthropic", "openai", "gemini", "openrouter", "tavily", "telegram"];
+
+    private string _selectedProvider = "";
+    private string _selectedModel = "";
+    private string _modelInput = "";
+    private IReadOnlyList<ModelInfo> _models = [];
+    private readonly Dictionary<string, string> _keyEdits = new();
+    private bool _busy;
+    private string? _providerMessage;
+    private string? _keysMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _selectedProvider = Worker.ProviderName;
+        _selectedModel = Worker.Model ?? "";
+        _modelInput = _selectedModel;
+        await LoadModelsAsync(_selectedProvider);
+    }
+
+    private async Task LoadModelsAsync(string providerName)
+    {
+        _models = await Worker.ListModelsAsync(providerName, CancellationToken.None);
+        if (_models.All(m => m.Id != _selectedModel))
+            _selectedModel = _models.FirstOrDefault(m => m.IsDefault)?.Id ?? _models.FirstOrDefault()?.Id ?? "";
+        _modelInput = _selectedModel;
+    }
+
+    private async Task OnProviderChangedAsync()
+    {
+        var provider = _selectedProvider;
+        _busy = true;
+        _providerMessage = null;
+        StateHasChanged();
+        try
+        {
+            await Worker.SwitchProviderAsync(provider, CancellationToken.None);
+            await LoadModelsAsync(provider);
+            _selectedModel = Worker.Model ?? _selectedModel;
+            _modelInput = _selectedModel;
+            _providerMessage = $"Switched to provider '{provider}', model '{_selectedModel}'.";
+        }
+        catch (Exception ex)
+        {
+            _providerMessage = $"Could not switch provider: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ApplyModel()
+    {
+        if (_models.All(m => m.Id != _modelInput))
+        {
+            _providerMessage = $"'{_modelInput}' is not in {_selectedProvider}'s model list.";
+            return;
+        }
+
+        Worker.SetModel(_modelInput);
+        _selectedModel = _modelInput;
+        _providerMessage = $"Switched to model '{_selectedModel}'.";
+    }
+
+    private void SaveKeys()
+    {
+        var updated = new Dictionary<string, string>(Config.ApiKeys);
+        var changedProviders = new List<string>();
+        foreach (var (provider, value) in _keyEdits)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                continue;
+
+            updated[provider] = value.Trim();
+            changedProviders.Add(provider);
+        }
+
+        if (changedProviders.Count == 0)
+        {
+            _keysMessage = "No changes to save.";
+            return;
+        }
+
+        var toSave = Config with { ApiKeys = updated };
+        toSave.Save();
+        _keyEdits.Clear();
+
+        var shadowed = changedProviders.Where(LitosConfig.IsSetByEnvironmentVariable).ToArray();
+        _keysMessage = shadowed.Length == 0
+            ? $"Saved {changedProviders.Count} key(s). Restart the container for the change to take effect."
+            : $"Saved {changedProviders.Count} key(s). Restart the container for the change to take effect. "
+              + $"Note: {string.Join(", ", shadowed)} {(shadowed.Length == 1 ? "is" : "are")} currently overridden by "
+              + $"{(shadowed.Length == 1 ? "its environment variable" : "their environment variables")} and won't be used until that's removed.";
+    }
+}

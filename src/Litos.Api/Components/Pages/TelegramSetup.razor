@@ -1,0 +1,229 @@
+@page "/telegram"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject Litos.Host.LitosConfig Config
+@inject IServiceProvider Services
+@using Litos.Api.Channels
+@using Litos.Api.Channels.Telegram
+@using Litos.Tools.Shell
+
+<h1>Telegram</h1>
+
+@if (_bridge is null)
+{
+    <p class="section-hint">
+        No bot token configured. Set it on the <a href="/settings">Settings</a> page (API keys
+        section) or via the <code>TELEGRAM_BOT_TOKEN</code> environment variable, then restart
+        the container to enable the Telegram bridge.
+    </p>
+}
+else
+{
+    <section class="settings-section">
+        <h2>Bridge</h2>
+        <p class="section-hint">Off by default, even with a token configured — an explicit toggle avoids a surprise always-on remote-access channel.</p>
+
+        <div class="field-row">
+            <span class="badge @(_config.Enabled ? "success" : "idle")">@(_config.Enabled ? "Enabled" : "Disabled")</span>
+            <button class="@(_config.Enabled ? "deny" : "approve")" @onclick="ToggleEnabledAsync" disabled="@_busy">
+                @(_config.Enabled ? "Disable" : "Enable")
+            </button>
+        </div>
+    </section>
+
+    <section class="settings-section">
+        <h2>Link a Telegram account</h2>
+        <p class="section-hint">Scan with your phone's camera, or tap the link on the device running Telegram.</p>
+
+        <button class="primary" @onclick="BeginPairingAsync" disabled="@(_busy || !_config.Enabled)">Link a Telegram account</button>
+        @if (!_config.Enabled)
+        {
+            <p class="inline-notice">Enable the bridge above before linking.</p>
+        }
+
+        @if (_pairingQrDataUri is not null)
+        {
+            <div class="field-row">
+                <img src="@_pairingQrDataUri" alt="Pairing QR code" width="200" height="200" />
+                <div>
+                    <p>Or open this link:</p>
+                    <code>@_pairingDeepLink</code>
+                </div>
+            </div>
+        }
+    </section>
+
+    <section class="settings-section">
+        <h2>Linked chats</h2>
+        @if (_config.LinkedChats.Count == 0)
+        {
+            <p class="empty-state">No linked chats yet.</p>
+        }
+        else
+        {
+            <div class="key-list">
+                @foreach (var chat in _config.LinkedChats)
+                {
+                    <div class="key-row">
+                        <span>Chat @chat.ChatId</span>
+                        <span class="section-hint">linked @chat.LinkedAt.ToLocalTime().ToString("g")</span>
+                        <button class="deny" @onclick="() => UnlinkAsync(chat.ChatId)">Unlink</button>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    <section class="settings-section">
+        <h2>Tool access</h2>
+        <p class="section-hint">
+            Applies to every linked Telegram chat — read-only tools (read/search/list) are always
+            available. For each mutating tool below: <strong>Deny</strong> blocks it outright,
+            <strong>Ask</strong> prompts an in-chat Approve/Deny before every call (auto-denies
+            after 10 minutes if nobody responds), <strong>Full</strong> runs it immediately with
+            no prompt.
+        </p>
+
+        <div class="key-list">
+            <div class="key-row">
+                <label>Shell</label>
+                @RenderPermissionButtons("shell", SetShellPermission)
+            </div>
+            <div class="key-row">
+                <label>Edit files (write_file + edit_file)</label>
+                @RenderPermissionButtons(EditFilesPermission, SetEditFilesPermission)
+            </div>
+            <div class="key-row">
+                <label>Send file</label>
+                @RenderPermissionButtons("send_file", SetSendFilePermission)
+            </div>
+        </div>
+    </section>
+}
+
+@code {
+    private TelegramBridge? _bridge;
+    private TelegramConfigStore? _store;
+    private TelegramConfig _config = TelegramConfig.Empty;
+    private string? _pairingQrDataUri;
+    private string? _pairingDeepLink;
+    private bool _busy;
+
+    // write_file and edit_file are shown/set as one "Edit files" control (per-tool granularity
+    // wasn't worth the extra UI row) — if they'd somehow drifted apart (manual telegram.json
+    // edit), show write_file's value; SetEditFilesPermission always re-syncs both to match.
+    private ToolPermission EditFilesPermission => _config.PermissionFor("write_file");
+
+    protected override void OnInitialized()
+    {
+        _bridge = Services.GetService(typeof(TelegramBridge)) as TelegramBridge;
+        _store = Services.GetService(typeof(TelegramConfigStore)) as TelegramConfigStore;
+        if (_store is not null)
+            _config = _store.Current;
+    }
+
+    private async Task ToggleEnabledAsync()
+    {
+        if (_bridge is null || _store is null)
+            return;
+
+        _busy = true;
+        try
+        {
+            var enabling = !_config.Enabled;
+            if (enabling)
+                await _bridge.StartAsync(CancellationToken.None);
+            else
+                await _bridge.StopAsync(CancellationToken.None);
+
+            _store.Update(cfg => cfg with { Enabled = enabling });
+            _config = _store.Current;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task BeginPairingAsync()
+    {
+        if (_bridge is null)
+            return;
+
+        _busy = true;
+        try
+        {
+            var handle = await _bridge.BeginPairingAsync(CancellationToken.None);
+            _pairingDeepLink = handle.DisplayText;
+            _pairingQrDataUri = handle.QrPngBytes is { } bytes
+                ? $"data:image/png;base64,{Convert.ToBase64String(bytes)}"
+                : null;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void UnlinkAsync(long chatId)
+    {
+        if (_store is null)
+            return;
+
+        _store.Update(cfg => cfg with { LinkedChats = [.. cfg.LinkedChats.Where(c => c.ChatId != chatId)] });
+        _config = _store.Current;
+    }
+
+    private void SetShellPermission(ToolPermission permission) => SetToolPermission("shell", permission);
+
+    private void SetSendFilePermission(ToolPermission permission) => SetToolPermission("send_file", permission);
+
+    private void SetEditFilesPermission(ToolPermission permission)
+    {
+        SetToolPermission("write_file", permission);
+        SetToolPermission("edit_file", permission);
+    }
+
+    private void SetToolPermission(string tool, ToolPermission permission)
+    {
+        if (_store is null)
+            return;
+
+        _store.Update(cfg => cfg with
+        {
+            ToolPermissions = new Dictionary<string, ToolPermission>(cfg.ToolPermissions) { [tool] = permission },
+        });
+        _config = _store.Current;
+    }
+
+    /// <summary>
+    /// Three-way Deny/Ask/Full control, styled with the same approve(green)/warning(amber)/
+    /// deny(red) convention Settings.razor already uses — the active choice is solid-filled, the
+    /// other two are plain/outline so the current state reads at a glance.
+    /// </summary>
+    private RenderFragment RenderPermissionButtons(ToolPermission current, Action<ToolPermission> onSelect) => builder =>
+    {
+        var i = 0;
+        builder.OpenElement(i++, "div");
+        builder.AddAttribute(i++, "class", "permission-group");
+        foreach (var (permission, cssClass, label) in PermissionButtonSpecs)
+        {
+            builder.OpenElement(i++, "button");
+            builder.AddAttribute(i++, "class", current == permission ? cssClass : "");
+            builder.AddAttribute(i++, "onclick", EventCallback.Factory.Create(this, () => onSelect(permission)));
+            builder.AddContent(i++, label);
+            builder.CloseElement();
+        }
+        builder.CloseElement();
+    };
+
+    private RenderFragment RenderPermissionButtons(string tool, Action<ToolPermission> onSelect) =>
+        RenderPermissionButtons(_config.PermissionFor(tool), onSelect);
+
+    private static readonly (ToolPermission Permission, string CssClass, string Label)[] PermissionButtonSpecs =
+    [
+        (ToolPermission.Deny, "deny", "Deny"),
+        (ToolPermission.Ask, "warning", "Ask"),
+        (ToolPermission.Full, "approve", "Full"),
+    ];
+}

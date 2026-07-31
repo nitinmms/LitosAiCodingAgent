@@ -1,0 +1,19 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:Litos.Gui"
+             x:Class="Litos.Gui.CommandMenuPopup"
+             Width="360">
+  <ListBox Name="ItemsList" MaxHeight="280" Background="Transparent">
+    <ListBox.ItemTemplate>
+      <DataTemplate x:DataType="local:CommandMenuPopup+MenuEntry">
+        <StackPanel Orientation="Horizontal" Margin="4,2">
+          <TextBlock Text="{Binding Icon}" Width="20" />
+          <StackPanel Margin="6,0,0,0">
+            <TextBlock Text="{Binding Title}" Foreground="WhiteSmoke" />
+            <TextBlock Text="{Binding Subtitle}" Foreground="#9A9A9A" FontSize="11" />
+          </StackPanel>
+        </StackPanel>
+      </DataTemplate>
+    </ListBox.ItemTemplate>
+  </ListBox>
+</UserControl>

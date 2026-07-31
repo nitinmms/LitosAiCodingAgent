@@ -1,0 +1,74 @@
+Litos AI Agent
+Copyright 2026 Nitin Sharma
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+This product includes software developed by the following third-party
+open-source projects:
+
+  Avalonia, Avalonia.Desktop, Avalonia.Fonts.Inter, Avalonia.Themes.Fluent (12.1.0)
+    License: MIT
+    https://github.com/AvaloniaUI/Avalonia
+
+  MarkView.Avalonia (12.0.3)
+    License: MIT
+
+  Markdig (1.1.3, transitive via MarkView.Avalonia)
+    License: BSD-2-Clause
+    https://github.com/xoofx/markdig
+
+  Terminal.Gui (2.0.0-rc.64)
+    License: MIT
+    https://github.com/gui-cs/Terminal.Gui
+
+  Telegram.Bot (22.10.2.1)
+    License: MIT
+    https://github.com/TelegramBots/Telegram.Bot
+
+  QRCoder (1.8.0)
+    License: MIT
+    https://github.com/codebude/QRCoder
+
+  Anthropic.SDK (5.10.0)
+    License: MIT
+    https://github.com/tghamm/Anthropic.SDK
+
+  OpenAI (2.12.0)
+    License: Apache-2.0
+    https://github.com/openai/openai-dotnet
+
+  ModelContextProtocol (2.0.0)
+    License: MIT
+    https://github.com/modelcontextprotocol/csharp-sdk
+
+  Google_GenerativeAI (3.6.6)
+    License: MIT
+    https://github.com/gunpal5/Google_GenerativeAI
+
+  ManagedCode.MarkItDown (10.0.7)
+    License: MIT
+    https://github.com/managedcode/MarkItDown
+
+  Microsoft.Extensions.DependencyInjection (10.0.9)
+    License: MIT
+    https://github.com/dotnet/runtime
+
+  xunit, xunit.runner.visualstudio (2.9.3 / 3.1.4)
+    License: Apache-2.0
+    https://github.com/xunit/xunit
+
+  coverlet.collector (6.0.4)
+    License: MIT
+    https://github.com/coverlet-coverage/coverlet
+
+  Microsoft.NET.Test.Sdk (17.14.1)
+    License: MIT
+    https://github.com/microsoft/vstest
+
+None of the above are modified or redistributed as source within this
+repository; they are consumed as unmodified NuGet package dependencies.
+
+Architectural inspiration (no source reproduced):
+  - Tau (Hugging Face) — layered brain/environment/face architecture
+  - pi (github.com/earendil-works/pi) — session-as-working-directory pattern

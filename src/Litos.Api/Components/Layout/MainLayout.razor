@@ -1,0 +1,40 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Nav
+
+<div class="page">
+    <div class="topbar">
+        <div class="brand">
+            <img src="app-icon.png" alt="Litos" />
+            <span>Litos.Api</span>
+        </div>
+        <nav>
+            <a href="/" class="@ActiveClass("/")">Status</a>
+            <a href="/telegram" class="@ActiveClass("/telegram")">Telegram</a>
+            <a href="/mcp" class="@ActiveClass("/mcp")">MCP</a>
+            <a href="/logs" class="@ActiveClass("/logs")">Logs</a>
+            <a href="/settings" class="@ActiveClass("/settings")">Settings</a>
+        </nav>
+        <form method="post" action="/auth/logout">
+            <button type="submit">Log out</button>
+        </form>
+    </div>
+    <main>
+        @Body
+    </main>
+</div>
+
+@code {
+    protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+        => InvokeAsync(StateHasChanged);
+
+    private string ActiveClass(string path)
+    {
+        var current = "/" + Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+        return current == path.TrimEnd('/') || (path == "/" && current == "") ? "active" : "";
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}
