@@ -106,7 +106,7 @@ public sealed partial class MainWindow : Window
             else
                 await SubmitAsync();
         };
-        InputBox.KeyDown += async (_, e) =>
+        InputBox.AddHandler(KeyDownEvent, async (_, e) =>
         {
             if (_commandMenu.HandleFilterKeyDown(e.Key) || _mentionPopup.HandleFilterKeyDown(e.Key))
             {
@@ -115,12 +115,22 @@ public sealed partial class MainWindow : Window
             }
 
             if (e.Key == Key.Enter && (e.KeyModifiers & KeyModifiers.Alt) != 0)
+            {
+                e.Handled = true;
                 SendFollowUp();
+            }
+            else if (e.Key == Key.Enter && (e.KeyModifiers & KeyModifiers.Shift) != 0)
+            {
+                // Let the TextBox handle it natively (AcceptsReturn="True" inserts a newline).
+            }
             else if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
                 await SubmitAsync();
+            }
             else if (e.Key == Key.Escape && _turnCts is { IsCancellationRequested: false } cts)
                 cts.Cancel();
-        };
+        }, RoutingStrategies.Tunnel);
         InputBox.TextChanged += async (_, _) =>
         {
             UpdateCommandMenuFromTypedText();

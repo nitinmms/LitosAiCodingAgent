@@ -49,12 +49,13 @@
       </Border>
 
       <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto">
-        <Button Grid.Column="0" Name="CommandMenuButton" Content="/" Width="32"
+        <Button Grid.Column="0" Name="CommandMenuButton" Content="/" Width="32" VerticalAlignment="Top"
                 ToolTip.Tip="Invokes slash commands" />
         <TextBox Name="InputBox" Grid.Column="1" Margin="8,0,0,0"
-                  PlaceholderText="Type a message and press Enter..."
-                  AcceptsReturn="False" />
-        <Button Name="SendButton" Grid.Column="2" Content="Send" Margin="8,0,0,0" />
+                  PlaceholderText="Type a message and press Enter... (Shift+Enter for a new line)"
+                  AcceptsReturn="True" TextWrapping="Wrap"
+                  MinHeight="88" MaxHeight="160" VerticalContentAlignment="Top" />
+        <Button Name="SendButton" Grid.Column="2" Content="Send" Margin="8,0,0,0" VerticalAlignment="Top" />
       </Grid>
 
       <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,8,0,0">
