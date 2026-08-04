@@ -13,6 +13,11 @@ directory model, and secondarily by [alejandro-ao](https://github.com/alejandro-
 [Tau](https://github.com/alejandro-ao/tau) and its "separate the brain, the environment, and the
 face" architecture.
 
+## Videos
+
+- [Built an AI Coding Agent in Pure C#/.NET (No Python!) — Watch It Build a WinForms 15-Puzzle Game](https://www.youtube.com/watch?v=em8w0SwgT5Q)
+- [Built an AI Agent in Pure C#/.NET— Here it is working through Telegram creating Mermaid Diagrams](https://www.youtube.com/watch?v=S2Sn_kwCRjE&t=8s)
+
 ## Status
 
 Two faces are working end to end today:
@@ -135,8 +140,8 @@ flowchart TD
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
 ```bash
-git clone https://github.com/nitinmms/LitosAiAgent1.0.git
-cd LitosAiAgent1.0
+git clone https://github.com/nitinmms/LitosAiCodingAgent.git
+cd LitosAiCodingAgent
 dotnet build
 ```
 
@@ -306,11 +311,6 @@ Each server's tools are registered under an `mcp__{ServerName}__{ToolName}` pref
 must be unique and can't contain `__`. See
 [ReadMe_LitosApi_Mcp.md](ReadMe_LitosApi_Mcp.md) §10 for full implementation detail, including what
 was verified against a real running server.
-
-## Videos
-
-- [Built an AI Coding Agent in Pure C#/.NET (No Python!) — Watch It Build a WinForms 15-Puzzle Game](https://www.youtube.com/watch?v=em8w0SwgT5Q)
-- [Built an AI Agent in Pure C#/.NET— Here it is working through Telegram creating Mermaid Diagrams](https://www.youtube.com/watch?v=S2Sn_kwCRjE&t=8s)
 
 ## Further documentation
 
