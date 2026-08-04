@@ -1,0 +1,48 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Litos.Gui.McpServersWindow"
+        Title="MCP servers"
+        Icon="avares://Litos.Gui/Assets/AppIcon.png"
+        Width="640" Height="560"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="16">
+    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8" HorizontalAlignment="Right">
+      <Button Name="RefreshAllButton" Content="Refresh all" />
+    </StackPanel>
+
+    <!-- Margin (not Padding) on the ScrollViewer's direct child — see CLAUDE.md: this Avalonia
+         version's ScrollViewer.Padding doesn't fold correctly into the scrollable extent, leaving
+         a fixed unreachable sliver at the trailing edge no resize can recover. -->
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Name="ServerListPanel" Margin="0,0,0,12" Spacing="8" />
+    </ScrollViewer>
+
+    <StackPanel Grid.Row="2" Spacing="8">
+      <TextBlock Text="Add a server" FontWeight="Bold" />
+
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+        <TextBox Name="NewNameBox" Grid.Column="0" PlaceholderText="Server name (e.g. filesystem)" />
+        <ComboBox Name="NewTransportCombo" Grid.Column="1" SelectedIndex="0" Width="140">
+          <ComboBoxItem Content="Stdio" />
+          <ComboBoxItem Content="HTTP" />
+        </ComboBox>
+      </Grid>
+
+      <StackPanel Name="StdioFieldsPanel" Spacing="8">
+        <TextBox Name="NewCommandBox" PlaceholderText="Command (e.g. npx)" />
+        <TextBox Name="NewArgsBox" PlaceholderText="Args, space-separated (e.g. -y @modelcontextprotocol/server-filesystem /workspace)" />
+      </StackPanel>
+
+      <StackPanel Name="HttpFieldsPanel" Spacing="8" IsVisible="False">
+        <TextBox Name="NewUrlBox" PlaceholderText="URL (e.g. https://example.com/mcp)" />
+      </StackPanel>
+
+      <CheckBox Name="NewEnabledCheckBox" Content="Enabled" IsChecked="True" />
+
+      <Button Name="AddServerButton" Content="Add server" HorizontalAlignment="Left" />
+
+      <TextBlock Name="MessageText" Foreground="#F48771" TextWrapping="Wrap" IsVisible="False" />
+    </StackPanel>
+  </Grid>
+</Window>

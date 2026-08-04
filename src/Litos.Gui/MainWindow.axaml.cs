@@ -144,6 +144,29 @@ public sealed partial class MainWindow : Window
         CommandMenuButton.Click += (_, _) => OpenCommandMenu(openedByTyping: false);
         _commandMenu.Accepted += entry => _ = OnCommandMenuAcceptedAsync(entry);
         _mentionPopup.Accepted += entry => OnMentionAccepted(entry);
+
+        // Bounded by its own short timeout so a hung MCP child-process disposal can't block
+        // window close — mirrors Litos.Api/Program.cs's ApplicationStopping hook, adapted to
+        // Avalonia's own Window.Closing lifetime event (there's no IHost here to hang off of).
+        // Run via Task.Run rather than awaited/blocked on directly: Closing fires on the UI
+        // thread, which has Avalonia's own SynchronizationContext installed, so every awaited
+        // continuation inside ShutdownAsync's chain (McpServerConnection.DisposeAsync, etc.) would
+        // try to resume back on this same thread — blocking here with GetAwaiter().GetResult()
+        // would deadlock that resumption until shutdownCts's timeout fires, turning every window
+        // close into a guaranteed 5s hang. Task.Run moves the whole awaited chain onto a thread
+        // pool thread with no captured context, so it can actually run to completion (or time out)
+        // without needing this now-blocked UI thread back.
+        Closing += (_, _) =>
+        {
+            try
+            {
+                Task.Run(() => _session.McpToolProvider.ShutdownAsync()).Wait(TimeSpan.FromSeconds(5));
+            }
+            catch (AggregateException)
+            {
+                // Best-effort: the window still closes even if MCP child processes didn't shut down in time.
+            }
+        };
     }
 
     private void UpdateProviderModelText()
@@ -284,6 +307,13 @@ public sealed partial class MainWindow : Window
         var steering = Channel.CreateUnbounded<SteeringMessage>();
         _currentSteeringWriter = steering.Writer;
         var turnContent = BuildTurnContent(text);
+
+        // Rebuilt on every send (not just on /provider, unlike the otherwise-identical two lines
+        // in HandleProviderAsync) so a server added/enabled/disabled/removed via /mcp is reflected
+        // starting with the very next turn, with no restart — a turn already in flight keeps
+        // whatever AgentLoop/ToolRegistry it captured here, since only one turn ever runs at a time.
+        _session.ToolRegistry = _session.ToolRegistryFactory.Create();
+        _session.Loop = _session.LoopFactory.Create(_session.ChatProvider, _session.ToolRegistry);
 
         try
         {
@@ -623,6 +653,10 @@ public sealed partial class MainWindow : Window
 
             case "/compact":
                 await HandleCompactAsync();
+                return;
+
+            case "/mcp":
+                await McpServersWindow.ShowAsync(this, _session.McpConfigStore, _session.McpToolProvider);
                 return;
 
             default:
@@ -1647,13 +1681,13 @@ public sealed partial class MainWindow : Window
                             AddBubbleContent(NewAssistantBubbleContent(text.Text), HorizontalAlignment.Left, AssistantBubbleBrush);
                             break;
                         case Litos.Agent.Messages.ToolUseBlock toolUse:
-                            var toolBlock = NewToolTextBlock();
-                            var row = new ToolCallRow(toolUse.ToolName, toolUse.Arguments, toolBlock, ToolTextBrush, ToolErrorBrush);
+                            var row = ToolCallRow.Create(toolUse.ToolName, toolUse.Arguments, ToolTextBrush, ToolErrorBrush);
+                            row.Toggled += () => { ScrollToEndAfterLayout(); NudgeTranscriptLayout(); };
                             if (resultsByCallId.TryGetValue(toolUse.CallId, out var result))
                                 row.RenderCompleted(result);
                             else
                                 row.RenderRunning();
-                            TranscriptPanel.Children.Add(toolBlock);
+                            TranscriptPanel.Children.Add(row.Root);
                             break;
                         case Litos.Agent.Messages.ToolResultBlock:
                             break; // already folded into its ToolUseBlock's row above
@@ -1680,8 +1714,8 @@ public sealed partial class MainWindow : Window
     private void AddToolCallRow(string callId, string toolName, JsonElement arguments) =>
         Dispatcher.UIThread.Post(() =>
         {
-            var block = NewToolTextBlock();
-            var row = new ToolCallRow(toolName, arguments, block, ToolTextBrush, ToolErrorBrush);
+            var row = ToolCallRow.Create(toolName, arguments, ToolTextBrush, ToolErrorBrush);
+            row.Toggled += () => { ScrollToEndAfterLayout(); NudgeTranscriptLayout(); };
             row.RenderRunning();
             // AgentLoop deliberately tolerates a provider emitting the same CallId more than
             // once in a round (see AgentLoopTests.RunTurnAsync_DuplicateToolCallIds_...), so a
@@ -1692,7 +1726,7 @@ public sealed partial class MainWindow : Window
             if (!_toolRows.TryGetValue(callId, out var queue))
                 _toolRows[callId] = queue = new Queue<ToolCallRow>();
             queue.Enqueue(row);
-            TranscriptPanel.Children.Add(block);
+            TranscriptPanel.Children.Add(row.Root);
             ScrollToEndAfterLayout();
         });
 

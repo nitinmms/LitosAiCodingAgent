@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Litos.Host\Litos.Host.csproj" />
+    <ProjectReference Include="..\Litos.Tools.Mcp\Litos.Tools.Mcp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

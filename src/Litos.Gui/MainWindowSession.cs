@@ -3,6 +3,7 @@ using Litos.Agent.Providers;
 using Litos.Agent.Session;
 using Litos.Agent.Tools;
 using Litos.Host;
+using Litos.Tools.Mcp;
 
 namespace Litos.Gui;
 
@@ -18,6 +19,7 @@ namespace Litos.Gui;
 /// </summary>
 public sealed class MainWindowSession(
     AgentLoopFactory loopFactory,
+    ToolRegistryFactory toolRegistryFactory,
     ToolRegistry toolRegistry,
     IChatProviderFactory providerFactory,
     ITranscriptStore transcriptStore,
@@ -29,24 +31,37 @@ public sealed class MainWindowSession(
     AgentLoop loop,
     string model,
     LitosConfig config,
-    int contextLength)
+    int contextLength,
+    McpConfigStore mcpConfigStore,
+    McpToolProvider mcpToolProvider)
 {
     public AgentLoopFactory LoopFactory { get; } = loopFactory;
 
     /// <summary>
-    /// Built once at startup via ToolRegistryFactory (see Program.cs) and reused for every
-    /// AgentLoop rebuilt by a provider switch — Litos.Gui doesn't run a per-turn loop the way
-    /// Litos.Api's AgentWorker does, and dynamic MCP tool discovery is out of scope for this face
-    /// (ReadMe_LitosApi_Mcp.md), so one static snapshot for the process's lifetime matches today's
-    /// existing behavior exactly.
+    /// Rebuilds a fresh ToolRegistry snapshot (static tools + every IToolSource's current tools,
+    /// including MCP) — called by MainWindow.SubmitAsync immediately before every turn so a server
+    /// added/enabled/disabled/removed via /mcp is picked up on the next send without a restart.
     /// </summary>
-    public ToolRegistry ToolRegistry { get; } = toolRegistry;
+    public ToolRegistryFactory ToolRegistryFactory { get; } = toolRegistryFactory;
+
+    /// <summary>
+    /// Rebuilt via ToolRegistryFactory.Create() immediately before every RunTurnAsync call (see
+    /// MainWindow.SubmitAsync) so newly discovered MCP tools are visible on the next turn — a turn
+    /// already in flight keeps whatever AgentLoop/ToolRegistry it captured at the moment it started.
+    /// </summary>
+    public ToolRegistry ToolRegistry { get; set; } = toolRegistry;
 
     public IChatProviderFactory ProviderFactory { get; } = providerFactory;
     public ITranscriptStore TranscriptStore { get; } = transcriptStore;
     public AttachHandler AttachHandler { get; } = attachHandler;
     public Compactor Compactor { get; } = compactor;
     public IReadOnlyList<string> AvailableProviders { get; } = availableProviders;
+
+    /// <summary>Live MCP server config, mutated by McpServersWindow's add/edit/enable/disable/remove actions.</summary>
+    public McpConfigStore McpConfigStore { get; } = mcpConfigStore;
+
+    /// <summary>Orchestrates MCP server connections; McpServersWindow reads Connections for live status and calls RefreshAsync after each mutation.</summary>
+    public McpToolProvider McpToolProvider { get; } = mcpToolProvider;
 
     public string ProviderName { get; set; } = providerName;
     public IChatProvider ChatProvider { get; set; } = chatProvider;
