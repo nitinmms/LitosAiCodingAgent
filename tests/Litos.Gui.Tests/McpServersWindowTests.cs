@@ -94,4 +94,15 @@ public class McpServersWindowTests
     {
         Assert.Equal(expected, McpServersWindow.StatusLabel(status));
     }
+
+    [Theory]
+    [InlineData(0, false, "0 tools ▸")]
+    [InlineData(1, false, "1 tool ▸")]
+    [InlineData(2, false, "2 tools ▸")]
+    [InlineData(5, true, "5 tools ▾")]
+    [InlineData(1, true, "1 tool ▾")]
+    public void ToolsSummaryLabel_FormatsCountPluralizationAndExpandGlyph(int toolCount, bool expanded, string expected)
+    {
+        Assert.Equal(expected, McpServersWindow.ToolsSummaryLabel(toolCount, expanded));
+    }
 }

@@ -29,6 +29,9 @@ public sealed partial class McpServersWindow : Window
 
     private McpConfigStore _store = null!;
     private McpToolProvider _provider = null!;
+    // Keyed by server name (not by row control, which RenderServerList discards and rebuilds on
+    // every refresh) so a server's expanded/collapsed tool list survives Refresh/Add/Remove/Toggle.
+    private readonly HashSet<string> _expandedServers = [];
 
     public McpServersWindow()
     {
@@ -223,6 +226,8 @@ public sealed partial class McpServersWindow : Window
         panel.Children.Add(new TextBlock { Text = summary, Foreground = DimTextBrush, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         if (connection is { Status: McpConnectionStatus.Unreachable, Error: { } error })
             panel.Children.Add(new TextBlock { Text = $"Unreachable: {error}", Foreground = ErrorTextBrush, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        if (connection is { Status: McpConnectionStatus.Connected })
+            panel.Children.Add(BuildToolsSection(server.Name, connection));
         panel.Children.Add(buttons);
 
         return new Border
@@ -233,6 +238,62 @@ public sealed partial class McpServersWindow : Window
             Child = panel,
         };
     }
+
+    /// <summary>
+    /// "N tools ▸" (collapsed) / "N tools ▾" (expanded) toggle, same click-to-expand mechanic as
+    /// ToolCallRow in the transcript. Only rendered for a Connected server — Connecting/Unreachable/
+    /// not-started servers have no Tools list worth summarizing.
+    /// </summary>
+    private Control BuildToolsSection(string serverName, McpServerConnection connection)
+    {
+        var expanded = _expandedServers.Contains(serverName);
+
+        var toggle = new TextBlock
+        {
+            Text = ToolsSummaryLabel(connection.Tools.Count, expanded),
+            Foreground = DimTextBrush,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        };
+        toggle.PointerPressed += (_, _) =>
+        {
+            if (!_expandedServers.Add(serverName))
+                _expandedServers.Remove(serverName);
+            RenderServerList();
+        };
+
+        var section = new StackPanel { Spacing = 2 };
+        section.Children.Add(toggle);
+
+        if (expanded)
+        {
+            var toolList = new StackPanel { Spacing = 2, Margin = new Avalonia.Thickness(16, 2, 0, 0) };
+            foreach (var tool in connection.Tools)
+            {
+                toolList.Children.Add(new StackPanel
+                {
+                    Children =
+                    {
+                        new TextBlock { Text = tool.Name, FontWeight = FontWeight.Bold },
+                        new TextBlock
+                        {
+                            Text = string.IsNullOrEmpty(tool.Description) ? "(no description)" : tool.Description,
+                            Foreground = DimTextBrush,
+                            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                        },
+                    },
+                });
+            }
+
+            section.Children.Add(toolList);
+        }
+
+        return section;
+    }
+
+    /// <summary>Pure label formatting for the tools expand/collapse toggle, split out so it's
+    /// testable without an Avalonia control tree (same reasoning as BuildDefinition/StatusLabel).</summary>
+    internal static string ToolsSummaryLabel(int toolCount, bool expanded) =>
+        $"{toolCount} tool{(toolCount == 1 ? "" : "s")} {(expanded ? "▾" : "▸")}";
 
     /// <summary>Pure status-to-label mapping, mirroring McpServers.razor's StatusLabel exactly (same four cases).</summary>
     internal static string StatusLabel(McpConnectionStatus? status) => status switch
