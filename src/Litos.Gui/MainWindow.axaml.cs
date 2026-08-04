@@ -145,28 +145,13 @@ public sealed partial class MainWindow : Window
         _commandMenu.Accepted += entry => _ = OnCommandMenuAcceptedAsync(entry);
         _mentionPopup.Accepted += entry => OnMentionAccepted(entry);
 
-        // Bounded by its own short timeout so a hung MCP child-process disposal can't block
-        // window close — mirrors Litos.Api/Program.cs's ApplicationStopping hook, adapted to
-        // Avalonia's own Window.Closing lifetime event (there's no IHost here to hang off of).
-        // Run via Task.Run rather than awaited/blocked on directly: Closing fires on the UI
-        // thread, which has Avalonia's own SynchronizationContext installed, so every awaited
-        // continuation inside ShutdownAsync's chain (McpServerConnection.DisposeAsync, etc.) would
-        // try to resume back on this same thread — blocking here with GetAwaiter().GetResult()
-        // would deadlock that resumption until shutdownCts's timeout fires, turning every window
-        // close into a guaranteed 5s hang. Task.Run moves the whole awaited chain onto a thread
-        // pool thread with no captured context, so it can actually run to completion (or time out)
-        // without needing this now-blocked UI thread back.
-        Closing += (_, _) =>
-        {
-            try
-            {
-                Task.Run(() => _session.McpToolProvider.ShutdownAsync()).Wait(TimeSpan.FromSeconds(5));
-            }
-            catch (AggregateException)
-            {
-                // Best-effort: the window still closes even if MCP child processes didn't shut down in time.
-            }
-        };
+        // Fire-and-forget, not awaited/blocked on: the window must close instantly regardless of
+        // how long MCP child-process teardown takes (previously this blocked the UI thread for up
+        // to 5s via Task.Run(...).Wait(), freezing the whole app on every close whenever a server
+        // was connected — worse with more servers enabled, since McpToolProvider.ShutdownAsync
+        // disposes them one at a time). A lingering child process for a few seconds after the
+        // window is gone is harmless — mirrors how most desktop apps close.
+        Closing += (_, _) => _ = _session.McpToolProvider.ShutdownAsync();
     }
 
     private void UpdateProviderModelText()

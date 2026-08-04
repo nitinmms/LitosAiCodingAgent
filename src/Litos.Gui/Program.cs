@@ -22,6 +22,13 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Must run before any MCP server connects (InitializeMcpAsync below): job membership
+        // propagates to every process spawned afterward, so this process needs to already be in
+        // the job before StdioClientTransport spawns its first "cmd.exe /c <command>" child. See
+        // Win32JobObject's own remarks for why this exists and why it's Windows-only.
+        if (OperatingSystem.IsWindows())
+            Win32JobObject.AssignCurrentProcessWithKillOnClose();
+
         var config = LitosConfig.Load();
         if (!LitosConfig.ChatProviderNames.Any(config.ApiKeys.ContainsKey))
         {
