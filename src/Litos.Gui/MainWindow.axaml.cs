@@ -1434,7 +1434,7 @@ public sealed partial class MainWindow : Window
 
         var bubble = _currentAssistantBubble;
         var markdown = _currentAssistantMarkdown.ToString();
-        Dispatcher.UIThread.Post(() => bubble.Child = NewAssistantBubbleContent(markdown));
+        Dispatcher.UIThread.Post(() => bubble.Child = NewAssistantBubbleContent(markdown, _transcript.WorkingDirectory));
         NudgeTranscriptLayout();
 
         _currentAssistantText = null;
@@ -1447,9 +1447,9 @@ public sealed partial class MainWindow : Window
     // more reliable than relying on MarkdownViewer's SelectAll/GetSelectedText, and it works the
     // same way whether the bubble came from live streaming or history replay. Shared by both
     // construction sites (FinalizeAssistantText, RenderTranscriptHistory) so they can't drift.
-    private static Control NewAssistantBubbleContent(string markdown)
+    private static Control NewAssistantBubbleContent(string markdown, string? workingDirectory)
     {
-        var viewer = NewMarkdownViewer(markdown);
+        var viewer = NewMarkdownViewer(markdown, workingDirectory);
 
         var copyButton = new Button
         {
@@ -1500,17 +1500,19 @@ public sealed partial class MainWindow : Window
     // wire that event or a rendered link is inert. Centralized here so both construction sites
     // (streamed text in FinalizeAssistantText, restored history in the transcript-load switch)
     // can't drift out of sync.
-    private static MarkdownViewer NewMarkdownViewer(string markdown)
+    private static MarkdownViewer NewMarkdownViewer(string markdown, string? workingDirectory)
     {
         var viewer = new MarkdownViewer { Markdown = markdown };
-        viewer.LinkClicked += (_, e) => OpenUrl(e.Url);
+        viewer.LinkClicked += (_, e) => OpenUrl(e.Url, workingDirectory);
         return viewer;
     }
 
-    private static void OpenUrl(string url)
+    private static void OpenUrl(string url, string? workingDirectory)
     {
         if (IsOpenableHttpUrl(url, out var uri))
             TryLaunch(uri);
+        else if (IsOpenableLocalFile(url, workingDirectory, out var path))
+            TryLaunch(path);
     }
 
     // Only http/https is launched — markdown links are model-authored text, and Process.Start
@@ -1530,6 +1532,60 @@ public sealed partial class MainWindow : Window
         return false;
     }
 
+    // A local-file link (file:// URI, bare path, or some other scheme the model invented to gesture
+    // at "a local file" — e.g. observed in the wild as "sandbox:/C:/temp/diagram.png" — pointing at
+    // a mermaid PNG the agent just rendered via ShellTool) is still model-authored text, so the same
+    // hallucination/malice concern from IsOpenableHttpUrl applies. The scheme name itself isn't
+    // trustworthy (unlike http/https, nothing constrains what a model calls a "local file" link), so
+    // two other checks stand in: the resolved absolute path must fall under the session's own
+    // working directory (nothing outside the sandbox the agent's tools actually write to), and it
+    // must exist on disk (a hallucinated path never does). Only once both hold is
+    // Process.Start(UseShellExecute: true) handed the path.
+    internal static bool IsOpenableLocalFile(string url, string? workingDirectory, out string path)
+    {
+        path = null!;
+        if (string.IsNullOrEmpty(workingDirectory))
+            return false;
+
+        // LocalPath resolves correctly for any scheme once the parser recognizes a drive-letter
+        // authority (e.g. "sandbox:/C:/..." or "file:///C:/..."), not just for parsed.IsFile
+        // ("file"/""/certain well-known schemes) — Uri itself is scheme-agnostic about this. Known
+        // web/other schemes are excluded even though the later working-directory + File.Exists
+        // checks would already neutralize them, so a non-file scheme reads as "rejected", not
+        // "coincidentally resolved to nothing."
+        string candidate;
+        if (Uri.TryCreate(url, UriKind.Absolute, out var parsed) && !parsed.IsUnc &&
+            parsed.Scheme is not ("http" or "https" or "ftp" or "ftps" or "mailto" or "javascript" or "data" or "ws" or "wss"))
+            candidate = parsed.LocalPath;
+        else if (Path.IsPathRooted(url))
+            candidate = url;
+        else
+            return false;
+
+        string fullPath, fullWorkingDirectory;
+        try
+        {
+            fullPath = Path.GetFullPath(candidate);
+            fullWorkingDirectory = Path.GetFullPath(workingDirectory);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+
+        if (!fullPath.StartsWith(
+                fullWorkingDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+            !fullPath.StartsWith(
+                fullWorkingDirectory + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!File.Exists(fullPath))
+            return false;
+
+        path = fullPath;
+        return true;
+    }
+
     private static void TryLaunch(Uri uri)
     {
         try
@@ -1539,6 +1595,18 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             // No browser/handler available for this URI on the host — nothing more Litos can do.
+        }
+    }
+
+    private static void TryLaunch(string path)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // No default handler for this file type on the host — nothing more Litos can do.
         }
     }
 
@@ -1663,7 +1731,7 @@ public sealed partial class MainWindow : Window
                                 HorizontalAlignment.Right, UserBubbleBrush);
                             break;
                         case MessageTextBlock text:
-                            AddBubbleContent(NewAssistantBubbleContent(text.Text), HorizontalAlignment.Left, AssistantBubbleBrush);
+                            AddBubbleContent(NewAssistantBubbleContent(text.Text, _transcript.WorkingDirectory), HorizontalAlignment.Left, AssistantBubbleBrush);
                             break;
                         case Litos.Agent.Messages.ToolUseBlock toolUse:
                             var row = ToolCallRow.Create(toolUse.ToolName, toolUse.Arguments, ToolTextBrush, ToolErrorBrush);
