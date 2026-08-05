@@ -68,6 +68,29 @@ public class McpToolProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task InitializeAsync_NoServersConfigured_YieldsNoPrompts()
+    {
+        var configStore = new McpConfigStore(StateFilePath);
+        var provider = CreateProvider(configStore);
+
+        await provider.InitializeAsync(ShortTimeout, CancellationToken.None);
+
+        Assert.Empty(provider.Prompts);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_UnreachableServer_ContributesNoPrompts()
+    {
+        var configStore = new McpConfigStore(StateFilePath);
+        configStore.Update(c => c with { Servers = [BogusServer("bad")] });
+        var provider = CreateProvider(configStore);
+
+        await provider.InitializeAsync(ShortTimeout, CancellationToken.None);
+
+        Assert.Empty(provider.Prompts);
+    }
+
+    [Fact]
     public async Task RefreshAsync_ServerRemovedFromConfig_DropsItsConnection()
     {
         var configStore = new McpConfigStore(StateFilePath);

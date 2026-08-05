@@ -27,6 +27,13 @@ public sealed class McpToolProvider(McpConfigStore configStore, ILoggerFactory l
 
     public IReadOnlyList<ITool> Tools { get; private set; } = [];
 
+    /// <summary>
+    /// Every connected server's prompts, aggregated the same way Tools is — rebuilt in the same
+    /// RebuildToolsSnapshot pass so the two can never drift out of sync with each other or with
+    /// Connections' live state (no separate refresh call/timer of its own).
+    /// </summary>
+    public IReadOnlyList<McpPromptEntry> Prompts { get; private set; } = [];
+
     public IReadOnlyList<McpServerConnection> Connections
     {
         get { lock (_lock) return [.. _connections]; }
@@ -84,6 +91,7 @@ public sealed class McpToolProvider(McpConfigStore configStore, ILoggerFactory l
         await Task.WhenAll(toConnect.Select(c => ConnectOneAsync(c, perServerTimeout, ct)));
 
         RebuildToolsSnapshot();
+        RebuildPromptsSnapshot();
     }
 
     /// <summary>
@@ -114,6 +122,22 @@ public sealed class McpToolProvider(McpConfigStore configStore, ILoggerFactory l
         }
 
         Tools = tools; // atomic reference swap — IToolSource.CurrentTools readers never see a half-built list
+    }
+
+    private void RebuildPromptsSnapshot()
+    {
+        var prompts = new List<McpPromptEntry>();
+        lock (_lock)
+        {
+            foreach (var connection in _connections.Where(c => c.Status == McpConnectionStatus.Connected))
+            {
+                var serverName = connection.ServerName;
+                foreach (var prompt in connection.Prompts)
+                    prompts.Add(new McpPromptEntry(serverName, prompt, connection));
+            }
+        }
+
+        Prompts = prompts; // atomic reference swap, same reasoning as Tools above
     }
 
     private async Task ConnectOneAsync(McpServerConnection connection, TimeSpan perServerTimeout, CancellationToken ct)

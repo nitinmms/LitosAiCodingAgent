@@ -101,6 +101,50 @@ public class MainWindowLinkTests
     }
 
     [Fact]
+    public void IsOpenableLocalFile_AcceptsBareRelativeFilenameUnderWorkingDirectory()
+    {
+        // The form a model most often emits for a file it just wrote alongside the session, e.g.
+        // "[PNG](dml-prevention.png)" — no scheme, not rooted, resolved against workingDirectory.
+        var dir = Directory.CreateTempSubdirectory();
+        try
+        {
+            var file = Path.Combine(dir.FullName, "diagram.png");
+            File.WriteAllBytes(file, [0]);
+
+            var result = MainWindow.IsOpenableLocalFile("diagram.png", dir.FullName, out var resolved);
+
+            Assert.True(result);
+            Assert.Equal(Path.GetFullPath(file), resolved);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void IsOpenableLocalFile_RejectsRelativePathEscapingWorkingDirectory()
+    {
+        var workingDir = Directory.CreateTempSubdirectory();
+        var outsideDir = Directory.CreateTempSubdirectory();
+        try
+        {
+            var file = Path.Combine(outsideDir.FullName, "diagram.png");
+            File.WriteAllBytes(file, [0]);
+            var relative = Path.GetRelativePath(workingDir.FullName, file);
+
+            var result = MainWindow.IsOpenableLocalFile(relative, workingDir.FullName, out _);
+
+            Assert.False(result);
+        }
+        finally
+        {
+            workingDir.Delete(recursive: true);
+            outsideDir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void IsOpenableLocalFile_RejectsFileThatDoesNotExist()
     {
         var dir = Directory.CreateTempSubdirectory();

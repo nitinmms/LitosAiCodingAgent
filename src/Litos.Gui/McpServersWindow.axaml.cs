@@ -32,6 +32,9 @@ public sealed partial class McpServersWindow : Window
     // Keyed by server name (not by row control, which RenderServerList discards and rebuilds on
     // every refresh) so a server's expanded/collapsed tool list survives Refresh/Add/Remove/Toggle.
     private readonly HashSet<string> _expandedServers = [];
+    // Same reasoning as _expandedServers, kept separate so a tool list and a prompt list can be
+    // expanded/collapsed independently for the same server.
+    private readonly HashSet<string> _expandedPromptServers = [];
 
     public McpServersWindow()
     {
@@ -227,7 +230,10 @@ public sealed partial class McpServersWindow : Window
         if (connection is { Status: McpConnectionStatus.Unreachable, Error: { } error })
             panel.Children.Add(new TextBlock { Text = $"Unreachable: {error}", Foreground = ErrorTextBrush, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         if (connection is { Status: McpConnectionStatus.Connected })
+        {
             panel.Children.Add(BuildToolsSection(server.Name, connection));
+            panel.Children.Add(BuildPromptsSection(server.Name, connection));
+        }
         panel.Children.Add(buttons);
 
         return new Border
@@ -294,6 +300,64 @@ public sealed partial class McpServersWindow : Window
     /// testable without an Avalonia control tree (same reasoning as BuildDefinition/StatusLabel).</summary>
     internal static string ToolsSummaryLabel(int toolCount, bool expanded) =>
         $"{toolCount} tool{(toolCount == 1 ? "" : "s")} {(expanded ? "▾" : "▸")}";
+
+    /// <summary>
+    /// "N prompts ▸/▾" toggle, mirroring BuildToolsSection/ToolsSummaryLabel exactly — the
+    /// servers window's parity extension for the MCP-prompts-as-slash-commands feature, so a
+    /// connected server's prompts (now user-facing via the "/" command menu) are just as
+    /// discoverable here as its tools already are. Only rendered for a Connected server, same
+    /// as BuildToolsSection.
+    /// </summary>
+    private Control BuildPromptsSection(string serverName, McpServerConnection connection)
+    {
+        var expanded = _expandedPromptServers.Contains(serverName);
+
+        var toggle = new TextBlock
+        {
+            Text = PromptsSummaryLabel(connection.Prompts.Count, expanded),
+            Foreground = DimTextBrush,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        };
+        toggle.PointerPressed += (_, _) =>
+        {
+            if (!_expandedPromptServers.Add(serverName))
+                _expandedPromptServers.Remove(serverName);
+            RenderServerList();
+        };
+
+        var section = new StackPanel { Spacing = 2 };
+        section.Children.Add(toggle);
+
+        if (expanded)
+        {
+            var promptList = new StackPanel { Spacing = 2, Margin = new Avalonia.Thickness(16, 2, 0, 0) };
+            foreach (var prompt in connection.Prompts)
+            {
+                promptList.Children.Add(new StackPanel
+                {
+                    Children =
+                    {
+                        new TextBlock { Text = prompt.Name, FontWeight = FontWeight.Bold },
+                        new TextBlock
+                        {
+                            Text = string.IsNullOrEmpty(prompt.Description) ? "(no description)" : prompt.Description,
+                            Foreground = DimTextBrush,
+                            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                        },
+                    },
+                });
+            }
+
+            section.Children.Add(promptList);
+        }
+
+        return section;
+    }
+
+    /// <summary>Pure label formatting for the prompts expand/collapse toggle, mirroring
+    /// ToolsSummaryLabel exactly.</summary>
+    internal static string PromptsSummaryLabel(int promptCount, bool expanded) =>
+        $"{promptCount} prompt{(promptCount == 1 ? "" : "s")} {(expanded ? "▾" : "▸")}";
 
     /// <summary>Pure status-to-label mapping, mirroring McpServers.razor's StatusLabel exactly (same four cases).</summary>
     internal static string StatusLabel(McpConnectionStatus? status) => status switch

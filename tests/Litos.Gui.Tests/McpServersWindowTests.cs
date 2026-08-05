@@ -105,4 +105,15 @@ public class McpServersWindowTests
     {
         Assert.Equal(expected, McpServersWindow.ToolsSummaryLabel(toolCount, expanded));
     }
+
+    [Theory]
+    [InlineData(0, false, "0 prompts ▸")]
+    [InlineData(1, false, "1 prompt ▸")]
+    [InlineData(2, false, "2 prompts ▸")]
+    [InlineData(5, true, "5 prompts ▾")]
+    [InlineData(1, true, "1 prompt ▾")]
+    public void PromptsSummaryLabel_FormatsCountPluralizationAndExpandGlyph(int promptCount, bool expanded, string expected)
+    {
+        Assert.Equal(expected, McpServersWindow.PromptsSummaryLabel(promptCount, expanded));
+    }
 }

@@ -32,6 +32,15 @@ public sealed class McpServerConnection(McpServerDefinition definition, ILoggerF
     public IReadOnlyList<McpClientTool> Tools { get; private set; } = [];
 
     /// <summary>
+    /// Prompts this server declares, named with the same mcp__{server}__{name} convention
+    /// McpToolProxy uses for tools (see McpConfig.cs remarks on "__"-rejection) even though a
+    /// prompt is never an ITool/ToolRegistry entry — it's a GUI-only command-menu concept whose
+    /// fetched result is injected as turn content (see MainWindow.HandleMcpPromptAsync), not
+    /// invoked like a tool.
+    /// </summary>
+    public IReadOnlyList<McpClientPrompt> Prompts { get; private set; } = [];
+
+    /// <summary>
     /// Earliest time McpToolRefreshService should retry this connection while it's Unreachable —
     /// null once Connected (nothing to retry) or before the first attempt (retry immediately).
     /// Backoff doubles per consecutive failure, capped at MaxBackoff, so a consistently-down
@@ -58,6 +67,7 @@ public sealed class McpServerConnection(McpServerDefinition definition, ILoggerF
 
             var listResult = await _client.ListToolsAsync(cancellationToken: linkedCts.Token);
             Tools = [.. listResult];
+            Prompts = await TryListPromptsAsync(_client, linkedCts.Token);
             Status = McpConnectionStatus.Connected;
             Error = null;
             NextRetryAt = null;
@@ -74,6 +84,30 @@ public sealed class McpServerConnection(McpServerDefinition definition, ILoggerF
             Error = ex.Message;
             _logger.LogWarning(ex, "MCP server '{Server}' failed to connect.", definition.Name);
             MarkUnreachable();
+        }
+    }
+
+    /// <summary>
+    /// Prompts are additive (most servers expose only tools), so — unlike ListToolsAsync just
+    /// above, whose failure legitimately fails the whole connect attempt — a server that errors
+    /// on ListPromptsAsync (e.g. one that never declared the prompts capability) contributes zero
+    /// prompts rather than being marked Unreachable over a capability it never claimed to have.
+    /// </summary>
+    private async Task<IReadOnlyList<McpClientPrompt>> TryListPromptsAsync(McpClient client, CancellationToken ct)
+    {
+        try
+        {
+            var result = await client.ListPromptsAsync(cancellationToken: ct);
+            return [.. result];
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(ex, "MCP server '{Server}' has no usable prompts capability.", definition.Name);
+            return [];
         }
     }
 
@@ -94,6 +128,10 @@ public sealed class McpServerConnection(McpServerDefinition definition, ILoggerF
 
         return await _client.CallToolAsync(toolName, arguments, cancellationToken: ct);
     }
+
+    public async ValueTask<ModelContextProtocol.Protocol.GetPromptResult> GetPromptAsync(
+        McpClientPrompt prompt, IReadOnlyDictionary<string, object?> arguments, CancellationToken ct) =>
+        await prompt.GetAsync(arguments, cancellationToken: ct);
 
     public async ValueTask DisposeAsync()
     {

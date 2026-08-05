@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Litos.Tools.Mcp;
 
 namespace Litos.Gui;
 
@@ -24,17 +25,21 @@ namespace Litos.Gui;
 public sealed partial class CommandMenuPopup : UserControl
 {
     /// <summary>
-    /// One row in the menu: either a real SlashCommand or the synthetic "Attach file(s)…" action
-    /// (Kind distinguishes the two since only a SlashCommand carries a Command to dispatch).
+    /// One row in the menu: a real SlashCommand, an MCP prompt (McpPromptEntry), or the
+    /// synthetic "Attach file(s)…" action — Kind distinguishes the three since only one of
+    /// Command/PromptEntry is ever populated for a given entry.
     /// </summary>
-    internal sealed record MenuEntry(string Icon, string Title, string Subtitle, MenuEntryKind Kind, SlashCommand? Command)
+    internal sealed record MenuEntry(string Icon, string Title, string Subtitle, MenuEntryKind Kind, SlashCommand? Command, McpPromptEntry? PromptEntry = null)
     {
         public override string ToString() => Title;
     }
 
-    internal enum MenuEntryKind { Attach, Command }
+    internal enum MenuEntryKind { Attach, Command, Prompt }
 
-    private static readonly IReadOnlyList<MenuEntry> AllEntries = BuildAllEntries();
+    // Rebuilt on every Open/UpdateFilter call (not cached) — MCP prompt entries are runtime/
+    // connection-dependent (a server can connect, disconnect, or refresh its prompt list between
+    // two menu-open events), so a list computed once at type-init time could never see them.
+    private IReadOnlyList<MenuEntry> _allEntries = BuildAllEntries([]);
 
     private readonly Flyout _host;
 
@@ -68,13 +73,40 @@ public sealed partial class CommandMenuPopup : UserControl
         };
     }
 
-    private static IReadOnlyList<MenuEntry> BuildAllEntries()
+    /// <summary>Internal (not private) so CommandMenuPopupTests can build the exact entry list
+    /// Filter operates over without an Avalonia control tree.</summary>
+    internal static IReadOnlyList<MenuEntry> BuildAllEntries(IReadOnlyList<McpPromptEntry> prompts)
     {
         var entries = new List<MenuEntry> { new("📎", "Attach file(s)…", "Attach a file, folder, or URL", MenuEntryKind.Attach, Command: null) };
         entries.AddRange(SlashCommands.All
             .OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .Select(c => new MenuEntry(IconFor(c.Name), c.Name, c.Description, MenuEntryKind.Command, c)));
+        entries.AddRange(prompts
+            .OrderBy(p => p.FullName, StringComparer.OrdinalIgnoreCase)
+            .Select(p => new MenuEntry(
+                "🗨️",
+                $"/{p.FullName}",
+                FormatSubtitle(p.Prompt.Description, p.Prompt.ProtocolPrompt.Arguments),
+                MenuEntryKind.Prompt,
+                Command: null,
+                PromptEntry: p)));
         return entries;
+    }
+
+    /// <summary>
+    /// One-line teaser shown while browsing the popup — full per-argument detail (with each
+    /// PromptArgument's own Description) is instead printed to the transcript the moment the
+    /// entry is accepted (see MainWindow.OnCommandMenuAcceptedAsync), since this Subtitle
+    /// TextBlock has no wrapping and would otherwise overflow for a prompt with several args.
+    /// Takes plain description/arguments rather than an McpPromptEntry/McpClientPrompt so it's
+    /// testable without a live MCP connection (McpClientPrompt has no fake-transport-free
+    /// construction path — see CommandMenuPopupTests remarks).
+    /// </summary>
+    internal static string FormatSubtitle(string? description, IList<ModelContextProtocol.Protocol.PromptArgument>? arguments)
+    {
+        var text = string.IsNullOrEmpty(description) ? "(no description)" : description;
+        var hint = McpPromptArguments.FormatArgumentHint(arguments);
+        return hint.Length == 0 ? text : $"{text} — args: {hint}";
     }
 
     private static string IconFor(string commandName) => commandName switch
@@ -97,13 +129,13 @@ public sealed partial class CommandMenuPopup : UserControl
     /// ListPickerWindow.ApplyFilter already uses. A blank/"/" query returns everything, including
     /// the Attach entry, so opening the menu with nothing typed yet shows the full action list.
     /// </summary>
-    internal static IReadOnlyList<MenuEntry> Filter(string query)
+    internal static IReadOnlyList<MenuEntry> Filter(IReadOnlyList<MenuEntry> allEntries, string query)
     {
         var needle = query.TrimStart('/');
         if (string.IsNullOrEmpty(needle))
-            return AllEntries;
+            return allEntries;
 
-        return AllEntries
+        return allEntries
             .Where(e => e.Title.Contains(needle, StringComparison.OrdinalIgnoreCase)
                      || e.Subtitle.Contains(needle, StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -117,7 +149,7 @@ public sealed partial class CommandMenuPopup : UserControl
     /// </summary>
     public void UpdateFilter(string query)
     {
-        var filtered = Filter(query);
+        var filtered = Filter(_allEntries, query);
         if (filtered.Count == 0)
         {
             Close();
@@ -128,11 +160,18 @@ public sealed partial class CommandMenuPopup : UserControl
         ItemsList.SelectedIndex = 0;
     }
 
+    /// <summary>
+    /// Refreshes the dynamic MCP-prompt portion of the entry list — called by MainWindow right
+    /// before Open() (see MainWindow.OpenCommandMenu) so every menu-open reflects whatever
+    /// McpToolProvider.Prompts currently holds, with no separate invalidation/event hookup.
+    /// </summary>
+    internal void SetPrompts(IReadOnlyList<McpPromptEntry> prompts) => _allEntries = BuildAllEntries(prompts);
+
     private bool _isOpen;
 
     public void Open(Control anchor)
     {
-        ItemsList.ItemsSource = AllEntries;
+        ItemsList.ItemsSource = _allEntries;
         ItemsList.SelectedIndex = 0;
         _isOpen = true;
         _host.ShowAt(anchor);

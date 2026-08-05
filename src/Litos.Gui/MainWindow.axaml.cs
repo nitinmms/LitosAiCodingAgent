@@ -18,6 +18,7 @@ using Litos.Agent.Session;
 using Litos.Agent.Streaming;
 using Litos.Agent.Tools;
 using Litos.Tools.Attachments;
+using Litos.Tools.Mcp;
 using Litos.Tools.Skills;
 using MarkView.Avalonia;
 using ContentBlock = Litos.Agent.Messages.ContentBlock;
@@ -278,6 +279,19 @@ public sealed partial class MainWindow : Window
 
         var attachedNames = _stagedChips.Select(c => c.DisplayName).ToList();
         AddUserBubble(text, attachedNames, loadedSkillNames);
+        await RunTurnFromTextAsync(text);
+    }
+
+    /// <summary>
+    /// Runs a turn from outgoing text that's already been decided and rendered as a user bubble
+    /// — shared by SubmitAsync's plain-text path and HandleMcpPromptAsync (an MCP prompt's
+    /// fetched, converted text stands in for what the user would otherwise have typed, per
+    /// Claude Code's own prompt UX; the prompt path never bypasses the LLM the way a tool
+    /// invocation would). Extracted verbatim from SubmitAsync's tail so both callers share
+    /// identical turn-execution/cancellation/UI-state machinery.
+    /// </summary>
+    private async Task RunTurnFromTextAsync(string text)
+    {
         ShowWorkingIndicator();
 
         _turnStarted = true;
@@ -645,9 +659,67 @@ public sealed partial class MainWindow : Window
                 return;
 
             default:
-                AddToolLine($"Unknown command: {command}");
+                var promptEntry = _session.McpToolProvider.Prompts.FirstOrDefault(p => $"/{p.FullName}" == command);
+                if (promptEntry is null)
+                {
+                    AddToolLine($"Unknown command: {command}");
+                    return;
+                }
+                await HandleMcpPromptAsync(promptEntry, argument);
                 return;
         }
+    }
+
+    /// <summary>
+    /// Fetches and runs an MCP prompt command (/mcp__server__prompt [args]) — the GUI-only
+    /// equivalent of a normal typed message, per Claude Code's own prompt UX: the server-
+    /// returned prompt text stands in for what the user would otherwise have typed, then runs
+    /// through the exact same RunTurnFromTextAsync path SubmitAsync uses for plain text (never a
+    /// bypassed/direct invocation the way a tool call would be). Called from
+    /// TryHandleSlashCommandAsync's default case once a command line resolves to a known
+    /// mcp__server__prompt name.
+    /// </summary>
+    private async Task HandleMcpPromptAsync(McpPromptEntry entry, string? argument)
+    {
+        if (entry.Connection.Status != McpConnectionStatus.Connected)
+        {
+            AddToolLine($"MCP server '{entry.ServerName}' is not connected — cannot run /{entry.FullName}.");
+            return;
+        }
+
+        var tokens = McpPromptArguments.Tokenize(argument ?? "");
+        var (arguments, bindError) = McpPromptArguments.Bind(tokens, entry.Prompt.ProtocolPrompt.Arguments);
+        if (bindError is not null)
+        {
+            AddToolLine(bindError.Kind == McpPromptArguments.BindErrorKind.MissingRequired
+                ? $"Missing required argument(s) for /{entry.FullName}: {string.Join(", ", bindError.Names)}."
+                : $"Too many arguments for /{entry.FullName} (expected at most {entry.Prompt.ProtocolPrompt.Arguments?.Count ?? 0}).");
+            return;
+        }
+
+        ModelContextProtocol.Protocol.GetPromptResult result;
+        try
+        {
+            result = await entry.Connection.GetPromptAsync(entry.Prompt, arguments, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            AddToolLine($"Failed to fetch prompt '{entry.FullName}': {ex.Message}");
+            return;
+        }
+
+        var converted = McpPromptContentConverter.Convert(result);
+        if (converted.SkippedBlockIndexes.Count > 0)
+            AddToolLine($"Note: {converted.SkippedBlockIndexes.Count} non-text block(s) in this prompt's response were skipped.");
+        if (string.IsNullOrWhiteSpace(converted.Text))
+        {
+            AddToolLine($"Prompt '{entry.FullName}' returned no usable text content.");
+            return;
+        }
+
+        await ResolveMentionsAsync(converted.Text);
+        AddUserBubble(converted.Text, attachedNames: [], skillNames: []);
+        await RunTurnFromTextAsync(converted.Text);
     }
 
     /// <summary>
@@ -1129,6 +1201,7 @@ public sealed partial class MainWindow : Window
     private void OpenCommandMenu(bool openedByTyping)
     {
         _commandMenuOpenedByTyping = openedByTyping;
+        _commandMenu.SetPrompts(_session.McpToolProvider.Prompts);
         _commandMenu.Open(InputBox);
         if (!openedByTyping)
             _commandMenu.UpdateFilter("");
@@ -1162,10 +1235,11 @@ public sealed partial class MainWindow : Window
     }
 
     // Handles a pick from CommandMenuPopup, whether it was opened by the "+" button or by typing
-    // a leading "/". Every entry runs immediately on pick — nothing is ever spliced into
-    // InputBox — so commands that take an argument (/resume, /attach, /provider, /model, /skill)
-    // are dispatched with no argument, which each already falls back to its own ListPickerWindow
-    // (or, for /attach, the native file picker) rather than requiring the user to type one.
+    // a leading "/". Every entry runs immediately on pick except an MCP prompt (see the Prompt
+    // branch below, which splices instead) — so commands that take an argument (/resume,
+    // /attach, /provider, /model, /skill) are dispatched with no argument, which each already
+    // falls back to its own ListPickerWindow (or, for /attach, the native file picker) rather
+    // than requiring the user to type one.
     private async Task OnCommandMenuAcceptedAsync(CommandMenuPopup.MenuEntry entry)
     {
         if (_commandMenuOpenedByTyping)
@@ -1180,6 +1254,21 @@ public sealed partial class MainWindow : Window
         if (entry.Kind == CommandMenuPopup.MenuEntryKind.Attach)
         {
             await HandleAttachAsync(argument: null);
+            return;
+        }
+
+        if (entry.Kind == CommandMenuPopup.MenuEntryKind.Prompt)
+        {
+            // Unlike every other entry (which dispatches immediately with no argument), an MCP
+            // prompt is spliced into InputBox and left for the user to type its arguments —
+            // mirrors HandleSkillsAsync's InsertAtCaret($"/skill/{name} ") exactly, and works
+            // naturally with LeadingSlashTokenPattern: the trailing space this inserts is what
+            // already makes UpdateCommandMenuFromTypedText close the menu on its own.
+            var promptEntry = entry.PromptEntry!;
+            InsertAtCaret($"/{promptEntry.FullName} ");
+            var hint = McpPromptArguments.FormatArgumentHint(promptEntry.Prompt.ProtocolPrompt.Arguments);
+            if (hint.Length > 0)
+                AddToolLine($"Arguments for /{promptEntry.FullName}: {hint}");
             return;
         }
 
@@ -1553,11 +1642,15 @@ public sealed partial class MainWindow : Window
         // web/other schemes are excluded even though the later working-directory + File.Exists
         // checks would already neutralize them, so a non-file scheme reads as "rejected", not
         // "coincidentally resolved to nothing."
+        // A bare relative filename (e.g. "dml-prevention.png", the form models most often emit for
+        // a file they just wrote alongside the session) has no scheme and isn't rooted, so it used
+        // to match neither branch above and the link was silently inert. It's resolved against
+        // workingDirectory below, same as a rooted path is.
         string candidate;
         if (Uri.TryCreate(url, UriKind.Absolute, out var parsed) && !parsed.IsUnc &&
             parsed.Scheme is not ("http" or "https" or "ftp" or "ftps" or "mailto" or "javascript" or "data" or "ws" or "wss"))
             candidate = parsed.LocalPath;
-        else if (Path.IsPathRooted(url))
+        else if (Path.IsPathRooted(url) || Uri.TryCreate(url, UriKind.Relative, out _))
             candidate = url;
         else
             return false;
@@ -1565,8 +1658,10 @@ public sealed partial class MainWindow : Window
         string fullPath, fullWorkingDirectory;
         try
         {
-            fullPath = Path.GetFullPath(candidate);
             fullWorkingDirectory = Path.GetFullPath(workingDirectory);
+            fullPath = Path.IsPathRooted(candidate)
+                ? Path.GetFullPath(candidate)
+                : Path.GetFullPath(Path.Combine(fullWorkingDirectory, candidate));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
