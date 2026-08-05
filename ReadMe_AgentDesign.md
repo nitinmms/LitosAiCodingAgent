@@ -1,7 +1,7 @@
 # LitosAiAgent — Design Document
 
-A minimal, transparent AI coding agent for the console, written in pure .NET.
-Inspired by [Tau](https://twotimespi.dev/) (an educational Python coding agent), reimplemented idiomatically in C#/.NET 10.
+A minimal, transparent AI coding agent written in pure .NET, multi-face (console, desktop GUI, HTTP/API with Telegram) over one shared brain.
+Inspired by [Tau](https://twotimespi.dev/) (an educational Python coding agent) and [pi](https://pi.dev), built in C#/.NET 10 rather than a port of either.
 
 ## 1. Goals
 
@@ -10,10 +10,11 @@ Inspired by [Tau](https://twotimespi.dev/) (an educational Python coding agent),
 - **Multi-provider**: native support for Anthropic, OpenAI, Google Gemini, and OpenRouter, selected at runtime.
 - **Attachments as first-class input**: any file, image, or URL can be dropped into the conversation and is converted to markdown via `ManagedCode.MarkItDown` before reaching the model.
 - **Nice console UX**: streaming tokens, syntax-highlighted diffs, tool-call panels, and confirmation prompts, with a fixed bottom input box and scrolling transcript above it — implemented today via Terminal.Gui v2 (§7.3–7.6), after Spectre.Console's hand-rolled cursor arithmetic and a rejected RazorConsole spike (§7.3.1).
-- **Multiple faces over one shared brain**: the console isn't the only UI — a desktop GUI face (`Litos.Gui`, Avalonia, §7.7) was evaluated and adopted alongside it, both driving the same unchanged `AgentLoop` through `Litos.Host`.
+- **Multiple faces over one shared brain**: the console isn't the only UI — a desktop GUI face (`Litos.Gui`, Avalonia, §7.7) and an HTTP/API host with a Telegram bridge (`Litos.Api`, §10.3) both ship alongside it, all driving the same unchanged `AgentLoop` through `Litos.Host`.
 - **Durable, inspectable sessions**: JSONL transcripts under the user profile, resumable and exportable.
 - **Skills**: reusable, model-invoked instruction bundles (`SKILL.md`, Claude Code's Agent Skills convention) discovered from project and user directories, listed to the model as short descriptions, and loaded in full only when the model chooses to use one.
 - **Project/global instructions**: always-on standing guidance (`AGENTS.md`/`CLAUDE.md`, the emerging cross-tool convention also used by pi.dev, Cursor, and Claude Code) discovered from `~/.litos` and every ancestor directory from the filesystem root down to the working directory, concatenated into the system prompt unconditionally — unlike skills, there's no model-invoked loading step, since this content is meant to be in context on every turn.
+- **MCP client support**: connect to external [Model Context Protocol](https://modelcontextprotocol.io) servers and expose their tools/prompts alongside the built-in ones (`Litos.Tools.Mcp`, §4.6), wired into `Litos.Gui` and `Litos.Api`.
 
 ## 2. Design philosophy (from Tau, ported)
 
@@ -21,7 +22,7 @@ Inspired by [Tau](https://twotimespi.dev/) (an educational Python coding agent),
 
 - **The brain** (`Litos.Agent`): the harness — messages, tool-call state machine, transcript, context accounting. Knows nothing about the console, the filesystem, or any specific LLM vendor.
 - **The environment** (`Litos.Tools`, `Litos.Providers.*`): the concrete capabilities the brain can invoke — file I/O, shell execution, attachment conversion, and the actual LLM API calls. These implement interfaces defined by the brain; the brain never references them directly.
-- **The face** (`Litos.Console`, and later e.g. `Litos.Web`): a thin UI shell — rendering, prompts, and the process entry point. Every face consumes the *same* `AgentEvent` stream out of `AgentLoop.RunTurnAsync` and implements the *same* `IToolApprovalGate` seam in whatever way fits its medium (console prompt vs. a browser dialog awaited over a WebSocket). Nothing in `Litos.Agent` or `Litos.Tools` depends on which face is attached.
+- **The face** (`Litos.Console`, `Litos.Gui`, `Litos.Api`): a thin UI shell — rendering, prompts, and the process entry point. Every face consumes the *same* `AgentEvent` stream out of `AgentLoop.RunTurnAsync` and implements the *same* `IToolApprovalGate` seam in whatever way fits its medium (a terminal modal, an Avalonia dialog, an admin-page approval queue). Nothing in `Litos.Agent` or `Litos.Tools` depends on which face is attached.
 
 The dependency arrow only ever points inward: `Console/Web → Host → Tools/Providers → Agent`. `Litos.Agent` has zero project references other than the BCL and `System.Text.Json`.
 
@@ -116,13 +117,41 @@ LitosAiAgent/
 │   ├── Litos.Gui/                       # THE FACE (desktop GUI, Avalonia) — see §7.7
 │   │   ├── Program.cs                   # AddLitosAgent(config); binds IToolApprovalGate; starts Avalonia
 │   │   ├── App.axaml / App.axaml.cs     # FluentTheme, dark variant, markdown code-block style overrides
-│   │   ├── MainWindow.axaml/.cs         # message-bubble transcript + pinned composer; consumes AgentEvent
-│   │   └── GuiApprovalGate.cs           # implements IToolApprovalGate (spike: auto-approve stub)
+│   │   ├── MainWindow.axaml/.cs         # transcript + pinned composer; consumes AgentEvent; session/
+│   │   │                                #   provider/model pickers, attachments, steering/abort, MCP
+│   │   ├── MainWindowSession.cs         # session state (provider, model, tool registry, MCP provider, config)
+│   │   ├── GuiApprovalGate.cs           # implements IToolApprovalGate — still auto-approve only (§7.7)
+│   │   ├── McpServersWindow.axaml/.cs   # /mcp popup: add/enable/disable/remove servers, tool + prompt lists
+│   │   ├── CommandMenuPopup.cs/.axaml   # /-command and /mcp__server__prompt menu
+│   │   ├── McpPromptArguments.cs, McpPromptContentConverter.cs   # MCP prompt execution support
+│   │   ├── Win32JobObject.cs            # Windows Job Object — kills orphaned MCP child processes on exit
+│   │   ├── ToolCallRow.cs               # per-tool-call transcript row, including MCP tool rendering
+│   │   ├── AttachHandler.cs, MentionParser.cs, MentionPopup.cs/.axaml, FileMentionIndex.cs, ImageMedia.cs
+│   │   │                                # attachments + @-mention support
+│   │   ├── ListPickerWindow.cs/.axaml   # generic modal picker (session/provider/model/branch/skill)
+│   │   └── SlashCommand.cs
+│   │
+│   └── Litos.Api/                       # THE FACE (HTTP/API host, web UI, Docker) — see §10.3
+│       ├── Program.cs                   # ASP.NET Core minimal API + Blazor admin UI; AddLitosAgent(config)
+│       ├── AgentWorker.cs               # BackgroundService driving AgentLoop for HTTP/Telegram callers
+│       ├── Turns/                       # POST /sessions/{id}/turns — SSE stream of AgentEvents
+│       ├── Approvals/                   # AutoApprovalGate + admin-page Ask/Approve flow
+│       ├── Auth/                        # ADMIN_TOKEN-based cookie/bearer auth for the admin UI
+│       ├── Logs/                        # in-memory log sink surfaced on the admin UI's /logs page
+│       └── Channels/Telegram/           # Telegram bridge — bot polling, QR pairing, per-chat session
+│                                         #   driver, voice-message transcription (see
+│                                         #   ReadMe_TelegramIntegrationTool.md)
 │
 └── tests/
     ├── Litos.Agent.Tests/               # pure unit tests against fakes (no network, no filesystem)
     ├── Litos.Tools.Tests/
-    └── Litos.Providers.Tests/           # recorded-response tests per provider
+    ├── Litos.Tools.Mcp.Tests/
+    ├── Litos.Providers.Tests/           # recorded-response tests per provider
+    ├── Litos.Host.Tests/
+    ├── Litos.Persistence.Tests/
+    ├── Litos.Console.Tests/
+    ├── Litos.Gui.Tests/
+    └── Litos.Api.Tests/
 ```
 
 **Project reference graph** (arrows = "depends on"):
@@ -130,16 +159,20 @@ LitosAiAgent/
 ```
 Litos.Console  ─┐
 Litos.Gui      ─┼─> Litos.Host ──> Litos.Tools          ──> Litos.Agent
-Litos.Web*     ─┤                  Litos.Persistence     ──> Litos.Agent
+Litos.Api      ─┤                  Litos.Persistence     ──> Litos.Agent
 (future faces) ─┘                  Litos.Providers.Anthropic  ──> Litos.Agent
                                     Litos.Providers.OpenAI     ──> Litos.Agent
                                     Litos.Providers.Gemini     ──> Litos.Agent
                                     Litos.Providers.OpenRouter ──> Litos.Agent
+
+Litos.Gui ─┐
+Litos.Api ─┴─> Litos.Tools.Mcp ──> Litos.Agent   (see §4.6 — each MCP-capable face wires this
+                                                    directly, Litos.Host does not carry it)
 ```
 
 `Litos.Agent` never references Spectre.Console, MarkItDown, or any provider SDK. This is the enforceable version of "the harness must not depend on the terminal, file paths, or rendering" — checked trivially by looking at each `.csproj`'s `<ProjectReference>` list.
 
-Every face (`Litos.Console` today, `Litos.Web` or others later) depends only on `Litos.Host` — never directly on `Litos.Tools`, `Litos.Persistence`, or any `Litos.Providers.*` project. A face's own project file stays tiny: one `ProjectReference` to `Litos.Host`, plus whatever UI framework it needs (Spectre.Console for the console face; ASP.NET Core/SignalR for a web face).
+Every face depends only on `Litos.Host` — never directly on `Litos.Tools`, `Litos.Persistence`, or any `Litos.Providers.*` project. A face's own project file stays small: a `ProjectReference` to `Litos.Host`, plus whatever UI framework it needs (Terminal.Gui for the console face, Avalonia for the desktop face, ASP.NET Core/Blazor for the API/web face) — and, for `Litos.Gui`/`Litos.Api` specifically, a direct `ProjectReference` to `Litos.Tools.Mcp` (§4.6), since MCP wiring is deliberately done per-face rather than folded into `Litos.Host`.
 
 ## 4. Key interfaces per layer
 
@@ -583,6 +616,41 @@ public sealed record TranscriptEntry(
 
 This is a small, self-contained slice of the isolation work §10.4 already anticipated for `Litos.Api` (a `WorkspaceRoot` scoped per session rather than ambient-CWD-derived) — pulled forward because it was already causing visible confusion in ordinary single-user `/resume` use, not just the multi-caller case §10.4 was written for.
 
+### 4.6 The environment — MCP (Model Context Protocol) client support
+
+`Litos.Tools.Mcp` lets the agent connect to external [MCP](https://modelcontextprotocol.io) servers and expose their tools/prompts alongside the built-in ones, without either side knowing about the other. This is a separate project from `Litos.Tools` (not folded into it) and, unlike every other environment project, is **not** wired into `Litos.Host.AddLitosAgent` — each MCP-capable face (`Litos.Gui`, `Litos.Api`) references and wires it directly, so faces that don't want MCP (`Litos.Console`, currently) carry zero MCP code. Two much longer documents already cover the implementation in full detail and are the source of truth for specifics; this section only records the shape and how it fits the brain/environment/face model:
+
+- [ReadMe_LitosApi_Mcp.md](ReadMe_LitosApi_Mcp.md) — the original implementation, in `Litos.Api`
+- [ReadMe_MCPSupportInLitosGUI.md](ReadMe_MCPSupportInLitosGUI.md) — extending it to `Litos.Gui`, and what differs between the two faces
+
+**Core pieces** (`src/Litos.Tools.Mcp/`):
+
+| Type | Role |
+|---|---|
+| `McpConfig`, `McpServerDefinition`, `McpConfigStore` | Per-server config (transport, command/args or URL, permissions); persisted to `{state dir}/mcp.json`; thread-safe singleton with `Current`/`Update(mutate)`. |
+| `McpServerConnection` | One server's connect/handshake/status (`Connecting`/`Connected`/`Unreachable`) over stdio or HTTP/SSE, with exponential backoff (15s → 5min) on failure. |
+| `McpToolProvider` | Orchestrates every configured server's connection lifecycle; `InitializeAsync`/`RefreshAsync` reconcile config against live connections and expose the current `Tools`/`Prompts`/`Connections` snapshots. |
+| `McpToolProxy` | Wraps one MCP tool as an ordinary `ITool`, named `mcp__{server}__{tool}` — from `AgentLoop`'s point of view it's indistinguishable from `read_file` or any other built-in tool. |
+| `McpToolSource` | Thin `IToolSource` adapter over `McpToolProvider.Tools` — see below for why tools are sourced this way instead of static DI registration. |
+| `McpAwareApprovalGate` | Decorator adding per-server Deny/Ask/Full permission gating in front of a face's own `IToolApprovalGate`; used by `Litos.Api` only (§4.6.1). |
+| `McpToolRefreshService` | `BackgroundService` polling `McpToolProvider.RefreshAsync` — picks up admin-page add/enable/disable/edit/remove and retries `Unreachable` servers, without a restart. Used by `Litos.Api` only; `Litos.Gui` has no `IHost`/`BackgroundService` infrastructure and instead exposes a manual **Refresh**/**Refresh all** button plus a fire-and-forget connect attempt at startup. |
+
+**Live tool discovery, not a static registration list.** Every other `ITool` is added once at startup via `services.AddSingleton<ITool, X>()` (§9) and never changes for the life of the process. MCP tools can't work that way — servers are added, enabled, disabled, and removed at runtime from the `/mcp` UI, and the tool list has to reflect that on the *next* turn without an app restart. `IToolSource` (`Litos.Agent/Tools/IToolSource.cs`) and `ToolRegistryFactory` are the face-agnostic seam that makes this possible: `ToolRegistryFactory.Create()` builds a fresh `ToolRegistry` from the static tools plus every registered `IToolSource.CurrentTools` snapshot, called once per turn rather than once per process. `McpToolSource` is the only `IToolSource` implementation today, but the seam itself carries zero MCP-specific knowledge — any other tool source that needs to change at runtime could use it the same way.
+
+#### 4.6.1 What differs between `Litos.Api` and `Litos.Gui`
+
+MCP shipped in `Litos.Api` first; extending it to `Litos.Gui` reused every type in the table above unchanged and only diverged where the two faces' underlying models genuinely differ:
+
+| | `Litos.Api` | `Litos.Gui` |
+|---|---|---|
+| Approval gating | `McpAwareApprovalGate` wraps the face's gate — per-server Deny/Ask/Full, `Ask` surfaces on the same Approvals page Telegram elevation uses | None — `GuiApprovalGate` already auto-approves everything unconditionally, so MCP calls flow through it unmodified; no permission UI is shown, since showing Deny/Ask/Full controls that are never consulted would be misleading |
+| Reconciliation | `McpToolRefreshService` (`BackgroundService`), polling in the background | No poller — manual **Refresh**/**Refresh all** buttons in `McpServersWindow`, plus a fire-and-forget connect attempt at startup (the GUI must not block its window appearing on MCP handshakes) |
+| Admin surface | `/mcp` Blazor admin page (`McpServers.razor`) | `/mcp` slash command opens `McpServersWindow` (Avalonia), mirroring the Blazor page's single-page list-plus-add-form layout |
+| Child-process cleanup | Runs as a long-lived container; process lifetime = container lifetime | `Win32JobObject` assigns the process to a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` at startup, so Windows force-kills every MCP stdio child (and its own children) the instant `Litos.Gui` exits for any reason — a crash or Task Manager "End Task" previously left orphaned server processes running indefinitely. Windows-only; macOS has no equivalent single-syscall primitive (tracked as a follow-up, not bundled). |
+| Prompts | Not yet surfaced as a distinct UI concept | Servers' declared prompts are listed alongside tools and surfaced in `CommandMenuPopup` as `/mcp__server__prompt` entries; selecting one runs the fetched prompt text through the same turn-execution path as a typed message (`McpPromptArguments`/`McpPromptContentConverter`) |
+
+Each server's tools are registered under an `mcp__{ServerName}__{ToolName}` prefix (server names must be unique and can't contain `__`), and `ToolCallRow`/`ToolCallSummary` in each face render MCP calls distinctly from built-in ones (collapsed by default, expandable to full arguments/result) since MCP results are dynamically shaped and can't get the same per-known-tool-name summary treatment §7.1 describes for `read_file`/`shell`/etc.
+
 ## 5. The agent loop
 
 The sketch below is the conceptual shape; see §6.2 for the real signature — `RunTurnAsync` is overloaded to take either a plain `string userInput` (shown here) or an `IReadOnlyList<ContentBlock> userContent` (text plus, e.g., `ImageBlock`s for attached images).
@@ -890,37 +958,18 @@ Two corrections to the plan as originally written, discovered once real API acce
 
 **Known follow-up, not yet done**: `MarkdownRenderer`'s LaTeX-rewrite output isn't wired into `TranscriptView` — streamed assistant text renders as plain text rather than through Terminal.Gui's own `Markdown` view (Markdig-backed, confirmed present in this package), so bold/italic/heading/code styling from the old Spectre-markup renderer doesn't yet have a Terminal.Gui equivalent on the live path. Tracked as a visible but non-blocking polish gap.
 
-### 7.7 `Litos.Gui` — an Avalonia desktop face, evaluated and adopted (spike run 2026-07-16)
+### 7.7 `Litos.Gui` — an Avalonia desktop face (shipped)
 
-§7.3's history — Spectre.Console → hand-rolled `PinnedFooter` cursor arithmetic → RazorConsole (rejected) → Terminal.Gui v2 (in progress, itself pre-1.0 beta) — is three rendering-library swaps in pursuit of one thing every real GUI toolkit gets for free: a pinned input region with scrolling output above it, via actual layout containers and a compositor instead of ANSI cursor bookkeeping. Once that pattern repeats a third time, it's worth asking whether the terminal is the right medium at all, not just which terminal library. This section records that evaluation.
+§7.3's history — Spectre.Console → hand-rolled `PinnedFooter` cursor arithmetic → RazorConsole (rejected) → Terminal.Gui v2 — is three rendering-library swaps in pursuit of one thing every real GUI toolkit gets for free: a pinned input region with scrolling output above it, via actual layout containers and a compositor instead of ANSI cursor bookkeeping. `Litos.Gui` (Avalonia, MIT-licensed, .NET-10-native) sidesteps the problem category entirely — `Grid`/`StackPanel`/`ScrollViewer` give a pinned composer and scrolling transcript as declared layout, not solved cursor math — and is the confirmed-working second face referenced throughout this doc and the top-level README's Status section. Per §2's brain/environment/face boundary, it required **zero changes to `Litos.Agent`, `Litos.Tools`, `Litos.Host`, or `Litos.Console`**; it references `Litos.Host` (for the shared composition root) plus `Litos.Tools.Mcp` directly (§4.6, since MCP wiring is deliberately per-face, not folded into `Litos.Host`).
 
-**Decision: GO.** A `Litos.Gui` spike (Avalonia, MIT-licensed, .NET-10-native) was built against the real `Litos.Host` composition root — not a mockup — and proved out end-to-end: real provider calls (Gemini/OpenAI/OpenRouter), real streaming `TextDelta`s, real tool calls (`write_file`, `read_file`) executed and rendered inline, real markdown-with-code-block rendering. Per §2's brain/environment/face boundary, **zero changes were required to `Litos.Agent`, `Litos.Tools`, `Litos.Host`, or `Litos.Console`** — `Litos.Gui` is purely additive, exactly as §9's composition-root design promised. This is the concrete validation milestone 10 (§11) was waiting on.
+**Feature-complete relative to `Litos.Console`, with two known gaps.** Session picker/resume/branch, provider/model pickers, `/attach` plus `@`-mention attachments (files, URLs, pasted images), full steering/follow-up/abort wiring (§7.2), `/compact` and a context-usage meter, and MCP server management (§4.6) are all built — see `src/Litos.Gui/` for the current file list (§3). Two items remain genuinely unbuilt:
 
-**Why Avalonia over continuing the Terminal.Gui investment**: Terminal.Gui v2 is real progress over Spectre.Console (§7.3), but it's still fighting the terminal's constraints — a 2D character grid, no native widget/pixel layout, its own pre-1.0 beta risk. Avalonia sidesteps the entire problem category: `Grid`/`StackPanel`/`ScrollViewer` give a pinned composer and scrolling transcript as declared layout, not solved cursor math; no `PinnedFooter`, no `StdinGate`, no poll loop arbitrating stdin. This is the same "the problem goes away, it isn't relocated" argument §7.3 used to justify Terminal.Gui over Spectre — carried one step further, to a toolkit where it's true architecturally rather than via one purpose-built inline-mode feature.
+- **No real tool-approval dialog.** `GuiApprovalGate` unconditionally returns `ApprovalDecision.Approve` — every tool call, including `shell`, runs without confirmation. A real implementation would mirror `Litos.Console`'s `ApprovalDialog` as an Avalonia modal window, per §9's "each face supplies its own `IToolApprovalGate` binding."
+- **No diff rendering for `edit_file`.** Tool-call rows show a plain text summary, not a colored unified-diff view analogous to `Litos.Console`'s `DiffView`.
 
-**What was built** (`src/Litos.Gui/`):
+**Rendering approach**: user/assistant/error turns render as role-colored `Border`-wrapped bubbles in a `StackPanel` inside one `ScrollViewer` (right-aligned blue for user, left-aligned dark gray for assistant, dark red for errors); tool calls render as a distinct row (`ToolCallRow`) between bubbles, mirroring §7.1's per-tool-file-visibility requirement, with MCP calls rendered collapsed-by-default and expandable given their dynamically-shaped results (§4.6.1); a "Thinking…" indicator is shown from the moment a turn starts and removed on the first `TextDelta`/`ToolCallCompleted`/`ErrorOccurred`, meeting §7.1's "never sit blank" requirement. Assistant text streams into a plain `TextBlock` during the turn (cheap, reliable per-token updates) and is swapped for a `MarkView.Avalonia` `MarkdownViewer` exactly once, when the turn completes — this renders fenced code blocks, headings, and lists properly rather than as raw markdown syntax, closing a gap `Litos.Console`'s own live-path rendering still has open (§7.6.1's last paragraph). The working directory is session-scoped per §4.5.1, resolved on startup and on `/resume` the same way `Litos.Console` does.
 
-```
-Litos.Gui/
-├── Litos.Gui.csproj        # Avalonia 12.1.0 + MarkView.Avalonia 12.0.3; references only Litos.Host
-├── Program.cs               # AddLitosAgent(config), binds IToolApprovalGate, resolves default
-│                             #   provider/model the same way Litos.Console's non-interactive
-│                             #   path does, starts Avalonia's classic desktop lifetime
-├── App.axaml / App.axaml.cs # FluentTheme, RequestedThemeVariant="Dark", markdown code-block
-│                             #   style overrides (see pitfalls below)
-├── MainWindow.axaml/.cs      # transcript (StackPanel of message-bubble Borders) + pinned
-│                             #   composer (TextBox + Send button); consumes AgentEvent stream
-│                             #   directly from AgentLoop.RunTurnAsync, same switch shape as
-│                             #   Litos.Console's Program.cs
-└── GuiApprovalGate.cs        # IToolApprovalGate; spike-only auto-approve stub — a real
-                              #   implementation would mirror Litos.Console's ApprovalDialog
-                              #   (Terminal.Gui modal) as an Avalonia ContentDialog/custom
-                              #   window, per §9's "each face supplies its own binding"
-```
-
-**Rendering approach**: user/assistant/error turns render as role-colored `Border`-wrapped bubbles in a `StackPanel` inside one `ScrollViewer` (right-aligned blue for user, left-aligned dark gray for assistant, dark red for errors); tool calls render as a distinct monospace line (`▶ tool_name`) between bubbles, mirroring §7.1's per-tool-file-visibility requirement; a "Thinking…" indicator is shown from the moment a turn starts and removed on the first `TextDelta`/`ToolCallCompleted`/`ErrorOccurred`, meeting §7.1's "never sit blank" requirement the same way Terminal.Gui's `WorkingIndicator` does. Assistant text streams into a plain `TextBlock` during the turn (cheap, reliable per-token updates) and is swapped for a `MarkView.Avalonia` `MarkdownViewer` exactly once, when the turn completes, with `Markdown` set against the full final text — this renders fenced code blocks, headings, and lists properly rather than as raw markdown syntax, closing a gap `Litos.Console`'s own `MarkdownRenderer` still has open on the live path (§7.6.1's last paragraph). The working directory is session-scoped per §4.5.1: a toolbar shows the current path and a "Change…" button (Avalonia's `IStorageProvider.OpenFolderPickerAsync`) is enabled only until the first message of a session is sent, then locks — matching the "captured once, not re-derived" model rather than allowing it to change mid-session.
-
-**Two library-selection pitfalls hit and resolved during the spike, worth recording so they aren't re-discovered**:
+**Two library-selection pitfalls hit early on, worth recording so they aren't re-discovered**:
 
 1. **`Markdown.Avalonia` 11.0.3 crashes against Avalonia 12.1.0** with `MissingSessionCwdError`-style opacity — actually a `System.MissingMethodException` on `DynamicResourceExtension.ProvideValue`, thrown from the library's compiled XAML the moment its first control (`MarkdownScrollViewer`) is constructed, not at build time. The package's declared dependency floor (`Avalonia >= 11.0.0`) is not a promise of forward compatibility with Avalonia 12's binary surface — a floor constraint in a `.nuspec` doesn't mean "tested against everything above it." **Lesson**: a clean `dotnet build` proves API-shape compatibility, not binary/runtime compatibility with a newer major version of the host framework; a package whose own examples/CI don't target your exact Avalonia version needs a real instantiate-and-run check, not just a compile check, before being trusted.
 2. **The official `Avalonia.Controls.Markdown` package requires an Avalonia Pro license** (`AvaloniaUI.Licensing` in its dependency tree) — despite Avalonia the framework itself being MIT, this particular first-party control is commercially licensed, not part of the free tier. **Lesson**: "published by the framework's own team" doesn't imply "free" for every package under that team's account; check the dependency list for licensing packages before assuming.
@@ -935,8 +984,6 @@ The adopted fix: **`MarkView.Avalonia` 12.0.3** — MIT-licensed, built and vers
 **Actual root cause**: `TranscriptScroll` had `Padding="16,16,16,16"` set directly on the `ScrollViewer`. In this Avalonia version, `ScrollViewer.Padding` isn't correctly folded into the scrollable extent calculation — it's excluded from how far the content can actually scroll, while still being applied visually, so the bottom `16px` (roughly one line) of real content was rendered but permanently outside the scrollable range. **Fix**: moved the `16,16,16,16` spacing from `ScrollViewer.Padding` to `Margin` on the `StackPanel` child instead (`MainWindow.axaml`) — `Margin` is included in the child's own measured size, which `ScrollViewer` does account for correctly. No code-behind changes were needed; `MainWindow.ScrollToEndAfterLayout`/`NudgeTranscriptLayout` are unchanged from before this investigation. Verified against the live app: a `list_directory` response listing 47 files renders with item 47 fully visible and un-clipped, in an un-maximized window, with no resize required.
 
 **Lesson for future Avalonia layout bugs**: when content is clipped/unreachable by a *fixed, roughly-constant amount* regardless of window size or added settle time, suspect a `Padding`-vs-`Margin` placement issue on the scrolling container itself before chasing `ScrollViewer` extent-staleness or virtualization theories — the symptom of "clipped by approximately one `Padding` amount, insensitive to more layout passes" is a strong, specific signal, whereas true extent-staleness bugs are all-or-nothing (a forced relayout recovers everything or nothing, not a fixed sliver). Prefer `Margin` on a `ScrollViewer`'s direct child over `Padding` on the `ScrollViewer` itself for exactly this reason.
-
-**Not built in the spike** (deliberately out of scope — this was a feasibility check, not a parity port): real tool-approval dialog (Approve/Deny/Always, currently auto-approve-only), diff rendering for `edit_file`, session picker/resume, provider/model picker, attachments, and steering/abort wiring. Porting these from their Terminal.Gui equivalents (`ApprovalDialog`, `DiffView`, `SessionPickerDialog`, `ModelPickerDialog`, `AttachDialog`, `Composer`'s Enter/Alt+Enter/Esc handling — all in `src/Litos.Console/Terminal/`) is the concrete scope of turning this spike into a real second face, whenever that's prioritized.
 
 ## 8. Session persistence format
 
@@ -997,16 +1044,19 @@ public static class LitosHostBuilder
 var services = new ServiceCollection().AddLitosAgent(LitosConfig.Load());
 services.AddSingleton<IToolApprovalGate, ConsoleApprovalGate>();
 
-// a future Litos.Web/Program.cs
-var services = new ServiceCollection().AddLitosAgent(LitosConfig.Load());
-services.AddSingleton<IToolApprovalGate, WebSocketApprovalGate>();
+// Litos.Api/Program.cs
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddLitosAgent(LitosConfig.Load());
+builder.Services.AddSingleton<IToolApprovalGate, AutoApprovalGate>();
 ```
 
-This is what makes adding a web (or any other) face purely additive: it references `Litos.Host`, calls `AddLitosAgent`, binds its own `IToolApprovalGate`, and forwards `AgentLoop.RunTurnAsync`'s `AgentEvent`s to its own transport (SignalR/SSE instead of `LiveDisplay`). No change to `Litos.Agent`, `Litos.Tools`, the providers, persistence, or `Litos.Console`.
+This is what makes adding a web (or any other) face purely additive: it references `Litos.Host`, calls `AddLitosAgent`, binds its own `IToolApprovalGate`, and forwards `AgentLoop.RunTurnAsync`'s `AgentEvent`s to its own transport (Server-Sent Events, in `Litos.Api`'s case, instead of a terminal `LiveDisplay`). No change to `Litos.Agent`, `Litos.Tools`, the providers, persistence, or `Litos.Console`.
 
 API keys are read from the standard per-provider environment variables listed in §4.2 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `OPENROUTER_API_KEY`) — the environment variable always wins if set. `%USERPROFILE%\.litos\config.json` supplies a key only as a fallback for a provider whose env var is absent, plus the default provider name and that provider's default model id. Both sources are loaded by `LitosConfig.Load()` in `Litos.Host` — never hardcoded, never logged.
 
 `TAVILY_API_KEY` (§4.3.2) follows the identical resolution order but is deliberately not one of the "providers": `LitosConfig.ChatProviderNames` is the explicit list callers filter `ApiKeys.Keys` through whenever they mean "which chat provider can I pick from," so a Tavily-only key never gets mistaken for an available `IChatProvider`.
+
+**One addition since the snippet above**: tool registration for a running session isn't purely the static `AddSingleton<ITool, X>()` list shown — `ToolRegistryFactory.Create()` is called once per turn (not once per process) and combines those static tools with every registered `IToolSource.CurrentTools` snapshot, which is what lets MCP tools (§4.6) appear or disappear as servers are added/removed without restarting the app. `Litos.Host.AddLitosAgent` itself is unchanged by this — `IToolSource` registration is additive, done by each face that needs it (`Litos.Gui`/`Litos.Api` register a `McpToolSource`; `Litos.Console` registers none today), the same "face supplies its own binding" pattern `IToolApprovalGate` already uses.
 
 ## 10. Calling LitosAiAgent from other apps
 
@@ -1042,14 +1092,18 @@ For callers that aren't .NET (a Python script, a VS Code extension, another agen
 
 This makes the agent callable as a subprocess from *any* language via `Process.Start`/`subprocess.Popen`/etc., with no HTTP server to stand up. It's the same pattern editor integrations (e.g. language servers) use, and it reuses `Litos.Console`'s existing `Program.cs` entry point plus `Litos.Host` — no new project required, just a new command-line mode.
 
-### 10.3 Network callers (HTTP/SSE API — remote, cross-language, cross-machine)
+### 10.3 Network callers (HTTP API — remote, cross-language, cross-machine) — shipped as `Litos.Api`
 
-For callers on another machine, in a browser, or where a long-lived service is preferred over spawning processes, add a `Litos.Api` project (sibling to `Litos.Console`, same relationship to `Litos.Host` described in §3/§9 for any future face):
+`Litos.Api` (`src/Litos.Api/`) is a built, working ASP.NET Core host — not the hypothetical sketch this section once was — bundling a Blazor admin web UI, Docker support, and a Telegram channel bridge, sibling to `Litos.Console`/`Litos.Gui` per §3/§9's "any face references `Litos.Host`, supplies its own `IToolApprovalGate`" pattern:
 
-- `POST /sessions/{id}/turns` accepts `{ input, attachments }`, starts `AgentLoop.RunTurnAsync`, and streams the resulting `AgentEvent`s back as **Server-Sent Events** (simplest, works through most proxies) or a SignalR hub (if bidirectional push, e.g. multi-client session watching, is wanted later).
-- `IToolApprovalGate` is implemented as an `HttpApprovalGate` that suspends the tool call and waits for `POST /sessions/{id}/approvals/{callId}` from the caller — mirroring the stdio approach in §10.2 but over HTTP instead of stdin/stdout.
-- Auth (API key header, or OAuth if multi-tenant) sits entirely in `Litos.Api`, whose job is precisely to turn "who is calling" into a `SessionOwner` (§10.4) before anything reaches `Litos.Host`; `Litos.Host` and below stay auth-agnostic and only ever see an already-resolved `SessionOwner`.
-- This is the same shape as the "future web UI" discussed earlier — in fact a browser-based `Litos.Web` face *is* a caller of this kind, just with a first-party frontend bundled in. A bare API without a bundled frontend and a full web app are the same project with or without static files.
+- `AgentWorker` (a `BackgroundService`) drives `AgentLoop.RunTurnAsync` for both the admin UI's own chat and every linked Telegram chat; the `Turns/` endpoints stream the resulting `AgentEvent`s back over Server-Sent Events, close to §10.3's original SSE sketch.
+- `IToolApprovalGate` is `AutoApprovalGate` by default, with a per-caller elevation model rather than a per-call HTTP round trip: a newly-linked Telegram chat starts **read-only**, and an admin must explicitly elevate it to shell/file-write access from the Approvals page — `Ask`-permission MCP servers (§4.6.1) surface on the same page.
+- Auth is `ADMIN_TOKEN`-based (bearer header or cookie, `Auth/AdminAuthEndpoints.cs`/`AdminTokenFilter.cs`) for the admin UI; the Telegram bridge authenticates chats via its own QR-code pairing flow (`Channels/Telegram/TelegramPairing.cs`), not the admin token. Both ultimately resolve to a `SessionOwner` (§10.4) before reaching `Litos.Host` — `Litos.Host` and below stay auth-agnostic either way, exactly as originally planned here.
+- **Telegram bridge** (`Channels/Telegram/`): bot polling via `Telegram.Bot`, per-chat session driver, voice-message transcription, QR-code linking — off by default even with a bot token configured, toggled explicitly from the admin UI. Full detail in [ReadMe_TelegramIntegrationTool.md](ReadMe_TelegramIntegrationTool.md).
+- **MCP** (§4.6): wired via `McpConfigStore`/`McpToolProvider`/`McpAwareApprovalGate`, managed from the `/mcp` admin page. Full detail in [ReadMe_LitosApi_Mcp.md](ReadMe_LitosApi_Mcp.md).
+- **Docker/deployment**: `src/Litos.Api/Dockerfile`, designed to run as a long-lived container with separate `/workspace` (agent file/shell scope) and `/data` (config, sessions, logs) volume mounts. Full detail in [ReadMe_HeadlessServiceTool.md](ReadMe_HeadlessServiceTool.md).
+
+A first-party frontend was the open question this section originally left for "later" (`Litos.Web` as a separate project) — in practice it landed as a bundled Blazor admin UI *inside* `Litos.Api` rather than a separate project, since the admin UI and the API are operationally one deployable, not two.
 
 ### 10.4 Session isolation across callers
 
@@ -1059,11 +1113,11 @@ Once more than one caller can reach the same running agent — concretely, §10.
 2. **Filesystem/shell blast radius.** `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`ShellTool` (§4.3) all need a *working-directory root* scoped per session/owner, not just per process — two API callers must not be able to read or edit each other's files, and a `ShellTool` command must not `cd ..` its way out of its sandbox. This means threading a `WorkspaceRoot` (an owner+session-scoped base path, validated the same reject-on-escape way as session IDs) through `ToolRegistry` resolution, so each turn's tools operate against `{workspaceRoot}/{owner}/{sessionId}/...` rather than the process's ambient current directory. This is a gap the original console-only design didn't need (one user, one machine, ambient CWD was fine) and should be closed before `Litos.Api` ships, not after. `ISkillDiscovery` (§4.4) inherits this: its project-level `.litos/skills/` search root must resolve relative to the caller's `WorkspaceRoot`, not the host process's ambient CWD, or one caller could load skills placed by another.
 3. **In-memory state.** `AgentLoop` itself is stateless per call (all state lives in the `Transcript` object and `ITranscriptStore`), so concurrent turns for different owners already don't share mutable state as long as each request constructs/loads its own `Transcript` — but this is only true if callers of `Litos.Host` don't cache a `Transcript` or `AgentLoop` instance across sessions/owners in DI as anything other than transient/per-request. `Litos.Api` should resolve `AgentLoop` and load the `Transcript` fresh per HTTP request, not hold one in a singleton.
 
-None of this is needed for `Litos.Console` (always `SessionOwner.Local`, one user, one machine) or for a single well-behaved in-process caller (§10.1) that just picks unique session IDs. It becomes mandatory the moment `Litos.Api` (§10.3) exists, since that's the first scenario with genuinely untrusted, mutually-distrusting callers sharing one running instance.
+None of this is needed for `Litos.Console` (always `SessionOwner.Local`, one user, one machine) or for a single well-behaved in-process caller (§10.1) that just picks unique session IDs. It's load-bearing for `Litos.Api` (§10.3), which now exists and does thread `SessionOwner` through `AgentWorker`/`TurnsEndpoints`/the Telegram bridge's own per-chat session driver — each linked Telegram chat and each admin-UI caller gets its own owner, per this section's original design.
 
-### Which to build, and when
+### Status
 
-None of these are needed until an actual caller shows up. `10.1` costs nothing extra (it's already true today); defer packaging as NuGet until a second consumer repo actually exists. `10.2` is worth adding as soon as the first non-.NET caller (e.g. an editor extension) is identified — it's a small addition to `Litos.Console`. `10.3` is the right answer once there's a caller that isn't on the same machine, or multiple simultaneous callers need to share one running instance; build it as its own milestone (see §11.11) rather than speculatively now, but §10.4's isolation guarantees (owner-scoped store, owner-scoped workspace root, per-request state) are a prerequisite for `10.3`, not a follow-up — an API that can leak one caller's files or transcript to another isn't a smaller version of the feature, it's a security bug.
+`10.1` (in-process library) has been true since the beginning — no packaging as a NuGet package yet, deferred until a second consumer repo actually exists. `10.2` (stdio/CLI mode for non-.NET callers) has not been built; still worth adding whenever the first such caller shows up, as a small addition to `Litos.Console`. `10.3` (`Litos.Api`) is built — see above — with `10.4`'s owner-scoped isolation wired in as originally required, not left as a follow-up.
 
 ## 11. Build sequence / milestones
 
@@ -1077,8 +1131,9 @@ None of these are needed until an actual caller shows up. `10.1` costs nothing e
 7a. **(Validated 2026-07-23) Project/global instructions**: `IProjectInstructionsDiscovery`/`ProjectInstructionsDiscovery` (§4.4a) — `~/.litos` + ancestor-directory discovery of `AGENTS.md`/`CLAUDE.md`, concatenated unconditionally into the system prompt by `LitosSystemPromptProvider`. Wired once in `Litos.Host.AddLitosAgent`, so both `Litos.Console` and `Litos.Gui` get it with zero face-specific code — no new tool, no config toggle.
 8. **Remaining providers**: OpenAI, Gemini, OpenRouter — each added once in `Litos.Host` and validated against the same `Litos.Agent.Tests` fakes plus a provider-specific recorded-response test.
 9. **Polish**: context accounting/trimming, `/model` switch at runtime, session branching, config file, first-run setup wizard for API keys.
-10. **(Validated 2026-07-16, see §7.7) Second face**: proven via a `Litos.Gui` spike (Avalonia, desktop) rather than `Litos.Web` first — see §7.7 for what was built and why Avalonia was chosen over Terminal.Gui's continued-investment alternative. Zero changes were required to `Litos.Agent`, `Litos.Tools`, the providers, or `Litos.Console` to stand it up, confirming §2's "swappable face" claim in practice, not just on paper. A `Litos.Web` (SSE/browser) face remains a separate, not-yet-built option per §10.3 whenever a remote/browser caller is actually needed — `Litos.Gui` and `Litos.Web` are alternative *desktop-vs-remote* faces, not sequential steps.
-11. **(Later, on demand) External callers**: add `--stdio` mode to `Litos.Console` (§10.2) as soon as a non-.NET caller is identified; add `Litos.Api` (§10.3) once a remote or multi-client caller is identified — this milestone includes §10.4's isolation work (`SessionOwner`-scoped `ITranscriptStore`, owner-scoped `WorkspaceRoot` for file/shell tools and skill discovery, per-request `Transcript`/`AgentLoop` resolution) as a hard prerequisite, not a stretch goal; pack `Litos.Host` as a NuGet package once a second .NET consumer repo exists.
-12. **(In progress) Terminal.Gui migration**: supersedes milestone 4's Spectre.Console face per §7.3–7.6 — RazorConsole was evaluated first and rejected after a validation spike surfaced an unfixable upstream cursor bug (§7.3.1); Terminal.Gui v2's `AppModel.Inline` was chosen instead and, per §7.3.2, ported directly without a second spike. Port `Litos.Console` to Terminal.Gui in the dependency order in §7.6 (one-shot widgets → live transcript region → composer last), deleting `PinnedFooter`/`StdinGate`/`IComposerOutput`/`IKeyInput`/`SteeringKeyWatcher`/`MentionInputPrompt` once superseded.
+10. **(Shipped, see §7.7) Second face — `Litos.Gui`**: Avalonia desktop face, now feature-complete relative to `Litos.Console` bar two gaps (real approval dialog, diff rendering — §7.7). Zero changes were required to `Litos.Agent`, `Litos.Tools`, the providers, or `Litos.Console` to stand it up, confirming §2's "swappable face" claim in practice, not just on paper.
+11. **(Shipped, see §10.3) `Litos.Api`**: HTTP/API host with a bundled Blazor admin UI, Docker support, and a working Telegram channel bridge — the "remote/multi-client caller" milestone this was originally written as a placeholder for. §10.4's isolation work (`SessionOwner`-scoped `ITranscriptStore`, per-request `Transcript`/`AgentLoop` resolution) shipped with it. `--stdio` mode for `Litos.Console` (§10.2, for non-.NET in-process callers) remains not built, on demand; `Litos.Host` as a standalone NuGet package remains deferred until a second .NET consumer repo exists.
+12. **(Completed) Terminal.Gui migration**: superseded milestone 4's Spectre.Console face per §7.3–7.6 — RazorConsole was evaluated first and rejected after a validation spike surfaced an unfixable upstream cursor bug (§7.3.1); Terminal.Gui v2's `AppModel.Inline` was chosen instead and, per §7.3.2, ported directly without a second spike. `Litos.Console` now references only `Terminal.Gui` (no Spectre.Console package reference remains); `PinnedFooter`/`StdinGate`/`IComposerOutput`/`IKeyInput`/`SteeringKeyWatcher`/`MentionInputPrompt` are deleted, per §7.6.1's landed status (one known follow-up remains open there: live-path markdown styling).
+13. **(Shipped, see §4.6) MCP client support**: `Litos.Tools.Mcp` — server config/connection/reconciliation, tool and prompt exposure, per-server permission gating — wired into `Litos.Api` first, then `Litos.Gui` (§4.6.1 covers what differs between the two). `Litos.Console` integration remains not built.
 
-Each milestone should be independently runnable and demoable; 2–4 form the minimum viable agent, 5–9 bring it to parity with Tau's feature set (plus skills, which Tau doesn't have), 10–11 validate the multi-face/multi-caller architecture once actually needed, 12 is the current in-progress rendering-layer migration described in §7.3–7.6.
+Each milestone should be independently runnable and demoable; 2–4 form the minimum viable agent, 5–9 bring it to parity with Tau's feature set (plus skills, which Tau doesn't have), 10–13 are all shipped: the multi-face/multi-caller architecture, the rendering-layer migration, and MCP support.
