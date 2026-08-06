@@ -33,7 +33,8 @@ public sealed class MainWindowSession(
     LitosConfig config,
     int contextLength,
     McpConfigStore mcpConfigStore,
-    McpToolProvider mcpToolProvider)
+    McpToolProvider mcpToolProvider,
+    ISystemPromptProvider systemPromptProvider)
 {
     public AgentLoopFactory LoopFactory { get; } = loopFactory;
 
@@ -76,4 +77,7 @@ public sealed class MainWindowSession(
     /// repeat after every message just to refresh the status-bar context meter.
     /// </summary>
     public int ContextLength { get; set; } = contextLength;
+
+    /// <summary>Builds the system prompt for the "View Context" breakdown modal — the same provider AgentLoop uses per-turn, called on demand rather than cached since it can change between turns (new AGENTS.md content, newly discovered MCP tools).</summary>
+    public ISystemPromptProvider SystemPromptProvider { get; } = systemPromptProvider;
 }

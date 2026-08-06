@@ -8,9 +8,10 @@ public sealed class FakeSystemPromptProvider(string? promptToReturn) : ISystemPr
 {
     public List<string?> ReceivedWorkingDirectories { get; } = [];
 
-    public Task<string?> BuildAsync(ToolRegistry tools, string? workingDirectory, CancellationToken ct)
+    public Task<SystemPromptSections?> BuildAsync(ToolRegistry tools, string? workingDirectory, CancellationToken ct)
     {
         ReceivedWorkingDirectories.Add(workingDirectory);
-        return Task.FromResult(promptToReturn);
+        var sections = promptToReturn is null ? null : new SystemPromptSections(promptToReturn, "", "", SkillsCatalog: null, [], "");
+        return Task.FromResult(sections);
     }
 }

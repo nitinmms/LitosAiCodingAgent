@@ -73,7 +73,8 @@ public sealed class AgentLoop(
             await store.AppendAsync(owner, sessionId, TranscriptEntry.FromMessage(transcript.Messages[0]), ct);
         }
 
-        var systemPrompt = systemPromptProvider is null ? null : await systemPromptProvider.BuildAsync(tools, transcript.WorkingDirectory, ct);
+        var systemPromptSections = systemPromptProvider is null ? null : await systemPromptProvider.BuildAsync(tools, transcript.WorkingDirectory, ct);
+        var systemPrompt = systemPromptSections?.Render();
 
         while (true)
         {

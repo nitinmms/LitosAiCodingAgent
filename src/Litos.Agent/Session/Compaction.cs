@@ -135,7 +135,8 @@ public static class CompactionPlanner
         return 0;
     }
 
-    private static int EstimateChars(ChatMessage message) =>
+    /// <summary>Internal (not private) so ContextBreakdown can reuse the same per-block-type estimate rather than duplicating it.</summary>
+    internal static int EstimateChars(ChatMessage message) =>
         message.Content.Sum(block => block switch
         {
             TextBlock t => t.Text.Length,

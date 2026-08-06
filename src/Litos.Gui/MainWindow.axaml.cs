@@ -142,6 +142,7 @@ public sealed partial class MainWindow : Window
         ChangeDirectoryButton.Click += async (_, _) => await ChangeWorkingDirectoryAsync();
         ProviderButton.Click += async (_, _) => await HandleProviderAsync(argument: null);
         ModelButton.Click += async (_, _) => await HandleModelAsync(argument: null);
+        ContextUsagePanel.DoubleTapped += async (_, _) => await ShowContextBreakdownAsync();
         CommandMenuButton.Click += (_, _) => OpenCommandMenu(openedByTyping: false);
         _commandMenu.Accepted += entry => _ = OnCommandMenuAcceptedAsync(entry);
         _mentionPopup.Accepted += entry => OnMentionAccepted(entry);
@@ -175,7 +176,7 @@ public sealed partial class MainWindow : Window
         {
             ContextUsageBar.Value = 0;
             ContextUsageText.Text = "—";
-            ToolTip.SetTip(ContextUsagePanel, "Context used: no usage reported yet");
+            ToolTip.SetTip(ContextUsagePanel, "Context used: no usage reported yet — double-click for details");
             return;
         }
 
@@ -189,7 +190,20 @@ public sealed partial class MainWindow : Window
         };
         ContextUsageText.Foreground = brush;
         ContextUsageBar.Foreground = brush;
-        ToolTip.SetTip(ContextUsagePanel, $"Context used: {snapshot.UsedTokens:N0} / {snapshot.ContextLength:N0} tokens");
+        ToolTip.SetTip(ContextUsagePanel, $"Context used: {snapshot.UsedTokens:N0} / {snapshot.ContextLength:N0} tokens — double-click for details");
+    }
+
+    /// <summary>
+    /// Rebuilds the system prompt on demand (same provider AgentLoop uses per-turn, see
+    /// MainWindowSession.SystemPromptProvider) and computes a fresh ContextBreakdown snapshot
+    /// from the live transcript, then shows it in a modal. A live, current-turn-only snapshot —
+    /// left open during an in-flight turn, it won't update; the user can just double-click again.
+    /// </summary>
+    private async Task ShowContextBreakdownAsync()
+    {
+        var systemPrompt = await _session.SystemPromptProvider.BuildAsync(_session.ToolRegistry, _transcript.WorkingDirectory, CancellationToken.None);
+        var snapshot = ContextBreakdown.Compute(_transcript, systemPrompt, _session.ToolRegistry.Schemas);
+        await ViewContextWindow.ShowAsync(this, snapshot, _session.ContextLength);
     }
 
     private async Task ChangeWorkingDirectoryAsync()

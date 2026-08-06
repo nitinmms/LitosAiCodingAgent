@@ -1,0 +1,25 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Litos.Gui.ViewContextWindow"
+        Title="View context"
+        Icon="avares://Litos.Gui/Assets/AppIcon.png"
+        Width="560" Height="520"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E">
+  <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="16">
+    <StackPanel Grid.Row="0" Name="BarPanel" Orientation="Horizontal" Height="14" />
+
+    <TextBlock Grid.Row="1" Name="SummaryText" Margin="0,8,0,12" FontWeight="Bold" />
+
+    <!-- Margin (not Padding) on the ScrollViewer's direct child — see CLAUDE.md: this Avalonia
+         version's ScrollViewer.Padding doesn't fold correctly into the scrollable extent, leaving
+         a fixed unreachable sliver at the trailing edge no resize can recover. -->
+    <ScrollViewer Grid.Row="2">
+      <StackPanel Name="RowsPanel" Margin="0,0,0,12" Spacing="6" />
+    </ScrollViewer>
+
+    <TextBlock Grid.Row="3" Name="CaptionText" Foreground="#9A9A9A" TextWrapping="Wrap" Margin="0,4,0,12" FontSize="12" />
+
+    <Button Grid.Row="4" Name="CloseButton" Content="Close" HorizontalAlignment="Right" />
+  </Grid>
+</Window>

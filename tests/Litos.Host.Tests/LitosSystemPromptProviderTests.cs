@@ -23,7 +23,7 @@ public class LitosSystemPromptProviderTests
     {
         var (provider, tools) = CreateProvider([new FakeTool("shell", "Run a shell command."), new FakeTool("search_code", "Search file contents.")]);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
 
         Assert.Contains("- shell: Run a shell command.", prompt);
         Assert.Contains("- search_code: Search file contents.", prompt);
@@ -34,7 +34,7 @@ public class LitosSystemPromptProviderTests
     {
         var (provider, tools) = CreateProvider([new FakeTool("shell"), new FakeTool("search_code")]);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
 
         Assert.Contains("search_code", prompt);
         Assert.Contains("grep", prompt, StringComparison.OrdinalIgnoreCase);
@@ -45,7 +45,7 @@ public class LitosSystemPromptProviderTests
     {
         var (provider, tools) = CreateProvider([]);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
 
         Assert.Contains("(none)", prompt);
     }
@@ -55,7 +55,7 @@ public class LitosSystemPromptProviderTests
     {
         var (provider, tools) = CreateProvider([new FakeTool("read_file")], skills: []);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
 
         Assert.DoesNotContain("Available skills", prompt);
     }
@@ -66,7 +66,7 @@ public class LitosSystemPromptProviderTests
         var skills = new[] { new SkillMetadata("deploy", "Deploys the app.", "/skills/deploy") };
         var (provider, tools) = CreateProvider([new FakeTool("read_file")], skills);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
 
         Assert.Contains("Available skills", prompt);
         Assert.Contains("- deploy: Deploys the app.", prompt);
@@ -77,7 +77,7 @@ public class LitosSystemPromptProviderTests
     {
         var (provider, tools) = CreateProvider([]);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: @"C:\repo\project", CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: @"C:\repo\project", CancellationToken.None))?.Render();
 
         Assert.Contains("Current working directory: C:/repo/project", prompt);
     }
@@ -87,7 +87,7 @@ public class LitosSystemPromptProviderTests
     {
         var (provider, tools) = CreateProvider([]);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
 
         var expected = Directory.GetCurrentDirectory().Replace('\\', '/');
         Assert.Contains($"Current working directory: {expected}", prompt);
@@ -98,7 +98,7 @@ public class LitosSystemPromptProviderTests
     {
         var (provider, tools) = CreateProvider([], instructionFiles: []);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
 
         Assert.DoesNotContain("Instructions from", prompt);
     }
@@ -109,7 +109,7 @@ public class LitosSystemPromptProviderTests
         var files = new[] { new ProjectInstructionsFile(@"C:\repo\AGENTS.md", "Use tabs, not spaces.") };
         var (provider, tools) = CreateProvider([], instructionFiles: files);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
 
         Assert.Contains("Instructions from C:/repo/AGENTS.md:", prompt);
         Assert.Contains("Use tabs, not spaces.", prompt);
@@ -125,7 +125,7 @@ public class LitosSystemPromptProviderTests
         };
         var (provider, tools) = CreateProvider([], instructionFiles: files);
 
-        var prompt = await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None);
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
 
         Assert.NotNull(prompt);
         Assert.True(prompt.IndexOf("Global rule.", StringComparison.Ordinal)

@@ -131,7 +131,8 @@ internal static class Program
             config,
             contextLength,
             mcpConfigStore,
-            mcpToolProvider);
+            mcpToolProvider,
+            provider.GetRequiredService<ISystemPromptProvider>());
 
         return BuildAvaloniaApp(session, workingDirectory)
             .StartWithClassicDesktopLifetime(args);

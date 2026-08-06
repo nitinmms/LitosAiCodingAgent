@@ -18,18 +18,16 @@ public sealed class LitosSystemPromptProvider(
     ISkillDiscovery skillDiscovery,
     IProjectInstructionsDiscovery projectInstructionsDiscovery) : ISystemPromptProvider
 {
-    public async Task<string?> BuildAsync(ToolRegistry tools, string? workingDirectory, CancellationToken ct)
+    public async Task<SystemPromptSections?> BuildAsync(ToolRegistry tools, string? workingDirectory, CancellationToken ct)
     {
         var toolsList = tools.Schemas.Count == 0
             ? "(none)"
             : string.Join('\n', tools.Schemas.Select(t => $"- {t.Name}: {t.Description}"));
 
-        var prompt = $"""
-            You are LitosAiAgent, an expert coding assistant operating inside a minimal .NET coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+        var identity = "You are LitosAiAgent, an expert coding assistant operating inside a minimal .NET coding agent harness. "
+            + "You help users by reading files, executing commands, editing code, and writing new files.";
 
-            Available tools:
-            {toolsList}
-
+        var guidelines = """
             Guidelines:
             - Be concise in your responses
             - Show file paths clearly when working with files
@@ -37,20 +35,22 @@ public sealed class LitosSystemPromptProvider(
             """;
 
         var skills = await skillDiscovery.DiscoverAsync(ct);
+        string? skillsCatalog = null;
         if (skills.Count > 0)
         {
             var skillLines = skills.Select(s => $"- {s.Name}: {s.Description}");
-            prompt += "\n\nAvailable skills (call the `skill` tool with a name to load its full instructions):\n"
+            skillsCatalog = "Available skills (call the `skill` tool with a name to load its full instructions):\n"
                 + string.Join('\n', skillLines);
         }
 
         var instructionFiles = await projectInstructionsDiscovery.DiscoverAsync(ct);
-        foreach (var file in instructionFiles)
-            prompt += $"\n\nInstructions from {file.Path.Replace('\\', '/')}:\n{file.Content}";
+        var instructions = instructionFiles
+            .Select(file => new SystemPromptInstructionFile(file.Path.Replace('\\', '/'), file.Content))
+            .ToList();
 
-        prompt += $"\n\nCurrent date: {DateTime.Now:yyyy-MM-dd}";
-        prompt += $"\nCurrent working directory: {(workingDirectory ?? Directory.GetCurrentDirectory()).Replace('\\', '/')}";
+        var footer = $"Current date: {DateTime.Now:yyyy-MM-dd}"
+            + $"\nCurrent working directory: {(workingDirectory ?? Directory.GetCurrentDirectory()).Replace('\\', '/')}";
 
-        return prompt;
+        return new SystemPromptSections(identity, $"Available tools:\n{toolsList}", guidelines, skillsCatalog, instructions, footer);
     }
 }

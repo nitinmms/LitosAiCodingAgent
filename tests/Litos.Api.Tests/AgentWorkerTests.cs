@@ -12,7 +12,7 @@ public class AgentWorkerTests
 {
     private sealed class NoopSystemPromptProvider : ISystemPromptProvider
     {
-        public Task<string?> BuildAsync(ToolRegistry tools, string? workingDirectory, CancellationToken ct) => Task.FromResult<string?>(null);
+        public Task<SystemPromptSections?> BuildAsync(ToolRegistry tools, string? workingDirectory, CancellationToken ct) => Task.FromResult<SystemPromptSections?>(null);
     }
 
     private sealed class FakeToolSource : IToolSource
