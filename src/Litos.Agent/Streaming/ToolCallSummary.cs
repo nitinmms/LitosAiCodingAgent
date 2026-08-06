@@ -14,7 +14,7 @@ public static partial class ToolCallSummary
     /// <summary>e.g. "Read src/Foo.cs", "$ npm test", "Search "TODO" in src/**/*.cs".</summary>
     public static string DescribeCall(string toolName, JsonElement arguments) => toolName switch
     {
-        "read_file" => $"Read {Str(arguments, "path")}",
+        "read_file" => DescribeReadFile(arguments),
         "write_file" => $"Write {Str(arguments, "path")}",
         "edit_file" => $"Edit {Str(arguments, "path")}",
         "list_directory" => $"List {Str(arguments, "path")}",
@@ -34,7 +34,7 @@ public static partial class ToolCallSummary
 
         return toolName switch
         {
-            "read_file" => $"{CountLines(result.Text)} lines",
+            "read_file" => DescribeReadFileResult(result.Text),
             "write_file" or "edit_file" => DiffStatSuffix().Match(result.Text) is { Success: true } m ? m.Groups[1].Value : "done",
             "list_directory" => $"{CountNonEmptyLines(result.Text)} entries",
             "search_code" => DescribeMatchCount(result.Text),
@@ -51,6 +51,27 @@ public static partial class ToolCallSummary
         && value.ValueKind == JsonValueKind.String
             ? value.GetString()!
             : "";
+
+    private static int? Int(JsonElement arguments, string propertyName) =>
+        arguments.ValueKind == JsonValueKind.Object
+        && arguments.TryGetProperty(propertyName, out var value)
+        && value.ValueKind == JsonValueKind.Number
+        && value.TryGetInt32(out var number)
+            ? number
+            : null;
+
+    private static string DescribeReadFile(JsonElement arguments)
+    {
+        var path = Str(arguments, "path");
+        var offset = Int(arguments, "offset");
+        var limit = Int(arguments, "limit");
+        if (offset is null && limit is null)
+            return $"Read {path}";
+
+        var start = offset ?? 1;
+        var end = limit is int l ? start + l - 1 : (int?)null;
+        return end is int e ? $"Read {path}:{start}-{e}" : $"Read {path}:{start}+";
+    }
 
     private static string DescribeSearch(JsonElement arguments)
     {
@@ -70,6 +91,23 @@ public static partial class ToolCallSummary
         // states the exact count; counting lines would otherwise also count that note itself.
         var truncated = TruncatedMatchCount().Match(text);
         return truncated.Success ? $"{truncated.Groups[1].Value}+ matches" : $"{CountNonEmptyLines(text)} matches";
+    }
+
+    private static string DescribeReadFileResult(string text)
+    {
+        if (text.Length == 0)
+            return "0 lines";
+
+        // ReadFileTool's continuation hint ("[Showing lines X-Y of Z. Use offset=N to continue.]")
+        // already states the shown range and the file's exact total line count; counting lines
+        // here would otherwise also count the blank separator and hint line themselves as if they
+        // were file content.
+        var truncated = ReadTruncationRange().Match(text);
+        if (!truncated.Success)
+            return $"{CountLines(text)} lines";
+
+        var shown = int.Parse(truncated.Groups[2].Value) - int.Parse(truncated.Groups[1].Value) + 1;
+        return $"{shown} of {truncated.Groups[3].Value} lines";
     }
 
     private static string DescribeWebSearchResultCount(string text)
@@ -101,4 +139,7 @@ public static partial class ToolCallSummary
 
     [GeneratedRegex(@"showing (\d+) of \d+\+ matches")]
     private static partial Regex TruncatedMatchCount();
+
+    [GeneratedRegex(@"\[Showing lines (\d+)-(\d+) of (\d+)\.")]
+    private static partial Regex ReadTruncationRange();
 }

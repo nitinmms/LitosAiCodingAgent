@@ -21,7 +21,7 @@ public class ReadFileToolTests : IDisposable
         var result = await tool.InvokeAsync(Args(new { path }), CancellationToken.None);
 
         Assert.False(result.IsError);
-        Assert.Equal("hello world", result.Text);
+        Assert.Equal("1\thello world", result.Text);
     }
 
     [Fact]
@@ -65,5 +65,89 @@ public class ReadFileToolTests : IDisposable
 
         Assert.False(result.IsError);
         Assert.Equal("", result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_MultipleLines_NumbersEachLine()
+    {
+        var path = Path.Combine(_tempDir, "file.txt");
+        await File.WriteAllTextAsync(path, "alpha\nbeta\ngamma");
+        var tool = new ReadFileTool();
+
+        var result = await tool.InvokeAsync(Args(new { path }), CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Equal("1\talpha\n2\tbeta\n3\tgamma", result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_LargeFile_TruncatesToDefaultLimitWithContinuationHint()
+    {
+        var path = Path.Combine(_tempDir, "large.txt");
+        await File.WriteAllTextAsync(path, string.Join('\n', Enumerable.Range(1, 2500).Select(i => $"line{i}")));
+        var tool = new ReadFileTool();
+
+        var result = await tool.InvokeAsync(Args(new { path }), CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.StartsWith("1\tline1\n", result.Text);
+        Assert.Contains("2000\tline2000", result.Text);
+        Assert.DoesNotContain("2001\tline2001", result.Text);
+        Assert.EndsWith("[Showing lines 1-2000 of 2500. Use offset=2001 to continue.]", result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WithOffsetAndLimit_ReadsRequestedWindow()
+    {
+        var path = Path.Combine(_tempDir, "file.txt");
+        await File.WriteAllTextAsync(path, string.Join('\n', Enumerable.Range(1, 10).Select(i => $"line{i}")));
+        var tool = new ReadFileTool();
+
+        var result = await tool.InvokeAsync(Args(new { path, offset = 4, limit = 2 }), CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Equal(
+            "4\tline4\n5\tline5\n\n[Showing lines 4-5 of 10. Use offset=6 to continue.]",
+            result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_OffsetBeyondEndOfFile_ReturnsError()
+    {
+        var path = Path.Combine(_tempDir, "file.txt");
+        await File.WriteAllTextAsync(path, "one\ntwo");
+        var tool = new ReadFileTool();
+
+        var result = await tool.InvokeAsync(Args(new { path, offset = 10 }), CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Contains("beyond the end of the file", result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_VeryLongLine_IsTruncatedPerLine()
+    {
+        var path = Path.Combine(_tempDir, "file.txt");
+        await File.WriteAllTextAsync(path, new string('x', 3000));
+        var tool = new ReadFileTool();
+
+        var result = await tool.InvokeAsync(Args(new { path }), CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Contains("[line truncated]", result.Text);
+        Assert.DoesNotContain(new string('x', 2001), result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_InvalidOffset_ReturnsError()
+    {
+        var path = Path.Combine(_tempDir, "file.txt");
+        await File.WriteAllTextAsync(path, "hello");
+        var tool = new ReadFileTool();
+
+        var result = await tool.InvokeAsync(Args(new { path, offset = 0 }), CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal("'offset' must be a positive integer.", result.Text);
     }
 }

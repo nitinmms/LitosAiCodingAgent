@@ -62,6 +62,18 @@ public class ToolCallSummaryTests
     public void DescribeCall_MissingProperty_RendersEmptyTarget() =>
         Assert.Equal("Read ", ToolCallSummary.DescribeCall("read_file", Args(new { })));
 
+    [Fact]
+    public void DescribeCall_ReadFile_WithOffsetAndLimit_ShowsRange() =>
+        Assert.Equal("Read src/Foo.cs:501-600", ToolCallSummary.DescribeCall("read_file", Args(new { path = "src/Foo.cs", offset = 501, limit = 100 })));
+
+    [Fact]
+    public void DescribeCall_ReadFile_WithOffsetOnly_ShowsOpenEndedRange() =>
+        Assert.Equal("Read src/Foo.cs:501+", ToolCallSummary.DescribeCall("read_file", Args(new { path = "src/Foo.cs", offset = 501 })));
+
+    [Fact]
+    public void DescribeCall_ReadFile_WithLimitOnly_ShowsRangeFromStart() =>
+        Assert.Equal("Read src/Foo.cs:1-100", ToolCallSummary.DescribeCall("read_file", Args(new { path = "src/Foo.cs", limit = 100 })));
+
     // ---- DescribeResult: errors take priority regardless of tool ----
 
     [Fact]
@@ -77,6 +89,12 @@ public class ToolCallSummaryTests
     [Fact]
     public void DescribeResult_ReadFile_EmptyFile_ZeroLines() =>
         Assert.Equal("0 lines", ToolCallSummary.DescribeResult("read_file", ToolResult.Ok("")));
+
+    [Fact]
+    public void DescribeResult_ReadFile_Truncated_ShowsShownAndTotalCount() =>
+        Assert.Equal("2000 of 2500 lines", ToolCallSummary.DescribeResult(
+            "read_file",
+            ToolResult.Ok("1\tline1\n...\n2000\tline2000\n\n[Showing lines 1-2000 of 2500. Use offset=2001 to continue.]")));
 
     [Fact]
     public void DescribeResult_WriteFile_ParsesDiffStatMarker() =>
