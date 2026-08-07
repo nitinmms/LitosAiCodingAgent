@@ -118,6 +118,7 @@ public sealed partial class CommandMenuPopup : UserControl
         "/model" => "🤖",
         "/skills" or "/skill" => "🧩",
         "/branch" => "🔀",
+        "/reflect" => "🧠",
         "/mcp" => "🛰️",
         _ => "▸",
     };

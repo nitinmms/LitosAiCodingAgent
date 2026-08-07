@@ -25,6 +25,7 @@ public sealed class MainWindowSession(
     ITranscriptStore transcriptStore,
     AttachHandler attachHandler,
     Compactor compactor,
+    Reflector reflector,
     IReadOnlyList<string> availableProviders,
     string providerName,
     IChatProvider chatProvider,
@@ -56,6 +57,7 @@ public sealed class MainWindowSession(
     public ITranscriptStore TranscriptStore { get; } = transcriptStore;
     public AttachHandler AttachHandler { get; } = attachHandler;
     public Compactor Compactor { get; } = compactor;
+    public Reflector Reflector { get; } = reflector;
     public IReadOnlyList<string> AvailableProviders { get; } = availableProviders;
 
     /// <summary>Live MCP server config, mutated by McpServersWindow's add/edit/enable/disable/remove actions.</summary>

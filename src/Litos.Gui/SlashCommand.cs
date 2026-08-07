@@ -27,6 +27,7 @@ internal static class SlashCommands
         new("/skill", "Load a skill by name"),
         new("/branch", "Rewind to an earlier message in this session"),
         new("/compact", "Summarize and compact the conversation"),
+        new("/reflect", "Distill this session into AGENTS.md"),
         new("/mcp", "Manage MCP servers"),
     ];
 }

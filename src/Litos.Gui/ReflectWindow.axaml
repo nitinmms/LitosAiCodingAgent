@@ -1,0 +1,38 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Litos.Gui.ReflectWindow"
+        Title="Reflect: update AGENTS.md"
+        Icon="avares://Litos.Gui/Assets/AppIcon.png"
+        Width="1100" Height="640"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
+    <TextBlock Grid.Row="0" Text="Edit the content below, then Confirm to write AGENTS.md."
+               Margin="0,0,0,8" Foreground="#9A9A9A" />
+
+    <Grid Grid.Row="1" ColumnDefinitions="*,16,*">
+      <TextBlock Grid.Column="0" Text="AGENTS.md (editable)" Margin="0,0,0,4" Foreground="#9A9A9A" FontSize="12" />
+      <TextBlock Grid.Column="2" Text="Diff (for reference)" Margin="0,0,0,4" Foreground="#9A9A9A" FontSize="12" />
+    </Grid>
+
+    <!-- Margin (not Padding) on each ScrollViewer's direct child — see CLAUDE.md: this Avalonia
+         version's ScrollViewer.Padding doesn't fold correctly into the scrollable extent, leaving
+         a fixed unreachable sliver at the trailing edge no resize can recover. -->
+    <Grid Grid.Row="2" ColumnDefinitions="*,16,*">
+      <ScrollViewer Grid.Column="0">
+        <TextBox Name="ContentBox" AcceptsReturn="True" TextWrapping="Wrap"
+                 FontFamily="Cascadia Code,Consolas,monospace" Margin="0,0,0,12" />
+      </ScrollViewer>
+
+      <ScrollViewer Grid.Column="2">
+        <TextBlock Name="DiffText" FontFamily="Cascadia Code,Consolas,monospace"
+                   TextWrapping="Wrap" Margin="0,0,0,12" FontSize="12" />
+      </ScrollViewer>
+    </Grid>
+
+    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+      <Button Name="CancelButton" Content="Cancel" />
+      <Button Name="ConfirmButton" Content="Confirm" />
+    </StackPanel>
+  </Grid>
+</Window>

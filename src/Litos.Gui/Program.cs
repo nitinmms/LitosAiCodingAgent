@@ -123,6 +123,7 @@ internal static class Program
             provider.GetRequiredService<ITranscriptStore>(),
             new AttachHandler(provider.GetRequiredService<IAttachmentConverter>()),
             provider.GetRequiredService<Compactor>(),
+            provider.GetRequiredService<Reflector>(),
             LitosConfig.ChatProviderNames.Where(config.ApiKeys.ContainsKey).ToList(),
             activeProviderName,
             chatProvider,

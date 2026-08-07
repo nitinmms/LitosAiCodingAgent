@@ -2,7 +2,7 @@ using System.Text;
 
 namespace Litos.Tools.FileSystem;
 
-internal static class UnifiedDiff
+public static class UnifiedDiff
 {
     /// <summary>
     /// Minimal line-level diff for approval previews — not meant to be a general-purpose

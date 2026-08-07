@@ -668,6 +668,10 @@ public sealed partial class MainWindow : Window
                 await HandleCompactAsync();
                 return;
 
+            case "/reflect":
+                await HandleReflectAsync();
+                return;
+
             case "/mcp":
                 await McpServersWindow.ShowAsync(this, _session.McpConfigStore, _session.McpToolProvider);
                 return;
@@ -835,6 +839,44 @@ public sealed partial class MainWindow : Window
             RenderTranscriptHistory(_transcript);
             RefreshContextUsage();
             AddToolLine("⚏ context compacted");
+        }
+        finally
+        {
+            StatusBarWorkingIndicator.IsVisible = false;
+        }
+    }
+
+    /// <summary>
+    /// Distills the current session's full transcript into AGENTS.md at the project root — the
+    /// write-side counterpart to ProjectInstructionsDiscovery's read side, which already
+    /// discovers and injects AGENTS.md into the system prompt on every turn. Always targets
+    /// {WorkingDirectory}/AGENTS.md directly (no ancestor walk, no multi-file picker), matching
+    /// /new's existing WorkingDirectory-with-CurrentDirectory-fallback idiom. Shows an editable-
+    /// text-plus-diff confirmation modal before writing anything — never silently overwrites the
+    /// user's file. Unlike /compact, this never mutates _transcript; its only side effect is the
+    /// AGENTS.md file write, gated entirely behind the modal's Confirm button.
+    /// </summary>
+    private async Task HandleReflectAsync()
+    {
+        StatusBarWorkingIndicator.IsVisible = true;
+        try
+        {
+            var workingDirectory = _transcript.WorkingDirectory ?? Environment.CurrentDirectory;
+            var agentsMdPath = Path.Combine(workingDirectory, "AGENTS.md");
+            var existing = File.Exists(agentsMdPath) ? await File.ReadAllTextAsync(agentsMdPath) : null;
+
+            var proposed = await _session.Reflector.ReflectAsync(
+                _transcript.Messages, existing, _session.ChatProvider, _session.Model, CancellationToken.None);
+
+            var edited = await ReflectWindow.ShowAsync(this, existing ?? "", proposed, agentsMdPath);
+            if (edited is null)
+            {
+                AddToolLine("Reflect cancelled — AGENTS.md not changed.");
+                return;
+            }
+
+            await File.WriteAllTextAsync(agentsMdPath, edited);
+            AddToolLine($"⚏ AGENTS.md updated ({agentsMdPath}).");
         }
         finally
         {

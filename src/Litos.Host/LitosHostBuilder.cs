@@ -37,6 +37,7 @@ public static class LitosHostBuilder
         services.AddSingleton<ContextAccountant>();
         services.AddSingleton(new CompactionSettings());
         services.AddSingleton<Compactor>();
+        services.AddSingleton<Reflector>();
 
         services.AddSingleton<ITool, ReadFileTool>();
         services.AddSingleton<ITool, WriteFileTool>();
