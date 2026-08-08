@@ -14,6 +14,9 @@ face" architecture.
 
 ## Install `Litos.Gui`
 
+`Litos.Gui` is the default desktop face of Litos — a .NET AI coding agent (like Claude Code, but
+built from scratch in C#), with a chat window, file/shell/web tools, and MCP support.
+
 **Windows** (PowerShell):
 
 ```powershell
