@@ -22,6 +22,19 @@ public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTime
     /// </summary>
     private readonly TimeSpan _hardTimeout = hardTimeout ?? TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// On macOS/Linux, a GUI app bundle launched from Finder/Dock/<c>open</c> inherits launchd's
+    /// bare-bones PATH (e.g. <c>/usr/bin:/bin:/usr/sbin:/sbin</c>), not the interactive-shell PATH
+    /// a user gets in Terminal — tools installed via a `.zshrc`/`.zprofile` PATH export (dotnet,
+    /// Homebrew, nvm, etc.) are invisible to every command this tool runs, even though the same
+    /// command works fine when the user types it themselves. We resolve the user's real login-shell
+    /// PATH once (by asking their actual $SHELL to report it, sourcing their profile the same way
+    /// Terminal would) and reuse it for the lifetime of the process. Resolution failure (e.g. no
+    /// real shell available, sandboxed/CI environment) just falls back to the inherited PATH —
+    /// same behavior as before this existed.
+    /// </summary>
+    private static readonly Lazy<string?> LoginShellPath = new(ResolveLoginShellPath);
+
     public string Name => "shell";
 
     public string Description =>
@@ -60,6 +73,9 @@ public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTime
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+
+        if (!OperatingSystem.IsWindows() && LoginShellPath.Value is { } loginPath)
+            startInfo.Environment["PATH"] = loginPath;
 
         using var process = new Process { StartInfo = startInfo };
         var output = new StringBuilder();
@@ -115,4 +131,69 @@ public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTime
     }
 
     private static string EscapeArgument(string command) => $"\"{command.Replace("\"", "\\\"")}\"";
+
+    /// <summary>
+    /// Asks the user's actual login shell (`$SHELL`, falling back to zsh — the macOS default —
+    /// then bash) for its PATH as an interactive login shell would compute it, i.e. after sourcing
+    /// `.zprofile`/`.zshrc`/`.bash_profile` the same way Terminal.app does. `-il` covers both login
+    /// (`.zprofile`) and interactive (`.zshrc`) profile files since PATH exports commonly live in
+    /// either depending on the user's setup. Sentinel markers isolate the PATH value from any
+    /// shell-startup banner/MOTD noise that might precede it in stdout.
+    /// </summary>
+    private static string? ResolveLoginShellPath()
+    {
+        const string marker = "__LITOS_SHELL_PATH__";
+        var candidates = new[] { Environment.GetEnvironmentVariable("SHELL"), "/bin/zsh", "/bin/bash" };
+
+        foreach (var shell in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(shell) || !File.Exists(shell))
+                continue;
+
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = shell,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    RedirectStandardInput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                startInfo.ArgumentList.Add("-ilc");
+                startInfo.ArgumentList.Add($"echo {marker}$PATH{marker}");
+
+                using var process = Process.Start(startInfo);
+                if (process is null)
+                    continue;
+
+                process.StandardInput.Close();
+                var stdout = process.StandardOutput.ReadToEnd();
+                if (!process.WaitForExit(5000))
+                {
+                    TryKillProcessTree(process);
+                    continue;
+                }
+
+                var start = stdout.IndexOf(marker, StringComparison.Ordinal);
+                if (start < 0)
+                    continue;
+                start += marker.Length;
+                var end = stdout.IndexOf(marker, start, StringComparison.Ordinal);
+                if (end < 0)
+                    continue;
+
+                var path = stdout[start..end].Trim();
+                if (!string.IsNullOrEmpty(path))
+                    return path;
+            }
+            catch
+            {
+                // Try the next candidate shell.
+            }
+        }
+
+        return null;
+    }
 }
