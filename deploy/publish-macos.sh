@@ -2,6 +2,12 @@
 # Publishes Litos.Gui as a self-contained macOS .app bundle.
 # Must be run on macOS (or a runner capable of producing osx-* builds).
 # Usage: deploy/publish-macos.sh [osx-arm64|osx-x64]
+#
+# Optional signing + notarization (skipped if APPLE_SIGN_IDENTITY is unset):
+#   APPLE_SIGN_IDENTITY   "Developer ID Application: Name (TEAMID)"
+#   APPLE_ID              Apple ID email, required to notarize
+#   APPLE_TEAM_ID         10-char team ID, required to notarize
+#   APPLE_APP_PASSWORD    app-specific password, required to notarize
 set -euo pipefail
 
 RUNTIME="${1:-osx-arm64}"
@@ -36,8 +42,42 @@ else
     echo "Note: deploy/AppIcon.iconset not found, bundling without a custom icon."
 fi
 
+if [ -z "${APPLE_SIGN_IDENTITY:-}" ]; then
+    echo ""
+    echo "Bundled (unsigned): $BUNDLE_DIR"
+    echo "Run: open \"$BUNDLE_DIR\""
+    echo ""
+    echo "Unsigned build - first launch requires right-click > Open (or: xattr -cr \"$BUNDLE_DIR\")"
+    exit 0
+fi
+
+echo "Signing with identity: $APPLE_SIGN_IDENTITY"
+codesign --force --deep --options runtime \
+    --entitlements "$REPO_ROOT/deploy/entitlements.plist" \
+    --sign "$APPLE_SIGN_IDENTITY" \
+    "$BUNDLE_DIR"
+
+ZIP_PATH="$REPO_ROOT/deploy/out/macos/$RUNTIME/$APP_NAME-$RUNTIME.zip"
+rm -f "$ZIP_PATH"
+ditto -c -k --keepParent "$BUNDLE_DIR" "$ZIP_PATH"
+
+if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ]; then
+    echo "Submitting for notarization..."
+    xcrun notarytool submit "$ZIP_PATH" \
+        --apple-id "$APPLE_ID" \
+        --team-id "$APPLE_TEAM_ID" \
+        --password "$APPLE_APP_PASSWORD" \
+        --wait
+
+    echo "Stapling notarization ticket..."
+    xcrun stapler staple "$BUNDLE_DIR"
+
+    rm -f "$ZIP_PATH"
+    ditto -c -k --keepParent "$BUNDLE_DIR" "$ZIP_PATH"
+else
+    echo "Note: APPLE_ID/APPLE_TEAM_ID/APPLE_APP_PASSWORD not set, skipping notarization."
+fi
+
 echo ""
-echo "Bundled: $BUNDLE_DIR"
-echo "Run: open \"$BUNDLE_DIR\""
-echo ""
-echo "Unsigned build - first launch requires right-click > Open (or: xattr -cr \"$BUNDLE_DIR\")"
+echo "Signed bundle: $BUNDLE_DIR"
+echo "Release zip:   $ZIP_PATH"
