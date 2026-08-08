@@ -12,6 +12,32 @@ directory model, and secondarily by [alejandro-ao](https://github.com/alejandro-
 [Tau](https://github.com/alejandro-ao/tau) and its "separate the brain, the environment, and the
 face" architecture.
 
+## Install `Litos.Gui`
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/nitinmms/LitosAiCodingAgent/master/deploy/install.ps1 | iex
+```
+
+Installs to `%LOCALAPPDATA%\Programs\Litos`, adds it to your PATH, and creates a Start Menu
+shortcut. No admin rights needed. The build is unsigned, so SmartScreen may warn on first launch
+— click **More info → Run anyway**.
+
+**macOS** (Terminal):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nitinmms/LitosAiCodingAgent/master/deploy/install.sh | bash
+```
+
+Installs `Litos.app` to `/Applications` (Apple Silicon and Intel both supported). This build is
+signed and notarized, so Gatekeeper won't block it.
+
+Re-running either command upgrades an existing install in place. On first launch, if no provider
+API key is found, Litos opens a dialog to enter one — see
+[Environment variables](#environment-variables) below. Keys can be added or changed later from
+inside the app with `/keys`.
+
 ## Videos
 
 - [Built an AI Coding Agent in Pure C#/.NET (No Python!) — Watch It Build a WinForms 15-Puzzle Game](https://www.youtube.com/watch?v=em8w0SwgT5Q)
@@ -34,20 +60,10 @@ end-to-end. Anthropic and Google Gemini adapters exist and should work, but are 
 
 ## Getting started
 
-### Install `Litos.Gui` (Windows, no .NET SDK required)
+Already installed `Litos.Gui` via the one-line command above? Just launch it. The rest of this
+section is for building from source or running the other faces (`Litos.Api`, `Litos.Console`).
 
-```powershell
-irm https://raw.githubusercontent.com/nitinmms/LitosAiCodingAgent/master/deploy/install.ps1 | iex
-```
-
-Downloads the latest release, installs it to `%LOCALAPPDATA%\Programs\Litos`, adds it to your
-PATH, and creates a Start Menu shortcut. No admin rights needed; re-running the command upgrades
-an existing install. On first launch, if no provider API key is found, Litos opens a dialog to
-enter one (writes a Windows user environment variable, then asks you to restart the app) — see
-[Environment variables](#environment-variables) below. Keys can be added or changed later from
-inside the app with `/keys`.
-
-### Build from source (any platform, or if you want to modify the code)
+### Build from source
 
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
@@ -78,8 +94,9 @@ Docker/Telegram deployment, see [ReadMe_HeadlessServiceTool.md](ReadMe_HeadlessS
 
 At least one LLM provider API key is required. Configure these via the `.env` file (`Litos.Api`,
 copied from [src/Litos.Api/.env.example](src/Litos.Api/.env.example)) or, for `Litos.Gui`, the
-first-run dialog or `/keys` command, which write Windows user environment variables directly. An
-env var always wins over any value stored in `Litos.Api`'s mounted config file.
+first-run dialog or `/keys` command (writes a Windows user environment variable on Windows, or
+`~/.litos/config.json` on macOS). An env var always wins over any value stored in `Litos.Api`'s
+mounted config file or `Litos.Gui`'s config.json.
 
 | Variable | Purpose |
 |---|---|
