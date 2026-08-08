@@ -34,6 +34,21 @@ end-to-end. Anthropic and Google Gemini adapters exist and should work, but are 
 
 ## Getting started
 
+### Install `Litos.Gui` (Windows, no .NET SDK required)
+
+```powershell
+irm https://raw.githubusercontent.com/nitinmms/LitosAiCodingAgent/master/deploy/install.ps1 | iex
+```
+
+Downloads the latest release, installs it to `%LOCALAPPDATA%\Programs\Litos`, adds it to your
+PATH, and creates a Start Menu shortcut. No admin rights needed; re-running the command upgrades
+an existing install. On first launch, if no provider API key is found, Litos opens a dialog to
+enter one (writes a Windows user environment variable, then asks you to restart the app) — see
+[Environment variables](#environment-variables) below. Keys can be added or changed later from
+inside the app with `/keys`.
+
+### Build from source (any platform, or if you want to modify the code)
+
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
 ```bash
@@ -47,9 +62,6 @@ dotnet build
 ```bash
 dotnet run --project src/Litos.Gui
 ```
-
-On first run, open Settings to add at least one provider API key (see
-[Environment variables](#environment-variables) below).
 
 ### Run `Litos.Api` (HTTP/API host)
 
@@ -65,8 +77,9 @@ Docker/Telegram deployment, see [ReadMe_HeadlessServiceTool.md](ReadMe_HeadlessS
 ## Environment variables
 
 At least one LLM provider API key is required. Configure these via the `.env` file (`Litos.Api`,
-copied from [src/Litos.Api/.env.example](src/Litos.Api/.env.example)) or the Settings screen
-(`Litos.Gui`). An env var always wins over any value stored in `Litos.Api`'s mounted config file.
+copied from [src/Litos.Api/.env.example](src/Litos.Api/.env.example)) or, for `Litos.Gui`, the
+first-run dialog or `/keys` command, which write Windows user environment variables directly. An
+env var always wins over any value stored in `Litos.Api`'s mounted config file.
 
 | Variable | Purpose |
 |---|---|

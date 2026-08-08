@@ -1,0 +1,45 @@
+name: Release Litos.Gui
+
+# Triggered by pushing a tag like "v1.2.3" — publishes a self-contained, single-file win-x64
+# build of Litos.Gui and attaches it (plus a SHA256 checksum) to a GitHub Release for that tag.
+# This is the artifact deploy/install.ps1 downloads for the one-line install, and the same
+# artifact a future winget "portable" manifest would point InstallerUrl at (see ReadMe.md).
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish win-x64
+        run: >
+          dotnet publish src/Litos.Gui/Litos.Gui.csproj
+          -c Release -r win-x64 -o deploy/out/windows/win-x64
+          --self-contained true -p:PublishSingleFile=true
+
+      - name: Package release asset
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          $zipPath = "Litos.Gui-$version-win-x64.zip"
+          Compress-Archive -Path "deploy/out/windows/win-x64/Litos.Gui.exe" -DestinationPath $zipPath
+          (Get-FileHash -Algorithm SHA256 $zipPath).Hash | Out-File -Encoding ascii "$zipPath.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Litos.Gui-*-win-x64.zip
+            Litos.Gui-*-win-x64.zip.sha256
+          generate_release_notes: true

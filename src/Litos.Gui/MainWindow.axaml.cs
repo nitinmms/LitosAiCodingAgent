@@ -676,6 +676,10 @@ public sealed partial class MainWindow : Window
                 await McpServersWindow.ShowAsync(this, _session.McpConfigStore, _session.McpToolProvider);
                 return;
 
+            case "/keys":
+                await HandleKeysAsync();
+                return;
+
             default:
                 var promptEntry = _session.McpToolProvider.Prompts.FirstOrDefault(p => $"/{p.FullName}" == command);
                 if (promptEntry is null)
@@ -882,6 +886,13 @@ public sealed partial class MainWindow : Window
         {
             StatusBarWorkingIndicator.IsVisible = false;
         }
+    }
+
+    private async Task HandleKeysAsync()
+    {
+        var saved = await ApiKeysWindow.ShowAsync(this);
+        if (saved)
+            AddToolLine("API keys updated. Restart Litos for the change to take effect.");
     }
 
     private async Task HandleResumeAsync(string? argument)

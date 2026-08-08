@@ -32,8 +32,12 @@ internal static class Program
         var config = LitosConfig.Load();
         if (!LitosConfig.ChatProviderNames.Any(config.ApiKeys.ContainsKey))
         {
-            Console.WriteLine("No API key found for any provider. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY and try again.");
-            return 1;
+            // No console window exists (OutputType=WinExe), so a Console.WriteLine here would be
+            // invisible to a user launching the published exe directly — show a window instead.
+            // ApiKeysApp runs its own AppBuilder.Configure/Start to completion (one-shot per
+            // process) before the real App below is ever built, so the two never coexist.
+            var keysSaved = ApiKeysApp.Run(args);
+            return keysSaved ? 0 : 1;
         }
 
         if (!config.ApiKeys.ContainsKey("tavily"))
