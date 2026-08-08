@@ -162,7 +162,11 @@ public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTime
                     CreateNoWindow = true,
                 };
                 startInfo.ArgumentList.Add("-ilc");
-                startInfo.ArgumentList.Add($"echo {marker}$PATH{marker}");
+                // ${PATH}, not $PATH: the marker's leading underscores are valid identifier
+                // characters, so unbraced $PATH{marker} greedily parses as one (unset) variable
+                // name `PATH__LITOS_SHELL_PATH__` in the shell — expanding to nothing and
+                // silently discarding the actual PATH value. Braces bound the variable name.
+                startInfo.ArgumentList.Add($"echo {marker}${{PATH}}{marker}");
 
                 using var process = Process.Start(startInfo);
                 if (process is null)
