@@ -9,6 +9,7 @@ using Litos.Agent.Tools;
 using Litos.Persistence;
 using Litos.Providers.Anthropic;
 using Litos.Providers.Gemini;
+using Litos.Providers.Local;
 using Litos.Providers.OpenAI;
 using Litos.Providers.OpenRouter;
 using Litos.Tools.Attachments;
@@ -96,6 +97,13 @@ public static class LitosHostBuilder
             services.AddKeyedSingleton<IChatProvider>("openrouter", (_, _) =>
                 new OpenRouterChatProvider(CreateOpenRouterHttpClient(openRouterKey)));
 
+        // Gated on LocalBaseUrl, not on a key — unlike every other provider here, "local"
+        // (LM Studio, Ollama, vLLM, ...) is meant to work with no API key at all, so requiring
+        // one the way the other three do would make a key-less local server unreachable.
+        if (config.LocalBaseUrl is { } localBaseUrl)
+            services.AddKeyedSingleton<IChatProvider>("local", (_, _) =>
+                new LocalChatProvider(CreateLocalHttpClient(localBaseUrl, config.GetApiKey("local"))));
+
         services.AddSingleton<IChatProviderFactory, ChatProviderFactory>();
         services.AddSingleton<AgentLoopFactory>();
 
@@ -106,6 +114,19 @@ public static class LitosHostBuilder
     {
         var client = new HttpClient { BaseAddress = new Uri("https://openrouter.ai/api/v1/") };
         client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+        return client;
+    }
+
+    private static HttpClient CreateLocalHttpClient(string baseUrl, string? apiKey)
+    {
+        // Trailing slash required for relative request URIs ("models", "chat/completions") to
+        // resolve under BaseAddress rather than replacing its last path segment — same reason
+        // CreateOpenRouterHttpClient's literal already ends in "/". A user-typed base URL can't
+        // be relied on to already end in one.
+        var normalizedBaseUrl = baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/";
+        var client = new HttpClient { BaseAddress = new Uri(normalizedBaseUrl) };
+        if (apiKey is not null)
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
         return client;
     }
 }

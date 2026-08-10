@@ -30,7 +30,7 @@ internal static class Program
             Win32JobObject.AssignCurrentProcessWithKillOnClose();
 
         var config = LitosConfig.Load();
-        if (!LitosConfig.ChatProviderNames.Any(config.ApiKeys.ContainsKey))
+        if (config.AvailableChatProviders.Count == 0)
         {
             // No console window exists (OutputType=WinExe), so a Console.WriteLine here would be
             // invisible to a user launching the published exe directly — show a window instead.
@@ -76,8 +76,8 @@ internal static class Program
 
         var providerFactory = provider.GetRequiredService<IChatProviderFactory>();
         var activeProviderName = config.DefaultProvider;
-        if (!config.ApiKeys.ContainsKey(activeProviderName))
-            activeProviderName = LitosConfig.ChatProviderNames.First(config.ApiKeys.ContainsKey);
+        if (!config.IsProviderConfigured(activeProviderName))
+            activeProviderName = config.AvailableChatProviders[0];
         var chatProvider = providerFactory.Resolve(activeProviderName);
 
         // Only strictly required when no default model is configured yet (to pick one), but
@@ -128,7 +128,7 @@ internal static class Program
             new AttachHandler(provider.GetRequiredService<IAttachmentConverter>()),
             provider.GetRequiredService<Compactor>(),
             provider.GetRequiredService<Reflector>(),
-            LitosConfig.ChatProviderNames.Where(config.ApiKeys.ContainsKey).ToList(),
+            config.AvailableChatProviders.ToList(),
             activeProviderName,
             chatProvider,
             loop,

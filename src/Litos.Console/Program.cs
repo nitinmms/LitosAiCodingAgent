@@ -51,14 +51,14 @@ if (canPrompt)
     app.ScreenChanged += (_, _) => app.ClearScreenNextIteration = true;
 }
 
-var hasChatProviderKey = LitosConfig.ChatProviderNames.Any(config.ApiKeys.ContainsKey);
+var hasChatProviderKey = config.AvailableChatProviders.Count > 0;
 if (!hasChatProviderKey && canPrompt)
     config = SetupWizardDialog.Run(app!);
 
-var availableProviders = LitosConfig.ChatProviderNames.Where(config.ApiKeys.ContainsKey).ToList();
+var availableProviders = config.AvailableChatProviders.ToList();
 if (availableProviders.Count == 0)
 {
-    System.Console.WriteLine("No API key found for any provider. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY and try again.");
+    System.Console.WriteLine("No API key found for any provider. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, or LOCAL_BASE_URL and try again.");
     app?.Dispose();
     return 1;
 }
@@ -67,7 +67,7 @@ if (!config.ApiKeys.ContainsKey("tavily"))
     System.Console.WriteLine("Web search disabled: set TAVILY_API_KEY to enable.");
 
 var activeProviderName = requestedProvider ?? config.DefaultProvider;
-if (!config.ApiKeys.ContainsKey(activeProviderName))
+if (!config.IsProviderConfigured(activeProviderName))
     activeProviderName = availableProviders[0];
 
 if (requestedProvider is null && canPrompt && availableProviders.Count > 1)

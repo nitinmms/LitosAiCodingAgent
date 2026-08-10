@@ -60,6 +60,9 @@ public sealed partial class MainWindow : Window
     private TextBlock? _currentAssistantText;
     private Border? _currentAssistantBubble;
     private readonly StringBuilder _currentAssistantMarkdown = new();
+    private TextBlock? _currentReasoningText;
+    private Border? _currentReasoningBubble;
+    private readonly StringBuilder _currentReasoningBuilder = new();
     private Border? _workingIndicator;
     private Border? _layoutNudgePhantom;
     private readonly Dictionary<string, Queue<ToolCallRow>> _toolRows = new();
@@ -316,6 +319,9 @@ public sealed partial class MainWindow : Window
         _currentAssistantText = null;
         _currentAssistantBubble = null;
         _currentAssistantMarkdown.Clear();
+        _currentReasoningText = null;
+        _currentReasoningBubble = null;
+        _currentReasoningBuilder.Clear();
         _turnCts = new CancellationTokenSource();
         var steering = Channel.CreateUnbounded<SteeringMessage>();
         _currentSteeringWriter = steering.Writer;
@@ -335,12 +341,18 @@ public sealed partial class MainWindow : Window
             {
                 switch (evt)
                 {
+                    case ReasoningDelta reasoning:
+                        HideWorkingIndicator();
+                        AppendReasoningText(reasoning.Text);
+                        break;
                     case TextDelta delta:
                         HideWorkingIndicator();
+                        FinalizeReasoningText();
                         AppendAssistantText(delta.Text);
                         break;
                     case ToolCallCompleted tool:
                         HideWorkingIndicator();
+                        FinalizeReasoningText();
                         FinalizeAssistantText();
                         AddToolCallRow(tool.CallId, tool.ToolName, tool.Arguments);
                         break;
@@ -356,6 +368,7 @@ public sealed partial class MainWindow : Window
                         break;
                     case ErrorOccurred error:
                         HideWorkingIndicator();
+                        FinalizeReasoningText();
                         FinalizeAssistantText();
                         AddBubble(error.Exception.Message, HorizontalAlignment.Left, ErrorBubbleBrush);
                         break;
@@ -363,6 +376,7 @@ public sealed partial class MainWindow : Window
                         AddToolLine("⚏ context compacted");
                         break;
                     case MessageCompleted:
+                        FinalizeReasoningText();
                         FinalizeAssistantText();
                         RefreshContextUsage();
                         break;
@@ -381,6 +395,7 @@ public sealed partial class MainWindow : Window
             // iterator on a non-2xx response (rate limits, auth errors, etc.). Left uncaught, that
             // exception unwinds past this async void-ish UI event handler and crashes the whole
             // process. Render it the same way as ErrorOccurred instead of letting it escape.
+            FinalizeReasoningText();
             FinalizeAssistantText();
             AddBubble(ex.Message, HorizontalAlignment.Left, ErrorBubbleBrush);
         }
@@ -1057,17 +1072,35 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // Not a real provider name — a picker-only entry offered when "local" hasn't been set up
+    // yet, so a user reaching for /provider to try LM Studio/Ollama/etc. lands on where to
+    // configure it instead of finding it silently missing from the list.
+    private const string ConfigureLocalProviderSentinel = "__configure-local-provider__";
+
     private async Task HandleProviderAsync(string? argument)
     {
         var pickedProvider = argument;
         if (pickedProvider is null)
         {
+            var offerConfigureLocal = !_session.AvailableProviders.Contains("local");
+            IReadOnlyList<string> pickerItems = offerConfigureLocal
+                ? [.. _session.AvailableProviders, ConfigureLocalProviderSentinel]
+                : _session.AvailableProviders;
+
             pickedProvider = await ListPickerWindow.PickAsync(
                 this,
                 "Switch provider",
-                _session.AvailableProviders,
-                p => p,
+                pickerItems,
+                p => p == ConfigureLocalProviderSentinel ? "Configure local server (LM Studio, Ollama, …)…" : p,
                 _session.ProviderName);
+
+            if (pickedProvider == ConfigureLocalProviderSentinel)
+            {
+                var saved = await ApiKeysWindow.ShowAsync(this);
+                if (saved)
+                    AddToolLine("Local server URL saved. Restart Litos for the change to take effect.");
+                return;
+            }
         }
 
         if (pickedProvider is null || !_session.AvailableProviders.Contains(pickedProvider))
@@ -1596,6 +1629,39 @@ public sealed partial class MainWindow : Window
         _currentAssistantText = null;
         _currentAssistantBubble = null;
         _currentAssistantMarkdown.Clear();
+    }
+
+    // Chain-of-thought (ReasoningDelta) from local "thinking" models — rendered as its own muted/
+    // italic bubble, same dim color as the "Thinking…" working indicator, so it reads as the
+    // model's scratch work rather than being mistaken for its actual reply. Left as plain wrapped
+    // text (no MarkdownViewer swap, unlike FinalizeAssistantText) since raw chain-of-thought isn't
+    // reliably well-formed markdown and this text is never sent back to the model anyway.
+    private void AppendReasoningText(string text) =>
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_currentReasoningText is null)
+            {
+                var block = new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap, Foreground = DimTextBrush, FontStyle = FontStyle.Italic,
+                };
+                _currentReasoningText = block;
+                _currentReasoningBubble = AddBubbleContent(block, HorizontalAlignment.Left, AssistantBubbleBrush);
+            }
+
+            _currentReasoningBuilder.Append(text);
+            _currentReasoningText.Text = _currentReasoningBuilder.ToString();
+            ScrollToEndAfterLayout();
+        });
+
+    private void FinalizeReasoningText()
+    {
+        if (_currentReasoningBubble is null)
+            return;
+
+        _currentReasoningText = null;
+        _currentReasoningBubble = null;
+        _currentReasoningBuilder.Clear();
     }
 
     // Wraps a completed assistant message's MarkdownViewer with a copy button beneath it, so the

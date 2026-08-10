@@ -8,6 +8,11 @@ public sealed record LitosConfig(
     string? DefaultModel,
     string? LastWorkingDirectory,
     IReadOnlyDictionary<string, string> ApiKeys,
+    // Base URL of a local OpenAI-compatible server (LM Studio, Ollama, vLLM, ...) for the
+    // "local" chat provider. Unlike every other provider, "local" needs no API key to be
+    // usable — it's gated on this being set rather than on ApiKeys containing "local" (see
+    // IsProviderConfigured) — so this is its own field rather than living in ApiKeys.
+    string? LocalBaseUrl = null,
     int? ShellCommandTimeoutSeconds = null)
 {
     /// <summary>
@@ -27,6 +32,7 @@ public sealed record LitosConfig(
         ["openai"] = "OPENAI_API_KEY",
         ["gemini"] = "GEMINI_API_KEY",
         ["openrouter"] = "OPENROUTER_API_KEY",
+        ["local"] = "LOCAL_API_KEY",
         ["tavily"] = "TAVILY_API_KEY",
         ["telegram"] = "TELEGRAM_BOT_TOKEN",
     };
@@ -36,7 +42,24 @@ public sealed record LitosConfig(
     /// "tavily") — callers that pick/prompt-for an active chat provider filter to these
     /// rather than assuming every key in ApiKeys is one.
     /// </summary>
-    public static readonly IReadOnlyList<string> ChatProviderNames = ["anthropic", "openai", "gemini", "openrouter"];
+    public static readonly IReadOnlyList<string> ChatProviderNames = ["anthropic", "openai", "gemini", "openrouter", "local"];
+
+    /// <summary>
+    /// True if <paramref name="providerName"/> has enough configuration to be usable. Every
+    /// provider but "local" means "has an API key"; "local" means "has a base URL" instead —
+    /// a local OpenAI-compatible server (LM Studio, Ollama, ...) typically needs no real key at
+    /// all, so gating it on ApiKeys the way every other provider is gated would make it
+    /// unreachable without a key it doesn't need.
+    /// </summary>
+    public bool IsProviderConfigured(string providerName) =>
+        providerName == "local" ? !string.IsNullOrEmpty(LocalBaseUrl) : ApiKeys.ContainsKey(providerName);
+
+    /// <summary>
+    /// Chat providers with enough configuration to actually be selected — the candidate list
+    /// every face (Console/Gui/Api) builds its provider picker from, in one place instead of
+    /// each face re-deriving "has a key, or is local with a base url" independently.
+    /// </summary>
+    public IReadOnlyList<string> AvailableChatProviders => [.. ChatProviderNames.Where(IsProviderConfigured)];
 
     public static string ConfigFilePath { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".litos", "config.json");
@@ -63,6 +86,7 @@ public sealed record LitosConfig(
             DefaultModel: onDisk?.DefaultModel,
             LastWorkingDirectory: onDisk?.LastWorkingDirectory,
             ApiKeys: apiKeys,
+            LocalBaseUrl: Environment.GetEnvironmentVariable("LOCAL_BASE_URL") ?? onDisk?.LocalBaseUrl,
             ShellCommandTimeoutSeconds: onDisk?.ShellCommandTimeoutSeconds);
     }
 

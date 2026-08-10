@@ -35,7 +35,7 @@ builder.Services.AddSingleton(_ => new AgentWorker(
     _.GetRequiredService<Litos.Agent.Session.ITranscriptStore>(),
     config)
 {
-    AvailableProviders = config.ApiKeys.Keys.Where(LitosConfig.ChatProviderNames.Contains).ToArray(),
+    AvailableProviders = config.AvailableChatProviders,
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorker>());
 builder.Services.AddSingleton<AdminTokenProvider>();

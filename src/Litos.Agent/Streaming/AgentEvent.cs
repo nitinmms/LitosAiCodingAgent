@@ -8,6 +8,13 @@ public abstract record AgentEvent;
 
 public sealed record TextDelta(string Text) : AgentEvent;
 
+// Chain-of-thought from a "thinking" model (Qwen3, DeepSeek-R1, QwQ, ...), streamed separately
+// from TextDelta so a UI can render it distinctly (e.g. muted/italic) and so consumers that
+// accumulate TextDelta into a persisted message (AgentLoop, Compactor, Reflector) never do the
+// same for reasoning — it has no business being replayed back to the model as if it were part
+// of a past reply.
+public sealed record ReasoningDelta(string Text) : AgentEvent;
+
 public sealed record ToolCallStarted(string CallId, string ToolName) : AgentEvent;
 
 public sealed record ToolCallArgsDelta(string CallId, string JsonFragment) : AgentEvent;

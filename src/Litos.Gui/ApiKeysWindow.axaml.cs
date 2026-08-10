@@ -28,6 +28,7 @@ public sealed partial class ApiKeysWindow : Window
         ("openai", "OPENAI_API_KEY", w => w.OpenAiBox),
         ("gemini", "GEMINI_API_KEY", w => w.GeminiBox),
         ("openrouter", "OPENROUTER_API_KEY", w => w.OpenRouterBox),
+        ("local", "LOCAL_API_KEY", w => w.LocalApiKeyBox),
         ("tavily", "TAVILY_API_KEY", w => w.TavilyBox),
     ];
 
@@ -73,6 +74,13 @@ public sealed partial class ApiKeysWindow : Window
                         ? "Already set — leave blank to keep"
                         : envVar;
             }
+
+            // Not a secret (unlike every field above), so it isn't masked/write-only — but it
+            // still uses the same "current value shown in the placeholder, leave blank to keep"
+            // convention as the key fields for consistency within this dialog.
+            LocalBaseUrlBox.PlaceholderText = config.LocalBaseUrl is { } url
+                ? $"{url} — leave blank to keep"
+                : "http://localhost:1234/v1 (can be any host on your network)";
         }
     }
 
@@ -92,8 +100,10 @@ public sealed partial class ApiKeysWindow : Window
             .Select(f => (f.Provider, f.EnvVar, Value: f.Field(this).Text))
             .Where(e => !string.IsNullOrWhiteSpace(e.Value))
             .ToList();
+        var localBaseUrl = LocalBaseUrlBox.Text;
+        var hasLocalBaseUrl = !string.IsNullOrWhiteSpace(localBaseUrl);
 
-        if (entries.Count == 0)
+        if (entries.Count == 0 && !hasLocalBaseUrl)
         {
             ErrorText.IsVisible = true;
             return;
@@ -104,13 +114,22 @@ public sealed partial class ApiKeysWindow : Window
             foreach (var (_, envVar, value) in entries)
                 Environment.SetEnvironmentVariable(envVar, value, EnvironmentVariableTarget.User);
         }
-        else
+
+        // LocalBaseUrl always goes to config.json — it isn't a secret, so (unlike the keys
+        // above) it has no Windows-user-environment-variable storage path; on non-Windows every
+        // key does too.
+        if (hasLocalBaseUrl || !OperatingSystem.IsWindows())
         {
             var config = LitosConfig.Load();
             var apiKeys = new Dictionary<string, string>(config.ApiKeys);
-            foreach (var (provider, _, value) in entries)
-                apiKeys[provider] = value!;
-            config = config with { ApiKeys = apiKeys };
+            if (!OperatingSystem.IsWindows())
+                foreach (var (provider, _, value) in entries)
+                    apiKeys[provider] = value!;
+            config = config with
+            {
+                ApiKeys = apiKeys,
+                LocalBaseUrl = hasLocalBaseUrl ? localBaseUrl!.Trim() : config.LocalBaseUrl,
+            };
             config.Save();
         }
 

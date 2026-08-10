@@ -58,11 +58,11 @@ public sealed class AgentWorker : BackgroundService
         _toolRegistryFactory = toolRegistryFactory;
         _transcriptStore = transcriptStore;
 
-        _providerName = config.ApiKeys.ContainsKey(config.DefaultProvider)
+        _providerName = config.IsProviderConfigured(config.DefaultProvider)
             ? config.DefaultProvider
-            : config.ApiKeys.Keys.FirstOrDefault(LitosConfig.ChatProviderNames.Contains)
+            : config.AvailableChatProviders.FirstOrDefault()
                 ?? throw new InvalidOperationException(
-                    "No API key found for any chat provider. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY.");
+                    "No API key found for any chat provider. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, or LOCAL_BASE_URL.");
         _model = config.DefaultModel ?? "";
         StartedAt = DateTimeOffset.UtcNow;
     }
