@@ -45,6 +45,31 @@ inside the app with `/keys`.
 
 - [Built an AI Coding Agent in Pure C#/.NET (No Python!) — Watch It Build a WinForms 15-Puzzle Game](https://www.youtube.com/watch?v=em8w0SwgT5Q)
 - [Built an AI Agent in Pure C#/.NET— Here it is working through Telegram creating Mermaid Diagrams](https://www.youtube.com/watch?v=S2Sn_kwCRjE&t=8s)
+- [Litos Coding Agent Building Features into an Existing Postgres Query Application](https://www.youtube.com/watch?v=j-Gx-7LZaso)
+
+## Slash commands
+
+Slash commands are typed directly into the chat input. Each face (`Litos.Console`, `Litos.Gui`,
+and `Litos.Api`'s Telegram bridge) implements its own command dispatch, so support varies:
+
+| Command | Description | Console | Gui | Api (Telegram) |
+|---|---|---|---|---|
+| `/new` | Start a new session | Yes | Yes | Yes |
+| `/resume [id]` | Resume a previous session (picker if no id given) | Yes | Yes | Yes |
+| `/attach <path\|url>` | Attach a file, folder, or URL to the conversation | Yes | Yes | No |
+| `/provider [name]` | Switch the active LLM provider | Yes | Yes | No |
+| `/model [id]` | Switch the active model | Yes | Yes | No |
+| `/skills` | List available skills | Yes | Yes | Yes |
+| `/skill <name>` | Load a skill by name | No | Yes | Yes |
+| `/branch <msgIndex>` | Rewind the session to an earlier message | Yes | Yes | Yes |
+| `/compact` | Force-summarize/compact the conversation to free context | Yes | Yes | Yes |
+| `/export <path>` | Export the transcript to a file | Yes | No | No |
+| `/reflect` | Distill the session into an `AGENTS.md` | No | Yes | No |
+| `/mcp` | Manage MCP servers (add/browse/run prompts) | No | Yes | No |
+| `/keys` | Add or update provider API keys | No | Yes | No |
+
+`Litos.Gui` also supports dynamic `/mcp__<server>__<prompt>` commands for running prompts exposed
+by a connected MCP server.
 
 ## Status
 
