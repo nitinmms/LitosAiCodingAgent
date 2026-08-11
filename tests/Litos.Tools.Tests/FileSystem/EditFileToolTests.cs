@@ -53,7 +53,7 @@ public class EditFileToolTests : IDisposable
         var result = await tool.InvokeAsync(Args(new { path, old_text = "missing", new_text = "x" }), CancellationToken.None);
 
         Assert.True(result.IsError);
-        Assert.Equal("'old_text' was not found in the file.", result.Text);
+        Assert.Contains("'old_text' was not found in the file.", result.Text);
     }
 
     [Fact]
@@ -130,6 +130,70 @@ public class EditFileToolTests : IDisposable
         var result = await tool.InvokeAsync(Args(new { path, old_text = "target", new_text = "x" }), CancellationToken.None);
 
         Assert.True(result.IsError);
-        Assert.Equal("'old_text' was not found in the file.", result.Text);
+        Assert.Contains("'old_text' was not found in the file.", result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_AnchorUsesLfButFileUsesCrlf_FallsBackToNormalizedMatch()
+    {
+        var path = Path.Combine(_tempDir, "file.cs");
+        await File.WriteAllTextAsync(path, "line1\r\nline2\r\nline3");
+        var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };
+        var tool = new EditFileTool(gate);
+
+        var result = await tool.InvokeAsync(
+            Args(new { path, old_text = "line1\nline2", new_text = "replaced" }),
+            CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Equal("replaced\r\nline3", await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
+    public async Task InvokeAsync_AnchorUsesCrlfButFileUsesLf_FallsBackToNormalizedMatch()
+    {
+        var path = Path.Combine(_tempDir, "file.cs");
+        await File.WriteAllTextAsync(path, "line1\nline2\nline3");
+        var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };
+        var tool = new EditFileTool(gate);
+
+        var result = await tool.InvokeAsync(
+            Args(new { path, old_text = "line1\r\nline2", new_text = "replaced" }),
+            CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Equal("replaced\nline3", await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
+    public async Task InvokeAsync_NormalizedAnchorMatchesMultipleTimes_ReturnsError()
+    {
+        var path = Path.Combine(_tempDir, "file.cs");
+        await File.WriteAllTextAsync(path, "foo\r\nbar foo\r\nbar");
+        var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };
+        var tool = new EditFileTool(gate);
+
+        var result = await tool.InvokeAsync(
+            Args(new { path, old_text = "foo\nbar", new_text = "x" }),
+            CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal("'old_text' matches more than once in the file; make it more specific.", result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_AnchorTrulyMissing_LineEndingFallbackDoesNotMaskError()
+    {
+        var path = Path.Combine(_tempDir, "file.cs");
+        await File.WriteAllTextAsync(path, "line1\r\nline2\r\nline3");
+        var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };
+        var tool = new EditFileTool(gate);
+
+        var result = await tool.InvokeAsync(
+            Args(new { path, old_text = "totally\nmissing", new_text = "x" }),
+            CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Contains("'old_text' was not found in the file.", result.Text);
     }
 }

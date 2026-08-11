@@ -37,12 +37,29 @@ public sealed class EditFileTool(IToolApprovalGate approvalGate) : ITool
 
         var original = await File.ReadAllTextAsync(path, ct);
         var firstIndex = original.IndexOf(oldText, StringComparison.Ordinal);
+        var matchLength = oldText.Length;
+        var usedNormalizedMatch = false;
+
         if (firstIndex < 0)
-            return ToolResult.Error("'old_text' was not found in the file.");
-        if (original.IndexOf(oldText, firstIndex + 1, StringComparison.Ordinal) >= 0)
+        {
+            var normalizedMatch = TryFindNormalizedMatch(original, oldText);
+            if (normalizedMatch is null)
+                return ToolResult.Error(
+                    "'old_text' was not found in the file. Re-read the file and copy the anchor text " +
+                    "exactly, including indentation; a mismatch is often due to a paraphrased anchor " +
+                    "or a whitespace/line-ending difference that isn't visible in the read output.");
+
+            (firstIndex, matchLength) = normalizedMatch.Value;
+            usedNormalizedMatch = true;
+        }
+
+        var hasDuplicate = usedNormalizedMatch
+            ? CountNormalizedMatches(original, oldText) > 1
+            : original.IndexOf(oldText, firstIndex + 1, StringComparison.Ordinal) >= 0;
+        if (hasDuplicate)
             return ToolResult.Error("'old_text' matches more than once in the file; make it more specific.");
 
-        var updated = string.Concat(original.AsSpan(0, firstIndex), newText, original.AsSpan(firstIndex + oldText.Length));
+        var updated = string.Concat(original.AsSpan(0, firstIndex), newText, original.AsSpan(firstIndex + matchLength));
         var diff = UnifiedDiff.Render(original, updated, path);
 
         var decision = await approvalGate.RequestAsync(
@@ -54,5 +71,63 @@ public sealed class EditFileTool(IToolApprovalGate approvalGate) : ITool
         await File.WriteAllTextAsync(path, updated, ct);
         var (added, removed) = LineDelta.Count(oldText, newText);
         return ToolResult.Ok($"Edited {path}. [+{added} -{removed}]");
+    }
+
+    /// <summary>
+    /// Falls back to a line-ending-insensitive search: normalizes CRLF to LF on both sides,
+    /// finds the match in normalized space, then maps that span back onto the original string
+    /// (which may use CRLF) so the replacement lands at the right offsets and the file's
+    /// existing line-ending convention is preserved.
+    /// </summary>
+    private static (int Index, int Length)? TryFindNormalizedMatch(string original, string oldText)
+    {
+        if (!oldText.Contains('\r') && !original.Contains('\r'))
+            return null;
+
+        var normalizedOriginal = original.Replace("\r\n", "\n");
+        var normalizedOldText = oldText.Replace("\r\n", "\n");
+        var normalizedIndex = normalizedOriginal.IndexOf(normalizedOldText, StringComparison.Ordinal);
+        if (normalizedIndex < 0)
+            return null;
+
+        var originalIndex = MapNormalizedOffsetToOriginal(original, normalizedIndex);
+        var originalEnd = MapNormalizedOffsetToOriginal(original, normalizedIndex + normalizedOldText.Length);
+        return (originalIndex, originalEnd - originalIndex);
+    }
+
+    private static int CountNormalizedMatches(string original, string oldText)
+    {
+        var normalizedOriginal = original.Replace("\r\n", "\n");
+        var normalizedOldText = oldText.Replace("\r\n", "\n");
+        if (normalizedOldText.Length == 0)
+            return 0;
+
+        var count = 0;
+        var searchFrom = 0;
+        int index;
+        while ((index = normalizedOriginal.IndexOf(normalizedOldText, searchFrom, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            searchFrom = index + 1;
+        }
+
+        return count;
+    }
+
+    private static int MapNormalizedOffsetToOriginal(string original, int normalizedOffset)
+    {
+        var seen = 0;
+        for (var i = 0; i < original.Length; i++)
+        {
+            if (seen == normalizedOffset)
+                return i;
+
+            if (original[i] == '\r' && i + 1 < original.Length && original[i + 1] == '\n')
+                continue;
+
+            seen++;
+        }
+
+        return original.Length;
     }
 }
