@@ -5,6 +5,19 @@
     <ProjectReference Include="..\Litos.Tools.Mcp\Litos.Tools.Mcp.csproj" />
   </ItemGroup>
 
+  <!--
+    examples/ holds standalone example projects (their own .csproj files) that demonstrate
+    calling Litos.Api over HTTP — they are siblings of this project in directory terms only, not
+    part of it. Without these excludes, Microsoft.NET.Sdk.Web's default globs would recursively
+    pull every example's .cs/.razor files into *this* assembly too, alongside their own build.
+  -->
+  <ItemGroup>
+    <Compile Remove="examples\**" />
+    <Content Remove="examples\**" />
+    <None Remove="examples\**" />
+    <EmbeddedResource Remove="examples\**" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Litos.Api.Tests" />
   </ItemGroup>

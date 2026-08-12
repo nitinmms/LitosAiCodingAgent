@@ -26,12 +26,34 @@ public static class PlainTextMedia
     /// <summary>NUL byte in the first 8 KB — the same heuristic GrepTool.IsBinaryFile and git itself use.</summary>
     public static bool IsBinary(string path)
     {
-        const int sampleSize = 8192;
-        Span<byte> buffer = stackalloc byte[sampleSize];
-
         try
         {
             using var stream = File.OpenRead(path);
+            return IsBinary(stream);
+        }
+        catch (IOException)
+        {
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Same NUL-byte-in-first-8KB sniff as the path overload, for callers with a stream and no
+    /// backing file on disk (e.g. an uploaded HTTP request body). Reads from the stream's current
+    /// position and rewinds it back afterward so the caller can still consume it from the start.
+    /// </summary>
+    public static bool IsBinary(Stream stream)
+    {
+        const int sampleSize = 8192;
+        Span<byte> buffer = stackalloc byte[sampleSize];
+        var startPosition = stream.Position;
+
+        try
+        {
             var read = stream.Read(buffer);
             return buffer[..read].Contains((byte)0);
         }
@@ -42,6 +64,10 @@ public static class PlainTextMedia
         catch (UnauthorizedAccessException)
         {
             return true;
+        }
+        finally
+        {
+            stream.Position = startPosition;
         }
     }
 }

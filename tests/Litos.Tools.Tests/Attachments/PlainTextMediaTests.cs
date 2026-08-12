@@ -59,4 +59,53 @@ public class PlainTextMediaTests : IDisposable
 
         Assert.False(PlainTextMedia.IsBinary(path));
     }
+
+    [Fact]
+    public void IsBinaryStream_ReturnsFalse_ForTextContent()
+    {
+        using var stream = new MemoryStream("namespace SnakeAndLadders;\n"u8.ToArray());
+
+        Assert.False(PlainTextMedia.IsBinary(stream));
+    }
+
+    [Fact]
+    public void IsBinaryStream_ReturnsTrue_WhenContentHasANulByte()
+    {
+        using var stream = new MemoryStream([0x01, 0x00, 0x02, 0x03]);
+
+        Assert.True(PlainTextMedia.IsBinary(stream));
+    }
+
+    [Fact]
+    public void IsBinaryStream_ReturnsFalse_ForEmptyStream()
+    {
+        using var stream = new MemoryStream([]);
+
+        Assert.False(PlainTextMedia.IsBinary(stream));
+    }
+
+    [Fact]
+    public void IsBinaryStream_RewindsToStartingPosition_SoCallerCanStillReadFromTheStart()
+    {
+        using var stream = new MemoryStream("hello world"u8.ToArray());
+
+        var result = PlainTextMedia.IsBinary(stream);
+
+        Assert.False(result);
+        Assert.Equal(0, stream.Position);
+        using var reader = new StreamReader(stream, leaveOpen: true);
+        Assert.Equal("hello world", reader.ReadToEnd());
+    }
+
+    [Fact]
+    public void IsBinaryStream_RewindsToNonZeroStartingPosition_WhenStreamWasPartiallyConsumed()
+    {
+        using var stream = new MemoryStream([0xAA, 0xBB, 0x01, 0x00, 0x02]);
+        stream.Position = 2;
+
+        var result = PlainTextMedia.IsBinary(stream);
+
+        Assert.True(result);
+        Assert.Equal(2, stream.Position);
+    }
 }

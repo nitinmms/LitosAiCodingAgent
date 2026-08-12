@@ -1,0 +1,140 @@
+body {
+    font-family: system-ui, sans-serif;
+    margin: 0;
+    background: #f5f5f7;
+    color: #1a1a1a;
+}
+
+.page {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.topbar {
+    padding: 0.75rem 1.5rem;
+    background: #1a1a2e;
+    color: white;
+}
+
+.brand {
+    font-weight: 600;
+}
+
+main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 1rem 1.5rem 2rem;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.session-id {
+    color: #666;
+    font-size: 0.85rem;
+}
+
+.transcript {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.chat-entry .bubble {
+    padding: 0.6rem 0.9rem;
+    border-radius: 0.75rem;
+    max-width: 80%;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.user-message {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.user-message .bubble {
+    background: #4a4ae0;
+    color: white;
+}
+
+.assistant-message .bubble {
+    background: white;
+    border: 1px solid #e0e0e5;
+}
+
+.attachment-list {
+    margin: 0.4rem 0 0;
+    padding-left: 1.1rem;
+    font-size: 0.85rem;
+    opacity: 0.85;
+}
+
+.tool-activity {
+    font-size: 0.85rem;
+    padding: 0.3rem 0.6rem;
+    border-left: 3px solid #ccc;
+    background: #fafafa;
+    max-width: 80%;
+}
+
+.tool-activity.running { border-left-color: #e0a000; }
+.tool-activity.succeeded { border-left-color: #2e9e4a; }
+.tool-activity.failed { border-left-color: #d33; }
+.tool-activity.skipped { border-left-color: #999; color: #777; }
+
+.tool-detail {
+    margin: 0.3rem 0 0;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #555;
+}
+
+.system-note {
+    font-size: 0.85rem;
+    color: #777;
+    font-style: italic;
+}
+
+.composer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: white;
+    border: 1px solid #e0e0e5;
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+}
+
+.composer textarea {
+    resize: vertical;
+    font-family: inherit;
+    padding: 0.5rem;
+}
+
+.pending-attachments {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.85rem;
+}
+
+.composer button {
+    align-self: flex-end;
+    padding: 0.5rem 1.25rem;
+    background: #4a4ae0;
+    color: white;
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+}
+
+.composer button:disabled {
+    background: #aaa;
+    cursor: not-allowed;
+}
+
+.error {
+    color: #d33;
+}

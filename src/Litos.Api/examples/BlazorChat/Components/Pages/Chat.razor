@@ -1,0 +1,194 @@
+@page "/"
+@rendermode InteractiveServer
+@inject LitosApiClient LitosClient
+@implements IDisposable
+
+<h1>Litos Chat Example</h1>
+<p class="session-id">Session: <code>@_sessionId</code></p>
+
+<div class="transcript">
+    @foreach (var entry in _entries)
+    {
+        <ChatMessageView Entry="entry" />
+    }
+    @if (_isSending)
+    {
+        <div class="chat-entry system-note">Waiting for a response…</div>
+    }
+</div>
+
+<EditForm Model="this" OnValidSubmit="SendAsync" class="composer">
+    <InputTextArea @bind-Value="_draftText" placeholder="Message Litos…" disabled="@_isSending" rows="2" />
+    <InputFile OnChange="OnFilesSelected" multiple disabled="@_isSending" />
+    @if (_pendingAttachments.Count > 0)
+    {
+        <ul class="pending-attachments">
+            @foreach (var attachment in _pendingAttachments)
+            {
+                <li>@attachment.FileName (@(attachment.Content.Length / 1024) KB)</li>
+            }
+        </ul>
+    }
+    <button type="submit" disabled="@(_isSending || (string.IsNullOrWhiteSpace(_draftText) && _pendingAttachments.Count == 0))">Send</button>
+</EditForm>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+@code {
+    // One id per Blazor circuit — Litos.Api treats the URL segment as the whole session identity
+    // (no server-issued session concept exists), and per this example's scope, history is held
+    // only in this component's in-memory _entries list, lost on refresh/reconnect.
+    private readonly string _sessionId = Guid.NewGuid().ToString("n");
+
+    private readonly List<ChatEntry> _entries = [];
+    private readonly List<PendingAttachment> _pendingAttachments = [];
+    private readonly Dictionary<string, ChatEntry.ToolActivity> _toolActivityByCallId = [];
+
+    private string _draftText = "";
+    private bool _isSending;
+    private string? _error;
+    private CancellationTokenSource? _sendCts;
+
+    private const long MaxFileBytes = 20 * 1024 * 1024; // Mirrors TurnsEndpoints.MaxAttachmentBytes.
+    private const int MaxFileCount = 5; // Mirrors TurnsEndpoints.MaxAttachmentCount.
+
+    private async Task OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        _error = null;
+        foreach (var file in e.GetMultipleFiles(MaxFileCount))
+        {
+            if (file.Size > MaxFileBytes)
+            {
+                _error = $"'{file.Name}' is larger than the {MaxFileBytes / (1024 * 1024)}MB limit and was not added.";
+                continue;
+            }
+
+            await using var stream = file.OpenReadStream(MaxFileBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            _pendingAttachments.Add(new PendingAttachment(file.Name, file.ContentType, buffer.ToArray()));
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_draftText) && _pendingAttachments.Count == 0)
+            return;
+
+        var text = _draftText;
+        var attachments = _pendingAttachments.ToList();
+        _entries.Add(new ChatEntry.UserMessage(text, attachments.Select(a => a.FileName).ToList()));
+        _draftText = "";
+        _pendingAttachments.Clear();
+        _isSending = true;
+        _error = null;
+
+        _sendCts = new CancellationTokenSource();
+        try
+        {
+            var outcome = await LitosClient.SendTurnAsync(_sessionId, text, attachments, _sendCts.Token);
+            switch (outcome)
+            {
+                case TurnOutcome.Started started:
+                    await ConsumeStreamAsync(started.Events, _sendCts.Token);
+                    break;
+                case TurnOutcome.Steered steered:
+                    _entries.Add(new ChatEntry.SystemNote(steered.Message));
+                    break;
+                case TurnOutcome.Queued queued:
+                    _entries.Add(new ChatEntry.SystemNote(queued.Message));
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Circuit disposed mid-turn — nothing to report.
+        }
+        catch (Exception ex)
+        {
+            _error = $"Request to Litos.Api failed: {ex.Message}";
+        }
+        finally
+        {
+            _isSending = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ConsumeStreamAsync(IAsyncEnumerable<AgentEventDto> events, CancellationToken ct)
+    {
+        ChatEntry.AssistantMessage? currentMessage = null;
+
+        await foreach (var evt in events.WithCancellation(ct))
+        {
+            switch (evt)
+            {
+                case TextDeltaDto delta:
+                    if (currentMessage is null)
+                    {
+                        currentMessage = new ChatEntry.AssistantMessage();
+                        _entries.Add(currentMessage);
+                    }
+                    currentMessage.Text += delta.Text;
+                    break;
+
+                case ToolCallStartedDto started:
+                    var activity = new ChatEntry.ToolActivity(started.ToolName, ToolActivityStatus.Running, null);
+                    _toolActivityByCallId[started.CallId] = activity;
+                    _entries.Add(activity);
+                    // A tool call result may still stream more assistant text afterward in the
+                    // same turn — closing currentMessage here lets that text start a fresh bubble
+                    // rather than appending after an interleaved tool-activity entry.
+                    currentMessage = null;
+                    break;
+
+                case ToolCallResultDto result:
+                    ReplaceToolActivity(result.CallId, result.Success ? ToolActivityStatus.Succeeded : ToolActivityStatus.Failed, Truncate(result.ResultText));
+                    break;
+
+                case ToolCallSkippedDto skipped:
+                    ReplaceToolActivity(skipped.CallId, ToolActivityStatus.Skipped, skipped.Reason);
+                    break;
+
+                case ErrorOccurredDto error:
+                    _entries.Add(new ChatEntry.SystemNote($"Error: {error.Message}"));
+                    break;
+
+                case CompactionOccurredDto:
+                    _entries.Add(new ChatEntry.SystemNote("(conversation history was compacted to stay within context limits)"));
+                    break;
+
+                case MessageCompletedDto:
+                    currentMessage = null;
+                    break;
+            }
+
+            StateHasChanged();
+        }
+    }
+
+    private void ReplaceToolActivity(string callId, ToolActivityStatus status, string? detail)
+    {
+        if (!_toolActivityByCallId.TryGetValue(callId, out var activity))
+            return;
+
+        // Found by reference (ReferenceEquals), not List<T>.IndexOf's default value equality —
+        // ChatEntry.ToolActivity is a record, so two Running activities for the same tool with no
+        // detail yet would otherwise compare equal and IndexOf could replace the wrong bubble.
+        var index = _entries.FindIndex(e => ReferenceEquals(e, activity));
+        if (index < 0)
+            return;
+
+        var updated = activity with { Status = status, Detail = detail };
+        _entries[index] = updated;
+        _toolActivityByCallId[callId] = updated;
+    }
+
+    private static string Truncate(string text, int maxLength = 500) =>
+        text.Length <= maxLength ? text : text[..maxLength] + "…";
+
+    public void Dispose() => _sendCts?.Cancel();
+}

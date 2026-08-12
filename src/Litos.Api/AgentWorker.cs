@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Litos.Agent;
 using Litos.Agent.Messages;
@@ -14,6 +13,7 @@ public enum TurnOutcome
 {
     Started,
     Steered,
+    Queued,
 }
 
 /// <summary>
@@ -34,7 +34,18 @@ public enum TurnOutcome
 /// </summary>
 public sealed class AgentWorker : BackgroundService
 {
-    private readonly ConcurrentDictionary<(SessionOwner Owner, string SessionId), ActiveTurn> _activeTurns = new();
+    // _activeTurns and _pendingContent are both guarded by _turnsLock, not left as independent
+    // ConcurrentDictionarys — the two must change together atomically (an "is this key active"
+    // check plus an enqueue-into/dequeue-from _pendingContent, or a turn's own removal from
+    // _activeTurns plus whatever a concurrent StartOrSteerTurn call decides to do about pending
+    // content for that same key). Two separately-locked structures left a real window where
+    // content enqueued right as a turn finished could be stranded forever: a dequeue could
+    // observe "not active yet" and complete before the enqueue that was meant to reach it ran.
+    // A plain Dictionary is fine here — every access already goes through the lock, so there's no
+    // benefit to ConcurrentDictionary's own lock-free reads.
+    private readonly Lock _turnsLock = new();
+    private readonly Dictionary<(SessionOwner Owner, string SessionId), ActiveTurn> _activeTurns = [];
+    private readonly Dictionary<(SessionOwner Owner, string SessionId), List<ContentBlock>> _pendingContent = [];
     private readonly Lock _settingsLock = new();
     private readonly IChatProviderFactory _providerFactory;
     private readonly AgentLoopFactory _loopFactory;
@@ -79,9 +90,15 @@ public sealed class AgentWorker : BackgroundService
 
     public DateTimeOffset StartedAt { get; }
 
-    public bool IsTurnActive => !_activeTurns.IsEmpty;
+    public bool IsTurnActive
+    {
+        get { lock (_turnsLock) return _activeTurns.Count > 0; }
+    }
 
-    public bool IsTurnActiveFor(SessionOwner owner, string sessionId) => _activeTurns.ContainsKey((owner, sessionId));
+    public bool IsTurnActiveFor(SessionOwner owner, string sessionId)
+    {
+        lock (_turnsLock) return _activeTurns.ContainsKey((owner, sessionId));
+    }
 
     /// <summary>
     /// Providers with a configured API key — the choices a Settings page can offer, mirroring
@@ -125,34 +142,79 @@ public sealed class AgentWorker : BackgroundService
     /// and the HTTP API's own session — or two different Telegram chats — make progress
     /// independently. The returned channel reader (only non-null for TurnOutcome.Started) is fed
     /// by that turn's own background Task and completes when the turn ends.
+    ///
+    /// <paramref name="queueIfActive"/> changes what happens on the "already running" path: when
+    /// true (the HTTP attachment endpoint's own case — see TurnsEndpoints), content is held in
+    /// _pendingContent instead of being steered in, because RenderForSteering only carries text
+    /// into a running turn and would silently drop any ImageBlock. The queued content is prepended
+    /// to whatever starts the *next* fresh turn for this key, once the current one finishes.
+    /// Callers that never set this (Telegram, plain-text HTTP) keep today's immediate-steer
+    /// behavior unchanged.
     /// </summary>
     public ChannelReader<AgentEvent>? StartOrSteerTurn(
-        SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content, CancellationToken requestAborted, out TurnOutcome outcome)
+        SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content, CancellationToken requestAborted,
+        out TurnOutcome outcome, bool queueIfActive = false)
     {
         var key = (owner, sessionId);
-        if (_activeTurns.TryGetValue(key, out var existing))
+        Channel<AgentEvent>? events = null;
+        IReadOnlyList<ContentBlock>? effectiveContent = null;
+        ActiveTurn? turn = null;
+
+        // The full decision — is a turn active for this key, and if so steer/queue, otherwise
+        // start one (draining any pending content queued for it) — happens under one lock so it's
+        // atomic with RunTurnAsync's own removal of the key on completion (see that method's
+        // finally, which takes the same lock). Two independently-locked structures here would
+        // leave a window where content queued right as a turn finishes is never dequeued by
+        // anyone: a dequeue could observe "not active yet" and complete before a concurrent
+        // enqueue for the same key runs. Only the decision and the dictionary mutations happen
+        // inside the lock — RunTurnAsync itself (the actual long-running turn) is kicked off
+        // after releasing it, so the lock is held only briefly.
+        lock (_turnsLock)
         {
-            existing.Steering.Writer.TryWrite(new SteeringMessage(RenderForSteering(content), SteeringMode.Steer));
-            outcome = TurnOutcome.Steered;
-            return null;
+            if (_activeTurns.TryGetValue(key, out var existing))
+            {
+                if (queueIfActive)
+                {
+                    EnqueuePendingContentLocked(key, content);
+                    outcome = TurnOutcome.Queued;
+                    return null;
+                }
+
+                existing.Steering.Writer.TryWrite(new SteeringMessage(RenderForSteering(content), SteeringMode.Steer));
+                outcome = TurnOutcome.Steered;
+                return null;
+            }
+
+            // Anything queued by an earlier attachment-bearing request while the *previous* turn
+            // for this key was running belongs to this fresh turn — prepended so it reads before
+            // whatever prompted this turn to start. Dequeued under the same lock that will add
+            // this turn to _activeTurns below, so no request arriving after this point can queue
+            // content that gets missed by this turn (it'll see _activeTurns already populated and
+            // queue for the *next* one instead).
+            effectiveContent = _pendingContent.Remove(key, out var pending) && pending.Count > 0
+                ? [.. pending, .. content]
+                : content;
+
+            events = Channel.CreateUnbounded<AgentEvent>();
+            var steering = Channel.CreateUnbounded<SteeringMessage>();
+            turn = new ActiveTurn(steering, Task.CompletedTask);
+            _activeTurns[key] = turn;
         }
 
-        var events = Channel.CreateUnbounded<AgentEvent>();
-        var steering = Channel.CreateUnbounded<SteeringMessage>();
-        var turn = new ActiveTurn(steering, Task.CompletedTask);
-        if (!_activeTurns.TryAdd(key, turn))
-        {
-            // Lost a race with another caller starting the same key between the check above and
-            // here — treat it the same as "already running": steer instead of double-starting.
-            _activeTurns[key].Steering.Writer.TryWrite(new SteeringMessage(RenderForSteering(content), SteeringMode.Steer));
-            outcome = TurnOutcome.Steered;
-            return null;
-        }
-
-        var runTask = RunTurnAsync(owner, sessionId, content, events.Writer, steering, requestAborted);
-        _activeTurns[key] = turn with { Run = runTask };
+        var runTask = RunTurnAsync(owner, sessionId, effectiveContent, events.Writer, turn.Steering, requestAborted);
+        lock (_turnsLock)
+            _activeTurns[key] = turn with { Run = runTask };
         outcome = TurnOutcome.Started;
         return events.Reader;
+    }
+
+    /// <summary>Caller must already hold _turnsLock.</summary>
+    private void EnqueuePendingContentLocked((SessionOwner, string) key, IReadOnlyList<ContentBlock> content)
+    {
+        if (_pendingContent.TryGetValue(key, out var existing))
+            existing.AddRange(content);
+        else
+            _pendingContent[key] = [.. content];
     }
 
     private static string RenderForSteering(IReadOnlyList<ContentBlock> content) =>
@@ -238,7 +300,8 @@ public sealed class AgentWorker : BackgroundService
         {
             events.TryComplete();
             steering.Writer.TryComplete();
-            _activeTurns.TryRemove((owner, sessionId), out _);
+            lock (_turnsLock)
+                _activeTurns.Remove((owner, sessionId));
         }
     }
 

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Deliberately has no ProjectReference to any Litos.* project. This example exists to show what
+    a genuinely external app looks like when talking to a running Litos.Api container over HTTP —
+    referencing Litos.Agent/Litos.Api directly would blur that line and let the example silently
+    depend on internal types a real third-party caller could never see.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>litos-examples-blazorchat</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,63 @@
+@if (Entry is ChatEntry.UserMessage userMessage)
+{
+    <div class="chat-entry user-message">
+        <div class="bubble">
+            @if (!string.IsNullOrWhiteSpace(userMessage.Text))
+            {
+                <p>@userMessage.Text</p>
+            }
+            @if (userMessage.AttachmentNames.Count > 0)
+            {
+                <ul class="attachment-list">
+                    @foreach (var name in userMessage.AttachmentNames)
+                    {
+                        <li>@name</li>
+                    }
+                </ul>
+            }
+        </div>
+    </div>
+}
+else if (Entry is ChatEntry.AssistantMessage assistantMessage)
+{
+    <div class="chat-entry assistant-message">
+        <div class="bubble">@assistantMessage.Text</div>
+    </div>
+}
+else if (Entry is ChatEntry.ToolActivity toolActivity)
+{
+    <div class="chat-entry tool-activity @StatusClass(toolActivity.Status)">
+        <span class="tool-name">@StatusIcon(toolActivity.Status) @toolActivity.ToolName</span>
+        @if (!string.IsNullOrEmpty(toolActivity.Detail))
+        {
+            <pre class="tool-detail">@toolActivity.Detail</pre>
+        }
+    </div>
+}
+else if (Entry is ChatEntry.SystemNote note)
+{
+    <div class="chat-entry system-note">@note.Text</div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public required ChatEntry Entry { get; set; }
+
+    private static string StatusClass(ToolActivityStatus status) => status switch
+    {
+        ToolActivityStatus.Running => "running",
+        ToolActivityStatus.Succeeded => "succeeded",
+        ToolActivityStatus.Failed => "failed",
+        ToolActivityStatus.Skipped => "skipped",
+        _ => "",
+    };
+
+    private static string StatusIcon(ToolActivityStatus status) => status switch
+    {
+        ToolActivityStatus.Running => "⏳",
+        ToolActivityStatus.Succeeded => "✓",
+        ToolActivityStatus.Failed => "✗",
+        ToolActivityStatus.Skipped => "⊘",
+        _ => "",
+    };
+}

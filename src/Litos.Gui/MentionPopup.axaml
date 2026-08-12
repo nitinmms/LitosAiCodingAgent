@@ -6,10 +6,10 @@
   <ListBox Name="ItemsList" MaxHeight="280" Background="Transparent">
     <ListBox.ItemTemplate>
       <DataTemplate x:DataType="local:MentionPopup+MentionEntry">
-        <StackPanel Orientation="Horizontal" Margin="4,2">
-          <TextBlock Text="{Binding Icon}" Width="20" />
-          <TextBlock Text="{Binding Path}" Foreground="WhiteSmoke" Margin="6,0,0,0" />
-        </StackPanel>
+        <Grid ColumnDefinitions="20,*" Margin="4,2">
+          <TextBlock Grid.Column="0" Text="{Binding Icon}" />
+          <TextBlock Grid.Column="1" Text="{Binding Path}" Foreground="WhiteSmoke" Margin="6,0,0,0" TextWrapping="Wrap" />
+        </Grid>
       </DataTemplate>
     </ListBox.ItemTemplate>
   </ListBox>

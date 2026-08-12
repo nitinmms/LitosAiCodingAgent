@@ -24,6 +24,11 @@ public sealed class FakeChatProvider : IChatProvider
     /// prove a source's newly-connected tool reached the NEXT turn but not one already running.</summary>
     public List<IReadOnlyList<ToolSchema>> ReceivedToolLists { get; } = [];
 
+    /// <summary>Every ChatRequest.Messages list this provider has actually been asked to stream
+    /// against, in call order — lets a test assert exactly what content a given turn saw, e.g. to
+    /// prove content queued while a turn was busy reached the NEXT turn's request.</summary>
+    public List<IReadOnlyList<ChatMessage>> ReceivedMessageLists { get; } = [];
+
     public IReadOnlyList<ModelInfo> ModelsToReturn { get; set; } =
         [new ModelInfo("fake-model", "Fake Model", IsDefault: true)];
 
@@ -44,6 +49,7 @@ public sealed class FakeChatProvider : IChatProvider
         ChatRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         ReceivedToolLists.Add(request.Tools);
+        ReceivedMessageLists.Add(request.Messages);
 
         var response = _responses.Count > 0
             ? _responses.Dequeue()

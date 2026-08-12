@@ -169,6 +169,21 @@ builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddAntiforgery();
 
+builder.Services.AddSingleton<AttachmentContentBuilder>();
+
+// Explicit limits for POST /sessions/{id}/turns' multipart attachment path (TurnsEndpoints.
+// MaxAttachmentBytes/MaxAttachmentCount govern the per-file/per-request checks that produce a
+// clean 400; these two settings just need to be large enough to let a request that would pass
+// those checks reach the endpoint at all, rather than being cut off earlier by Kestrel/the form
+// reader with a generic connection-level failure. Sized with headroom above
+// MaxAttachmentCount * MaxAttachmentBytes for multipart boundary/header overhead.
+var maxMultipartBytes = TurnsEndpoints.MaxAttachmentCount * TurnsEndpoints.MaxAttachmentBytes + 1024 * 1024;
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>
+{
+    o.MultipartBodyLengthLimit = maxMultipartBytes;
+});
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = maxMultipartBytes);
+
 var app = builder.Build();
 
 app.UseStaticFiles();

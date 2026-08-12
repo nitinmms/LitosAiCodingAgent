@@ -370,3 +370,7 @@ scratch/
 # Docker env files with real secrets (see src/Litos.Api/.env.example)
 .env
 src/Litos.Api/.env
+
+# BlazorChat example's local config carries a real Litos.Api admin token
+src/Litos.Api/examples/BlazorChat/appsettings.json
+src/Litos.Api/examples/BlazorChat/appsettings.Development.json
