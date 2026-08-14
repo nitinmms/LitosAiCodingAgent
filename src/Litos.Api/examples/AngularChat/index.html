@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en" ng-app="litosChat" ng-controller="ChatController">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Litos Chat Example</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div class="page">
+        <div class="topbar">
+            <span class="brand">Litos Chat Example</span>
+        </div>
+
+        <div class="session-bar" ng-if="session">
+            <span class="session-user">{{ session.username }}</span>
+            <button type="button" class="logout-button" ng-click="logout()">Log out</button>
+        </div>
+
+        <main>
+            <!-- Login view (mirrors BlazorChat's Login.razor + LoginLayout.razor) -->
+            <div class="login-shell" ng-if="!session">
+                <div class="login-card">
+                    <h1>Litos Chat</h1>
+                    <p class="login-hint">Sign in with your Litos.Api account.</p>
+
+                    <form class="login-form" ng-submit="login()">
+                        <label for="username">Username</label>
+                        <input id="username" name="username" autocomplete="username" autofocus ng-model="loginForm.username" />
+
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" autocomplete="current-password" ng-model="loginForm.password" />
+
+                        <button type="submit" class="primary" ng-disabled="loggingIn">Sign in</button>
+                    </form>
+
+                    <p class="login-error" ng-if="loginError">{{ loginError }}</p>
+                </div>
+            </div>
+
+            <!-- Chat view (mirrors Chat.razor) -->
+            <div class="chat-layout" ng-if="session">
+                <aside class="session-sidebar">
+                    <div class="sidebar-heading">
+                        <strong>Conversations</strong>
+                        <button type="button" class="new-session" ng-click="startNewSession()">＋ New</button>
+                    </div>
+                    <input class="session-search" ng-model="search.text" placeholder="Search conversations…" aria-label="Search conversations" />
+                    <div class="session-list">
+                        <button type="button" class="session-card" ng-class="{ selected: s.sessionId === sessionId }"
+                                ng-repeat="s in filteredSessions()" ng-click="selectSession(s.sessionId)">
+                            <strong>{{ s.firstUserMessagePreview || 'New conversation' }}</strong>
+                            <small>{{ s.lastUpdatedAt | date:'medium' }}</small>
+                        </button>
+                        <p class="no-sessions" ng-if="sessions.length === 0">No previous conversations</p>
+                    </div>
+                </aside>
+
+                <section class="chat-shell">
+                    <header class="chat-header">
+                        <div class="bot-avatar" aria-hidden="true">L</div>
+                        <div>
+                            <h1>Litos Chat</h1>
+                            <p><span class="status-dot"></span> Online · private conversation</p>
+                        </div>
+                        <span class="session-id" title="Session identifier">Session {{ sessionId.substring(0, 8) }}</span>
+                    </header>
+
+                    <div class="transcript" id="transcript" aria-live="polite">
+                        <div class="empty-state" ng-if="entries.length === 0">
+                            <div class="empty-icon">✦</div>
+                            <h2>How can I help?</h2>
+                            <p>Send a message or attach files to get started.</p>
+                        </div>
+
+                        <div ng-repeat="entry in entries" ng-switch="entry.kind">
+
+                            <div class="chat-entry user-message" ng-switch-when="user">
+                                <div class="bubble">
+                                    <p ng-if="entry.text">{{ entry.text }}</p>
+                                    <ul class="attachment-list" ng-if="entry.attachmentNames.length > 0">
+                                        <li ng-repeat="name in entry.attachmentNames"><span class="file-icon">↗</span>{{ name }}</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <div class="chat-entry assistant-message" ng-switch-when="assistant">
+                                <div class="bubble">{{ entry.text }}</div>
+                            </div>
+
+                            <div class="chat-entry tool-activity" ng-class="entry.status" ng-switch-when="tool">
+                                <span class="tool-name">
+                                    <span ng-if="entry.status === 'running'">⏳</span>
+                                    <span ng-if="entry.status === 'succeeded'">✓</span>
+                                    <span ng-if="entry.status === 'failed'">✗</span>
+                                    <span ng-if="entry.status === 'skipped'">⊘</span>
+                                    {{ entry.toolName }}
+                                </span>
+                                <pre class="tool-detail" ng-if="entry.detail">{{ entry.detail }}</pre>
+                            </div>
+
+                            <div class="chat-entry system-note" ng-switch-when="system">{{ entry.text }}</div>
+                        </div>
+
+                        <div class="chat-entry system-note typing" ng-if="isSending"><span></span><span></span><span></span> Litos is thinking</div>
+                    </div>
+
+                    <form class="composer" ng-submit="send()">
+                        <div class="pending-attachments" aria-label="Files to attach" ng-if="pendingAttachments.length > 0">
+                            <div class="attachment-chip" ng-repeat="attachment in pendingAttachments">
+                                <span class="file-icon">↗</span>
+                                <span class="attachment-info"><strong>{{ attachment.fileName }}</strong><small>{{ formatSize(attachment.blob.size) }}</small></span>
+                                <button type="button" class="remove-attachment" ng-click="removeAttachment($index)" aria-label="Remove {{ attachment.fileName }}">×</button>
+                            </div>
+                        </div>
+                        <div class="composer-row">
+                            <label class="attach-button" ng-class="{ disabled: isSending }" title="Attach up to 5 files">
+                                <span aria-hidden="true">＋</span> Attach
+                                <input type="file" multiple ng-disabled="isSending" aria-label="Attach files"
+                                       onchange="angular.element(this).scope().onFilesSelected(this.files)" />
+                            </label>
+                            <textarea ng-model="composer.text" ng-keydown="onComposerKeyDown($event)" placeholder="Message Litos…" ng-disabled="isSending" rows="1"></textarea>
+                            <button type="submit" class="send-button" ng-disabled="!canSend()" aria-label="Send message">↑</button>
+                        </div>
+                        <div class="composer-hint">Up to 5 files · 20 MB each</div>
+                    </form>
+
+                    <p class="error" ng-if="error">{{ error }}</p>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.3/angular.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

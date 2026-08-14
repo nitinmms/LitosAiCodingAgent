@@ -63,6 +63,23 @@ var jwtSigningKeyProvider = new JwtSigningKeyProvider(builder.Configuration);
 builder.Services.AddSingleton(jwtSigningKeyProvider);
 builder.Services.AddScoped<JwtTokenService>();
 
+// Opt-in CORS for genuinely external browser-side clients (e.g. examples/AngularChat) that call
+// this API directly from a different origin — same env-var-only pattern as ADMIN_TOKEN/
+// JWT_SIGNING_KEY, no file-backed config. Absent by default, matching today's behavior (no CORS
+// policy registered at all) for anyone not opting in. Credentials aren't allowed since callers
+// authenticate via an Authorization header (bearer JWT/ADMIN_TOKEN), not cookies, so
+// AllowAnyOrigin-with-credentials' security concerns don't apply here — but an explicit origin
+// allowlist is still required rather than AllowAnyOrigin, since a bearer token is present.
+var corsAllowedOrigins = (Environment.GetEnvironmentVariable("CORS_ALLOWED_ORIGINS") ?? builder.Configuration["CORS_ALLOWED_ORIGINS"])
+    ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    ?? [];
+const string corsPolicyName = "LitosApiExternalClients";
+if (corsAllowedOrigins.Length > 0)
+{
+    builder.Services.AddCors(o => o.AddPolicy(corsPolicyName, policy =>
+        policy.WithOrigins(corsAllowedOrigins).AllowAnyHeader().AllowAnyMethod()));
+}
+
 // Channel-agnostic — MCP Ask-mode gating needs this even with no Telegram token configured, so it
 // can no longer live only inside the telegramToken-is-not-null branch below.
 var pendingApprovalStore = new PendingApprovalStore();
@@ -246,6 +263,8 @@ using (var migrationScope = app.Services.CreateScope())
 }
 
 app.UseStaticFiles();
+if (corsAllowedOrigins.Length > 0)
+    app.UseCors(corsPolicyName);
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
