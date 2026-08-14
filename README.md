@@ -1,5 +1,7 @@
 # Litos AI Agent
 
+**[litosai.dev](https://litosai.dev/)**
+
 A minimal, transparent AI coding agent written in pure .NET. Multi-provider (Anthropic,
 OpenAI, Google Gemini, OpenRouter), multi-face (console, desktop GUI, and an HTTP/API host with
 web UI), with tool use (file edit, shell, web search) and MCP client support.
