@@ -4,13 +4,17 @@ using Litos.Api.Approvals;
 using Litos.Api.Auth;
 using Litos.Api.Channels;
 using Litos.Api.Channels.Telegram;
+using Litos.Api.Data;
 using Litos.Api.Logs;
 using Litos.Api.Turns;
 using Litos.Host;
 using Litos.Tools.Mcp;
 using Litos.Tools.Shell;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 using Telegram.Bot;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -39,7 +43,25 @@ builder.Services.AddSingleton(_ => new AgentWorker(
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorker>());
 builder.Services.AddSingleton<AdminTokenProvider>();
-builder.Services.AddSingleton<AdminTokenFilter>();
+
+// Per-user account store — Postgres via Npgsql. Connection string is a deployment secret read
+// directly from the environment, the same way ADMIN_TOKEN is (AdminTokenProvider) rather than
+// through LitosConfig's ApiKeys (that dictionary is chat-provider keys only, keyed off a fixed
+// allowlist — this isn't one). Admin-provisioned only: no self-service /auth/register endpoint.
+var postgresConnectionString = Environment.GetEnvironmentVariable("POSTGRES_CONNECTION_STRING")
+    ?? builder.Configuration["POSTGRES_CONNECTION_STRING"]
+    ?? throw new InvalidOperationException(
+        "POSTGRES_CONNECTION_STRING is required (env var) to store per-user accounts.");
+builder.Services.AddDbContext<LitosDbContext>(o => o.UseNpgsql(postgresConnectionString));
+builder.Services.AddScoped<UserStore>();
+
+// Constructed directly (not left to DI) since AddJwtBearer's options callback below needs the
+// signing key synchronously, before builder.Build() exists to resolve it — same reason
+// mcpConfigStore/telegramConfigStore are constructed directly elsewhere in this file. Registered
+// as this same instance afterward so JwtTokenService/JwtSigningKeyProvider consumers share it.
+var jwtSigningKeyProvider = new JwtSigningKeyProvider(builder.Configuration);
+builder.Services.AddSingleton(jwtSigningKeyProvider);
+builder.Services.AddScoped<JwtTokenService>();
 
 // Channel-agnostic — MCP Ask-mode gating needs this even with no Telegram token configured, so it
 // can no longer live only inside the telegramToken-is-not-null branch below.
@@ -162,8 +184,37 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.Cookie.Name = "litos_admin";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Strict;
+        // Sliding 14-day expiration: a caller stays signed in as long as they use the admin UI
+        // at least that often, without needing "remember me" UI — matches the pre-existing
+        // shared-admin-token cookie's implicit lifetime (ASP.NET Core's own 14-day default),
+        // made explicit now that a second, longer-lived-feeling credential type (username/
+        // password) exists alongside it.
+        options.ExpireTimeSpan = TimeSpan.FromDays(14);
+        options.SlidingExpiration = true;
+    })
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, AdminTokenAuthenticationHandler>(
+        AdminTokenAuthenticationDefaults.AuthenticationScheme, _ => { })
+    .AddJwtBearer(options =>
+    {
+        // The API/client credential (POST /auth/token) — separate from the litos_admin cookie
+        // the Blazor UI uses, and from ADMIN_TOKEN's bearer scheme. Validated fully offline
+        // (signature + issuer/audience/lifetime), no round trip to Postgres per request; a
+        // revoked-via-disable account only stops working once its access token expires (up to
+        // AccessTokenLifetime later) or its refresh token is used and rejected — see
+        // JwtTokenService.RevokeAllForUserAsync's doc comment.
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = JwtSigningKeyProvider.Issuer,
+            ValidateAudience = true,
+            ValidAudience = JwtSigningKeyProvider.Audience,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = jwtSigningKeyProvider.Key,
+            ClockSkew = TimeSpan.FromSeconds(30),
+        };
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(o => o.AddAdminOrUserPolicy());
 builder.Services.AddCascadingAuthenticationState();
 
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
@@ -186,6 +237,14 @@ builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = maxMultipart
 
 var app = builder.Build();
 
+// Applies pending EF Core migrations at startup — fails fast with a clear exception if Postgres
+// is unreachable or misconfigured, rather than the app half-starting and every /auth/login-user
+// or Users-page request failing later with an opaque DbContext error.
+using (var migrationScope = app.Services.CreateScope())
+{
+    await migrationScope.ServiceProvider.GetRequiredService<LitosDbContext>().Database.MigrateAsync();
+}
+
 app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -200,7 +259,7 @@ app.MapGet("/status", (AgentWorker worker) => Results.Ok(new
     model = worker.Model,
     startedAt = worker.StartedAt,
     turnActive = worker.IsTurnActive,
-})).AddEndpointFilter<AdminTokenFilter>();
+})).RequireAuthorization(AuthPolicies.AdminOrUser);
 
 app.MapRazorComponents<Litos.Api.Components.App>()
     .AddInteractiveServerRenderMode();

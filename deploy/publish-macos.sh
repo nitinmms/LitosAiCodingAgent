@@ -24,7 +24,9 @@ dotnet publish "$PROJECT" \
     -r "$RUNTIME" \
     -o "$PUBLISH_DIR" \
     --self-contained true \
-    -p:PublishSingleFile=true
+    -p:PublishSingleFile=true \
+    -p:Version="$VERSION" \
+    -p:InformationalVersion="$VERSION"
 
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$BUNDLE_DIR/Contents/MacOS"

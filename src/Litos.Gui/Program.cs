@@ -29,6 +29,8 @@ internal static class Program
         if (OperatingSystem.IsWindows())
             Win32JobObject.AssignCurrentProcessWithKillOnClose();
 
+        var resume = SessionResumeArgs.Parse(args);
+
         var config = LitosConfig.Load();
         if (config.AvailableChatProviders.Count == 0)
         {
@@ -109,8 +111,9 @@ internal static class Program
         var toolRegistry = toolRegistryFactory.Create();
         var loop = loopFactory.Create(chatProvider, toolRegistry);
 
-        var workingDirectory = ResolveStartupWorkingDirectory(
-            config.LastWorkingDirectory, Directory.Exists, Directory.GetCurrentDirectory);
+        var workingDirectory = resume is not null && Directory.Exists(resume.WorkingDirectory)
+            ? resume.WorkingDirectory
+            : ResolveStartupWorkingDirectory(config.LastWorkingDirectory, Directory.Exists, Directory.GetCurrentDirectory);
 
         // File/shell tools resolve relative paths against the process's real CWD, not
         // against Transcript.WorkingDirectory (which is otherwise only ever shown in the
@@ -139,12 +142,17 @@ internal static class Program
             mcpToolProvider,
             provider.GetRequiredService<ISystemPromptProvider>());
 
-        return BuildAvaloniaApp(session, workingDirectory)
+        // Fire-and-forget, same shape as InitializeMcpAsync above: must not block the window from
+        // appearing. MainWindow reads session.UpdateCheckTask once constructed and reflects the
+        // result in the status bar (see MainWindow's constructor and ObserveUpdateCheckAsync).
+        session.UpdateCheckTask = SelfUpdater.CheckForUpdateAsync(session.UpdateHttpClient, CancellationToken.None);
+
+        return BuildAvaloniaApp(session, workingDirectory, resume?.SessionId)
             .StartWithClassicDesktopLifetime(args);
     }
 
-    private static AppBuilder BuildAvaloniaApp(MainWindowSession session, string workingDirectory) =>
-        AppBuilder.Configure(() => new App { Session = session, WorkingDirectory = workingDirectory })
+    private static AppBuilder BuildAvaloniaApp(MainWindowSession session, string workingDirectory, string? resumeSessionId) =>
+        AppBuilder.Configure(() => new App { Session = session, WorkingDirectory = workingDirectory, ResumeSessionId = resumeSessionId })
             .UsePlatformDetect()
             .WithInterFont()
             .LogToTrace();

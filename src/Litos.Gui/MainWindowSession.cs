@@ -82,4 +82,27 @@ public sealed class MainWindowSession(
 
     /// <summary>Builds the system prompt for the "View Context" breakdown modal — the same provider AgentLoop uses per-turn, called on demand rather than cached since it can change between turns (new AGENTS.md content, newly discovered MCP tools).</summary>
     public ISystemPromptProvider SystemPromptProvider { get; } = systemPromptProvider;
+
+    /// <summary>
+    /// Shared client for SelfUpdater's GitHub Releases API/asset-download calls — one instance for
+    /// the process lifetime rather than one per check, matching HttpClient's own reuse guidance.
+    /// User-Agent is required, not optional: GitHub's REST API returns 403 on requests without one
+    /// (same reason deploy/install.ps1:20 sets "User-Agent" = "Litos-Installer" for this identical
+    /// releases/latest endpoint).
+    /// </summary>
+    public HttpClient UpdateHttpClient { get; } = BuildUpdateHttpClient();
+
+    private static HttpClient BuildUpdateHttpClient()
+    {
+        var client = new HttpClient();
+        client.DefaultRequestHeaders.UserAgent.Add(new System.Net.Http.Headers.ProductInfoHeaderValue("Litos.Gui", "1.0"));
+        return client;
+    }
+
+    /// <summary>
+    /// Set once, in Program.cs, to the fire-and-forget startup update check (mirrors how
+    /// InitializeMcpAsync is fired before MainWindow exists). MainWindow awaits this in its own
+    /// constructor and reflects the result in the status bar once it completes.
+    /// </summary>
+    public Task<SelfUpdater.UpdateCheckResult>? UpdateCheckTask { get; set; }
 }

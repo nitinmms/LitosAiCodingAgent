@@ -23,16 +23,25 @@ namespace Litos.Gui;
 /// out of scope here). Call sites must guard with OperatingSystem.IsWindows(); on other platforms
 /// this class is simply not called, and the previous best-effort Closing-based cleanup remains
 /// whatever protection exists there.
+///
+/// Also sets JOB_OBJECT_LIMIT_BREAKAWAY_OK, which by itself changes nothing (kill-on-close still
+/// applies to every descendant by default) — it only makes CREATE_BREAKAWAY_FROM_JOB *available*
+/// to a process that explicitly asks for it. SelfUpdater uses that flag for exactly one launch (the
+/// relaunch helper that installs an update and starts the new Litos.Gui.exe), because without it
+/// that child would inherit job membership and get killed the instant this process exits to let the
+/// update proceed — see SelfUpdater's own remarks. MCP child processes never opt into breakaway, so
+/// they remain confined and are still killed on close exactly as before.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal static class Win32JobObject
 {
     /// <summary>
-    /// Creates an unnamed job object, sets KILL_ON_JOB_CLOSE, and assigns the current process to it.
-    /// Intentionally leaks the job handle for the lifetime of the process (never closed) — the whole
-    /// point is for it to close only when Windows tears down this process, which is what triggers the
-    /// kill. Safe to call once at startup; does nothing observable if it silently fails (see remarks
-    /// on AssignProcessToJobObject below) beyond leaving orphan-proofing unavailable, same as before.
+    /// Creates an unnamed job object, sets KILL_ON_JOB_CLOSE (+ BREAKAWAY_OK, see remarks above),
+    /// and assigns the current process to it. Intentionally leaks the job handle for the lifetime of
+    /// the process (never closed) — the whole point is for it to close only when Windows tears down
+    /// this process, which is what triggers the kill. Safe to call once at startup; does nothing
+    /// observable if it silently fails (see remarks on AssignProcessToJobObject below) beyond
+    /// leaving orphan-proofing unavailable, same as before.
     /// </summary>
     public static void AssignCurrentProcessWithKillOnClose()
     {
@@ -42,7 +51,7 @@ internal static class Win32JobObject
 
         var info = new JOBOBJECT_BASIC_LIMIT_INFORMATION
         {
-            LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK,
         };
         var extendedInfo = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION
         {
@@ -70,6 +79,7 @@ internal static class Win32JobObject
 
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+    private const uint JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x0800;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct JOBOBJECT_BASIC_LIMIT_INFORMATION

@@ -229,6 +229,8 @@ public sealed partial class McpServersWindow : Window
         panel.Children.Add(new TextBlock { Text = summary, Foreground = DimTextBrush, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         if (connection is { Status: McpConnectionStatus.Unreachable, Error: { } error })
             panel.Children.Add(new TextBlock { Text = $"Unreachable: {error}", Foreground = ErrorTextBrush, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        if (connection is { Status: McpConnectionStatus.Failed, Error: { } failedError })
+            panel.Children.Add(new TextBlock { Text = $"Gave up after repeated failures: {failedError}. Disable and re-enable, or edit the server, to retry.", Foreground = ErrorTextBrush, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         if (connection is { Status: McpConnectionStatus.Connected })
         {
             panel.Children.Add(BuildToolsSection(server.Name, connection));
@@ -359,12 +361,13 @@ public sealed partial class McpServersWindow : Window
     internal static string PromptsSummaryLabel(int promptCount, bool expanded) =>
         $"{promptCount} prompt{(promptCount == 1 ? "" : "s")} {(expanded ? "▾" : "▸")}";
 
-    /// <summary>Pure status-to-label mapping, mirroring McpServers.razor's StatusLabel exactly (same four cases).</summary>
+    /// <summary>Pure status-to-label mapping, mirroring McpServers.razor's StatusLabel exactly (same five cases).</summary>
     internal static string StatusLabel(McpConnectionStatus? status) => status switch
     {
         McpConnectionStatus.Connected => "Connected",
         McpConnectionStatus.Connecting => "Connecting…",
         McpConnectionStatus.Unreachable => "Unreachable",
+        McpConnectionStatus.Failed => "Failed",
         _ => "Not started",
     };
 
@@ -373,6 +376,7 @@ public sealed partial class McpServersWindow : Window
         McpConnectionStatus.Connected => ConnectedBrush,
         McpConnectionStatus.Connecting => ConnectingBrush,
         McpConnectionStatus.Unreachable => ErrorTextBrush,
+        McpConnectionStatus.Failed => ErrorTextBrush,
         _ => DimTextBrush,
     };
 }

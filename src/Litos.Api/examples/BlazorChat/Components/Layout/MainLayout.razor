@@ -1,8 +1,15 @@
 @inherits LayoutComponentBase
+@inject Litos.Examples.BlazorChat.Auth.LitosUserSession Session
 
 <div class="page">
     <div class="topbar">
         <span class="brand">Litos Chat Example</span>
+    </div>
+    <div class="session-bar">
+        <span class="session-user">@Session.Username</span>
+        <form method="post" action="/auth/logout">
+            <button type="submit" class="logout-button">Log out</button>
+        </form>
     </div>
     <main>
         @Body

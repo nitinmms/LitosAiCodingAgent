@@ -26,6 +26,19 @@
     <PackageReference Include="OpenAI" Version="2.12.0" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
     <PackageReference Include="Telegram.Bot" Version="22.10.2.1" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- Explicit pins, not left to float to whatever Npgsql.EntityFrameworkCore.PostgreSQL
+         10.0.3 transitively resolves (10.0.4) — keeps every EF Core assembly in this project at
+         the same 10.0.11 version as Microsoft.EntityFrameworkCore.Design above, avoiding an
+         MSB3277 conflict for any downstream project (e.g. Litos.Api.Tests) that also references
+         a 10.0.11 EF Core package directly. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
   </ItemGroup>
 
   <PropertyGroup>

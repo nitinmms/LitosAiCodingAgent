@@ -23,10 +23,13 @@ jobs:
           dotnet-version: "10.0.x"
 
       - name: Publish win-x64
-        run: >
-          dotnet publish src/Litos.Gui/Litos.Gui.csproj
-          -c Release -r win-x64 -o deploy/out/windows/win-x64
-          --self-contained true -p:PublishSingleFile=true
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          dotnet publish src/Litos.Gui/Litos.Gui.csproj `
+            -c Release -r win-x64 -o deploy/out/windows/win-x64 `
+            --self-contained true -p:PublishSingleFile=true `
+            -p:Version=$version -p:InformationalVersion=$version
 
       - name: Package release asset
         shell: pwsh

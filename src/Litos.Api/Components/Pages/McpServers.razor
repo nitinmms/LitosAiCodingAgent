@@ -67,6 +67,10 @@
                     {
                         <p class="inline-notice">Unreachable: @error</p>
                     }
+                    else if (connection is { Status: McpConnectionStatus.Failed, Error: { } failedError })
+                    {
+                        <p class="inline-notice">Gave up after repeated failures: @failedError. Disable and re-enable, or edit the server, to retry.</p>
+                    }
 
                     <div class="field-row">
                         <button class="@(server.Enabled ? "deny" : "approve")" @onclick="() => ToggleEnabled(server.Name)">
@@ -160,6 +164,7 @@
         McpConnectionStatus.Connected => "Connected",
         McpConnectionStatus.Connecting => "Connecting…",
         McpConnectionStatus.Unreachable => "Unreachable",
+        McpConnectionStatus.Failed => "Failed",
         _ => "Not started",
     };
 
@@ -168,6 +173,7 @@
         McpConnectionStatus.Connected => "success",
         McpConnectionStatus.Connecting => "warning",
         McpConnectionStatus.Unreachable => "deny",
+        McpConnectionStatus.Failed => "deny",
         _ => "idle",
     };
 

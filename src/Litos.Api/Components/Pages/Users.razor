@@ -1,0 +1,164 @@
+@page "/users"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = Litos.Api.Auth.AuthPolicies.AdminOnly)]
+@rendermode InteractiveServer
+@inject Litos.Api.Data.UserStore UserStore
+@inject Litos.Api.Auth.JwtTokenService TokenService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@using Litos.Api.Auth
+@using Litos.Api.Data
+
+<h1>Users</h1>
+
+<p class="section-hint">
+    Accounts are admin-provisioned — there is no self-service sign-up. Each account gets its
+    own sessions (SessionOwner), but shares the same workspace, files, and MCP tools as every
+    other account and the ADMIN_TOKEN bootstrap identity.
+</p>
+
+<section class="settings-section">
+    <h2>Existing accounts</h2>
+
+    @if (_users.Count == 0)
+    {
+        <p class="empty-state">No accounts yet.</p>
+    }
+    else
+    {
+        <div class="key-list">
+            @foreach (var user in _users)
+            {
+                <div class="approval-card">
+                    <p>
+                        <span class="tool-name">@user.Username</span>
+                        @if (user.IsAdmin)
+                        {
+                            <span class="badge success">Admin</span>
+                        }
+                        <span class="badge @(user.DisabledAt is null ? "success" : "idle")">
+                            @(user.DisabledAt is null ? "Enabled" : "Disabled")
+                        </span>
+                    </p>
+                    <div class="field-row">
+                        <button class="@(user.DisabledAt is null ? "deny" : "approve")" @onclick="() => ToggleDisabledAsync(user)">
+                            @(user.DisabledAt is null ? "Disable" : "Enable")
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</section>
+
+<section class="settings-section">
+    <h2>Create account</h2>
+
+    <div class="field-row">
+        <div>
+            <label for="new-username">Username</label>
+            <input id="new-username" @bind="_newUsername" autocomplete="off" disabled="@_busy" />
+        </div>
+        <div>
+            <label for="new-password">Password</label>
+            <input type="password" id="new-password" @bind="_newPassword" autocomplete="new-password" disabled="@_busy" />
+        </div>
+        <div>
+            <label for="new-is-admin">Admin</label>
+            <input type="checkbox" id="new-is-admin" @bind="_newIsAdmin" disabled="@_busy" />
+        </div>
+    </div>
+
+    <button class="primary" @onclick="CreateUserAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_newUsername) || string.IsNullOrWhiteSpace(_newPassword))">
+        Create
+    </button>
+
+    @if (_message is not null)
+    {
+        <p class="settings-message">@_message</p>
+    }
+</section>
+
+@code {
+    private List<User> _users = [];
+    private bool _busy;
+    private string? _message;
+
+    private string _newUsername = "";
+    private string _newPassword = "";
+    private bool _newIsAdmin;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+        => _users = [.. await UserStore.ListAsync(CancellationToken.None)];
+
+    // [Authorize(Policy = AdminOnly)] on the page keeps a non-admin from ever loading this
+    // component, but Blazor Server only evaluates that once, at circuit start — it doesn't
+    // re-check on every @onclick within an already-open circuit. Since CreateAsync/SetDisabledAsync
+    // are privileged writes (the latter creates admin accounts outright via _newIsAdmin), each
+    // handler re-verifies the caller is still an admin before calling into UserStore, rather than
+    // relying solely on the page-level gate.
+    private async Task<bool> EnsureStillAdminAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        if (authState.User.HasClaim(c => c.Type == AdminAuthEndpoints.AdminClaimType))
+            return true;
+
+        _message = "Your session is no longer an admin session — refresh and sign in again.";
+        return false;
+    }
+
+    private async Task CreateUserAsync()
+    {
+        if (!await EnsureStillAdminAsync())
+            return;
+
+        _busy = true;
+        _message = null;
+        try
+        {
+            await UserStore.CreateAsync(_newUsername.Trim(), _newPassword, _newIsAdmin, CancellationToken.None);
+            _newUsername = "";
+            _newPassword = "";
+            _newIsAdmin = false;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            // Most likely a unique-index violation on Username — surfaced as-is rather than
+            // parsed for the Postgres error code, since this is an admin-only page where the
+            // raw exception text ("duplicate key value violates unique constraint...") is
+            // already clear enough to act on.
+            _message = $"Could not create account: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ToggleDisabledAsync(User user)
+    {
+        if (!await EnsureStillAdminAsync())
+            return;
+
+        _busy = true;
+        try
+        {
+            var disabling = user.DisabledAt is null;
+            await UserStore.SetDisabledAsync(user.Id, disabled: disabling, CancellationToken.None);
+
+            // Disabling an account should also kill any refresh token it already has in hand —
+            // otherwise it could keep minting fresh access tokens via /auth/token/refresh right
+            // up until that refresh token's own 30-day expiry, well past the point an admin
+            // thought "Disable" had cut it off.
+            if (disabling)
+                await TokenService.RevokeAllForUserAsync(user.Id, CancellationToken.None);
+
+            await ReloadAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

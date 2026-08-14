@@ -848,3 +848,44 @@ single current consumer (`Litos.Api`) per the architecture-comparison pass.
   active health check; it would only be caught the next time a tool call against it fails.
 - **Handshake timeout is still a hardcoded constant** (30s, §10.2), not user-configurable — flagged
   as a reasonable follow-up, not built.
+
+### 10.6 Bounded retry cap for permanently-unreachable servers (2026-08-13)
+
+§10.3 requirement 3 said `Unreachable` servers are "retried periodically in the background with
+exponential backoff (15s → 5min cap)" with no mention of ever stopping — in practice this meant a
+permanently-misconfigured or permanently-dead server was retried forever, every 5 minutes for the
+life of the process, with no way to stop it short of manually disabling it via `/mcp`.
+
+**Bug found while fixing this**: the backoff never actually grew. `McpToolProvider.RefreshAsync`'s
+retry path constructs a brand-new `McpServerConnection` for each retry (rather than reusing the
+failed instance), and `_consecutiveFailures` — the field `MarkUnreachable`'s doubling math is
+based on — is instance state that started over at 0 on every retry. The backoff was flat at
+`MinBackoff` (15s) forever, not the documented 15s→5min doubling. Fixed by having
+`McpServerConnection` accept a `consecutiveFailures` constructor parameter, and having
+`RefreshAsync` pass the failed connection's `ConsecutiveFailures` into its replacement.
+
+**Retry cap**: `McpServerConnection` gained a `MaxConsecutiveFailures` constant (8). Once a
+server's consecutive-failure count reaches it, `MarkUnreachable` sets `Status` to a new terminal
+`Failed` state (added to `McpConnectionStatus`) instead of `Unreachable`, and clears `NextRetryAt`.
+`RefreshAsync`'s due-for-retry query only ever matched `Unreachable` connections, so `Failed`
+connections are excluded from polling with no additional logic needed. With the fixed doubling
+(15s→30s→60s→120s→240s→300s→300s→300s), 8 attempts spans roughly 22 minutes before giving up.
+
+**Recovery from `Failed`**: no new code path — `RefreshAsync`'s existing "stale connection"
+diffing (definition changed, or server disabled then re-enabled) already removes and reconnects a
+connection regardless of its current `Status`, resetting `ConsecutiveFailures` to 0. An admin
+un-sticks a `Failed` server the same way they'd retry any other change: edit it, or toggle
+Disable/Enable, via `/mcp` (`Litos.Api`) or the equivalent `Litos.Gui` window. No dedicated
+"retry now" button was added — considered and deliberately skipped in favor of reusing the
+existing toggle, consistent with this doc's general preference for reusing an existing control
+over adding a narrow-purpose one.
+
+Surfaced on both `/mcp` (`McpServers.razor`) and `Litos.Gui`'s `McpServersWindow` with a `Failed`
+badge/label and an explanatory line, mirroring how `Unreachable` already surfaces `Error`.
+
+Covered by new `McpServerConnectionTests` (backoff growth via constructor-carried
+`consecutiveFailures`, cap-triggers-`Failed`, `NextRetryAt` cleared once `Failed`) — tested at the
+`McpServerConnection` unit level (constructing what `RefreshAsync`'s retry path constructs)
+deliberately rather than with a real-time sleep through `RefreshAsync`/`McpToolRefreshService`, to
+keep the suite fast; `RefreshAsync_UnreachableServer_BeforeBackoffElapses_DoesNotRetry` already
+covers that `RefreshAsync`'s due-for-retry gate itself works correctly.

@@ -1,0 +1,43 @@
+@page "/login"
+@layout Litos.Examples.BlazorChat.Components.Layout.LoginLayout
+@inject NavigationManager Nav
+
+<div class="login-card">
+    <h1>Litos Chat</h1>
+    <p class="login-hint">Sign in with your Litos.Api account.</p>
+
+    <form method="post" action="/auth/login" class="login-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" autofocus />
+
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" />
+
+        <button type="submit" class="primary">Sign in</button>
+    </form>
+
+    @if (_errorMessage is not null)
+    {
+        <p class="login-error">@_errorMessage</p>
+    }
+</div>
+
+@code {
+    private string? _errorMessage;
+
+    protected override void OnInitialized()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        // TryGetValue, not the indexer — ParseQuery returns a plain Dictionary, whose indexer
+        // throws KeyNotFoundException when "error" is absent (the normal case: e.g. an
+        // unauthenticated visit redirected here as /login?ReturnUrl=%2F carries no "error" key
+        // at all, unlike HttpRequest.Query's IQueryCollection which returns empty StringValues
+        // for a missing key instead of throwing).
+        _errorMessage = query.TryGetValue("error", out var error) ? error.ToString() switch
+        {
+            "unreachable" => "Could not reach Litos.Api. Check that it's running and LitosApi:BaseUrl is correct.",
+            _ => "Invalid username or password.",
+        } : null;
+    }
+}

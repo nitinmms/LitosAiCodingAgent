@@ -17,14 +17,43 @@ public static class TurnsEndpoints
 
     public static IEndpointRouteBuilder MapTurnsEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/sessions/{id}/turns", async (
-            string id, HttpRequest request, AgentWorker worker, AttachmentContentBuilder attachmentBuilder, CancellationToken requestAborted) =>
+        app.MapGet("/sessions", async (HttpContext http, Litos.Agent.Session.ITranscriptStore store, CancellationToken ct) =>
         {
+            var owner = CurrentSessionOwner.Resolve(http.User);
+            var sessions = await store.ListSessionsAsync(owner, ct);
+            return Results.Ok(sessions.OrderByDescending(s => s.LastUpdatedAt));
+        }).RequireAuthorization(AuthPolicies.AdminOrUser);
+
+        app.MapGet("/sessions/{id}/history", async (string id, HttpContext http, Litos.Agent.Session.ITranscriptStore store, CancellationToken ct) =>
+        {
+            var owner = CurrentSessionOwner.Resolve(http.User);
+            var messages = new List<object>();
+            await foreach (var entry in store.ReadAsync(owner, id, ct))
+            {
+                if (entry.Message is null)
+                    continue;
+
+                var text = string.Concat(entry.Message.Content.OfType<Litos.Agent.Messages.TextBlock>().Select(b => b.Text));
+                var attachments = entry.Message.Content.OfType<Litos.Agent.Messages.ImageBlock>().Count();
+                if (entry.Message.Role == Litos.Agent.Messages.Role.User &&
+                    entry.Message.Content.OfType<Litos.Agent.Messages.ToolResultBlock>().Any())
+                    continue;
+
+                messages.Add(new { role = entry.Message.Role.ToString().ToLowerInvariant(), text, attachments, timestamp = entry.Timestamp });
+            }
+            return Results.Ok(messages);
+        }).RequireAuthorization(AuthPolicies.AdminOrUser);
+
+        app.MapPost("/sessions/{id}/turns", async (
+            string id, HttpContext http, HttpRequest request, AgentWorker worker, AttachmentContentBuilder attachmentBuilder, CancellationToken requestAborted) =>
+        {
+            var owner = CurrentSessionOwner.Resolve(http.User);
+
             if (!request.HasFormContentType)
             {
                 var turnRequest = await request.ReadFromJsonAsync<TurnRequest>(requestAborted)
                     ?? throw new BadHttpRequestException("Request body is required.");
-                return StartOrSteer(worker, id, [new TextBlock(turnRequest.Input)], requestAborted, queueIfActive: false);
+                return StartOrSteer(worker, owner, id, [new TextBlock(turnRequest.Input)], requestAborted, queueIfActive: false);
             }
 
             var form = await request.ReadFormAsync(requestAborted);
@@ -43,8 +72,8 @@ public static class TurnsEndpoints
             // whatever starts the *next* fresh turn for this session (AgentWorker.StartOrSteerTurn,
             // queueIfActive: true). Requests with no files keep today's immediate-steer behavior.
             var queueIfActive = files.Count > 0;
-            return StartOrSteer(worker, id, content, requestAborted, queueIfActive);
-        }).AddEndpointFilter<AdminTokenFilter>();
+            return StartOrSteer(worker, owner, id, content, requestAborted, queueIfActive);
+        }).RequireAuthorization(AuthPolicies.AdminOrUser);
 
         return app;
     }
@@ -69,9 +98,9 @@ public static class TurnsEndpoints
     }
 
     private static IResult StartOrSteer(
-        AgentWorker worker, string id, IReadOnlyList<ContentBlock> content, CancellationToken ct, bool queueIfActive)
+        AgentWorker worker, SessionOwner owner, string id, IReadOnlyList<ContentBlock> content, CancellationToken ct, bool queueIfActive)
     {
-        var events = worker.StartOrSteerTurn(SessionOwner.Local, id, content, ct, out var outcome, queueIfActive);
+        var events = worker.StartOrSteerTurn(owner, id, content, ct, out var outcome, queueIfActive);
 
         return outcome switch
         {

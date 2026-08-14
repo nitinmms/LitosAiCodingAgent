@@ -5,6 +5,8 @@ namespace Litos.Examples.BlazorChat.LitosClient;
 
 /// <summary>One attachment ready to POST — filename, content type, and bytes already read into memory by the caller (Chat.razor reads each IBrowserFile before this point, since IBrowserFile streams can't outlive the render that produced them).</summary>
 public sealed record PendingAttachment(string FileName, string ContentType, byte[] Content);
+public sealed record SessionSummaryDto(string SessionId, DateTimeOffset CreatedAt, DateTimeOffset LastUpdatedAt, string? FirstUserMessagePreview, int MessageCount);
+public sealed record HistoryMessageDto(string Role, string Text, int Attachments, DateTimeOffset Timestamp);
 
 /// <summary>
 /// Thin wrapper over POST /sessions/{id}/turns — the one endpoint that drives a whole
@@ -13,6 +15,12 @@ public sealed record PendingAttachment(string FileName, string ContentType, byte
 /// </summary>
 public sealed class LitosApiClient(HttpClient httpClient)
 {
+    public async Task<IReadOnlyList<SessionSummaryDto>> ListSessionsAsync(CancellationToken ct) =>
+        await httpClient.GetFromJsonAsync<List<SessionSummaryDto>>("sessions", ct) ?? [];
+
+    public async Task<IReadOnlyList<HistoryMessageDto>> GetHistoryAsync(string sessionId, CancellationToken ct) =>
+        await httpClient.GetFromJsonAsync<List<HistoryMessageDto>>($"sessions/{Uri.EscapeDataString(sessionId)}/history", ct) ?? [];
+
     public async Task<TurnOutcome> SendTurnAsync(
         string sessionId, string text, IReadOnlyList<PendingAttachment> attachments, CancellationToken ct)
     {

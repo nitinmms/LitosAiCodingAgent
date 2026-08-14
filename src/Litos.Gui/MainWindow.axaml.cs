@@ -49,6 +49,10 @@ public sealed partial class MainWindow : Window
     private readonly MainWindowSession _session;
     private Transcript _transcript;
     private string _sessionId = Guid.NewGuid().ToString("n");
+    // Populated once ObserveUpdateCheckAsync's startup check completes with a real update; null
+    // means either "still checking", "up to date", or "check failed" — HandleUpdateAsync re-checks
+    // on demand rather than trusting a possibly-stale/absent cached result for the actual install.
+    private SelfUpdater.UpdateCheckResult? _latestUpdate;
     private CancellationTokenSource? _turnCts;
     private bool _turnStarted;
     private ChannelWriter<SteeringMessage>? _currentSteeringWriter;
@@ -87,12 +91,12 @@ public sealed partial class MainWindow : Window
     // suggestion knows exactly what span of InputBox.Text to splice (see SpliceMention).
     private int _activeMentionStart = -1;
 
-    public MainWindow() : this(null!, Directory.GetCurrentDirectory())
+    public MainWindow() : this(null!, Directory.GetCurrentDirectory(), resumeSessionId: null)
     {
         // Parameterless constructor required by the Avalonia XAML previewer/loader.
     }
 
-    public MainWindow(MainWindowSession session, string workingDirectory)
+    public MainWindow(MainWindowSession session, string workingDirectory, string? resumeSessionId)
     {
         _session = session;
         _transcript = Transcript.CreateNew(workingDirectory);
@@ -145,6 +149,7 @@ public sealed partial class MainWindow : Window
         ChangeDirectoryButton.Click += async (_, _) => await ChangeWorkingDirectoryAsync();
         ProviderButton.Click += async (_, _) => await HandleProviderAsync(argument: null);
         ModelButton.Click += async (_, _) => await HandleModelAsync(argument: null);
+        UpdateButton.Click += async (_, _) => await HandleUpdateAsync();
         ContextUsagePanel.DoubleTapped += async (_, _) => await ShowContextBreakdownAsync();
         CommandMenuButton.Click += (_, _) => OpenCommandMenu(openedByTyping: false);
         _commandMenu.Accepted += entry => _ = OnCommandMenuAcceptedAsync(entry);
@@ -157,6 +162,39 @@ public sealed partial class MainWindow : Window
         // disposes them one at a time). A lingering child process for a few seconds after the
         // window is gone is harmless — mirrors how most desktop apps close.
         Closing += (_, _) => _ = _session.McpToolProvider.ShutdownAsync();
+
+        if (resumeSessionId is not null)
+            _ = ResumeSessionAsync(resumeSessionId, announce: false);
+
+        // Fire-and-forget: Program.cs already started this before the window existed (mirrors
+        // InitializeMcpAsync's shape) so it may already be complete by the time we get here —
+        // awaiting it either way is cheap either way and keeps a single code path.
+        if (_session.UpdateCheckTask is { } updateCheckTask)
+            _ = ObserveUpdateCheckAsync(updateCheckTask);
+    }
+
+    private async Task ObserveUpdateCheckAsync(Task<SelfUpdater.UpdateCheckResult> updateCheckTask)
+    {
+        SelfUpdater.UpdateCheckResult result;
+        try
+        {
+            result = await updateCheckTask;
+        }
+        catch
+        {
+            // CheckForUpdateAsync itself never throws (network/parse failures are reported via
+            // UpdateCheckResult.Error) — this only guards against an unexpected failure so a
+            // startup check can never take the window down with it.
+            return;
+        }
+
+        _latestUpdate = result.IsUpdateAvailable ? result : null;
+        Dispatcher.UIThread.Post(() =>
+        {
+            UpdateButton.IsVisible = _latestUpdate is not null;
+            if (_latestUpdate is { } update)
+                UpdateButtonText.Text = $"Update to {update.LatestVersion}";
+        });
     }
 
     private void UpdateProviderModelText()
@@ -695,6 +733,10 @@ public sealed partial class MainWindow : Window
                 await HandleKeysAsync();
                 return;
 
+            case "/update":
+                await HandleUpdateAsync();
+                return;
+
             default:
                 var promptEntry = _session.McpToolProvider.Prompts.FirstOrDefault(p => $"/{p.FullName}" == command);
                 if (promptEntry is null)
@@ -910,6 +952,62 @@ public sealed partial class MainWindow : Window
             AddToolLine("API keys updated. Restart Litos for the change to take effect.");
     }
 
+    /// <summary>
+    /// Both the /update command and UpdateButton's click go through here. Always re-checks GitHub
+    /// rather than trusting _latestUpdate blindly — that field is only ever set by the one-shot
+    /// startup check, so a click minutes/hours into a session could otherwise install a release
+    /// that's since been superseded, or (if the startup check failed/hadn't finished) never learn
+    /// about an update that's actually available. A confirmed install ends in Environment.Exit
+    /// (see SelfUpdater), so nothing after that call ever runs on success.
+    /// </summary>
+    private async Task HandleUpdateAsync()
+    {
+        UpdateButton.IsEnabled = false;
+        UpdateButtonText.Text = "Checking…";
+        UpdateButton.IsVisible = true;
+        try
+        {
+            var result = await SelfUpdater.CheckForUpdateAsync(_session.UpdateHttpClient, CancellationToken.None);
+            if (result.Error is { } error)
+            {
+                AddToolLine($"Update check failed: {error}");
+                return;
+            }
+
+            if (!result.IsUpdateAvailable || result.Asset is null)
+            {
+                AddToolLine($"Litos.Gui is up to date (v{SelfUpdater.CurrentVersion}).");
+                _latestUpdate = null;
+                UpdateButton.IsVisible = false;
+                return;
+            }
+
+            _latestUpdate = result;
+            UpdateButtonText.Text = $"Update to {result.LatestVersion}";
+
+            var confirmed = await ConfirmationDialog.ShowAsync(
+                this,
+                "Update Litos.Gui",
+                $"Version {result.LatestVersion} is available (you have v{SelfUpdater.CurrentVersion}). "
+                    + "Litos.Gui will close and relaunch to install it. Continue?");
+            if (!confirmed)
+                return;
+
+            AddToolLine($"Downloading {result.LatestVersion}…");
+            UpdateButtonText.Text = "Updating…";
+            var resume = new SessionResumeArgs(_sessionId, _transcript.WorkingDirectory ?? Environment.CurrentDirectory);
+            await SelfUpdater.InstallAndRelaunchAsync(_session.UpdateHttpClient, result.Asset, resume, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            AddToolLine($"Update failed: {ex.Message}");
+        }
+        finally
+        {
+            UpdateButton.IsEnabled = true;
+        }
+    }
+
     private async Task HandleResumeAsync(string? argument)
     {
         var sessions = await _session.TranscriptStore.ListSessionsAsync(SessionOwner.Local, CancellationToken.None);
@@ -931,11 +1029,24 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _sessionId = pickedId;
+        await ResumeSessionAsync(pickedId, announce: true);
+    }
+
+    /// <summary>
+    /// Loads and switches to <paramref name="sessionId"/> — shared by the interactive /resume
+    /// command and MainWindow's constructor (when relaunched by SelfUpdater with a session to pick
+    /// back up, see SessionResumeArgs). <paramref name="announce"/> is false for the startup path:
+    /// there's no point telling the user "resumed session X" as the very first line of a window
+    /// they just watched relaunch itself.
+    /// </summary>
+    private async Task ResumeSessionAsync(string sessionId, bool announce)
+    {
+        _sessionId = sessionId;
         _transcript = await Transcript.LoadAsync(_session.TranscriptStore, SessionOwner.Local, _sessionId, CancellationToken.None);
         RenderTranscriptHistory(_transcript);
         RefreshContextUsage();
-        AddToolLine($"Resumed session {_sessionId} ({_transcript.Messages.Count} messages).");
+        if (announce)
+            AddToolLine($"Resumed session {_sessionId} ({_transcript.Messages.Count} messages).");
 
         // A resumed session's own recorded WorkingDirectory only takes effect if it's usable
         // (non-null and still exists on this machine); otherwise the app stays exactly where it

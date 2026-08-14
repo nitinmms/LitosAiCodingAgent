@@ -30,5 +30,6 @@ internal static class SlashCommands
         new("/reflect", "Distill this session into AGENTS.md"),
         new("/mcp", "Manage MCP servers"),
         new("/keys", "Add or update API keys"),
+        new("/update", "Check for and install an update"),
     ];
 }

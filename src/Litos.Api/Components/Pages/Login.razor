@@ -6,15 +6,26 @@
     <img src="app-icon.png" alt="Litos" />
     <h1>Sign in to Litos.Api</h1>
 
-    <form method="post" action="/auth/login">
-        <label for="token">Admin token</label>
-        <input type="password" id="token" name="token" autocomplete="current-password" autofocus />
+    <form method="post" action="/auth/login-user">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" autofocus />
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" />
         <button type="submit" class="primary">Sign in</button>
     </form>
 
+    <details class="admin-token-login">
+        <summary>Sign in with admin token instead</summary>
+        <form method="post" action="/auth/login">
+            <label for="token">Admin token</label>
+            <input type="password" id="token" name="token" autocomplete="current-password" />
+            <button type="submit">Sign in with token</button>
+        </form>
+    </details>
+
     @if (_showError)
     {
-        <p class="login-error">Invalid admin token. Please try again.</p>
+        <p class="login-error">Invalid credentials. Please try again.</p>
     }
 </div>
 

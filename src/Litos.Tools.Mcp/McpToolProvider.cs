@@ -74,15 +74,17 @@ public sealed class McpToolProvider(McpConfigStore configStore, ILoggerFactory l
                 .ToList();
 
             // Retry any still-live Unreachable connection whose backoff has elapsed — replaced
-            // with a fresh McpServerConnection (its own backoff/attempt state resets to
-            // Connecting) rather than reusing the Unreachable instance in place.
+            // with a fresh McpServerConnection (status resets to Connecting) but carrying
+            // ConsecutiveFailures forward, so backoff keeps growing and the MaxConsecutiveFailures
+            // cap is reached across retries instead of every retry looking like the first one.
+            // (Failed connections are deliberately excluded here — they've stopped retrying.)
             var dueForRetry = _connections
                 .Where(c => c.Status == McpConnectionStatus.Unreachable && (c.NextRetryAt is null || c.NextRetryAt <= now))
                 .ToList();
             foreach (var connection in dueForRetry)
             {
                 _connections.Remove(connection);
-                toConnect.Add(new McpServerConnection(connection.Definition, loggerFactory));
+                toConnect.Add(new McpServerConnection(connection.Definition, loggerFactory, connection.ConsecutiveFailures));
             }
 
             _connections.AddRange(toConnect);

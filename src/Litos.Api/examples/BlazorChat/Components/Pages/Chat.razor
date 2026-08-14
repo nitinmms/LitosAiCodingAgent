@@ -1,51 +1,104 @@
 @page "/"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @rendermode InteractiveServer
 @inject LitosApiClient LitosClient
+@inject Microsoft.JSInterop.IJSRuntime JS
 @implements IDisposable
 
-<h1>Litos Chat Example</h1>
-<p class="session-id">Session: <code>@_sessionId</code></p>
-
-<div class="transcript">
-    @foreach (var entry in _entries)
-    {
-        <ChatMessageView Entry="entry" />
-    }
-    @if (_isSending)
-    {
-        <div class="chat-entry system-note">Waiting for a response…</div>
-    }
-</div>
-
-<EditForm Model="this" OnValidSubmit="SendAsync" class="composer">
-    <InputTextArea @bind-Value="_draftText" placeholder="Message Litos…" disabled="@_isSending" rows="2" />
-    <InputFile OnChange="OnFilesSelected" multiple disabled="@_isSending" />
-    @if (_pendingAttachments.Count > 0)
-    {
-        <ul class="pending-attachments">
-            @foreach (var attachment in _pendingAttachments)
+<div class="chat-layout">
+    <aside class="session-sidebar">
+        <div class="sidebar-heading"><strong>Conversations</strong><button type="button" class="new-session" @onclick="StartNewSession">＋ New</button></div>
+        <input class="session-search" @bind="_sessionSearch" @bind:event="oninput" placeholder="Search conversations…" aria-label="Search conversations" />
+        <div class="session-list">
+            @foreach (var session in FilteredSessions)
             {
-                <li>@attachment.FileName (@(attachment.Content.Length / 1024) KB)</li>
+                <button type="button" class="session-card @(session.SessionId == _sessionId ? "selected" : "")" @onclick="() => SelectSessionAsync(session.SessionId)">
+                    <strong>@(session.FirstUserMessagePreview ?? "New conversation")</strong>
+                    <small>@session.LastUpdatedAt.ToLocalTime().ToString("g")</small>
+                </button>
             }
-        </ul>
-    }
-    <button type="submit" disabled="@(_isSending || (string.IsNullOrWhiteSpace(_draftText) && _pendingAttachments.Count == 0))">Send</button>
-</EditForm>
+            @if (_sessions.Count == 0) { <p class="no-sessions">No previous conversations</p> }
+        </div>
+    </aside>
+    <section class="chat-shell">
+    <header class="chat-header">
+        <div class="bot-avatar" aria-hidden="true">L</div>
+        <div>
+            <h1>Litos Chat</h1>
+            <p><span class="status-dot"></span> Online · private conversation</p>
+        </div>
+        <span class="session-id" title="Session identifier">Session @_sessionId[..8]</span>
+    </header>
 
-@if (_error is not null)
-{
-    <p class="error">@_error</p>
-}
+    <div class="transcript" @ref="_transcript" aria-live="polite">
+        @if (_entries.Count == 0)
+        {
+            <div class="empty-state">
+                <div class="empty-icon">✦</div>
+                <h2>How can I help?</h2>
+                <p>Send a message or attach files to get started.</p>
+            </div>
+        }
+        @foreach (var entry in _entries)
+        {
+            <ChatMessageView Entry="entry" />
+        }
+        @if (_isSending)
+        {
+            <div class="chat-entry system-note typing"><span></span><span></span><span></span> Litos is thinking</div>
+        }
+    </div>
+
+    <EditForm Model="this" OnValidSubmit="SendAsync" class="composer">
+        @if (_pendingAttachments.Count > 0)
+        {
+            <div class="pending-attachments" aria-label="Files to attach">
+                @foreach (var attachment in _pendingAttachments.Select((item, index) => (item, index)))
+                {
+                    <div class="attachment-chip">
+                        <span class="file-icon">↗</span>
+                        <span class="attachment-info"><strong>@attachment.item.FileName</strong><small>@FormatSize(attachment.item.Content.Length)</small></span>
+                        <button type="button" class="remove-attachment" @onclick="() => RemoveAttachment(attachment.index)" aria-label="Remove @attachment.item.FileName">×</button>
+                    </div>
+                }
+            </div>
+        }
+        <div class="composer-row">
+            <label class="attach-button @( _isSending ? "disabled" : "")" title="Attach up to @MaxFileCount files">
+                <span aria-hidden="true">＋</span> Attach
+                <InputFile OnChange="OnFilesSelected" multiple disabled="@_isSending" aria-label="Attach files" />
+            </label>
+            <textarea @bind="_draftText" @bind:event="oninput" @onkeydown="OnComposerKeyDown" placeholder="Message Litos…" disabled="@_isSending" rows="1"></textarea>
+            <button type="submit" class="send-button" disabled="@(_isSending || (string.IsNullOrWhiteSpace(_draftText) && _pendingAttachments.Count == 0))" aria-label="Send message">↑</button>
+        </div>
+        <div class="composer-hint">Up to @MaxFileCount files · @(MaxFileBytes / (1024 * 1024)) MB each</div>
+    </EditForm>
+
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+</section>
+</div>
 
 @code {
     // One id per Blazor circuit — Litos.Api treats the URL segment as the whole session identity
     // (no server-issued session concept exists), and per this example's scope, history is held
     // only in this component's in-memory _entries list, lost on refresh/reconnect.
-    private readonly string _sessionId = Guid.NewGuid().ToString("n");
+    private string _sessionId = Guid.NewGuid().ToString("n");
 
     private readonly List<ChatEntry> _entries = [];
+    private readonly List<SessionSummaryDto> _sessions = [];
+    private string _sessionSearch = "";
+
+    private IEnumerable<SessionSummaryDto> FilteredSessions => _sessions
+        .Where(s => string.IsNullOrWhiteSpace(_sessionSearch) ||
+            (s.FirstUserMessagePreview?.Contains(_sessionSearch, StringComparison.OrdinalIgnoreCase) ?? false))
+        .OrderByDescending(s => s.LastUpdatedAt);
     private readonly List<PendingAttachment> _pendingAttachments = [];
     private readonly Dictionary<string, ChatEntry.ToolActivity> _toolActivityByCallId = [];
+    private ElementReference _transcript;
+    private bool _scrollPending;
 
     private string _draftText = "";
     private bool _isSending;
@@ -55,10 +108,79 @@
     private const long MaxFileBytes = 20 * 1024 * 1024; // Mirrors TurnsEndpoints.MaxAttachmentBytes.
     private const int MaxFileCount = 5; // Mirrors TurnsEndpoints.MaxAttachmentCount.
 
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshSessionsAsync();
+    }
+
+    private async Task RefreshSessionsAsync()
+    {
+        try
+        {
+            _sessions.Clear();
+            _sessions.AddRange(await LitosClient.ListSessionsAsync(CancellationToken.None));
+        }
+        catch (Exception ex)
+        {
+            _error = $"Could not load conversations: {ex.Message}";
+        }
+    }
+
+    private async Task SelectSessionAsync(string sessionId)
+    {
+        if (_isSending || sessionId == _sessionId)
+            return;
+
+        _sessionId = sessionId;
+        _entries.Clear();
+        _toolActivityByCallId.Clear();
+        _pendingAttachments.Clear();
+        _draftText = "";
+        _error = null;
+
+        try
+        {
+            var history = await LitosClient.GetHistoryAsync(sessionId, CancellationToken.None);
+            foreach (var message in history)
+            {
+                if (message.Role == "user")
+                    _entries.Add(new ChatEntry.UserMessage(message.Text, message.Attachments == 0 ? [] : [$"{message.Attachments} attachment(s)"]));
+                else if (message.Role == "assistant" && !string.IsNullOrWhiteSpace(message.Text))
+                    _entries.Add(new ChatEntry.AssistantMessage { Text = message.Text });
+            }
+            _scrollPending = true;
+        }
+        catch (Exception ex)
+        {
+            _error = $"Could not load conversation: {ex.Message}";
+        }
+    }
+
+    private async Task StartNewSession()
+    {
+        if (_isSending)
+            return;
+
+        _sessionId = Guid.NewGuid().ToString("n");
+        _entries.Clear();
+        _pendingAttachments.Clear();
+        _toolActivityByCallId.Clear();
+        _draftText = "";
+        _error = null;
+        await RefreshSessionsAsync();
+    }
+
     private async Task OnFilesSelected(InputFileChangeEventArgs e)
     {
         _error = null;
-        foreach (var file in e.GetMultipleFiles(MaxFileCount))
+        var remaining = MaxFileCount - _pendingAttachments.Count;
+        if (remaining <= 0)
+        {
+            _error = $"You can attach up to {MaxFileCount} files per message.";
+            return;
+        }
+
+        foreach (var file in e.GetMultipleFiles(remaining))
         {
             if (file.Size > MaxFileBytes)
             {
@@ -73,6 +195,46 @@
         }
     }
 
+    private void RemoveAttachment(int index)
+    {
+        if (index >= 0 && index < _pendingAttachments.Count)
+            _pendingAttachments.RemoveAt(index);
+    }
+
+    private static string FormatSize(int bytes) => bytes < 1024 * 1024
+        ? $"{Math.Max(1, bytes / 1024)} KB"
+        : $"{bytes / (1024d * 1024d):0.0} MB";
+
+    private async Task OnComposerKeyDown(KeyboardEventArgs e)
+    {
+        // Enter sends; Shift+Enter keeps the natural textarea newline behavior.
+        if (e.Key == "Enter" && !e.ShiftKey && !_isSending)
+        {
+            await SendAsync();
+        }
+    }
+
+    private async Task ScrollTranscriptAsync()
+    {
+        if (!_scrollPending)
+            return;
+
+        _scrollPending = false;
+        try
+        {
+            await JS.InvokeVoidAsync("litosChat.scrollToBottom", _transcript);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The circuit can disconnect while a streamed response is finishing.
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await ScrollTranscriptAsync();
+    }
+
     private async Task SendAsync()
     {
         if (string.IsNullOrWhiteSpace(_draftText) && _pendingAttachments.Count == 0)
@@ -80,6 +242,7 @@
 
         var text = _draftText;
         var attachments = _pendingAttachments.ToList();
+        _scrollPending = true;
         _entries.Add(new ChatEntry.UserMessage(text, attachments.Select(a => a.FileName).ToList()));
         _draftText = "";
         _pendingAttachments.Clear();
@@ -114,6 +277,8 @@
         finally
         {
             _isSending = false;
+            _scrollPending = true;
+            await RefreshSessionsAsync();
             StateHasChanged();
         }
     }
@@ -166,6 +331,7 @@
                     break;
             }
 
+            _scrollPending = true;
             StateHasChanged();
         }
     }

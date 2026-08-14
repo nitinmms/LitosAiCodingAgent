@@ -8,22 +8,33 @@ public enum McpConnectionStatus
     Connecting,
     Connected,
     Unreachable,
+    Failed,
 }
 
 /// <summary>
 /// One configured server's connect/handshake/state lifecycle — a concrete class, not behind an
 /// interface, matching this codebase's existing style (ShellTool itself isn't tested against a
-/// fake process either). Crash and timeout both collapse to Unreachable with the distinguishing
-/// detail preserved in Error, rather than a separate 4th state.
+/// fake process either). Crash and timeout both collapse to Unreachable (or, once
+/// MaxConsecutiveFailures is reached, the terminal Failed state) with the distinguishing detail
+/// preserved in Error, rather than a separate status per failure mode.
 /// </summary>
-public sealed class McpServerConnection(McpServerDefinition definition, ILoggerFactory loggerFactory)
+public sealed class McpServerConnection(McpServerDefinition definition, ILoggerFactory loggerFactory, int consecutiveFailures = 0)
 {
     private static readonly TimeSpan MinBackoff = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// Once a server has failed this many consecutive attempts, it stops being retried
+    /// automatically (Status becomes Failed instead of Unreachable) rather than being polled
+    /// forever — an admin must edit or toggle the server via /mcp to try again. At MinBackoff
+    /// doubling to MaxBackoff, 8 attempts spans ~22 minutes of real time before giving up, enough
+    /// to ride out a brief restart/deploy without retrying indefinitely.
+    /// </summary>
+    private const int MaxConsecutiveFailures = 8;
+
     private readonly ILogger _logger = loggerFactory.CreateLogger($"Litos.Tools.Mcp.{definition.Name}");
     private McpClient? _client;
-    private int _consecutiveFailures;
+    private int _consecutiveFailures = consecutiveFailures;
 
     public McpServerDefinition Definition => definition;
     public string ServerName => definition.Name;
@@ -42,11 +53,18 @@ public sealed class McpServerConnection(McpServerDefinition definition, ILoggerF
 
     /// <summary>
     /// Earliest time McpToolRefreshService should retry this connection while it's Unreachable —
-    /// null once Connected (nothing to retry) or before the first attempt (retry immediately).
+    /// null once Connected (nothing to retry) or once Failed (given up, no more automatic retries).
     /// Backoff doubles per consecutive failure, capped at MaxBackoff, so a consistently-down
     /// server is retried less and less often instead of hammered every poll tick.
     /// </summary>
     public DateTimeOffset? NextRetryAt { get; private set; }
+
+    /// <summary>
+    /// Read by McpToolProvider.RefreshAsync so a retry's replacement McpServerConnection can be
+    /// constructed with this count carried forward — otherwise every retry would start a fresh
+    /// instance at zero and the backoff below would never actually grow past MinBackoff.
+    /// </summary>
+    public int ConsecutiveFailures => _consecutiveFailures;
 
     public async Task ConnectAsync(TimeSpan timeout, CancellationToken ct)
     {
@@ -113,8 +131,16 @@ public sealed class McpServerConnection(McpServerDefinition definition, ILoggerF
 
     private void MarkUnreachable()
     {
-        Status = McpConnectionStatus.Unreachable;
         _consecutiveFailures++;
+
+        if (_consecutiveFailures >= MaxConsecutiveFailures)
+        {
+            Status = McpConnectionStatus.Failed;
+            NextRetryAt = null;
+            return;
+        }
+
+        Status = McpConnectionStatus.Unreachable;
         var backoff = TimeSpan.FromSeconds(Math.Min(
             MinBackoff.TotalSeconds * Math.Pow(2, _consecutiveFailures - 1), MaxBackoff.TotalSeconds));
         NextRetryAt = DateTimeOffset.UtcNow + backoff;

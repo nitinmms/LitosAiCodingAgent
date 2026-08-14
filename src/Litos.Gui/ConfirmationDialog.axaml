@@ -1,0 +1,17 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Litos.Gui.ConfirmationDialog"
+        Title="Confirm"
+        Icon="avares://Litos.Gui/Assets/AppIcon.png"
+        Width="420" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E"
+        CanResize="False">
+  <Grid RowDefinitions="Auto,Auto" Margin="16">
+    <TextBlock Name="MessageText" Grid.Row="0" TextWrapping="Wrap" Foreground="WhiteSmoke" Margin="0,0,0,16" />
+    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Name="CancelButton" Content="Cancel" />
+      <Button Name="ConfirmButton" Content="Continue" />
+    </StackPanel>
+  </Grid>
+</Window>

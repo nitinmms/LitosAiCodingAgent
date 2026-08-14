@@ -1,0 +1,52 @@
+# Local/dev stack: Litos.Api + the Postgres 18 instance it stores user accounts in.
+# Build context is the repo root (Dockerfile COPYs src/ relative to it) — see src/Litos.Api/Dockerfile.
+#
+#   docker compose up --build
+#
+# Litos.Api's own secrets (ADMIN_TOKEN, provider API keys) still come from src/Litos.Api/.env,
+# same as running the container directly (src/Litos.Api/.env.example) — only
+# POSTGRES_CONNECTION_STRING is set here, since it points at the sidecar service this file itself
+# defines rather than being a deploy-time secret the operator supplies.
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: litos
+      POSTGRES_USER: litos
+      POSTGRES_PASSWORD: litos
+    # postgres:18's image mounts at /var/lib/postgresql (not .../data as in earlier major
+    # versions) — it nests a major-version-specific subdirectory itself now, for
+    # pg_ctlcluster/pg_upgrade --link compatibility. Mounting at .../data (the pre-18
+    # convention) makes the image refuse to start with "unused mount/volume" — see
+    # https://github.com/docker-library/postgres/issues/37.
+    volumes:
+      - litos-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litos -d litos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  litos-api:
+    build:
+      context: .
+      dockerfile: src/Litos.Api/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - src/Litos.Api/.env
+    environment:
+      POSTGRES_CONNECTION_STRING: "Host=postgres;Database=litos;Username=litos;Password=litos"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - litos-workspace:/workspace
+      - litos-data:/data
+
+volumes:
+  litos-postgres-data:
+  litos-workspace:
+  litos-data:

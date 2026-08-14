@@ -1,30 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.Net.Http.Headers;
 
 namespace Litos.Api.Auth;
-
-/// <summary>
-/// Shared-admin-token check for Minimal API endpoints (HeadlessServiceTool.md §5.5). Compares
-/// an `Authorization: Bearer &lt;ADMIN_TOKEN&gt;` header using constant-time comparison — avoids
-/// leaking the token's correctness via response-time timing.
-/// </summary>
-public sealed class AdminTokenFilter(AdminTokenProvider tokenProvider) : IEndpointFilter
-{
-    public ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
-    {
-        var header = context.HttpContext.Request.Headers[HeaderNames.Authorization].ToString();
-        const string prefix = "Bearer ";
-        if (!header.StartsWith(prefix, StringComparison.Ordinal))
-            return ValueTask.FromResult<object?>(Results.Unauthorized());
-
-        var presented = header[prefix.Length..];
-        if (!tokenProvider.IsValid(presented))
-            return ValueTask.FromResult<object?>(Results.Unauthorized());
-
-        return next(context);
-    }
-}
 
 /// <summary>
 /// Resolves ADMIN_TOKEN from the environment directly — no file-backed config for this value
