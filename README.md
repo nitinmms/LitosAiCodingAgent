@@ -1,6 +1,12 @@
-# Litos AI Agent
+# Litos
 
-**[litosai.dev](https://litosai.dev/)**
+Open-source AI coding agent built in pure C#/.NET.
+
+[![Litos building an App](https://img.youtube.com/vi/j-Gx-7LZaso/maxresdefault.jpg)](https://youtu.be/j-Gx-7LZaso?si=mtQf8CjoTjUWTr5N)
+
+[⭐ Star](https://github.com/nitinmms/LitosAiCodingAgent) | [🚀 Quick Start](#install-litosgui) | [📖 Architecture](ReadMe_Architecture.md) | [🌐 litosai.dev](https://litosai.dev/)
+
+## Litos AI Agent
 
 A minimal, transparent AI coding agent written in pure .NET. Multi-provider (Anthropic,
 OpenAI, Google Gemini, OpenRouter), multi-face (console, desktop GUI, and an HTTP/API host with
