@@ -220,10 +220,34 @@ public sealed class PickerDialog<T> : Dialog<T> where T : notnull
     /// a genuinely non-blocking (not blocking-wait, not nested-Run) fix is found and verified for
     /// this call shape specifically. See AttachDialog.cs, which hits the identical problem for
     /// /attach and is mid-investigation of a fully async (non-blocking Task-returning) approach.
+    ///
+    /// SECOND CAUTION (Console Parity Plan hardening): the MainThreadId check has a genuine hole
+    /// at STARTUP specifically, before any outer Run loop exists at all — confirmed via real
+    /// diagnostic logging against Program.cs's own two startup pickers. PickProvider (no preceding
+    /// `await` since Init) matches MainThreadId and correctly takes the on-thread branch. PickModel
+    /// (called after `await chatProvider.ListModelsAsync(...)`) resumes on a DIFFERENT thread-pool
+    /// thread — no SynchronizationContext is installed, so the continuation is not guaranteed to
+    /// land back on the thread Init captured — and so incorrectly takes the off-thread Begin/
+    /// Iteration/blocking-wait branch below. Unlike the mid-keydown slash-command case the FIRST
+    /// caution above describes, there is no outer Run loop active yet at all here, so nothing can
+    /// ever raise app.Iteration to satisfy OnIteration's StopRequested poll, or ever pump the
+    /// app.Invoke(...) callback this whole branch is queued inside — a genuine, permanent deadlock
+    /// (confirmed: the process didn't even respond to Ctrl+C, since the original calling thread is
+    /// blocked forever inside tcs.Task.GetAwaiter().GetResult()). TopRunnableView is null before
+    /// any Run/Begin call has ever happened (unlike the slash-command case in the FIRST caution,
+    /// where a real outer loop genuinely is running), so gating specifically on "is anything
+    /// running at all" — not "is an outer loop active from THIS call's perspective" — distinguishes
+    /// the two cases without reintroducing the previously-tried fix's regression.
     /// </summary>
     public static T? Pick(IApplication app, string title, IReadOnlyList<T> items, Func<T, string> labelSelector, string? initialText = null)
     {
-        if (app.MainThreadId == Environment.CurrentManagedThreadId)
+        // No session has ever been Run/Begin-started yet (TopRunnableView is null) — true only at
+        // startup, before RunInteractive's outer Run(litosApp, ...) loop exists. In that specific
+        // state, no outer loop can conflict with app.Run(dialog, null) regardless of which thread
+        // physically resumed this call (see SECOND CAUTION above) — safe to always take the
+        // on-thread branch here even if a post-await continuation landed on a different thread.
+        var noOuterLoopRunningYet = app.TopRunnableView is null;
+        if (app.MainThreadId == Environment.CurrentManagedThreadId || noOuterLoopRunningYet)
         {
             var dialog = new PickerDialog<T>(title, items, labelSelector, initialText);
             app.Run(dialog, null);

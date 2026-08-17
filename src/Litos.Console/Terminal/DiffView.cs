@@ -15,16 +15,32 @@ namespace Litos.Console.Terminal;
 /// </summary>
 public sealed class DiffView : View
 {
-    private readonly string[] _lines;
+    private string[] _lines;
 
     public DiffView(string unifiedDiff)
     {
-        _lines = unifiedDiff.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        _lines = Split(unifiedDiff);
 
         Width = Dim.Auto();
         Height = Dim.Absolute(Math.Max(1, _lines.Length));
         CanFocus = false;
     }
+
+    /// <summary>
+    /// Replaces the displayed diff in place — used by /reflect's live, re-rendered-on-keystroke
+    /// diff (ReflectDialog), so a new DiffView doesn't need to be recreated and re-added to its
+    /// parent on every keystroke. Height grows/shrinks with the new content, same as the
+    /// constructor's initial sizing.
+    /// </summary>
+    public void SetDiff(string unifiedDiff)
+    {
+        _lines = Split(unifiedDiff);
+        Height = Dim.Absolute(Math.Max(1, _lines.Length));
+        SetNeedsDraw();
+    }
+
+    private static string[] Split(string unifiedDiff) =>
+        unifiedDiff.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     protected override bool OnDrawingText()
     {

@@ -374,3 +374,6 @@ src/Litos.Api/.env
 # BlazorChat example's local config carries a real Litos.Api admin token
 src/Litos.Api/examples/BlazorChat/appsettings.json
 src/Litos.Api/examples/BlazorChat/appsettings.Development.json
+
+# Local publish output from deploy/publish-*.ps1 / deploy/publish-*.sh
+deploy/out/

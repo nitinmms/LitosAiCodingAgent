@@ -12,10 +12,10 @@ namespace Litos.Console.Tests;
 /// Regression coverage for Litos.Console's own use of the AgentLoopFactory.Create(provider,
 /// tools) signature (ToolRegistry moved from a constructor-captured DI singleton to a per-call
 /// parameter — see ReadMe_LitosApi_Mcp.md's dynamic-MCP-tool-discovery redesign). Litos.Console
-/// builds its ToolRegistry once at startup via ToolRegistryFactory.Create() (Program.cs) and
-/// reuses that same instance across every AgentLoop rebuilt by a /provider switch — dynamic MCP
-/// discovery itself is out of scope for this face, but the plumbing must still compile and
-/// actually thread the tool list through to a real request, which this test proves end-to-end.
+/// rebuilds a fresh ToolRegistry via ToolRegistryFactory.Create() immediately before every turn
+/// (Program.cs, Console Parity Plan Slice 0.3) so a server added/removed via /mcp is picked up on
+/// the next send without an app restart — this test proves the tool list actually reaches a real
+/// request end-to-end.
 /// </summary>
 public class AgentLoopFactoryToolRegistryTests
 {
@@ -92,20 +92,31 @@ public class AgentLoopFactoryToolRegistryTests
     }
 
     [Fact]
-    public void Create_CalledAgainOnProviderSwitch_ReusesTheSameToolRegistry()
+    public void Create_RebuiltPerTurn_ObservesToolsAddedToASourceBetweenCalls()
     {
-        // Mirrors Litos.Console/Program.cs's /provider handler: loop = loopFactory.Create(
-        // chatProvider, toolRegistry) is called again with the SAME toolRegistry local, not a
-        // freshly-resolved one — confirms passing the identical ToolRegistry instance across two
-        // Create() calls works and each resulting AgentLoop resolves tools from it correctly.
+        // Mirrors Program.cs's per-turn rebuild (Slice 0.3): toolRegistryFactory.Create() is
+        // called fresh immediately before every turn, from the same ToolRegistryFactory instance,
+        // so a mutable IToolSource's current contents (e.g. MCP tools connecting after startup)
+        // are picked up on the very next turn with no restart.
+        var mutableSource = new MutableToolSource();
+        var toolRegistryFactory = new ToolRegistryFactory([new FakeTool("read_file")], [mutableSource]);
         var loopFactory = new AgentLoopFactory(
             new FakeTranscriptStore(), new ContextAccountant(), new NoopSystemPromptProvider(), new Compactor(new CompactionSettings()));
-        var toolRegistry = new ToolRegistryFactory([new FakeTool("read_file")], []).Create();
 
-        var loopBeforeSwitch = loopFactory.Create(new FakeChatProvider(), toolRegistry);
-        var loopAfterSwitch = loopFactory.Create(new FakeChatProvider(), toolRegistry);
+        var registryBeforeConnect = toolRegistryFactory.Create();
+        Assert.Throws<ToolInvocationException>(() => registryBeforeConnect.Resolve("mcp__server__tool"));
 
-        Assert.NotSame(loopBeforeSwitch, loopAfterSwitch);
-        Assert.Same(toolRegistry.Resolve("read_file"), toolRegistry.Resolve("read_file"));
+        mutableSource.Tools = [new FakeTool("mcp__server__tool")];
+        var registryAfterConnect = toolRegistryFactory.Create();
+
+        Assert.NotSame(registryBeforeConnect, registryAfterConnect);
+        Assert.NotNull(registryAfterConnect.Resolve("mcp__server__tool"));
+        Assert.NotNull(loopFactory.Create(new FakeChatProvider(), registryAfterConnect));
+    }
+
+    private sealed class MutableToolSource : IToolSource
+    {
+        public IReadOnlyList<ITool> Tools { get; set; } = [];
+        public IReadOnlyList<ITool> CurrentTools => Tools;
     }
 }

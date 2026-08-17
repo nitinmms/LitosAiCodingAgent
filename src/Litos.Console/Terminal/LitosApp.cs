@@ -1,3 +1,4 @@
+using Terminal.Gui.App;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using LineStyle = Terminal.Gui.Drawing.LineStyle;
@@ -16,9 +17,9 @@ public sealed class LitosApp : Window
     public WorkingIndicator Working { get; } = new();
     public Composer Composer { get; }
 
-    public LitosApp(Func<string> workingDirectoryProvider)
+    public LitosApp(IApplication app, Func<string> workingDirectoryProvider)
     {
-        Composer = new Composer(workingDirectoryProvider);
+        Composer = new Composer(app, workingDirectoryProvider);
         BorderStyle = LineStyle.None;
         Width = Dim.Fill();
         Height = Dim.Fill();
@@ -42,4 +43,7 @@ public sealed class LitosApp : Window
         Add(Transcript, Working, Composer);
         Composer.SetFocus();
     }
+
+    /// <summary>Forwards to Composer's @-mention cache invalidation — call after /new, /resume, /branch reassign the working directory.</summary>
+    public void InvalidateMentionCache() => Composer.InvalidateMentionCache();
 }

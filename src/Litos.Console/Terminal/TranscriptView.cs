@@ -102,8 +102,4 @@ public sealed class TranscriptView : TextView
         // request a redraw directly so the corrected scroll position always repaints.
         SetNeedsDraw();
     }
-
-    /// <summary>Temporary diagnostic snapshot — remove once the last-line cutoff bug is root-caused.</summary>
-    public string DebugScrollState() =>
-        $"Viewport=({Viewport.X},{Viewport.Y},{Viewport.Width},{Viewport.Height}) Lines={Lines} CurrentRow={CurrentRow} ContentSize={GetContentSize()}";
 }

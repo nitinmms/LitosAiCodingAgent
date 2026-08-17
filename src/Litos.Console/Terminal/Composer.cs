@@ -1,3 +1,4 @@
+using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -21,7 +22,9 @@ namespace Litos.Console.Terminal;
 /// </summary>
 public sealed class Composer : TextView
 {
+    private readonly IApplication _app;
     private readonly ComposerState _state = new();
+    private readonly MentionAutocomplete _mentionAutocomplete;
     private bool _syncing;
 
     public event Action<string>? Submitted;
@@ -32,8 +35,27 @@ public sealed class Composer : TextView
     /// <summary>Aborted turn's leftover text (may be empty) — the caller restores it, matching pi's abort() semantics.</summary>
     public event Action<string?>? Aborted;
 
-    public Composer(Func<string> workingDirectoryProvider)
+    /// <summary>
+    /// Raised when Ctrl+V found a real image on the OS clipboard (PNG bytes) — the host
+    /// (Program.cs) adds it to pendingImages the same way an @mention'd image file would be.
+    /// Terminal.Gui's own Ctrl+V handling (plain-text paste) still runs unmodified whenever the
+    /// clipboard held no image, so text paste is never regressed on any platform.
+    /// </summary>
+    public event Action<byte[]>? ImagePasted;
+
+    /// <summary>
+    /// Raised the first time a Linux Ctrl+V falls through to text paste specifically because
+    /// neither wl-paste nor xclip is installed (as opposed to falling through because the
+    /// clipboard just held text) — per Claude Code issue #29204, silently falling through with no
+    /// explanation is itself a known rough edge; this surfaces a one-line hint instead of staying
+    /// silent about the missing dependency. Fires at most once per process (mirrors
+    /// ClipboardImageReader.NoLinuxClipboardToolFound's own "surface it once" latch).
+    /// </summary>
+    public event Action? ImagePasteToolMissing;
+
+    public Composer(IApplication app, Func<string> workingDirectoryProvider)
     {
+        _app = app;
         Multiline = true;
         WordWrap = true;
         // Enter must reach our KeyDown handler as a submit/steer signal, not insert a newline —
@@ -66,7 +88,8 @@ public sealed class Composer : TextView
         // Confirmed empirically. Same root cause and fix shape as PickerDialog.cs's HostControl
         // comment — leaving HostControl null here lets TextView.OnSuperViewChanged wire it up
         // itself once Composer actually gains a SuperView.
-        Autocomplete.SuggestionGenerator = new MentionAutocomplete(workingDirectoryProvider);
+        _mentionAutocomplete = new MentionAutocomplete(workingDirectoryProvider);
+        Autocomplete.SuggestionGenerator = _mentionAutocomplete;
 
         KeyDown += OnKeyDown;
         // NOT TextChanged: TextView's own doc comment on its Text property says TextChanged
@@ -105,6 +128,9 @@ public sealed class Composer : TextView
     /// <summary>Clears the composer (used after a successful submit/steer/follow-up).</summary>
     public void ClearInput() => RestoreText(null);
 
+    /// <summary>Forces the @-mention file index to rebuild on next use — call when the working directory changes (/new, /resume, /branch).</summary>
+    public void InvalidateMentionCache() => _mentionAutocomplete.InvalidateCache();
+
     private void SyncStateFromText()
     {
         // TextView is the source of truth for the buffer text once the user is typing (it owns
@@ -118,6 +144,17 @@ public sealed class Composer : TextView
 
     private void OnKeyDown(object? sender, Key key)
     {
+        if (key == Key.V.WithCtrl)
+        {
+            // Always mark handled immediately: Terminal.Gui's own Ctrl+V (Command.Paste,
+            // TextView.Paste()) must not also fire for the same keystroke — the async image
+            // check below calls Paste() itself as the fallback once it knows the clipboard held
+            // no image, rather than letting both paths race.
+            key.Handled = true;
+            _ = TryPasteImageAsync();
+            return;
+        }
+
         if (key == Key.Enter || key == Key.Enter.WithAlt)
         {
             var action = _state.OnEnter(altHeld: key.IsAlt);
@@ -172,5 +209,33 @@ public sealed class Composer : TextView
                 Aborted?.Invoke(leftover);
             }
         }
+    }
+
+    /// <summary>
+    /// ClipboardImageReader's async platform read resumes on a thread-pool continuation, not
+    /// Terminal.Gui's main UI thread (no SynchronizationContext is installed — same reasoning as
+    /// every other async-dialog comment in this codebase), so both branches below marshal back
+    /// via _app.Invoke before touching this View or raising ImagePasted.
+    /// </summary>
+    private async Task TryPasteImageAsync()
+    {
+        var toolMissingBefore = ClipboardImageReader.NoLinuxClipboardToolFound;
+        var png = await ClipboardImageReader.TryReadPngAsync(CancellationToken.None);
+        var toolMissingJustDetected = !toolMissingBefore && ClipboardImageReader.NoLinuxClipboardToolFound;
+
+        _app.Invoke(() =>
+        {
+            if (png is not null)
+            {
+                ImagePasted?.Invoke(png);
+                return;
+            }
+
+            // No image on the clipboard (or this platform/format isn't supported) — fall back to
+            // Terminal.Gui's own normal text paste, so Ctrl+V never regresses to a no-op.
+            Paste();
+            if (toolMissingJustDetected)
+                ImagePasteToolMissing?.Invoke();
+        });
     }
 }

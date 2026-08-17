@@ -9,10 +9,19 @@ using Litos.Console;
 using Litos.Console.Terminal;
 using Litos.Host;
 using Litos.Tools.Attachments;
+using Litos.Tools.Mcp;
 using Litos.Tools.Shell;
 using Litos.Tools.Skills;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Terminal.Gui.App;
+
+// Must run before any MCP server connects (InitializeMcpAsync below): job membership propagates
+// to every process spawned afterward, so this process needs to already be in the job before
+// StdioClientTransport spawns its first "cmd.exe /c <command>" child. See Win32JobObject's own
+// remarks for why this exists and why it's Windows-only.
+if (OperatingSystem.IsWindows())
+    Win32JobObject.AssignCurrentProcessWithKillOnClose();
 
 var config = LitosConfig.Load();
 
@@ -53,7 +62,7 @@ if (canPrompt)
 
 var hasChatProviderKey = config.AvailableChatProviders.Count > 0;
 if (!hasChatProviderKey && canPrompt)
-    config = SetupWizardDialog.Run(app!);
+    config = ApiKeysDialog.RunFirstRun(app!);
 
 var availableProviders = config.AvailableChatProviders.ToList();
 if (availableProviders.Count == 0)
@@ -73,28 +82,81 @@ if (!config.IsProviderConfigured(activeProviderName))
 if (requestedProvider is null && canPrompt && availableProviders.Count > 1)
     activeProviderName = ModelPickerDialog.PickProvider(app!, availableProviders, activeProviderName);
 
+// Measured against a real npx-launched reference server, where process spawn + MCP initialize
+// handshake + tools/list took ~18s even with a warm npm cache — mirrors Litos.Gui/Litos.Api's own
+// mcpHandshakeTimeout comment. Only bounds the fire-and-forget startup connect (InitializeMcpAsync
+// below); it never blocks the app from starting.
+var mcpHandshakeTimeout = TimeSpan.FromSeconds(30);
+
 var services = new ServiceCollection().AddLitosAgent(config);
-services.AddSingleton<IToolApprovalGate>(_ => canPrompt
-    ? new ApprovalDialog(app!)
-    : new NonInteractiveApprovalGate());
+// Auto-approves every tool call — built-in and MCP alike — matching Litos.Gui's GuiApprovalGate.
+// ApprovalDialog/NonInteractiveApprovalGate remain in the codebase, unused, as a real fallback
+// implementation should approval gating be reintroduced later as an opt-in.
+services.AddSingleton<IToolApprovalGate, AutoApprovalGate>();
+
+// Constructed directly (not via DI), mirroring Litos.Gui/Litos.Api's Program.cs exactly: McpToolProvider
+// needs the AutoApprovalGate instance before BuildServiceProvider() exists to resolve it. No wrapping
+// McpAwareApprovalGate — Console's approval gate auto-approves everything unconditionally (Slice 0.4),
+// so MCP tool calls flow through AutoApprovalGate unmodified, same as every built-in tool.
+var mcpConfigStore = new McpConfigStore();
+var mcpApprovalGate = new AutoApprovalGate();
+// No provider added — Litos.Console has no log sink today; McpServerConnection's handshake/failure
+// logging still runs through this factory, it just has nowhere to go yet.
+using var mcpLoggerFactory = LoggerFactory.Create(_ => { });
+var mcpToolProvider = new McpToolProvider(mcpConfigStore, mcpLoggerFactory, mcpApprovalGate);
+
+// Registered as the single IToolSource instance, not per-tool AddSingleton<ITool> calls —
+// ToolRegistryFactory reads IToolSource.CurrentTools fresh every time Create() runs (Slice 0.3's
+// per-turn rebuild), so a server added/enabled/disabled/removed via /mcp is picked up on the next
+// turn without a restart.
+services.AddSingleton<IToolSource>(new McpToolSource(mcpToolProvider));
+
 var serviceProvider = services.BuildServiceProvider();
+
+// Fire-and-forget, not awaited: the app must start immediately rather than block on MCP
+// handshakes. Connections populate McpToolProvider.Tools as they complete; the per-turn
+// ToolRegistry rebuild (Slice 0.3) is what makes them visible, so there's no "first turn must
+// have everything" pressure.
+async Task InitializeMcpAsync()
+{
+    try
+    {
+        await mcpToolProvider.InitializeAsync(mcpHandshakeTimeout, CancellationToken.None);
+    }
+    catch (Exception ex)
+    {
+        System.Console.WriteLine($"MCP startup connect failed: {ex.Message}");
+    }
+}
+_ = InitializeMcpAsync();
+
 var providerFactory = serviceProvider.GetRequiredService<IChatProviderFactory>();
 var chatProvider = providerFactory.Resolve(activeProviderName);
-// Built once at startup — Litos.Console doesn't run a per-turn loop the way Litos.Api's
-// AgentWorker does, and dynamic MCP tool discovery is out of scope for this face, so one static
-// snapshot for the process's lifetime matches today's existing behavior exactly.
-var toolRegistry = serviceProvider.GetRequiredService<ToolRegistryFactory>().Create();
-var loop = serviceProvider.GetRequiredService<AgentLoopFactory>().Create(chatProvider, toolRegistry);
+var toolRegistryFactory = serviceProvider.GetRequiredService<ToolRegistryFactory>();
+var agentLoopFactory = serviceProvider.GetRequiredService<AgentLoopFactory>();
 
 var compactor = serviceProvider.GetRequiredService<Compactor>();
 var transcriptStore = serviceProvider.GetRequiredService<ITranscriptStore>();
 var attachmentConverter = serviceProvider.GetRequiredService<IAttachmentConverter>();
 var skillDiscovery = serviceProvider.GetRequiredService<ISkillDiscovery>();
+var systemPromptProvider = serviceProvider.GetRequiredService<ISystemPromptProvider>();
+var reflector = serviceProvider.GetRequiredService<Reflector>();
 var transcript = Transcript.CreateNew(Directory.GetCurrentDirectory());
 var sessionId = Guid.NewGuid().ToString("n");
 var pendingAttachments = new List<DocumentMarkdown>();
 var pendingImages = new List<ImageBlock>();
 var attachHandler = new AttachHandler(attachmentConverter);
+// Set once by RunInteractive; stays null on the non-interactive path (no @-mention popup to
+// invalidate there — FileIndex is rebuilt fresh every ResolveMentionsAsync call regardless).
+// Named distinctly from RunInteractive's own local `litosApp` (a non-nullable convenience alias
+// scoped to that function) so TryHandleSlashCommandAsync — declared outside RunInteractive and
+// also reachable from the non-interactive path — has an unambiguous nullable reference to check.
+LitosApp? litosAppForMentionCacheInvalidation = null;
+// The last completed assistant reply's raw text (post-LaTeX-rewrite), for /md to view through a
+// real Terminal.Gui.Views.Markdown renderer — Slice 3.1 Step A's isolated proving ground for
+// whether that view behaves well under AppModel.Inline before attempting Step B's larger
+// TranscriptView restructure.
+string? lastAssistantReplyText = null;
 
 void ApplyAttachResult(AttachResult result, Action<string> printLine)
 {
@@ -169,9 +231,14 @@ async Task<int> RunNonInteractiveAsync()
         var steeringChannel = Channel.CreateUnbounded<SteeringMessage>();
         using var turnCts = new CancellationTokenSource();
 
+        // Rebuilt immediately before each turn so a server added/removed via /mcp takes effect on
+        // the very next send, with no app restart (Slice 0.3 — the MCP prerequisite).
+        var turnToolRegistry = toolRegistryFactory.Create();
+        var turnLoop = agentLoopFactory.Create(chatProvider, turnToolRegistry);
+
         try
         {
-            await foreach (var evt in loop.RunTurnAsync(SessionOwner.Local, sessionId, transcript, model, turnContent, turnCts.Token, steeringChannel.Reader))
+            await foreach (var evt in turnLoop.RunTurnAsync(SessionOwner.Local, sessionId, transcript, model, turnContent, turnCts.Token, steeringChannel.Reader))
             {
                 switch (evt)
                 {
@@ -213,7 +280,11 @@ async Task<int> RunNonInteractiveAsync()
 // ---- Interactive Terminal.Gui path -------------------------------------------------------------
 int RunInteractive()
 {
-    var litosApp = new LitosApp(() => transcript.WorkingDirectory ?? Directory.GetCurrentDirectory());
+    var litosApp = new LitosApp(app!, () => transcript.WorkingDirectory ?? Directory.GetCurrentDirectory())
+    {
+        Title = $"Litos — {activeProviderName}/{model}",
+    };
+    litosAppForMentionCacheInvalidation = litosApp;
 
     // Called both from Terminal.Gui's own main-loop thread (e.g. directly inside a Composer
     // event handler) and from background thread-pool continuations resumed after an `await` on
@@ -236,6 +307,11 @@ int RunInteractive()
         currentSteeringChannel = steeringChannel;
         using var turnCts = new CancellationTokenSource();
         currentTurnCts = turnCts;
+
+        // Rebuilt immediately before each turn so a server added/removed via /mcp takes effect on
+        // the very next send, with no app restart (Slice 0.3 — the MCP prerequisite).
+        var turnToolRegistry = toolRegistryFactory.Create();
+        var turnLoop = agentLoopFactory.Create(chatProvider, turnToolRegistry);
 
         // AgentLoop.RunTurnAsync's IAsyncEnumerable resumes its continuations wherever the
         // awaited provider.StreamAsync/tool-execution work happens to complete — a thread-pool
@@ -270,7 +346,7 @@ int RunInteractive()
 
         try
         {
-            await foreach (var evt in loop.RunTurnAsync(SessionOwner.Local, sessionId, transcript, model, turnContent, turnCts.Token, steeringChannel.Reader))
+            await foreach (var evt in turnLoop.RunTurnAsync(SessionOwner.Local, sessionId, transcript, model, turnContent, turnCts.Token, steeringChannel.Reader))
             {
                 var stopWorking = !firstEventSeen;
                 firstEventSeen = true;
@@ -284,7 +360,13 @@ int RunInteractive()
                     {
                         case TextDelta delta:
                             liveReplyText += delta.Text;
-                            litosApp.Transcript.SetLive(liveReplyText);
+                            // LaTeX-to-Unicode rewriting only (\alpha -> α) — MarkdownRenderer no
+                            // longer hand-rolls bold/italic/heading markup (Terminal.Gui.Views.
+                            // Markdown handles real CommonMark styling natively, see Slice 3.1
+                            // Step B), so this is safe to apply to the full accumulated reply on
+                            // every delta: idempotent on already-rewritten text, and a
+                            // still-incomplete "$..." delimiter simply doesn't match yet.
+                            litosApp.Transcript.SetLive(MarkdownRenderer.ToDisplayText(liveReplyText));
                             break;
 
                         case ToolCallCompleted toolCall:
@@ -302,8 +384,9 @@ int RunInteractive()
 
                         case MessageCompleted:
                             litosApp.Transcript.CommitLive();
+                            if (liveReplyText.Length > 0)
+                                lastAssistantReplyText = liveReplyText;
                             liveReplyText = string.Empty;
-                            litosApp.Title = litosApp.Transcript.DebugScrollState();
                             break;
 
                         case ErrorOccurred error:
@@ -414,6 +497,13 @@ int RunInteractive()
     };
     litosApp.Composer.EmptyEnterHintRequested += () =>
         PrintLine("Type your steering message first, then press Enter to send it (Alt+Enter to follow up instead).");
+    litosApp.Composer.ImagePasted += pngBytes =>
+    {
+        pendingImages.Add(new ImageBlock("image/png", pngBytes));
+        PrintLine($"Pasted image ({pngBytes.Length} bytes) — will be sent to the model directly.");
+    };
+    litosApp.Composer.ImagePasteToolMissing += () =>
+        PrintLine("Note: install xclip or wl-clipboard for image paste support.");
 
     app!.Run(litosApp, null);
     app.Dispose();
@@ -503,6 +593,7 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
         case "/new":
             sessionId = Guid.NewGuid().ToString("n");
             transcript = Transcript.CreateNew(Directory.GetCurrentDirectory());
+            litosAppForMentionCacheInvalidation?.InvalidateMentionCache();
             printLine($"Started new session {sessionId}.");
             return true;
 
@@ -519,6 +610,7 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
 
             sessionId = pickedId;
             transcript = await Transcript.LoadAsync(transcriptStore, SessionOwner.Local, sessionId, CancellationToken.None);
+            litosAppForMentionCacheInvalidation?.InvalidateMentionCache();
             printLine($"Resumed session {sessionId} ({transcript.Messages.Count} messages).");
             WarnIfWorkingDirectoryMissing(transcript.WorkingDirectory, printLine);
             return true;
@@ -579,7 +671,8 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
 
             activeProviderName = pickedProvider;
             chatProvider = providerFactory.Resolve(activeProviderName);
-            loop = serviceProvider.GetRequiredService<AgentLoopFactory>().Create(chatProvider, toolRegistry);
+            // No loop/registry rebuild needed here — each turn already builds its own fresh
+            // AgentLoop from the current chatProvider immediately before running (Slice 0.3).
 
             // Model ids aren't portable across providers, so switching providers always
             // resets to that provider's own default rather than carrying the old id over.
@@ -627,6 +720,7 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
             var newSessionId = await transcriptStore.BranchAsync(SessionOwner.Local, sessionId, uptoEntryIndex, CancellationToken.None);
             sessionId = newSessionId;
             transcript = await Transcript.LoadAsync(transcriptStore, SessionOwner.Local, sessionId, CancellationToken.None);
+            litosAppForMentionCacheInvalidation?.InvalidateMentionCache();
             printLine($"Branched into new session {sessionId} ({transcript.Messages.Count} messages kept).");
             WarnIfWorkingDirectoryMissing(transcript.WorkingDirectory, printLine);
             return true;
@@ -650,6 +744,97 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
             return true;
         }
 
+        case "/keys":
+        {
+            if (interactiveApp is null)
+            {
+                printLine("/keys requires an interactive terminal.");
+                return true;
+            }
+
+            var updatedConfig = await ApiKeysDialog.ShowAsync(interactiveApp);
+            if (updatedConfig is null)
+            {
+                printLine("Cancelled — no changes saved.");
+                return true;
+            }
+
+            config = updatedConfig;
+            printLine("API keys saved.");
+            return true;
+        }
+
+        case "/md":
+        {
+            if (interactiveApp is null)
+            {
+                printLine("/md requires an interactive terminal.");
+                return true;
+            }
+
+            if (lastAssistantReplyText is null)
+            {
+                printLine("No completed reply yet this session.");
+                return true;
+            }
+
+            MarkdownViewDialog.Show(interactiveApp, lastAssistantReplyText);
+            return true;
+        }
+
+        case "/mcp":
+        {
+            if (interactiveApp is null)
+            {
+                printLine("/mcp requires an interactive terminal.");
+                return true;
+            }
+
+            await McpServersDialog.ShowAsync(interactiveApp, mcpConfigStore, mcpToolProvider);
+            return true;
+        }
+
+        case "/reflect":
+        {
+            var workingDirectory = transcript.WorkingDirectory ?? Directory.GetCurrentDirectory();
+            var agentsMdPath = Path.Combine(workingDirectory, "AGENTS.md");
+            var existingAgentsMd = File.Exists(agentsMdPath) ? await File.ReadAllTextAsync(agentsMdPath) : null;
+
+            var proposed = await reflector.ReflectAsync(transcript.Messages, existingAgentsMd, chatProvider, model, CancellationToken.None);
+
+            if (interactiveApp is null)
+            {
+                printLine(Litos.Tools.FileSystem.UnifiedDiff.Render(existingAgentsMd, proposed, agentsMdPath));
+                printLine("Non-interactive mode: refusing to write AGENTS.md unattended. Run /reflect interactively to confirm and write.");
+                return true;
+            }
+
+            var edited = await ReflectDialog.ShowAsync(interactiveApp, existingAgentsMd, proposed, agentsMdPath);
+            if (edited is null)
+            {
+                printLine("Reflection cancelled — AGENTS.md not written.");
+                return true;
+            }
+
+            await File.WriteAllTextAsync(agentsMdPath, edited);
+            printLine($"Wrote {agentsMdPath}.");
+            return true;
+        }
+
+        case "/context":
+        {
+            if (interactiveApp is null)
+            {
+                printLine("/context requires an interactive terminal.");
+                return true;
+            }
+
+            var contextLength = ModelContextWindows.Resolve(model);
+            var contextToolRegistry = toolRegistryFactory.Create();
+            await ContextBreakdownDialog.ShowAsync(interactiveApp, systemPromptProvider, transcript, contextToolRegistry, contextLength);
+            return true;
+        }
+
         case "/skills":
         {
             var skills = await skillDiscovery.DiscoverAsync(CancellationToken.None);
@@ -661,6 +846,36 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
 
             foreach (var skill in skills)
                 printLine($"{skill.Name,-24} {skill.Description}  [{skill.DirectoryPath}]");
+            return true;
+        }
+
+        case "/skill":
+        {
+            if (string.IsNullOrWhiteSpace(argument))
+            {
+                printLine("Usage: /skill <name> [args]");
+                return true;
+            }
+
+            var skillParts = argument.Split(' ', 2, StringSplitOptions.TrimEntries);
+            var skillName = skillParts[0];
+            var skillArgs = skillParts.Length > 1 ? skillParts[1] : null;
+
+            // Scoped to the live session working directory, not the DI singleton's, so a skill
+            // resolves relative to wherever /resume or /branch last pointed the session — same
+            // reasoning as Litos.Gui's LoadSkillAsync.
+            var skillTool = new SkillTool(new SkillDiscovery(transcript.WorkingDirectory));
+            var skillToolArgs = System.Text.Json.JsonSerializer.SerializeToElement(new { name = skillName });
+            var skillResult = await skillTool.InvokeAsync(skillToolArgs, CancellationToken.None);
+            if (skillResult.IsError)
+            {
+                printLine($"{skillResult.Text} Run /skills to see what's available.");
+                return true;
+            }
+
+            var skillMarkdown = skillArgs is null ? skillResult.Text : $"{skillResult.Text}\n\nUser: {skillArgs}";
+            pendingAttachments.Add(new DocumentMarkdown(skillName, skillMarkdown, []));
+            printLine($"Loaded skill '{skillName}' — will be included in your next message.");
             return true;
         }
 
@@ -685,9 +900,63 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
         }
 
         default:
-            printLine($"Unknown command: {command}");
-            return true;
+            return await TryHandleMcpPromptCommandAsync(command, argument, printLine);
     }
+}
+
+/// <summary>
+/// Checks an unrecognized "/foo" against McpToolProvider.Prompts (named "/{server}__{prompt}",
+/// mirroring McpToolProxy's mcp__{server}__{tool} tool-name convention) before reporting "Unknown
+/// command" — Slice 2.3. A matched prompt's fetched content runs through the exact same
+/// turn-execution path a typed message would (BuildTurnContent -> RunTurnAsync), never invoked
+/// directly. Since Console has no command-menu popup for discovering available prompt names
+/// (unlike Litos.Gui's CommandMenuPopup), /mcp's dialog lists them instead (Slice 2.2).
+/// </summary>
+async Task<bool> TryHandleMcpPromptCommandAsync(string command, string? argument, Action<string> printLine)
+{
+    if (!command.StartsWith('/'))
+    {
+        printLine($"Unknown command: {command}");
+        return true;
+    }
+
+    var promptFullName = "mcp__" + command[1..];
+    var entry = mcpToolProvider.Prompts.FirstOrDefault(p => p.FullName == promptFullName);
+    if (entry is null)
+    {
+        printLine($"Unknown command: {command}");
+        return true;
+    }
+
+    var tokens = McpPromptArguments.Tokenize(argument ?? string.Empty);
+    var (arguments, bindError) = McpPromptArguments.Bind(tokens, entry.Prompt.ProtocolPrompt.Arguments);
+    if (bindError is not null)
+    {
+        var hint = McpPromptArguments.FormatArgumentHint(entry.Prompt.ProtocolPrompt.Arguments);
+        printLine(bindError.Kind == McpPromptArguments.BindErrorKind.MissingRequired
+            ? $"Missing required argument(s): {string.Join(", ", bindError.Names)}. Usage: {command} {hint}"
+            : $"Too many arguments. Usage: {command} {hint}");
+        return true;
+    }
+
+    ModelContextProtocol.Protocol.GetPromptResult result;
+    try
+    {
+        result = await entry.Connection.GetPromptAsync(entry.Prompt, arguments, CancellationToken.None);
+    }
+    catch (Exception ex)
+    {
+        printLine($"Could not run prompt '{command}': {ex.Message}");
+        return true;
+    }
+
+    var converted = McpPromptContentConverter.Convert(result);
+    if (converted.SkippedBlockIndexes.Count > 0)
+        printLine($"Note: {converted.SkippedBlockIndexes.Count} non-text message(s) in this prompt's result were skipped.");
+
+    pendingAttachments.Add(new DocumentMarkdown(command, converted.Text, []));
+    printLine($"Loaded prompt '{command}' — will be included in your next message.");
+    return true;
 }
 
 void WarnIfWorkingDirectoryMissing(string? workingDirectory, Action<string> printLine)
