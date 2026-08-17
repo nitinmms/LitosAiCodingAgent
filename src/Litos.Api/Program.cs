@@ -5,6 +5,7 @@ using Litos.Api.Auth;
 using Litos.Api.Channels;
 using Litos.Api.Channels.Telegram;
 using Litos.Api.Data;
+using Litos.Api.Files;
 using Litos.Api.Logs;
 using Litos.Api.Turns;
 using Litos.Host;
@@ -79,6 +80,14 @@ if (corsAllowedOrigins.Length > 0)
     builder.Services.AddCors(o => o.AddPolicy(corsPolicyName, policy =>
         policy.WithOrigins(corsAllowedOrigins).AllowAnyHeader().AllowAnyMethod()));
 }
+
+// share_file needs its own externally-reachable base URL to build a clickable download link —
+// same env-var-only pattern as CORS_ALLOWED_ORIGINS above. Left unset is tolerated (ShareFileTool
+// still shares the file and returns the bare token) rather than failing startup, since a
+// deployment might add this later without wanting share_file entirely unavailable until then.
+var publicBaseUrl = Environment.GetEnvironmentVariable("PUBLIC_BASE_URL") ?? builder.Configuration["PUBLIC_BASE_URL"];
+builder.Services.AddSingleton<SharedFileStore>();
+builder.Services.AddSingleton<ITool>(sp => new ShareFileTool(sp.GetRequiredService<SharedFileStore>(), publicBaseUrl));
 
 // Channel-agnostic — MCP Ask-mode gating needs this even with no Telegram token configured, so it
 // can no longer live only inside the telegramToken-is-not-null branch below.
@@ -271,6 +280,10 @@ app.UseAntiforgery();
 
 app.MapAdminAuthEndpoints();
 app.MapTurnsEndpoints();
+// Deliberately unauthenticated (see FilesEndpoints) — mapped here like every other endpoint;
+// route-level auth (or its absence) is what governs access, not registration order relative to
+// UseAuthentication/UseAuthorization above.
+app.MapFilesEndpoints();
 
 app.MapGet("/status", (AgentWorker worker) => Results.Ok(new
 {

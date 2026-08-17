@@ -12,6 +12,28 @@
  */
 angular.module('litosChat', [])
 
+// Renders assistant text with Markdown-style links (e.g. share_file's own
+// "[Download README.md](http://localhost:8080/files/{token})" output, see Files/ShareFileTool.cs)
+// as clickable <a> tags. Escapes the raw text first — same as {{ }} interpolation would've done —
+// so nothing else in a message is ever interpreted as HTML; only the bracket/paren link syntax is
+// turned into a real anchor. rel="noopener noreferrer" since target="_blank" opens an
+// attacker-influenced-if-the-model-is-compromised URL.
+.filter('linkify', function () {
+    var ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    var MARKDOWN_LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+
+    function escapeHtml(text) {
+        return text.replace(/[&<>"']/g, function (ch) { return ESCAPE_MAP[ch]; });
+    }
+
+    return function (text) {
+        if (!text) return text;
+        return escapeHtml(text).replace(MARKDOWN_LINK, function (match, label, url) {
+            return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+        });
+    };
+})
+
 // Wraps POST /auth/token and /auth/token/refresh. A separate, tokenless $http call — mirrors
 // BlazorChat's LitosLoginService being on its own unauthenticated HttpClient (see that file's
 // doc comment: wiring token-refresh onto the calls that mint/refresh tokens would be circular).
@@ -293,8 +315,15 @@ angular.module('litosChat', [])
     }
 }])
 
-.controller('ChatController', ['$scope', '$q', '$timeout', 'authService', 'litosApiClient', function ($scope, $q, $timeout, authService, litosApiClient) {
+.controller('ChatController', ['$scope', '$q', '$sce', '$timeout', '$filter', 'authService', 'litosApiClient', function ($scope, $q, $sce, $timeout, $filter, authService, litosApiClient) {
     $scope.session = authService.current();
+
+    // linkify (above) already escapes the raw text and only ever introduces a fixed, known-safe
+    // <a href="http(s)://..." target="_blank" rel="noopener noreferrer">label</a> shape — so
+    // trusting its output here is safe; this is not trusting arbitrary assistant-authored HTML.
+    $scope.renderAssistantText = function (text) {
+        return $sce.trustAsHtml($filter('linkify')(text));
+    };
 
     $scope.loginForm = { username: '', password: '' };
     $scope.loginError = null;

@@ -21,7 +21,7 @@
 else if (Entry is ChatEntry.AssistantMessage assistantMessage)
 {
     <div class="chat-entry assistant-message">
-        <div class="bubble">@assistantMessage.Text</div>
+        <div class="bubble">@ChatTextRenderer.RenderAssistantText(assistantMessage.Text)</div>
     </div>
 }
 else if (Entry is ChatEntry.ToolActivity toolActivity)

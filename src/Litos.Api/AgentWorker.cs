@@ -5,6 +5,7 @@ using Litos.Agent.Providers;
 using Litos.Agent.Session;
 using Litos.Agent.Streaming;
 using Litos.Agent.Tools;
+using Litos.Api.Channels;
 using Litos.Host;
 
 namespace Litos.Api;
@@ -256,7 +257,20 @@ public sealed class AgentWorker : BackgroundService
         }
     }
 
-    private async Task RunTurnAsync(
+    private Task RunTurnAsync(
+        SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content,
+        ChannelWriter<AgentEvent> events, Channel<SteeringMessage> steering, CancellationToken requestAborted) =>
+        // Sets ChannelContext.Owner/SessionId for every turn (HTTP and Telegram alike) — this is
+        // the one place both paths already funnel through, so a tool like ShareFileTool can read
+        // "which session is this" without AgentLoop/ITool needing a new parameter. Telegram's own
+        // ChannelContext.RunAsAsync("telegram", chatId, ...) wrap (TelegramSessionDriver.cs) sets
+        // Channel/ChannelId *before* this runs (it wraps the synchronous call that creates this
+        // method's Task, and AsyncLocal is captured at Task-creation time even though that Task is
+        // never awaited under the outer wrap) — this call's own RunAsAsync(owner, sessionId, ...)
+        // overload preserves whatever Channel/ChannelId is already ambient rather than clobbering it.
+        ChannelContext.RunAsAsync(owner, sessionId, () => RunTurnCoreAsync(owner, sessionId, content, events, steering, requestAborted));
+
+    private async Task RunTurnCoreAsync(
         SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content,
         ChannelWriter<AgentEvent> events, Channel<SteeringMessage> steering, CancellationToken requestAborted)
     {

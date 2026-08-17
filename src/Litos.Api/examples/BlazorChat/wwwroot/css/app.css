@@ -33,6 +33,8 @@ h1 { margin: 0; font: 700 1.25rem 'Space Grotesk'; letter-spacing: -.02em; }
 .user-message { display: flex; justify-content: flex-end; }
 .user-message .bubble { color: white; background: linear-gradient(135deg,#6558f5,#7467ed); border-bottom-right-radius: 5px; box-shadow: 0 7px 15px #6558f526; }
 .assistant-message .bubble { background: #fff; border: 1px solid #e4e9f2; border-bottom-left-radius: 5px; box-shadow: 0 4px 12px #3a49600c; }
+.bubble a { color: #6558f5; font-weight: 600; text-decoration: underline; }
+.bubble a:hover { text-decoration: none; }
 .attachment-list { display: grid; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; font-size: .82rem; }
 .attachment-list li { display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-radius: 8px; background: #ffffff24; }
 .file-icon { color: #786cf4; font-weight: 700; }
