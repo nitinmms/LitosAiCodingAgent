@@ -59,7 +59,6 @@ jobs:
           dotnet-version: "10.0.x"
 
       - name: Import signing certificate
-        if: ${{ env.APPLE_CERT_P12 != '' }}
         env:
           APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
@@ -79,9 +78,9 @@ jobs:
 
           rm -f "$CERT_PATH"
 
-      - name: Publish (and sign/notarize if configured)
+      - name: Publish, sign, and notarize
         env:
-          APPLE_SIGN_IDENTITY: ${{ secrets.APPLE_CERT_P12 != '' && format('Developer ID Application: Nitin Sharma ({0})', secrets.APPLE_TEAM_ID) || '' }}
+          APPLE_SIGN_IDENTITY: "Developer ID Application: Nitin Sharma (${{ secrets.APPLE_TEAM_ID }})"
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
