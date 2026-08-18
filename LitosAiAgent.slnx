@@ -12,6 +12,7 @@
     <Project Path="src/Litos.Providers.OpenRouter/Litos.Providers.OpenRouter.csproj" />
     <Project Path="src/Litos.Tools/Litos.Tools.csproj" />
     <Project Path="src/Litos.Tools.Mcp/Litos.Tools.Mcp.csproj" />
+    <Project Path="src/Litos.VsCodeHost/Litos.VsCodeHost.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Litos.Agent.Tests/Litos.Agent.Tests.csproj" />
@@ -23,5 +24,6 @@
     <Project Path="tests/Litos.Providers.Tests/Litos.Providers.Tests.csproj" />
     <Project Path="tests/Litos.Tools.Tests/Litos.Tools.Tests.csproj" />
     <Project Path="tests/Litos.Tools.Mcp.Tests/Litos.Tools.Mcp.Tests.csproj" />
+    <Project Path="tests/Litos.VsCodeHost.Tests/Litos.VsCodeHost.Tests.csproj" />
   </Folder>
 </Solution>

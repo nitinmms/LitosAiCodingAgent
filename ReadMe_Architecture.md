@@ -120,3 +120,5 @@ flowchart TD
 | `Litos.Console` | Terminal UI face (Terminal.Gui v2) — work in progress |
 | `Litos.Gui` | Desktop UI face (Avalonia) — **working** |
 | `Litos.Api` | HTTP API + web UI host, with Docker support and a working Telegram bridge — **working**. WhatsApp/Rocket.Chat/email bridges are design docs only (no implementation yet) |
+| `Litos.VsCodeHost` | Minimal local no-auth HTTP host for the VS Code extension (loopback-only, no Postgres/JWT/Telegram) — **working**; single-session chat only, see `ReadMe_VsCodeExtension.md` |
+| `Litos.VsCode` (`src/Litos.VsCode`, TypeScript) | VS Code extension face: webview chat UI, spawns `Litos.VsCodeHost` as a child process — **working**, Windows only, no slash commands yet — see `ReadMe_VsCodeExtension.md` |

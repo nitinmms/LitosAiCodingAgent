@@ -1,0 +1,97 @@
+using Litos.Host;
+
+namespace Litos.VsCodeHost.Config;
+
+/// <summary>
+/// First-run API key setup for the webview — mirrors Litos.Gui's ApiKeysWindow (same persistence:
+/// Windows user-scope env vars, else ~/.litos/config.json, both already read back by
+/// LitosConfig.Load() and shared across every face) but reachable over JSON instead of a modal
+/// Avalonia window.
+///
+/// No live reload: LitosHostBuilder.AddLitosAgent conditionally registers each keyed IChatProvider
+/// once, at DI-container-build time, gated on whatever LitosConfig.GetApiKey(...) returned at that
+/// instant — there's no seam to swap a provider registration into an already-built
+/// IServiceProvider. So saving a key here doesn't take effect in *this* process; it mirrors
+/// ApiKeysWindow's own first-run behavior ("Litos will then close so you can restart it") except
+/// the restart is the extension's job, not the user's — see extension.ts, which calls POST
+/// /config/keys, then kills and respawns this process so the freshly-saved key is picked up by a
+/// fresh LitosConfig.Load() on the next AddLitosAgent call.
+/// </summary>
+public static class ConfigEndpoints
+{
+    public static IEndpointRouteBuilder MapConfigEndpoints(this IEndpointRouteBuilder app, LitosConfig config)
+    {
+        app.MapGet("/config/status", () => Results.Ok(new
+        {
+            configured = config.AvailableChatProviders.Count > 0,
+            availableProviders = config.AvailableChatProviders,
+        }));
+
+        app.MapPost("/config/keys", (SaveKeysRequest request) =>
+        {
+            if (request.Entries.Count == 0 && string.IsNullOrWhiteSpace(request.LocalBaseUrl))
+                return Results.BadRequest("At least one API key or a local server URL is required.");
+
+            SaveKeys(request);
+
+            // Reflects what was just written to disk/env — NOT what this already-running process
+            // will use for chat providers (see class remarks). The caller must restart the host
+            // process for a new key to actually take effect.
+            var reloaded = LitosConfig.Load();
+            return Results.Ok(new
+            {
+                configured = reloaded.AvailableChatProviders.Count > 0,
+                availableProviders = reloaded.AvailableChatProviders,
+                restartRequired = true,
+            });
+        });
+
+        return app;
+    }
+
+    // Same persistence split as Litos.Gui's ApiKeysWindow.TrySave: Windows writes user-scope
+    // environment variables (no admin elevation needed, persists across restarts, picked up by
+    // every face's own LitosConfig.Load()); everywhere else — and LocalBaseUrl always, since it
+    // isn't a secret and has no environment-variable convention — goes to config.json.
+    private static void SaveKeys(SaveKeysRequest request)
+    {
+        var hasLocalBaseUrl = !string.IsNullOrWhiteSpace(request.LocalBaseUrl);
+
+        if (OperatingSystem.IsWindows())
+        {
+            foreach (var entry in request.Entries)
+                Environment.SetEnvironmentVariable(EnvVarName(entry.Provider), entry.ApiKey, EnvironmentVariableTarget.User);
+        }
+
+        if (hasLocalBaseUrl || !OperatingSystem.IsWindows())
+        {
+            var config = LitosConfig.Load();
+            var apiKeys = new Dictionary<string, string>(config.ApiKeys);
+            if (!OperatingSystem.IsWindows())
+                foreach (var entry in request.Entries)
+                    apiKeys[entry.Provider] = entry.ApiKey;
+
+            config = config with
+            {
+                ApiKeys = apiKeys,
+                LocalBaseUrl = hasLocalBaseUrl ? request.LocalBaseUrl!.Trim() : config.LocalBaseUrl,
+            };
+            config.Save();
+        }
+    }
+
+    private static string EnvVarName(string provider) => provider switch
+    {
+        "anthropic" => "ANTHROPIC_API_KEY",
+        "openai" => "OPENAI_API_KEY",
+        "gemini" => "GEMINI_API_KEY",
+        "openrouter" => "OPENROUTER_API_KEY",
+        "local" => "LOCAL_API_KEY",
+        "tavily" => "TAVILY_API_KEY",
+        _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Unknown provider."),
+    };
+}
+
+public sealed record SaveKeysRequest(IReadOnlyList<KeyEntry> Entries, string? LocalBaseUrl);
+
+public sealed record KeyEntry(string Provider, string ApiKey);

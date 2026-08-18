@@ -383,7 +383,9 @@ int RunInteractive()
                             break;
 
                         case MessageCompleted:
+                            System.Console.Error.WriteLine("[DIAG] MessageCompleted: calling CommitLive()");
                             litosApp.Transcript.CommitLive();
+                            System.Console.Error.WriteLine("[DIAG] MessageCompleted: CommitLive() returned");
                             if (liveReplyText.Length > 0)
                                 lastAssistantReplyText = liveReplyText;
                             liveReplyText = string.Empty;
@@ -439,11 +441,37 @@ int RunInteractive()
 
             app!.Invoke(() =>
             {
+                System.Console.Error.WriteLine("[DIAG] finally block: calling Working.Stop()");
                 litosApp.Working.Stop();
+                System.Console.Error.WriteLine($"[DIAG] finally block: Working.Stop() returned, IsRunning={litosApp.Working.IsRunning}");
                 litosApp.Composer.IsTurnInFlight = false;
 
                 if (textToRestore is not null)
                     litosApp.Composer.RestoreText(textToRestore);
+
+                // Working.Stop() just reclaimed the row LitosApp's Dim.Func was reserving for it
+                // (Transcript.Height depends on Working.IsRunning) — the final reply line was
+                // already committed and scrolled into place against the OLD, one-row-shorter
+                // viewport (MessageCompleted's CommitLive() ran earlier, in this same RunTurnAsync
+                // call but a separate app.Invoke, before Working.Stop() here). Reflowing/redrawing
+                // SYNCHRONOUSLY here (ReflowAfterExternalResize(), LayoutAndDraw(true), even a real
+                // RaiseKeyDownEvent(CursorRight)) all failed empirically — the content and scroll
+                // position are provably correct at this point (confirmed via diagnostic logging:
+                // Frame/Viewport/ContentSize/CurrentRow all show the right values), but nothing
+                // callable synchronously from within this same Invoke callback ever makes it repaint
+                // on screen. Deferring the identical reflow to run on the NEXT main-loop iteration
+                // via a fresh AddTimeout(TimeSpan.Zero, ...) — genuinely a separate later callback,
+                // not more work packed into this one — is what finally reproduces the effect that
+                // already reliably fixes this when the user's own next keystroke does it.
+                System.Console.Error.WriteLine("[DIAG] finally block: scheduling deferred reflow via AddTimeout");
+                app.AddTimeout(TimeSpan.Zero, () =>
+                {
+                    System.Console.Error.WriteLine("[DIAG] deferred reflow timeout: firing");
+                    litosApp.Transcript.ReflowAfterExternalResize();
+                    app.LayoutAndDraw(true);
+                    System.Console.Error.WriteLine("[DIAG] deferred reflow timeout: done");
+                    return false;
+                });
             });
         }
     }

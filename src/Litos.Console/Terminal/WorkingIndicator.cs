@@ -45,6 +45,7 @@ public sealed class WorkingIndicator : View
         _label.Visible = true;
         _spinner.AutoSpin = true;
         SetNeedsDraw();
+        RelayoutSiblingsDependingOnIsRunning();
     }
 
     public void Stop()
@@ -56,5 +57,34 @@ public sealed class WorkingIndicator : View
         _spinner.Visible = false;
         _label.Visible = false;
         SetNeedsDraw();
+        RelayoutSiblingsDependingOnIsRunning();
+    }
+
+    /// <summary>
+    /// LitosApp.cs sizes TranscriptView via Dim.Fill(Dim.Func(_ => Working.IsRunning ? 2 : 1)) —
+    /// a computed Dim that reads IsRunning, evaluated only when ITS OWN view (Transcript) next
+    /// relayouts. Flipping _spinner.AutoSpin above marks only THIS view (WorkingIndicator) dirty;
+    /// it does nothing to invalidate Transcript's cached layout, so Transcript keeps using its
+    /// stale pre-toggle height until something unrelated forces a full window relayout later.
+    /// Confirmed empirically: after a turn's final MessageCompleted commits the last reply line
+    /// (TranscriptView.Refresh(), called from Program.cs's RunTurnAsync before this Stop() runs —
+    /// a separate, later app.Invoke in the `finally` block), that last line lands in the row the
+    /// Working indicator was still occupying at commit time; the row is only reclaimed by
+    /// Transcript AFTER this Stop() call flips IsRunning, one full redraw cycle too late — so the
+    /// last line silently sits off-screen until some unrelated event (the next keystroke, e.g.)
+    /// forces a fresh layout pass that finally re-evaluates Transcript's Dim.Func with the correct
+    /// IsRunning value. SuperView.SetNeedsLayout()+SetNeedsDraw() forces exactly that immediately,
+    /// rather than waiting for happenstance. Guarded on SuperView being non-null since Start()/
+    /// Stop() can theoretically run before this view is ever Added (not reachable in practice —
+    /// Program.cs's RunInteractive always Adds before starting the first turn — but a null check
+    /// costs nothing and avoids a hard dependency on that ordering).
+    /// </summary>
+    private void RelayoutSiblingsDependingOnIsRunning()
+    {
+        if (SuperView is not { } superView)
+            return;
+
+        superView.SetNeedsLayout();
+        superView.SetNeedsDraw();
     }
 }

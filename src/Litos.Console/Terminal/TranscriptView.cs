@@ -71,18 +71,40 @@ public sealed class TranscriptView : TextView
         AppendCommitted(_liveSuffix);
     }
 
-    private void Refresh()
+    /// <summary>
+    /// Re-runs the same relayout/rescroll Refresh() does, without changing any text — call after
+    /// something OTHER than this view's own content changes the space available to it (e.g.
+    /// LitosApp.Working.Stop(), which reclaims WorkingIndicator's row via a Dim.Func LitosApp
+    /// wires TranscriptView's Height through). CommitLive()'s own Refresh() runs and scrolls
+    /// against whatever Viewport height this view had AT THAT MOMENT — if WorkingIndicator hadn't
+    /// stopped yet (it stops in a separate, later app.Invoke call in Program.cs's RunTurnAsync
+    /// `finally` block, after MessageCompleted's CommitLive() already ran), MoveEnd() computed its
+    /// scroll target against a viewport one row short of what the window ends up with once the
+    /// indicator's row is reclaimed — landing the final line just past the (still-current) bottom
+    /// edge, invisible until some unrelated event forces a fresh layout pass. Calling this right
+    /// after the height-changing event lets the already-committed content re-settle into the
+    /// now-correct viewport immediately instead of waiting on that unrelated event.
+    /// </summary>
+    public void ReflowAfterExternalResize()
+    {
+        System.Console.Error.WriteLine($"[DIAG] ReflowAfterExternalResize() called, Frame={Frame}, Viewport={Viewport}");
+        Refresh();
+    }
+
+    private void Refresh([System.Runtime.CompilerServices.CallerMemberName] string caller = "")
     {
         var full = _liveSuffix.Length == 0
             ? _committed.ToString()
             : _committed.ToString() + (_committed.Length > 0 ? "\n" : string.Empty) + _liveSuffix;
 
         Text = full;
+        System.Console.Error.WriteLine($"[DIAG] Refresh() from {caller}: BEFORE Layout() Frame={Frame} Viewport={Viewport} Lines={Lines}");
         // WordWrap re-wraps the new Text during layout, not immediately on assignment — without
         // forcing layout first, MoveEnd() scrolls to the last line using the PREVIOUS wrap
         // geometry, landing one visual row short and leaving the newest line's tail clipped
         // below the viewport until the next redraw. Force layout so MoveEnd() sees current wrap.
         Layout();
+        System.Console.Error.WriteLine($"[DIAG] Refresh() from {caller}: AFTER Layout() Frame={Frame} Viewport={Viewport} Lines={Lines}");
         // TextView.DoNeededAction() (driven by MoveEnd() below) bounds its scroll target against
         // GetContentSize(), but that cached size is only refreshed by TextView's own private
         // UpdateContentSize() — called from OnSubViewsLaidOut (a full window-level relayout pass,
@@ -97,6 +119,7 @@ public sealed class TranscriptView : TextView
         // content size in sync on every Refresh() instead of only on resize.
         SetContentSize(new System.Drawing.Size(Viewport.Width + 1, Lines));
         MoveEnd();
+        System.Console.Error.WriteLine($"[DIAG] Refresh() from {caller}: AFTER MoveEnd() CurrentRow={CurrentRow} ContentSize={GetContentSize()} Viewport={Viewport}");
         // MoveEnd() only calls SetNeedsDraw() when its OWN pre-scroll Viewport bounds say the
         // target row/column falls outside them. Never depend on that conditional internal call —
         // request a redraw directly so the corrected scroll position always repaints.

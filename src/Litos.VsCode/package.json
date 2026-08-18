@@ -1,0 +1,33 @@
+{
+  "name": "litos-vscode",
+  "displayName": "Litos",
+  "description": "Chat with the Litos AI coding agent inside VS Code.",
+  "version": "0.1.0",
+  "publisher": "litos",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "litos.openChat",
+        "title": "Litos: Open Chat"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  }
+}
