@@ -43,8 +43,17 @@ public static class TurnsEndpoints
                 if (entry.Message is null)
                     continue;
 
-                var text = string.Concat(entry.Message.Content.OfType<Litos.Agent.Messages.TextBlock>().Select(b => b.Text));
-                var attachments = entry.Message.Content.OfType<Litos.Agent.Messages.ImageBlock>().Count();
+                // Only the FIRST TextBlock is the user's own typed message — /sessions/{id}/turns
+                // always builds a turn's content as [TextBlock(typed input), ...attachments] (see
+                // that endpoint's own comment), so any TextBlock after the first is a document
+                // attachment's converted content (UntrustedContent-wrapped Markdown, potentially
+                // huge), not something the user wrote. Concatenating every TextBlock here used to
+                // glue that wrapped document text directly onto the displayed message on history
+                // replay — fixed by only ever taking the first and folding every TextBlock past it
+                // into the same attachment count ImageBlock already contributes to.
+                var textBlocks = entry.Message.Content.OfType<Litos.Agent.Messages.TextBlock>().ToList();
+                var text = textBlocks.Count > 0 ? textBlocks[0].Text : "";
+                var attachments = entry.Message.Content.OfType<Litos.Agent.Messages.ImageBlock>().Count() + Math.Max(0, textBlocks.Count - 1);
                 if (entry.Message.Role == Litos.Agent.Messages.Role.User &&
                     entry.Message.Content.OfType<Litos.Agent.Messages.ToolResultBlock>().Any())
                     continue;

@@ -397,6 +397,140 @@ before ever reaching a running webview.
   management) is fully built, but running a connected server's *prompt* as if it were typed text
   is not yet wired into `SLASH_COMMANDS`/`runSlashCommand`.
 
+### 7.10 Composer usability pass — implemented
+
+Three small composer/attachment UX gaps, closed in one pass:
+
+- **Taller, auto-growing input box.** `#composerInput` started at a fixed `rows="2")` — enough for
+  one short line before the box started internally scrolling, which made multi-line prompts (a
+  common case: pasted stack traces, multi-part instructions) awkward to review before sending.
+  Now starts at 4 rows and auto-grows with each `input` event (`el.style.height = 'auto'` then
+  `el.style.height = el.scrollHeight + 'px'`, the standard textarea-autogrow trick — Avalonia/WPF
+  have real auto-sizing layout primitives for this, the DOM does not) up to a capped max height
+  (`max-height: 14 lines` via CSS, in `ch`-independent `em`/`px` terms so it tracks the editor font
+  size VS Code themes provide); beyond the cap the textarea scrolls internally exactly as before.
+  Resets back to its 4-row minimum after every send (`resetComposerHeight()`, called alongside the
+  existing `inputEl.value = ''` in `send()`/`selectCommand()`), so a long draft doesn't leave the
+  box permanently tall for the next message.
+- **Slash-command button.** A small `/` icon button sits in the composer row, left of Send. Click
+  focuses the composer, sets its value to `/`, and opens the exact same in-webview command-menu
+  dropdown `updateCommandMenu()` already renders for typed `/` — no second menu implementation,
+  no native `showQuickPick` (would break the "everything chat-adjacent stays in-webview" posture
+  §7's design decisions already committed to for `/resume`/`/provider`/etc.). Purely a discoverability
+  affordance for users who don't know the `/`-to-trigger convention exists.
+- **Removable attachment chips.** Each pending-attachment chip (populated from `/attach`'s file
+  picker, clipboard paste-to-attach, or a loaded `/skill`) now renders a small `×` at its trailing
+  edge. Clicking it removes just that one attachment before send: the webview posts
+  `{type: 'removeAttachment', index}` (index into the chip list as currently rendered) to the
+  extension; `extension.ts`'s `handlePanelMessage` splices that same index out of
+  `state.pendingAttachments` (the array `send`/`pasteAttach`/`/attach`/`/skill` all already push
+  onto) and the chip removes itself from the DOM. No backend change — this only ever touches an
+  attachment queued client-side before the turn is sent; nothing about `POST /sessions/{id}/turns`
+  or the attachment-conversion endpoints changed. Previously the only way to drop a mistakenly
+  attached file was to send the turn anyway or reload the whole panel.
+- **Attachment chip previews.** A chip is no longer just a text label — it now shows a small 20px
+  visual so a pasted/attached file is recognizable (and, for images, visually verifiable) before
+  send. Image attachments (`kind: "image"`) render the real image as a thumbnail: `extension.ts`'s
+  `attachmentThumbnail()` builds a `data:{mimeType};base64,{base64Data}` URI straight from the
+  `AttachedContent` it already has in hand (no extra fetch) and sends it alongside
+  `attachmentAdded`; the webview drops it straight into an `<img>`. Document attachments (`/attach`
+  on a non-image file, or a loaded `/skill`) instead get one of a small set of inline-SVG file-type
+  glyphs — `attachmentIconKind()` classifies by file extension (`.pdf`, `.doc(x)`, `.xls(x)`/`.csv`,
+  `.ppt(x)`, `.txt`/`.md`/`.log` → pdf/word/excel/powerpoint/text) and falls back to a plain generic
+  glyph for anything unmapped, so an unrecognized extension still renders something rather than a
+  blank chip. All icons are inline SVG defined in `webviewContent.ts` itself (`ATTACHMENT_ICON_SVG`)
+  — no icon font, no external asset, consistent with this webview's existing "everything
+  self-contained" posture (§7.7's vendored `marked`, §6's bundled binary). The thumbnail/icon swatch
+  itself is given an explicit white background rather than inheriting the chip's own badge-colored
+  background — both a transparent-cornered pasted image and the file-type glyphs (drawn assuming a
+  light backing, matching common OS file-icon conventions) read poorly sitting directly on that
+  color.
+
+  **Real bug found live**: the page's CSP was `default-src 'none'` with no `img-src` directive at
+  all, which silently blocks `data:` URIs too — the pasted-image thumbnail's `<img src="data:...">`
+  never rendered, with no visible error anywhere (CSP violations don't throw, and this webview has
+  no console output surfaced to the user by default). The file-type SVG icons worked fine alongside
+  it purely because inline `<svg>` injected via `innerHTML` isn't a CSP `img-src` resource load at
+  all — which is exactly what made the image-specific breakage easy to miss from source alone.
+  Fixed by adding `img-src data:` to the CSP — deliberately scoped to `data:` only, not `*` or
+  `https:`, so this doesn't open the webview up to loading arbitrary remote images.
+
+### 7.11 Real bug found post-ship: a bad pasted-image MIME type could silently poison a session forever
+
+Found live, not in testing: pasting a screenshot from certain OS clipboard sources produced a
+`DataTransferItem` whose `.type` was an empty string rather than a real `image/*` value.
+`webviewContent.ts`'s paste handler forwarded that empty string verbatim as `mimeType` to
+`pasteAttach`, `extension.ts` forwarded it verbatim to `POST /attachments/from-bytes`, and
+`AttachEndpoints.cs` had no validation on it at all — it built an `ImageBlock` with
+`MimeType: ""` and returned 200. That `ImageBlock` can't be sent to any provider, so the *next*
+turn 500'd — but by then it was already too late in a second, worse way: `extension.ts`'s "send"
+handler only cleared `state.pendingAttachments` *after* `await sendTurn(...)` returned
+successfully, so a 500 left the same broken attachment sitting in the queue, and it silently
+re-attached itself to every subsequent message typed in that panel — including plain text-only
+messages with no visible attachment chip at all, since the webview's own chip UI had already
+(correctly) cleared itself optimistically on send. Each failed retry pushed a duplicate copy in
+alongside it (`pasteAttach` only ever pushes), so a session hit by this bug got a new, larger,
+still-broken image block appended to `state.pendingAttachments` on every failed send — confirmed
+on a real affected session's on-disk transcript, whose per-line size (JSONL is append-only) grew
+from ~425KB to ~850KB across three consecutive failed turns as duplicate copies of the same
+corrupted image piled up in each new user message.
+
+Fixed in three places, from the ground up:
+- **`AttachEndpoints.cs`**'s `/attachments/from-bytes` now rejects a missing/non-`image/*`
+  `MimeType` with a `400`, so a bad attachment can never enter a transcript in the first place —
+  this is the real fix; the other two are defense in depth.
+- **`extension.ts`**'s `pasteAttach` handler now defaults an empty/non-`image/*` clipboard MIME
+  type to `image/png` before it ever reaches the endpoint above, since `image/png` is what
+  paste-to-attach's own filename (`pasted-image.png`) already assumes.
+- **`extension.ts`**'s `send` handler now clears `state.pendingAttachments` *before* calling
+  `sendTurn`, not after — matching the webview's own already-optimistic chip-clearing — so a
+  failed turn (whatever the cause) can never leave a stale attachment silently reattached to
+  future messages on that session again.
+
+No provider/agent-layer code was touched — `Litos.Api` and `Litos.Gui` don't share
+`Litos.VsCodeHost`'s `AttachEndpoints.cs` (a face-local copy, same convention as `Files/*.cs` in
+§7.9) and don't call it, so neither face is affected by either the bug or the fix.
+
+### 7.12 Attachments were invisible in the transcript once sent
+
+Reported by a user: after sending a message with an attached PDF, the model answered correctly, but
+nothing in the transcript indicated a file had been attached at all — the user bubble showed only
+the typed text. Two separate gaps, fixed together:
+
+- **Live send showed nothing.** `send()` called `addEntry('user', text)` with no reference to
+  whatever was in `pendingAttachmentChips` at the time, even though the webview already had the
+  real filenames in hand (populated by `attachmentAdded` for every `/attach`/paste/`/skill`).
+  Fixed by a new `addUserEntry(text, attachmentNames)` — mirrors `Litos.Gui`'s own
+  `AddUserBubble`/`BuildBubbleLabel` split (`MainWindow.axaml.cs`) for the identical reason: once
+  the composer's chips clear on send, a small `📎 filename, filename` line above the message is the
+  *only* remaining record of what was attached to that turn. `pendingAttachmentLabels` (a new array
+  kept parallel to `pendingAttachmentChips`) is snapshotted via `.slice()` *before*
+  `clearAttachmentChips()` empties it, so the label list handed to `addUserEntry` isn't the same
+  array being cleared out from under it.
+- **History replay leaked a document attachment's converted text into the displayed message.**
+  A real, independent bug found while scoping the above: `/sessions/{id}/history` built each
+  message's displayed `text` by concatenating *every* `TextBlock` in the stored `ChatMessage`, but
+  `/sessions/{id}/turns` always constructs a turn's content as `[TextBlock(typed input),
+  ...attachments]` — so a document attachment (`/attach` on a non-image file, or a loaded `/skill`,
+  both converted to a `TextBlock` by `AttachEndpoints.ToContentBlock`) got its entire
+  `UntrustedContent`-wrapped Markdown silently glued onto the user's own typed text on replay,
+  rendered as if the user had typed the whole document. Fixed by taking only the *first* `TextBlock`
+  as the displayed text and folding any `TextBlock`s past it into the same `attachments` count
+  `ImageBlock` already contributes to — verified live: attached a real text file, sent a turn, and
+  confirmed `/history` now returns the clean typed message (`"What does this file say?"`) with
+  `attachments: 1`, not the leaked document body.
+
+**Scope note, matching a question raised while designing this**: this only touches what's already
+in hand client-side at send time (live path) and how an *existing* persisted `TextBlock` array is
+summarized for display (history path) — no new field was added to `TranscriptEntry` or any shared
+`Litos.Agent` type, and nothing about what's sent to the model changed. `Litos.Gui`'s own
+`AddUserBubble` comment states outright that it has the same live-only limitation (attachment names
+have "no other trace in the transcript" once its staging strip clears) — matching that scope here
+rather than adding new persistence was a deliberate choice, not an oversight: recovering real
+filenames on history replay after a session reload would need a genuinely new persisted field
+(`ImageBlock`/`TextBlock` carry no filename at all), which is a larger, separate change than this
+pass's actual reported problem called for.
+
 ## 7.9 File sharing with clickable download links — implemented
 
 `Files/ShareFileTool.cs`, `Files/SharedFileStore.cs`, `Files/SharedFileMeta.cs`, `Files/
@@ -424,6 +558,23 @@ that filter's regex.
 Verified end-to-end via a live integration smoke test: asked a real turn to `share_file` this
 repo's `README.md`, extracted the returned URL, fetched it, and confirmed the downloaded bytes
 matched the source file exactly.
+
+**Cross-session link staleness — fixed**: a share link embeds the port `Litos.VsCodeHost.exe`
+happened to bind (`Program.cs`'s port-0 OS-assigned bind) at the moment `share_file` ran, and that
+string is what ends up persisted into the transcript (as the assistant's own reply text quoting the
+tool result). The file/token themselves are fine for a full 24h regardless of process lifetime
+(`SharedFileStore.TryGetAsync` re-reads `meta.json` fresh off disk on every request), but the
+*process* is not: closing or reloading the VS Code window kills the shared host (`deactivate()`),
+and the next panel-open spawns a new one on a new random port. A link from an earlier session that
+gets clicked after such a restart was pointing at a port nothing listens on anymore, even though the
+underlying file was still perfectly valid. Fixed entirely on the extension-host side, no protocol or
+webview change needed: `extension.ts` now keeps `sharedHost.baseUrl` (the live host's own
+`http://127.0.0.1:{port}`) alongside `client`, and its `openLink` handler rewrites any URL whose
+path matches `/files/{token}` to the *current* `sharedHost.baseUrl` before calling
+`vscode.env.openExternal` — the token in the path is the only part that actually identifies the
+file, so the stored host:port is simply discarded and replaced at click-time. A stale link now
+resolves correctly as long as the token is still within its 24h window, independent of how many
+times the host process has restarted since the link was generated.
 
 ## 8. API-key first-run UX — implemented
 

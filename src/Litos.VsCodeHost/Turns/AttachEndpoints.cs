@@ -64,6 +64,16 @@ public static class AttachEndpoints
             if (bytes.Length > MaxAttachmentBytes)
                 return Results.BadRequest($"Pasted image is {bytes.Length / (1024 * 1024)}MB, exceeding the {MaxAttachmentBytes / (1024 * 1024)}MB attachment limit.");
 
+            // Some clipboard sources report an image DataTransferItem with an empty or missing
+            // MIME type (observed via certain OS screenshot tools' clipboard output) — the webview
+            // extension now defaults this itself before calling here (see extension.ts's
+            // pasteAttach handler), but this endpoint is the last real checkpoint before an
+            // ImageBlock no provider can process gets written into a session's transcript forever
+            // (JSONL is append-only — a bad attachment isn't just a failed turn, it silently
+            // re-attaches to every later turn on that same session too, see TurnsEndpoints.cs).
+            if (string.IsNullOrWhiteSpace(request.MimeType) || !request.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest("MimeType must be a valid image/* MIME type.");
+
             return Results.Ok(new AttachedContent("image", request.FileName ?? "pasted-image.png", request.MimeType, Convert.ToBase64String(bytes), null));
         });
 

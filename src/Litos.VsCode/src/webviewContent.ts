@@ -19,7 +19,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
 <style>
   :root {
     color-scheme: light dark;
@@ -104,6 +104,12 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   }
   .copy-button:hover { color: var(--vscode-foreground); }
   .entry.user { border-left: 3px solid var(--vscode-textLink-foreground); padding-left: 8px; }
+  .entry-attachments {
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.85em;
+    font-style: italic;
+    margin-bottom: 4px;
+  }
   .entry.assistant { border-left: 3px solid var(--vscode-charts-green, #3fb950); padding-left: 8px; }
   .entry.system { color: var(--vscode-descriptionForeground); font-style: italic; }
   .entry.tool {
@@ -150,14 +156,49 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   }
   #pendingAttachments.visible { display: flex; }
   #pendingAttachments .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     background: var(--vscode-badge-background);
     color: var(--vscode-badge-foreground);
     border-radius: 10px;
-    padding: 2px 10px;
+    padding: 2px 6px 2px 10px;
     font-size: 0.85em;
   }
+  #pendingAttachments .chip:has(.chip-thumb) { padding-left: 2px; }
+  #pendingAttachments .chip .chip-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    object-fit: cover;
+    display: block;
+    flex: none;
+    /* White, not the chip's own badge-blue background, in both themes: an image thumbnail can
+       have its own transparent/light corners, and the file-type glyphs below are drawn assuming a
+       light backing (matches common OS file-icon conventions) — both read poorly sitting directly
+       on the badge color. */
+    background: #fff;
+  }
+  #pendingAttachments .chip .chip-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #pendingAttachments .chip .chip-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    cursor: pointer;
+    opacity: 0.75;
+    line-height: 1;
+  }
+  #pendingAttachments .chip .chip-remove:hover { opacity: 1; background: rgba(0,0,0,0.2); }
   #composer {
     display: flex;
+    align-items: flex-end;
     gap: 8px;
     padding: 8px;
     border-top: 1px solid var(--vscode-widget-border, #444);
@@ -165,13 +206,27 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   #composerInput {
     flex: 1;
     resize: none;
+    overflow-y: auto;
+    max-height: 22em;
     font-family: inherit;
     font-size: inherit;
+    line-height: 1.4;
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, transparent);
     border-radius: 4px;
     padding: 6px 8px;
+  }
+  #slashCommandButton {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: none;
+    border-radius: 4px;
+    padding: 0 12px;
+    align-self: stretch;
+    cursor: pointer;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-weight: 600;
   }
   #sendButton {
     background: var(--vscode-button-background);
@@ -179,6 +234,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     border: none;
     border-radius: 4px;
     padding: 0 16px;
+    align-self: stretch;
     cursor: pointer;
   }
   #sendButton:disabled { opacity: 0.5; cursor: default; }
@@ -344,7 +400,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 <div id="pendingAttachments"></div>
 <div id="composer">
   <div id="commandMenu"></div>
-  <textarea id="composerInput" rows="2" placeholder="Message Litos... (type / for commands, paste an image to attach it)"></textarea>
+  <button id="slashCommandButton" title="Slash commands">/</button>
+  <textarea id="composerInput" rows="4" placeholder="Message Litos... (type / for commands, paste an image to attach it)"></textarea>
   <button id="sendButton">Send</button>
 </div>
 <div id="contextUsage" title="Click for a breakdown of what's using your context">
@@ -370,6 +427,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const pendingAttachmentsEl = document.getElementById('pendingAttachments');
   const inputEl = document.getElementById('composerInput');
   const sendButton = document.getElementById('sendButton');
+  const slashCommandButton = document.getElementById('slashCommandButton');
   const contextUsageEl = document.getElementById('contextUsage');
   const contextUsageFillEl = document.getElementById('contextUsageFill');
   const contextUsageTextEl = document.getElementById('contextUsageText');
@@ -583,7 +641,19 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   function selectCommand(name) {
     commandMenuEl.classList.remove('visible');
     inputEl.value = '';
+    resetComposerHeight();
     runSlashCommand(name, '');
+  }
+
+  // Auto-grow the composer as the user types, up to the CSS max-height cap (beyond which it
+  // scrolls internally) — 'auto' first so shrinking (e.g. after deleting text) is measured
+  // correctly instead of the height only ever ratcheting upward.
+  function autoGrowComposer() {
+    inputEl.style.height = 'auto';
+    inputEl.style.height = inputEl.scrollHeight + 'px';
+  }
+  function resetComposerHeight() {
+    inputEl.style.height = 'auto';
   }
 
   function runSlashCommand(name, arg) {
@@ -608,6 +678,22 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     transcriptEl.appendChild(el);
     scrollToBottom();
     return { el, body };
+  }
+
+  // Sent attachments have no other trace in the transcript once the composer's own chips are
+  // cleared on send — mirrors Litos.Gui's own AddUserBubble/BuildBubbleLabel split (MainWindow.axaml.cs)
+  // for the identical reason: a 📎-prefixed dim line above the message text is the only remaining
+  // record of what was actually attached to this turn, so it's worth showing even though (matching
+  // Litos.Gui's own documented limitation) this is live-send-only — history replay after reopening
+  // a session has no filenames to recover this from (ReadMe_VsCodeExtension.md §7.12).
+  function addUserEntry(text, attachmentNames) {
+    const entry = addEntry('user', text);
+    if (!attachmentNames || attachmentNames.length === 0) return entry;
+    const attachLine = document.createElement('div');
+    attachLine.className = 'entry-attachments';
+    attachLine.textContent = '📎 ' + attachmentNames.join(', ');
+    entry.body.insertBefore(attachLine, entry.body.firstChild);
+    return entry;
   }
 
   function addToolEntry(callId, toolName) {
@@ -865,15 +951,25 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
       return;
     }
 
-    addEntry('user', text);
+    addUserEntry(text, pendingAttachmentLabels.slice());
     inputEl.value = '';
+    resetComposerHeight();
     currentAssistantBubble = null;
     clearAttachmentChips();
     vscode.postMessage({ type: 'send', text });
   }
 
   sendButton.addEventListener('click', send);
-  inputEl.addEventListener('input', updateCommandMenu);
+  slashCommandButton.addEventListener('click', () => {
+    inputEl.value = '/';
+    inputEl.focus();
+    autoGrowComposer();
+    updateCommandMenu();
+  });
+  inputEl.addEventListener('input', () => {
+    updateCommandMenu();
+    autoGrowComposer();
+  });
   inputEl.addEventListener('keydown', (event) => {
     if (commandMenuEl.classList.contains('visible')) {
       if (event.key === 'ArrowDown') {
@@ -906,18 +1002,82 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   });
 
   // --- Pending attachments (from /attach's file picker, /skill, or clipboard paste) ---
+  // Chips are rendered in the same order extension.ts's state.pendingAttachments is pushed onto,
+  // so a chip's position among its siblings is a valid index into that array — removeAttachment
+  // sends that index back and extension.ts splices the matching entry out.
+  // Inline SVG per non-image attachment icon-kind (extension.ts's attachmentIconKind classifies
+  // by file extension; anything unrecognized falls back to 'generic' here too, so an unmapped key
+  // never renders nothing). Kept as a plain colored document-with-folded-corner glyph, one accent
+  // color per kind mirroring common OS file-icon conventions (red=PDF, blue=Word, green=Excel,
+  // orange=PowerPoint) — not real per-app branding/logos, just enough to distinguish file kinds at
+  // a glance in a 20px chip.
+  function fileGlyphSvg(accent, label) {
+    return '<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">' +
+      '<path d="M4 1.5h8l4 4v13a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-16a.5.5 0 0 1 .5-.5z" fill="' + accent + '" opacity="0.25"/>' +
+      '<path d="M12 1.5v3.5a.5.5 0 0 0 .5.5H16" fill="none" stroke="' + accent + '" stroke-width="1"/>' +
+      '<path d="M4 1.5h8l4 4v13a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-16a.5.5 0 0 1 .5-.5z" fill="none" stroke="' + accent + '" stroke-width="1"/>' +
+      (label ? '<text x="10" y="14.5" font-size="6" font-weight="700" text-anchor="middle" fill="' + accent + '">' + label + '</text>' : '') +
+      '</svg>';
+  }
+  const ATTACHMENT_ICON_SVG = {
+    pdf: fileGlyphSvg('#e5484d', 'PDF'),
+    word: fileGlyphSvg('#2b6cb0', 'W'),
+    excel: fileGlyphSvg('#2f9e44', 'X'),
+    powerpoint: fileGlyphSvg('#e8590c', 'P'),
+    text: fileGlyphSvg('var(--vscode-descriptionForeground, #888)', ''),
+    generic: fileGlyphSvg('var(--vscode-descriptionForeground, #888)', ''),
+  };
+
+  // --- Pending attachments (from /attach's file picker, /skill, or clipboard paste) ---
+  // Chips are rendered in the same order extension.ts's state.pendingAttachments is pushed onto,
+  // so a chip's position among its siblings is a valid index into that array — removeAttachment
+  // sends that index back and extension.ts splices the matching entry out. pendingAttachmentLabels
+  // is kept as a parallel array (not re-derived from chip DOM text) so send() can hand the labels
+  // off to addUserEntry for the 📎 line — see addUserEntry's own comment for why that's the only
+  // remaining record of what was attached once these chips are cleared on send.
   const pendingAttachmentChips = [];
-  function addAttachmentChip(label) {
+  const pendingAttachmentLabels = [];
+  function addAttachmentChip(label, thumbnailDataUri, iconKind) {
     const chip = document.createElement('span');
     chip.className = 'chip';
-    chip.textContent = label;
+    if (thumbnailDataUri) {
+      const thumb = document.createElement('img');
+      thumb.className = 'chip-thumb';
+      thumb.src = thumbnailDataUri;
+      thumb.alt = '';
+      chip.appendChild(thumb);
+    } else {
+      const icon = document.createElement('span');
+      icon.className = 'chip-thumb chip-icon';
+      icon.innerHTML = ATTACHMENT_ICON_SVG[iconKind] || ATTACHMENT_ICON_SVG.generic;
+      chip.appendChild(icon);
+    }
+    const labelEl = document.createElement('span');
+    labelEl.textContent = label;
+    chip.appendChild(labelEl);
+    const removeEl = document.createElement('span');
+    removeEl.className = 'chip-remove';
+    removeEl.textContent = '×';
+    removeEl.title = 'Remove attachment';
+    removeEl.addEventListener('click', () => {
+      const index = pendingAttachmentChips.indexOf(chip);
+      if (index === -1) return;
+      chip.remove();
+      pendingAttachmentChips.splice(index, 1);
+      pendingAttachmentLabels.splice(index, 1);
+      if (pendingAttachmentChips.length === 0) pendingAttachmentsEl.classList.remove('visible');
+      vscode.postMessage({ type: 'removeAttachment', index });
+    });
+    chip.appendChild(removeEl);
     pendingAttachmentsEl.appendChild(chip);
     pendingAttachmentChips.push(chip);
+    pendingAttachmentLabels.push(label);
     pendingAttachmentsEl.classList.add('visible');
   }
   function clearAttachmentChips() {
     pendingAttachmentChips.forEach((chip) => chip.remove());
     pendingAttachmentChips.length = 0;
+    pendingAttachmentLabels.length = 0;
     pendingAttachmentsEl.classList.remove('visible');
   }
 
@@ -988,7 +1148,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     } else if (message.type === 'historyLoaded') {
       renderHistory(message.history);
     } else if (message.type === 'attachmentAdded') {
-      addAttachmentChip(message.fileName);
+      addAttachmentChip(message.fileName, message.thumbnailDataUri, message.iconKind);
     } else if (message.type === 'contextUsage') {
       renderContextUsage(message.usage);
     } else if (message.type === 'openPicker') {

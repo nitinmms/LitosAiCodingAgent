@@ -16,7 +16,7 @@ import { getContextPanelHtml } from "./contextPanelContent";
  * this space uses (e.g. OpenCode's server/session split, confirmed via its own docs) rather than
  * spawning a redundant ~75MB process per open panel, which an earlier version of this file did.
  */
-let sharedHost: { process: LitosHostProcess; client: LitosClient; cwd: string } | undefined;
+let sharedHost: { process: LitosHostProcess; client: LitosClient; cwd: string; baseUrl: string } | undefined;
 
 /** Per-panel session state — sessionId is mutable (unlike the earlier const) since /new and
  * /resume and /branch all change which session a panel is pointed at without closing the panel. */
@@ -43,6 +43,60 @@ export function deactivate() {
  * this is called with that panel's own state right after whatever changed its usage (a completed
  * turn, /new, /resume, /branch, /compact, /provider, /model — see call sites below).
  */
+/**
+ * Builds a data: URI thumbnail for an image attachment, or undefined for a non-image (document)
+ * attachment — AttachedContent.base64Data/mimeType are already right here (no extra fetch), so the
+ * webview just needs the raw data: URI to render straight into an <img src>. Kept as an explicit
+ * whitelist on `kind === "image"` rather than checking mimeType's presence alone, since a document
+ * attachment (from /attach on a non-image file) has no base64Data at all.
+ */
+function attachmentThumbnail(content: AttachedContent): string | undefined {
+    if (content.kind !== "image" || !content.base64Data || !content.mimeType) return undefined;
+    return `data:${content.mimeType};base64,${content.base64Data}`;
+}
+
+// File-extension -> icon-kind map for non-image attachments (document-kind AttachedContent, e.g.
+// /attach on a PDF/Office file/plain text). webviewContent.ts owns the actual SVG glyph per kind
+// (inline, no external assets — matches the rest of this webview's self-contained convention) —
+// this only classifies, keeping icon rendering out of the extension host entirely. Anything not
+// listed here falls back to "generic" in the webview.
+const ATTACHMENT_ICON_KIND_BY_EXTENSION: Record<string, string> = {
+    ".pdf": "pdf",
+    ".doc": "word", ".docx": "word",
+    ".xls": "excel", ".xlsx": "excel", ".csv": "excel",
+    ".ppt": "powerpoint", ".pptx": "powerpoint",
+    ".txt": "text", ".md": "text", ".markdown": "text", ".log": "text",
+};
+
+function attachmentIconKind(fileName: string): string {
+    const ext = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+    return ATTACHMENT_ICON_KIND_BY_EXTENSION[ext] || "generic";
+}
+
+// share_file (ShareFileTool.cs) always emits "http://127.0.0.1:{port}/files/{token}", where token
+// is RandomNumberGenerator.GetHexString(16, lowercase: true) — a stable file on disk under
+// ~/.litos/shared-files, valid 24h regardless of which process minted it — but the port is only
+// valid for the Litos.VsCodeHost.exe process that was running at share-time. Closing/reloading the
+// VS Code window kills that process (deactivate()) and the next panel-open spawns a new one on a
+// new OS-assigned port (Program.cs binds port 0), so a link persisted into an old session's
+// transcript embeds a port nothing is listening on anymore even though the token/file are still
+// good. Since the token itself carries all the information needed to resolve the file, any link
+// matching this shape is rewritten to whichever host:port the *currently running* shared host
+// actually reports, rather than trusting whatever host:port happened to be embedded when the link
+// was generated.
+const SHARE_LINK_PATH_PATTERN = /\/files\/[0-9a-f]{16,}$/;
+
+function rewriteStaleShareLink(url: string): string {
+    if (!sharedHost) return url;
+    try {
+        const parsed = new URL(url);
+        if (!SHARE_LINK_PATH_PATTERN.test(parsed.pathname)) return url;
+        return `${sharedHost.baseUrl}${parsed.pathname}`;
+    } catch {
+        return url;
+    }
+}
+
 async function refreshContextUsage(state: PanelState): Promise<void> {
     if (!sharedHost) return;
 
@@ -100,9 +154,15 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
     const { panel } = state;
 
     if (message.type === "send") {
+        // Cleared up front, not after a successful sendTurn: the webview's own composer already
+        // clears its attachment chips optimistically on send (see webviewContent.ts's send()), and
+        // if sendTurn throws (e.g. the host 500s on a bad attachment), leaving the old code's
+        // post-await clear unreached meant the same attachment silently re-sent itself on every
+        // later turn on this session, forever, growing by one duplicate each time it failed again.
+        const attachments = state.pendingAttachments;
+        state.pendingAttachments = [];
         try {
-            const outcome = await sharedHost!.client.sendTurn(state.sessionId, message.text, state.pendingAttachments);
-            state.pendingAttachments = [];
+            const outcome = await sharedHost!.client.sendTurn(state.sessionId, message.text, attachments);
             if (outcome.kind === "steered") {
                 panel.webview.postMessage({ type: "system", text: outcome.message });
                 return;
@@ -187,18 +247,40 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
         // for why this is routed through the extension instead of a plain <a target="_blank">.
         // openExternal hands off to the OS the same way every time, including a real Save-As
         // dialog for a Content-Disposition: attachment response like share_file's own.
-        vscode.env.openExternal(vscode.Uri.parse(message.url));
+        vscode.env.openExternal(vscode.Uri.parse(rewriteStaleShareLink(message.url)));
         return;
     }
 
     if (message.type === "pasteAttach") {
+        // Some clipboard sources (observed with certain OS screenshot tools) report a
+        // DataTransferItem with an image/* type prefix but no further subtype, or Chromium hands
+        // back an empty string — webviewContent.ts's paste handler forwards whatever `item.type`
+        // it got verbatim. An empty MimeType survives JSON round-tripping through
+        // /attachments/from-bytes with no server-side validation and produces an ImageBlock no
+        // provider can actually process, which 500s every future turn on this session until the
+        // attachment is somehow cleared (see the "send" handler's own comment on the compounding
+        // half of this bug). Default to image/png here — the one paste-to-attach already always
+        // requests as its filename extension — rather than trusting an unreliable clipboard value.
+        const mimeType = message.mimeType && message.mimeType.startsWith("image/") ? message.mimeType : "image/png";
         try {
-            const content = await sharedHost!.client.attachFromBytes(message.base64Data, message.mimeType, "pasted-image.png");
+            const content = await sharedHost!.client.attachFromBytes(message.base64Data, mimeType, "pasted-image.png");
             state.pendingAttachments.push(content);
-            panel.webview.postMessage({ type: "attachmentAdded", fileName: "Pasted image" });
+            panel.webview.postMessage({ type: "attachmentAdded", fileName: "Pasted image", thumbnailDataUri: attachmentThumbnail(content), iconKind: attachmentIconKind("pasted-image.png") });
         } catch (err: any) {
             panel.webview.postMessage({ type: "system", text: `Error attaching pasted image: ${err.message}` });
         }
+        return;
+    }
+
+    if (message.type === "removeAttachment") {
+        // index is this chip's position among the webview's currently rendered chips, which is
+        // always kept in the same order as pendingAttachments is pushed onto (send/pasteAttach/
+        // the /attach picker/`/skill` all only ever push, never reorder) — so it's a valid splice
+        // index here too.
+        if (typeof message.index === "number" && message.index >= 0 && message.index < state.pendingAttachments.length) {
+            state.pendingAttachments.splice(message.index, 1);
+        }
+        return;
     }
 }
 
@@ -279,7 +361,7 @@ async function runSlashCommand(context: vscode.ExtensionContext, state: PanelSta
                 if (!picked || picked.length === 0) break;
                 const content = await client.attachFromPath(picked[0].fsPath);
                 state.pendingAttachments.push(content);
-                panel.webview.postMessage({ type: "attachmentAdded", fileName: content.fileName });
+                panel.webview.postMessage({ type: "attachmentAdded", fileName: content.fileName, thumbnailDataUri: attachmentThumbnail(content), iconKind: attachmentIconKind(content.fileName) });
                 break;
             }
 
@@ -374,7 +456,7 @@ async function loadSkillIntoComposer(state: PanelState, name: string): Promise<v
     const client = sharedHost!.client;
     const skill = await client.loadSkill(name, sharedHost!.cwd);
     state.pendingAttachments.push({ kind: "document", fileName: `${skill.name}.md`, documentText: `### Skill: ${skill.name}\n\n${skill.content}` });
-    state.panel.webview.postMessage({ type: "attachmentAdded", fileName: `Skill: ${skill.name}` });
+    state.panel.webview.postMessage({ type: "attachmentAdded", fileName: `Skill: ${skill.name}`, iconKind: "text" });
 }
 
 /**
@@ -528,17 +610,18 @@ function openContextPanel(context: vscode.ExtensionContext, state: PanelState): 
 
 async function ensureSharedHost(
     context: vscode.ExtensionContext, cwd: string,
-): Promise<{ process: LitosHostProcess; client: LitosClient; cwd: string }> {
+): Promise<{ process: LitosHostProcess; client: LitosClient; cwd: string; baseUrl: string }> {
     if (sharedHost) return sharedHost;
     return spawnSharedHost(context, cwd);
 }
 
 async function spawnSharedHost(
     context: vscode.ExtensionContext, cwd: string,
-): Promise<{ process: LitosHostProcess; client: LitosClient; cwd: string }> {
+): Promise<{ process: LitosHostProcess; client: LitosClient; cwd: string; baseUrl: string }> {
     const process_ = new LitosHostProcess();
     const { port } = await process_.start(context.extensionPath, cwd);
-    sharedHost = { process: process_, client: new LitosClient(`http://127.0.0.1:${port}`), cwd };
+    const baseUrl = `http://127.0.0.1:${port}`;
+    sharedHost = { process: process_, client: new LitosClient(baseUrl), cwd, baseUrl };
     return sharedHost;
 }
 
