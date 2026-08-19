@@ -31,6 +31,13 @@ public static class ContextEndpoints
             });
         });
 
+        app.MapGet("/sessions/{id}/working-directory", async (
+            string id, Litos.Agent.Session.ITranscriptStore store, CancellationToken ct) =>
+        {
+            var transcript = await Transcript.LoadAsync(store, SessionOwner.Local, id, ct);
+            return Results.Ok(new { workingDirectory = transcript.WorkingDirectory });
+        });
+
         app.MapGet("/sessions/{id}/context/breakdown", async (
             string id, AgentWorker worker, Litos.Agent.Session.ITranscriptStore store,
             ISystemPromptProvider systemPromptProvider, ToolRegistryFactory toolRegistryFactory, CancellationToken ct) =>

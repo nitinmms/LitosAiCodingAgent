@@ -18,16 +18,28 @@ import { getContextPanelHtml } from "./contextPanelContent";
  */
 let sharedHost: { process: LitosHostProcess; client: LitosClient; cwd: string; baseUrl: string } | undefined;
 
+/**
+ * The minimal shape every chat message-handler function actually needs — satisfied structurally by
+ * both vscode.WebviewPanel (an editor-tab chat, see openChatPanel) and vscode.WebviewView (the
+ * activity-bar sidebar chat, see LitosChatViewProvider). Letting PanelState hold this instead of a
+ * concrete WebviewPanel means handlePanelMessage/runSlashCommand/refreshContextUsage/etc. work
+ * unchanged for either surface — the sidebar is not a separate, duplicated code path.
+ */
+interface ChatSurface {
+    webview: vscode.Webview;
+}
+
 /** Per-panel session state — sessionId is mutable (unlike the earlier const) since /new and
  * /resume and /branch all change which session a panel is pointed at without closing the panel. */
-type PanelState = { panel: vscode.WebviewPanel; sessionId: string; pendingAttachments: AttachedContent[]; contextPanel?: vscode.WebviewPanel };
-const openPanels = new Map<vscode.WebviewPanel, PanelState>();
+type PanelState = { panel: ChatSurface; sessionId: string; pendingAttachments: AttachedContent[]; contextPanel?: vscode.WebviewPanel };
+const openPanels = new Map<ChatSurface, PanelState>();
 
 let mcpPanel: vscode.WebviewPanel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand("litos.openChat", () => openChatPanel(context)),
+        vscode.window.registerWebviewViewProvider("litos.chatView", new LitosChatViewProvider(context)),
     );
 }
 
@@ -109,37 +121,35 @@ async function refreshContextUsage(state: PanelState): Promise<void> {
     }
 }
 
+/** Refreshes the working-directory row for state.sessionId specifically — not sharedHost.cwd,
+ * which only reflects wherever the shared host happened to be spawned. A resumed or branched
+ * session carries its own WorkingDirectory (see Transcript.cs), which can differ from the host's
+ * spawn-time cwd if the VS Code workspace folder changed since. Falls back to sharedHost.cwd for a
+ * session that hasn't run a turn yet (WorkingDirectory is null until AgentWorker sets it). */
+async function refreshWorkingDirectory(state: PanelState): Promise<void> {
+    if (!sharedHost) return;
+
+    try {
+        const { workingDirectory } = await sharedHost.client.getWorkingDirectory(state.sessionId);
+        state.panel.webview.postMessage({ type: "workingDir", cwd: workingDirectory ?? sharedHost.cwd });
+    } catch {
+        // Host not ready yet (e.g. still starting) or transient error — leave the row as it was.
+    }
+}
+
 async function openChatPanel(context: vscode.ExtensionContext) {
     const panel = vscode.window.createWebviewPanel("litosChat", "Litos", vscode.ViewColumn.Beside, {
         enableScripts: true,
         retainContextWhenHidden: true,
     });
+    // Full-color icon.png, not the monochrome activity-icon.svg — editor-tab icons aren't
+    // theme-masked the way activity-bar/view-title icons are, so the real navy/cyan Litos mark
+    // can render here unlike those two (see the extension's own design notes on this split).
+    panel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "icon.png");
     panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);
 
-    const state: PanelState = { panel, sessionId: crypto.randomBytes(16).toString("hex"), pendingAttachments: [] };
-    openPanels.set(panel, state);
-
-    // cwd is captured once, at whichever moment the shared host first gets spawned (the first
-    // panel opened in this window) — vscode.workspace.workspaceFolders[0], the same "first folder
-    // in a possibly multi-root workspace" caveat noted throughout. A later panel reuses the
-    // already-running host's cwd even if the open workspace changes afterward; picking up a
-    // workspace-folder change without restarting the host is out of scope (see
-    // ReadMe_VsCodeExtension.md's non-goals).
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-
-    try {
-        await ensureSharedHost(context, cwd);
-    } catch (err: any) {
-        vscode.window.showErrorMessage(`Litos: failed to start the agent host — ${err.message}`);
-        openPanels.delete(panel);
-        return;
-    }
-
-    const status = await sharedHost!.client.getConfigStatus();
-    panel.webview.postMessage({ type: status.configured ? "showChat" : "showFirstRun" });
-    void refreshContextUsage(state);
-
-    panel.webview.onDidReceiveMessage((message) => handlePanelMessage(context, state, message));
+    const state = await initializeChatSurface(context, panel);
+    if (!state) return;
 
     panel.onDidDispose(() => {
         openPanels.delete(panel);
@@ -148,6 +158,69 @@ async function openChatPanel(context: vscode.ExtensionContext) {
         // whole extension shutting down, i.e. this VS Code window closing) tears it down —
         // closing one panel must never affect another panel's still-live session.
     });
+}
+
+/**
+ * Wires up a fresh chat session onto any ChatSurface — an editor-tab WebviewPanel (openChatPanel)
+ * or the activity-bar sidebar's WebviewView (LitosChatViewProvider). Both need the identical
+ * "start/reuse the shared host, show first-run or chat, start listening for messages" sequence;
+ * only how each surface is created and disposed differs, which stays with the caller.
+ */
+async function initializeChatSurface(context: vscode.ExtensionContext, surface: ChatSurface): Promise<PanelState | undefined> {
+    const state: PanelState = { panel: surface, sessionId: crypto.randomBytes(16).toString("hex"), pendingAttachments: [] };
+    openPanels.set(surface, state);
+
+    // cwd is captured once, at whichever moment the shared host first gets spawned (the first
+    // chat surface opened in this window) — vscode.workspace.workspaceFolders[0], the same "first
+    // folder in a possibly multi-root workspace" caveat noted throughout. A later surface reuses
+    // the already-running host's cwd even if the open workspace changes afterward; picking up a
+    // workspace-folder change without restarting the host is out of scope (see
+    // ReadMe_VsCodeExtension.md's non-goals).
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+
+    try {
+        await ensureSharedHost(context, cwd);
+    } catch (err: any) {
+        vscode.window.showErrorMessage(`Litos: failed to start the agent host — ${err.message}`);
+        openPanels.delete(surface);
+        return undefined;
+    }
+
+    const status = await sharedHost!.client.getConfigStatus();
+    surface.webview.postMessage({ type: status.configured ? "showChat" : "showFirstRun" });
+    void refreshContextUsage(state);
+    void refreshWorkingDirectory(state);
+
+    surface.webview.onDidReceiveMessage((message) => handlePanelMessage(context, state, message));
+
+    return state;
+}
+
+/**
+ * Activity-bar sidebar chat — the primary Litos surface (matches Claude Code/OpenCode's docked
+ * chat view). A WebviewView is created once by VS Code and reused across show/hide (unlike
+ * WebviewPanel, there's no separate open command); resolveWebviewView fires again only if the view
+ * is actually disposed (e.g. the extension host restarts), so state persists across sidebar
+ * hide/show for free via retainContextWhenHidden below. Opening additional chats as editor panels
+ * (litos.openChat) stays a fully separate ChatSurface/PanelState — the sidebar view and any number
+ * of editor-tab panels are independent sessions side by side, per the litos.openChat title-bar
+ * button on this view (see package.json's view/title menu contribution).
+ */
+class LitosChatViewProvider implements vscode.WebviewViewProvider {
+    constructor(private readonly context: vscode.ExtensionContext) {}
+
+    async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
+        webviewView.webview.options = { enableScripts: true };
+        webviewView.webview.html = getWebviewHtml(webviewView.webview, this.context.extensionUri);
+
+        const state = await initializeChatSurface(this.context, webviewView);
+        if (!state) return;
+
+        webviewView.onDidDispose(() => {
+            openPanels.delete(webviewView);
+            state.contextPanel?.dispose();
+        });
+    }
 }
 
 async function handlePanelMessage(context: vscode.ExtensionContext, state: PanelState, message: any): Promise<void> {
@@ -219,8 +292,11 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
     if (message.type === "runCommand") {
         await runSlashCommand(context, state, message.command, message.arg || "");
         // /new, /branch, /compact, /provider (open), /model (open) can all change this panel's
-        // context usage; harmless no-op refresh for commands that don't (e.g. /skills).
+        // context usage; harmless no-op refresh for commands that don't (e.g. /skills). /new also
+        // resets state.sessionId to a not-yet-run session, so the working-directory row falls back
+        // to sharedHost.cwd until that session's first turn sets its own WorkingDirectory.
         void refreshContextUsage(state);
+        void refreshWorkingDirectory(state);
         return;
     }
 
@@ -228,8 +304,10 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
         try {
             await handlePickerSelection(state, message.context, message.itemId);
             // /resume, /provider, /model, /branch selections all land here — same reasoning as
-            // runCommand above.
+            // runCommand above. /resume and /branch are exactly the cases where the session's own
+            // WorkingDirectory can differ from sharedHost.cwd, which is the whole point of refreshing it here.
             void refreshContextUsage(state);
+            void refreshWorkingDirectory(state);
         } catch (err: any) {
             panel.webview.postMessage({ type: "system", text: `Error: ${err.message}` });
         }
@@ -512,6 +590,7 @@ function openMcpPanel(context: vscode.ExtensionContext): void {
     }
 
     mcpPanel = vscode.window.createWebviewPanel("litosMcp", "Litos: MCP Servers", vscode.ViewColumn.Beside, { enableScripts: true });
+    mcpPanel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "icon.png");
     mcpPanel.webview.html = getMcpPanelHtml(mcpPanel.webview, context.extensionUri);
 
     mcpPanel.webview.onDidReceiveMessage(async (message) => {
@@ -581,6 +660,7 @@ function openContextPanel(context: vscode.ExtensionContext, state: PanelState): 
     } else {
         const panel = vscode.window.createWebviewPanel("litosContext", "Litos: Context Usage", vscode.ViewColumn.Beside, { enableScripts: true });
         state.contextPanel = panel;
+        panel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "icon.png");
         panel.webview.html = getContextPanelHtml(panel.webview, context.extensionUri);
         panel.webview.onDidReceiveMessage(async (message) => {
             if (message.type !== "refresh") return;

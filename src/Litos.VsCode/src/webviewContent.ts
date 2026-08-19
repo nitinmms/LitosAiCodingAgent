@@ -245,7 +245,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
      status-bar item couldn't unambiguously represent "which session" with multiple chat panels
      open at once). */
   #contextUsage {
-    display: none;
+    display: flex;
     align-items: center;
     gap: 6px;
     padding: 2px 10px 6px;
@@ -253,10 +253,20 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     color: var(--vscode-descriptionForeground);
     cursor: pointer;
   }
-  #contextUsage.visible { display: flex; }
   #contextUsage:hover { color: var(--vscode-foreground); }
   #contextUsage.level-Warning { color: var(--vscode-charts-yellow, #d29922); }
   #contextUsage.level-Critical { color: var(--vscode-errorForeground); }
+  /* Codicon-shaped inline SVGs (dashboard/graph for context usage, root-folder for working
+     directory) so these rows read as native VS Code chrome rather than bespoke iconography — the
+     glyph paths mirror @vscode/codicons (MIT) but are hand-inlined, matching this webview's
+     no-external-asset CSP (see getWebviewHtml's comment) instead of shipping the codicon font. */
+  .statusIcon {
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+    flex: none;
+  }
+  .statusIcon svg { width: 100%; height: 100%; fill: currentColor; }
   #contextUsageBar {
     width: 60px;
     height: 4px;
@@ -267,6 +277,30 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   #contextUsageBar div {
     height: 100%;
     background: currentColor;
+  }
+
+  /* Working-directory row — always shown (not conditionally hidden like #contextUsage's .visible
+     toggle) so the row itself is never a signal of whether the extension is behaving correctly;
+     only its text changes, between a placeholder and a real path. Refreshed on panel open and
+     after any command/picker selection that can change the active session (see extension.ts's
+     refreshWorkingDirectory) since a resumed/branched session's own WorkingDirectory can differ
+     from the shared host's spawn-time cwd. */
+  #workingDir {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* Bottom padding here is the *only* thing standing between this text and the webview's
+       viewport edge — #workingDir is the last child in the flex column and body has none of its
+       own (see body's rule above) — so this is deliberately generous, not decorative, to avoid a
+       clipped-descender sliver at the bottom edge. */
+    padding: 0 10px 10px;
+    font-size: 0.8em;
+    color: var(--vscode-descriptionForeground);
+  }
+  #workingDirText {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   #composer { position: relative; }
@@ -405,9 +439,11 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <button id="sendButton">Send</button>
 </div>
 <div id="contextUsage" title="Click for a breakdown of what's using your context">
+  <span class="statusIcon" id="contextUsageIcon"></span>
   <div id="contextUsageBar"><div id="contextUsageFill" style="width:0%"></div></div>
-  <span id="contextUsageText"></span>
+  <span id="contextUsageText">Context usage unavailable</span>
 </div>
+<div id="workingDir"><span class="statusIcon" id="workingDirIcon"></span><span id="workingDirText">Working directory: (loading...)</span></div>
 </div>
 <div id="pickerOverlay"></div>
 <div id="picker">
@@ -431,20 +467,42 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const contextUsageEl = document.getElementById('contextUsage');
   const contextUsageFillEl = document.getElementById('contextUsageFill');
   const contextUsageTextEl = document.getElementById('contextUsageText');
+  const contextUsageIconEl = document.getElementById('contextUsageIcon');
+  const workingDirEl = document.getElementById('workingDir');
+  const workingDirTextEl = document.getElementById('workingDirText');
+  const workingDirIconEl = document.getElementById('workingDirIcon');
+
+  // Codicon-shaped glyphs (graph-line, root-folder), hand-inlined as 16x16 currentColor paths —
+  // see .statusIcon's CSS comment for why these are inlined rather than the codicon font.
+  contextUsageIconEl.innerHTML = '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M1.5 1v13.5H15v1H1v-1H.5V1h1zm12.15 2.15l.7.7L10 8.21l-2.5-2.5-3.65 3.65-.7-.7L7.5 4.29 10 6.79l3.65-3.64z"/>' +
+    '</svg>';
+  workingDirIconEl.innerHTML = '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M14.5 4H8.71l-.85-.85L7.51 3H1.5l-.5.5v9l.5.5h13l.5-.5v-8L14.5 4zM14 13H2V4h5.29l.85.85.36.15H14v8z"/>' +
+    '</svg>';
 
   contextUsageEl.addEventListener('click', () => {
     vscode.postMessage({ type: 'showContextBreakdown' });
   });
 
+  function renderWorkingDir(cwd) {
+    const text = cwd ? 'Working directory: ' + cwd : 'Working directory: (not yet started)';
+    workingDirTextEl.textContent = text;
+    workingDirEl.title = cwd || '';
+  }
+
   // usage is ContextUsage | null (GET /sessions/{id}/context/usage — null before any real usage
-  // has been reported yet, e.g. before the session's first turn completes).
+  // has been reported yet, e.g. before the session's first turn completes). The row itself always
+  // stays visible (see #contextUsage's CSS comment) — a null usage just falls back to placeholder text.
   function renderContextUsage(usage) {
     if (!usage) {
-      contextUsageEl.classList.remove('visible');
+      contextUsageEl.className = '';
+      contextUsageFillEl.style.width = '0%';
+      contextUsageTextEl.textContent = 'Context usage unavailable';
       return;
     }
     const pct = Math.round(usage.fraction * 100);
-    contextUsageEl.className = 'visible level-' + usage.level;
+    contextUsageEl.className = 'level-' + usage.level;
     contextUsageFillEl.style.width = Math.min(100, pct) + '%';
     contextUsageTextEl.textContent = pct + '% of context (' + usage.usedTokens.toLocaleString() + ' / ' + usage.contextLength.toLocaleString() + ' tokens)';
   }
@@ -1145,12 +1203,15 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     } else if (message.type === 'sessionReset') {
       resetSessionUi();
       renderContextUsage(null);
+      renderWorkingDir(null);
     } else if (message.type === 'historyLoaded') {
       renderHistory(message.history);
     } else if (message.type === 'attachmentAdded') {
       addAttachmentChip(message.fileName, message.thumbnailDataUri, message.iconKind);
     } else if (message.type === 'contextUsage') {
       renderContextUsage(message.usage);
+    } else if (message.type === 'workingDir') {
+      renderWorkingDir(message.cwd);
     } else if (message.type === 'openPicker') {
       openPicker(message.items.map((item) => ({ title: item.title, subtitle: item.subtitle, id: item.id })), (picked) => {
         vscode.postMessage({ type: 'pickerSelected', context: message.context, itemId: picked.id });

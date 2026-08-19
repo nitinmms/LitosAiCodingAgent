@@ -275,6 +275,12 @@ export class LitosClient {
         return this.getJson(`/sessions/${encodeURIComponent(sessionId)}/context/breakdown`);
     }
 
+    // Null until the session's first turn actually runs (Transcript.WorkingDirectory is only set
+    // once AgentWorker falls back to Directory.GetCurrentDirectory() — see AgentWorker.cs).
+    async getWorkingDirectory(sessionId: string): Promise<{ workingDirectory: string | null }> {
+        return this.getJson(`/sessions/${encodeURIComponent(sessionId)}/working-directory`);
+    }
+
     // --- /reflect ---
 
     async reflect(sessionId: string, existingAgentsMd: string | null): Promise<{ proposed: string }> {

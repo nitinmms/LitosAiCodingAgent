@@ -12,12 +12,46 @@
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "litos",
+          "title": "Litos",
+          "icon": "media/litos-mark-v2.svg"
+        }
+      ]
+    },
+    "views": {
+      "litos": [
+        {
+          "id": "litos.chatView",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "litos.openChat",
-        "title": "Litos: Open Chat"
+        "title": "Open Litos",
+        "icon": "media/icon.png"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "litos.openChat",
+          "when": "view == litos.chatView",
+          "group": "navigation"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "litos.openChat",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",
