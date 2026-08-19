@@ -123,6 +123,34 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   .entry.tool .status-succeeded { color: var(--vscode-charts-green, #3fb950); }
   .entry.tool .status-failed { color: var(--vscode-errorForeground); }
   .entry.tool .status-skipped { color: var(--vscode-descriptionForeground); }
+  /* Shown for the whole turn — from 'turnStarted' until 'turnEnded' — not just the gap before the
+     first streamed event. Mirrors Litos.Gui's status-bar spinner (MainWindow.axaml's
+     StatusBarWorkingIndicator), which is deliberately scoped to turn lifetime rather than hidden on
+     the first textDelta/toolCallStarted: a tool-heavy turn has multiple provider round-trips after
+     its first token, and hiding early made this indicator flash for a fraction of a second instead
+     of staying meaningful. Placed as its own row below the composer, right-aligned, alongside the
+     #contextUsage/#workingDir status-row family rather than inline in the transcript. */
+  #workingIndicator {
+    display: none;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px 0;
+  }
+  #workingIndicator.visible { display: flex; }
+  #workingIndicator .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--vscode-foreground);
+    animation: workingDotPulse 1.4s ease-in-out infinite;
+  }
+  #workingIndicator .dot:nth-child(2) { animation-delay: 0.2s; }
+  #workingIndicator .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes workingDotPulse {
+    0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1); }
+  }
   .entry.approval {
     border: 1px solid var(--vscode-charts-yellow, #d29922);
     border-radius: 4px;
@@ -438,6 +466,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <textarea id="composerInput" rows="4" placeholder="Message Litos... (type / for commands, paste an image to attach it)"></textarea>
   <button id="sendButton">Send</button>
 </div>
+<div id="workingIndicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
 <div id="contextUsage" title="Click for a breakdown of what's using your context">
   <span class="statusIcon" id="contextUsageIcon"></span>
   <div id="contextUsageBar"><div id="contextUsageFill" style="width:0%"></div></div>
@@ -471,6 +500,14 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const workingDirEl = document.getElementById('workingDir');
   const workingDirTextEl = document.getElementById('workingDirText');
   const workingDirIconEl = document.getElementById('workingDirIcon');
+  const workingIndicatorEl = document.getElementById('workingIndicator');
+
+  function showWorkingIndicator() {
+    workingIndicatorEl.classList.add('visible');
+  }
+  function hideWorkingIndicator() {
+    workingIndicatorEl.classList.remove('visible');
+  }
 
   // Codicon-shaped glyphs (graph-line, root-folder), hand-inlined as 16x16 currentColor paths —
   // see .statusIcon's CSS comment for why these are inlined rather than the codicon font.
@@ -1145,6 +1182,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     Object.keys(toolEntriesByCallId).forEach((k) => delete toolEntriesByCallId[k]);
     Object.keys(approvalEntriesById).forEach((k) => delete approvalEntriesById[k]);
     clearAttachmentChips();
+    hideWorkingIndicator();
   }
 
   function renderHistory(history) {
@@ -1189,6 +1227,10 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     const message = event.data;
     if (message.type === 'agentEvent') {
       handleAgentEvent(message.event);
+    } else if (message.type === 'turnStarted') {
+      showWorkingIndicator();
+    } else if (message.type === 'turnEnded') {
+      hideWorkingIndicator();
     } else if (message.type === 'system') {
       addEntry('system', message.text);
     } else if (message.type === 'showFirstRun') {

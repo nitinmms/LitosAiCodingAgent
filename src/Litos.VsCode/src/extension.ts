@@ -241,6 +241,11 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
                 return;
             }
 
+            // outcome.kind === "started" here (the "steered" branch above already returned) —
+            // this is the earliest point the extension can confirm a turn actually began, as
+            // opposed to a message merely being appended to one already in flight.
+            panel.webview.postMessage({ type: "turnStarted" });
+
             // approvalRequested/approvalResolved arrive interleaved on this same stream
             // (TurnsEndpoints.ToSseData merges PendingApprovalRelay onto the turn's own
             // AgentEvent channel) — postMessage forwards every event uniformly, and
@@ -248,6 +253,7 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
             for await (const evt of outcome.events) {
                 panel.webview.postMessage({ type: "agentEvent", event: evt });
             }
+            panel.webview.postMessage({ type: "turnEnded" });
 
             // Turn finished — refresh this panel's own context-usage row (mirrors Litos.Gui's
             // RefreshContextUsage being called after every completed turn). A cheap re-fetch
@@ -256,6 +262,7 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
             // number.
             void refreshContextUsage(state);
         } catch (err: any) {
+            panel.webview.postMessage({ type: "turnEnded" });
             panel.webview.postMessage({ type: "system", text: `Error: ${err.message}` });
         }
         return;
