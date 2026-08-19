@@ -52,18 +52,21 @@ builder.Services.AddSingleton(pendingApprovalRelay);
 builder.Services.AddSingleton<IToolApprovalGate>(approvalGate);
 
 // McpToolProvider/McpToolSource/McpToolRefreshService, mirroring Litos.Api/Program.cs's own MCP
-// wiring exactly (same face-agnostic Litos.Tools.Mcp types, same approvalGate instance reused —
-// no changes needed in Litos.Tools.Mcp/Litos.Api/Litos.Gui to add this third consumer).
-// Constructed and InitializeAsync'd before builder.Build() so the very first turn already has
-// real per-tool schemas rather than an empty tool list — bounded by mcpHandshakeTimeout so a
-// slow/unresponsive server can't hang this process's own startup; an Unreachable server is
-// retried later by McpToolRefreshService's poll-with-backoff, no restart needed. 30s/5s match
-// Litos.Api's own measured-against-a-real-npx-server tuning (see that file's comment for the
-// measurement this was taken from).
+// wiring (same face-agnostic Litos.Tools.Mcp types, same approvalGate instance reused — no
+// changes needed in Litos.Tools.Mcp/Litos.Api/Litos.Gui to add this third consumer), with one
+// deliberate difference: InitializeAsync is fire-and-forget here rather than awaited before
+// builder.Build(). Unlike Litos.Api/Litos.Gui, this process's own liveness signal (the stdout
+// port handshake below) is itself gated on Program.cs finishing — so awaiting a slow/unreachable
+// MCP server's up-to-mcpHandshakeTimeout connect here meant the VS Code webview sat unusable for
+// that whole time on every window open, not just the first turn seeing an incomplete tool list.
+// McpToolRefreshService's poll-with-backoff (started below) already tolerates connections still
+// being in flight — RefreshAsync only adds servers not yet in _connections — so a turn sent before
+// this finishes just proceeds with whatever tools are connected so far, same as any later turn
+// racing a mid-session Unreachable retry already does.
 var mcpLoggerFactory = LoggerFactory.Create(loggingBuilder => loggingBuilder.AddConsole());
 var mcpHandshakeTimeout = TimeSpan.FromSeconds(30);
 var mcpToolProvider = new McpToolProvider(mcpConfigStore, mcpLoggerFactory, approvalGate);
-await mcpToolProvider.InitializeAsync(mcpHandshakeTimeout, CancellationToken.None);
+_ = mcpToolProvider.InitializeAsync(mcpHandshakeTimeout, CancellationToken.None);
 builder.Services.AddSingleton(mcpToolProvider);
 builder.Services.AddSingleton<IToolSource>(new McpToolSource(mcpToolProvider));
 
