@@ -307,6 +307,26 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     background: currentColor;
   }
 
+  /* Model/provider row — same always-visible convention as #workingDir below (never
+     display:none; a fetch failure just falls back to placeholder text). Sits between
+     #contextUsage and #workingDir: context usage updates every turn and is clickable, working
+     directory is anchored last for its own trailing-padding reason (see #workingDir's comment),
+     and model/provider — identity information that only changes via an explicit /provider or
+     /model switch — belongs in between. */
+  #modelInfo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px 6px;
+    font-size: 0.8em;
+    color: var(--vscode-descriptionForeground);
+  }
+  #modelInfoText {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   /* Working-directory row — always shown (not conditionally hidden like #contextUsage's .visible
      toggle) so the row itself is never a signal of whether the extension is behaving correctly;
      only its text changes, between a placeholder and a real path. Refreshed on panel open and
@@ -472,6 +492,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <div id="contextUsageBar"><div id="contextUsageFill" style="width:0%"></div></div>
   <span id="contextUsageText">Context usage unavailable</span>
 </div>
+<div id="modelInfo"><span class="statusIcon" id="modelInfoIcon"></span><span id="modelInfoText">Model: (loading...)</span></div>
 <div id="workingDir"><span class="statusIcon" id="workingDirIcon"></span><span id="workingDirText">Working directory: (loading...)</span></div>
 </div>
 <div id="pickerOverlay"></div>
@@ -497,6 +518,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const contextUsageFillEl = document.getElementById('contextUsageFill');
   const contextUsageTextEl = document.getElementById('contextUsageText');
   const contextUsageIconEl = document.getElementById('contextUsageIcon');
+  const modelInfoTextEl = document.getElementById('modelInfoText');
+  const modelInfoIconEl = document.getElementById('modelInfoIcon');
   const workingDirEl = document.getElementById('workingDir');
   const workingDirTextEl = document.getElementById('workingDirText');
   const workingDirIconEl = document.getElementById('workingDirIcon');
@@ -509,10 +532,13 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     workingIndicatorEl.classList.remove('visible');
   }
 
-  // Codicon-shaped glyphs (graph-line, root-folder), hand-inlined as 16x16 currentColor paths —
-  // see .statusIcon's CSS comment for why these are inlined rather than the codicon font.
+  // Codicon-shaped glyphs (graph-line, root-folder, hexagon), hand-inlined as 16x16 currentColor
+  // paths — see .statusIcon's CSS comment for why these are inlined rather than the codicon font.
   contextUsageIconEl.innerHTML = '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">' +
     '<path d="M1.5 1v13.5H15v1H1v-1H.5V1h1zm12.15 2.15l.7.7L10 8.21l-2.5-2.5-3.65 3.65-.7-.7L7.5 4.29 10 6.79l3.65-3.64z"/>' +
+    '</svg>';
+  modelInfoIconEl.innerHTML = '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M8 1L1 4.5v7L8 15l7-3.5v-7L8 1zm0 1.12l5.5 2.75L8 7.62 2.5 4.87 8 2.12zM2 5.75l5.5 2.75v5.63L2 11.38V5.75zm6.5 8.38V8.5L14 5.75v5.63l-5.5 2.75z"/>' +
     '</svg>';
   workingDirIconEl.innerHTML = '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">' +
     '<path d="M14.5 4H8.71l-.85-.85L7.51 3H1.5l-.5.5v9l.5.5h13l.5-.5v-8L14.5 4zM14 13H2V4h5.29l.85.85.36.15H14v8z"/>' +
@@ -526,6 +552,19 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     const text = cwd ? 'Working directory: ' + cwd : 'Working directory: (not yet started)';
     workingDirTextEl.textContent = text;
     workingDirEl.title = cwd || '';
+  }
+
+  // providerName/model mirror AgentWorker.ProviderName/Model verbatim (raw lowercase provider key,
+  // raw model id — no display-name lookup for either, see extension.ts's refreshModelSettings).
+  // Row always stays visible (see #modelInfo's CSS comment) — a failed fetch just leaves the
+  // placeholder in place.
+  function renderModelInfo(providerName, model) {
+    if (!providerName) {
+      modelInfoTextEl.textContent = 'Model: unavailable';
+      return;
+    }
+    const providerLabel = providerName.charAt(0).toUpperCase() + providerName.slice(1);
+    modelInfoTextEl.textContent = model ? providerLabel + ' · ' + model : providerLabel;
   }
 
   // usage is ContextUsage | null (GET /sessions/{id}/context/usage — null before any real usage
@@ -1051,6 +1090,12 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     resetComposerHeight();
     currentAssistantBubble = null;
     clearAttachmentChips();
+    // Shown here, not on 'turnStarted' — that message only arrives after the extension host's
+    // POST /turns round-trip resolves (see extension.ts's "send" handler), which in practice waits
+    // on the provider's first streamed event, not just a fast local ack. The user's own sense of
+    // "this turn is in progress" starts the instant they hit send, so the indicator should too;
+    // 'turnEnded'/the catch block still owns hiding it, unchanged.
+    showWorkingIndicator();
     vscode.postMessage({ type: 'send', text });
   }
 
@@ -1254,6 +1299,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
       renderContextUsage(message.usage);
     } else if (message.type === 'workingDir') {
       renderWorkingDir(message.cwd);
+    } else if (message.type === 'modelSettings') {
+      renderModelInfo(message.providerName, message.model);
     } else if (message.type === 'openPicker') {
       openPicker(message.items.map((item) => ({ title: item.title, subtitle: item.subtitle, id: item.id })), (picked) => {
         vscode.postMessage({ type: 'pickerSelected', context: message.context, itemId: picked.id });

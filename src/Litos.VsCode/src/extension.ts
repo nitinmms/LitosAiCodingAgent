@@ -137,6 +137,21 @@ async function refreshWorkingDirectory(state: PanelState): Promise<void> {
     }
 }
 
+/** Refreshes the model/provider row. Unlike contextUsage/workingDir this isn't keyed off
+ * state.sessionId at all — AgentWorker.ProviderName/Model are process-wide (switching provider
+ * affects the *next* turn on any session, see AgentSettingsEndpoints.cs's remarks), so every open
+ * panel shows the same value and there is nothing session-specific to pass here. */
+async function refreshModelSettings(state: PanelState): Promise<void> {
+    if (!sharedHost) return;
+
+    try {
+        const { providerName, model } = await sharedHost.client.getSettings();
+        state.panel.webview.postMessage({ type: "modelSettings", providerName, model });
+    } catch {
+        // Host not ready yet (e.g. still starting) or transient error — leave the row as it was.
+    }
+}
+
 async function openChatPanel(context: vscode.ExtensionContext) {
     const panel = vscode.window.createWebviewPanel("litosChat", "Litos", vscode.ViewColumn.Beside, {
         enableScripts: true,
@@ -190,6 +205,7 @@ async function initializeChatSurface(context: vscode.ExtensionContext, surface: 
     surface.webview.postMessage({ type: status.configured ? "showChat" : "showFirstRun" });
     void refreshContextUsage(state);
     void refreshWorkingDirectory(state);
+    void refreshModelSettings(state);
 
     surface.webview.onDidReceiveMessage((message) => handlePanelMessage(context, state, message));
 
@@ -304,6 +320,7 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
         // to sharedHost.cwd until that session's first turn sets its own WorkingDirectory.
         void refreshContextUsage(state);
         void refreshWorkingDirectory(state);
+        void refreshModelSettings(state);
         return;
     }
 
@@ -313,8 +330,10 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
             // /resume, /provider, /model, /branch selections all land here — same reasoning as
             // runCommand above. /resume and /branch are exactly the cases where the session's own
             // WorkingDirectory can differ from sharedHost.cwd, which is the whole point of refreshing it here.
+            // /provider and /model selections are exactly the case refreshModelSettings exists for.
             void refreshContextUsage(state);
             void refreshWorkingDirectory(state);
+            void refreshModelSettings(state);
         } catch (err: any) {
             panel.webview.postMessage({ type: "system", text: `Error: ${err.message}` });
         }
