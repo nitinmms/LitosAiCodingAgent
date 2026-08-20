@@ -27,4 +27,16 @@
     <DebugType>None</DebugType>
   </PropertyGroup>
 
+  <!-- macOS-only override: a compressed single-file bundle extracts its native libraries (incl.
+       CoreCLR itself) to a temp directory and loads them from there at startup. Under the hardened
+       runtime notarization requires (codesign --options runtime), the kernel's code-signing
+       enforcement blocks loading those extracted-at-runtime dylibs, so CoreCLR bootstrap fails with
+       "Failed to create CoreCLR, HRESULT: 0x80070008" — confirmed live on a real signed/notarized
+       osx-arm64 build. Disabling compression lets the OS load native libraries straight out of the
+       signed single-file bundle with no runtime extraction step. Windows is unaffected (no hardened
+       runtime / code-signing enforcement of this kind), so this is scoped to osx-* RIDs only. -->
+  <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('osx-'))">
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
 </Project>
