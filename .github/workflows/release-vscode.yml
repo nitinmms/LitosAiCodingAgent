@@ -1,8 +1,14 @@
 name: Release Litos.VsCode
 
-# Triggered by pushing a tag like "vscode-v1.2.3" — separate from Litos.Gui's "v*.*.*" tags
+# Triggered by pushing a tag like "litos-vscode-v1.2.3" — separate from Litos.Gui's "v*.*.*" tags
 # (release-gui.yml) and Litos.Console's "console-v*.*.*" tags (release-console.yml) so every face
 # versions and releases independently.
+#
+# NOTE: the tag prefix must NOT start with "v" — GitHub Actions tag-glob matching anchors "v*.*.*"
+# at a literal leading "v", so a tag like "vscode-v0.1.0" (which does start with "v") also matches
+# release-gui.yml/release-macos.yml's pattern (the wildcards absorb "scode-v0" etc.) and triggers
+# an unrelated Gui/macOS release under the wrong tag. Confirmed the hard way: pushing
+# "vscode-v0.1.0" fired all three workflows. "litos-vscode-v*" starts with "l", can't collide.
 #
 # Builds the win-x64 and osx-{arm64,x64} Litos.VsCodeHost binaries, bundles each into
 # src/Litos.VsCode/bin/<rid>/, then packages one .vsix per platform target and attaches them to a
@@ -14,7 +20,7 @@ name: Release Litos.VsCode
 on:
   push:
     tags:
-      - "vscode-v*.*.*"
+      - "litos-vscode-v*.*.*"
 
 permissions:
   contents: write
@@ -32,7 +38,7 @@ jobs:
       - name: Publish Litos.VsCodeHost (win-x64)
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}" -replace '^vscode-v', ''
+          $version = "${{ github.ref_name }}" -replace '^litos-vscode-v', ''
           dotnet publish src/Litos.VsCodeHost/Litos.VsCodeHost.csproj `
             -c Release -r win-x64 -o deploy/out/vscodehost/windows/win-x64 `
             --self-contained true -p:PublishSingleFile=true `
@@ -89,7 +95,7 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           LITOS_VERSION: ${{ github.ref_name }}
         run: |
-          VERSION="${LITOS_VERSION#vscode-v}"
+          VERSION="${LITOS_VERSION#litos-vscode-v}"
           LITOS_VERSION="$VERSION" ./deploy/publish-vscodehost-macos.sh ${{ matrix.runtime }}
 
       - name: Clean up keychain
@@ -151,7 +157,7 @@ jobs:
       - name: Set extension version from tag
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}" -replace '^vscode-v', ''
+          $version = "${{ github.ref_name }}" -replace '^litos-vscode-v', ''
           $pkgPath = "src/Litos.VsCode/package.json"
           $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
           $pkg.version = $version
