@@ -4,6 +4,11 @@ Chat with the Litos AI coding agent from a panel inside VS Code — no Docker, n
 account to create. Litos runs a small local process on your machine and talks to it over
 `localhost` only.
 
+## Supported platforms
+
+**Windows and macOS** (Intel and Apple Silicon), both fully supported and code-signed. Linux
+support is planned but not yet available.
+
 ## Getting started
 
 1. Install the extension.

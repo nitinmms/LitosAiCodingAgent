@@ -17,6 +17,10 @@
   "engines": {
     "vscode": "^1.90.0"
   },
+  "os": [
+    "win32",
+    "darwin"
+  ],
   "categories": [
     "Other"
   ],
