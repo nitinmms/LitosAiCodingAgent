@@ -634,105 +634,76 @@ accept the real-env-var side effect deliberately, never accidentally.
 | `src/Litos.VsCode/media/marked.min.js` | Vendored `marked` v12.0.2 (MIT), inlined verbatim into the webview's `<script>` — see §7.7. |
 | `deploy/publish-vscodehost-{windows,linux,macos}.{ps1,sh}` | Per-platform publish scripts, mirroring the now-shelved `Litos.Console`'s own (§11) — only Windows has been run/tested so far. |
 
-## 10. Publishing to the VS Code Marketplace — not yet done
+## 10. Publishing to the VS Code Marketplace — done (win-x64, osx-arm64, osx-x64)
 
-Scoped but not yet executed. Nothing below has been run for real; this is the plan, not a status
-report. Split into four buckets, in dependency order.
+Live as of `litos-vscode-v0.1.3`: https://marketplace.visualstudio.com/items?itemName=litosai.litos-vscode
+(publisher `litosai` — `litos` was unavailable; `package.json`'s `"publisher"` field matches).
+Linux is the only remaining gap (§10.5).
 
-### 10.1 One-time account setup (portal work, outside CI) — done
+### 10.1 Account setup
 
-1. **Done.** Publisher created at https://marketplace.visualstudio.com/manage as **`litosai`**
-   (`litos` was unavailable). `src/Litos.VsCode/package.json`'s `"publisher"` field was updated to
-   match (`litos`→`litosai`) — per this section's own original guidance, the ID drives
-   `package.json`, not the other way around. No other file references the publisher ID by name
-   (`name`/`contributes.*.id` are extension-namespaced, unaffected by publisher).
-2. **Done.** PAT generated at `https://dev.azure.com/{org}` → User settings → Personal access
-   tokens, **Organization: All accessible organizations**, **Scope: Marketplace (Manage)**. Max
-   expiry is 1 year — needs periodic rotation; an expired token fails CI publishing silently (no
-   advance warning), so whoever rotates it should also update the GitHub secret at the same time.
-3. **Done.** Token stored as the GitHub Actions repository secret `VSCE_PAT`.
-4. **Not yet done.** Verify locally before trusting CI to publish: `npx vsce login litosai`, paste
-   the PAT — confirms the publisher ID and token are both valid. Recommended before the first real
-   `vsce publish`.
+Publisher `litosai` created at https://marketplace.visualstudio.com/manage. PAT generated at
+`https://dev.azure.com/{org}` → User settings → Personal access tokens, **Organization: All
+accessible organizations**, **Scope: Marketplace (Manage)**, stored as the GitHub Actions secret
+`VSCE_PAT`. Max expiry is 1 year — rotate before it expires; an expired token fails CI publishing
+silently, so update the GitHub secret at the same time as the portal rotation.
 
-### 10.2 Extension packaging plumbing (`src/Litos.VsCode/`) — not yet added
+### 10.2 Extension packaging plumbing
 
-- `@vscode/vsce` as a devDependency — not present in `package.json` today; `npx vsce` currently
-  fails locally with no package installed.
-- A `.vscodeignore` — doesn't exist yet. Needs to exclude `node_modules/*` (check whether any
-  runtime `dependencies` actually exist first — `dist/extension.js` may already be self-contained
-  via `tsc`'s plain `commonjs` output, in which case this is `node_modules/**`, full stop),
-  `src/**`, `**/__tests__/**`, `.vscode/**`, `*.map`, `package-lock.json` — and, per platform-target
-  build, the **other four RIDs'** `bin/<rid>/` folders. `vsce`'s `--target` flag does not do this
-  exclusion automatically; each targeted `vsce package --target <target>` needs the unrelated
-  `bin/*` directories moved aside (or a filtered copy of the tree staged) before packaging, or
-  every platform's `.vsix` silently balloons to include all five binaries.
-- Missing `package.json` fields the Marketplace expects: `repository`, `license` (repo root already
-  has `LICENSE.txt`, Apache 2.0 — the `license` field should reference that, e.g. `"license": "SEE
-  LICENSE IN LICENSE.txt"` since it isn't a bare SPDX identifier), optionally `bugs`/`homepage`.
-- Investigate and strip the stray `.pdb` files currently sitting in `bin/win-x64/` alongside the
-  real `.exe` (`libSkiaSharp.pdb` alone is ~84MB, plus nine smaller ones) — these must never enter a
-  packaged `.vsix`. Worth checking *why* `dotnet publish -p:PublishSingleFile=true` is emitting
-  `.pdb` output into that folder at all before just deleting them in a build step — possible stale
-  `-o` directory reused across a non-single-file and a single-file publish.
+`src/Litos.VsCode/package.json` carries `@vscode/vsce` as a devDependency plus the
+`repository`/`license`/`bugs` fields the Marketplace requires. `src/Litos.VsCode/.vscodeignore`
+excludes `src/**`, `node_modules/**`, test files, and the stray `.pdb`/`web.config`/
+`*.staticwebassets.endpoints.json` files a Web-SDK publish emits alongside the real binary (fixed
+at the source too — see `DebugType=None` in `Litos.VsCodeHost.csproj`).
 
-### 10.3 Producing and verifying all 5 host binaries
+`vsce package --target <target>` does **not** exclude other RIDs' `bin/<rid>/` folders on its own
+— `deploy/package-vscode-extension.ps1` handles that by generating a per-target ignore file
+listing every RID except the one being packaged, then calling `vsce package --ignoreFile`.
 
-- **Windows** (`win-x64`): already built (§6), but never smoke-tested from an actually-*packaged*
-  extension — only from F5, which never exercises the `.vscodeignore`/packaging path at all.
-- **macOS** (`osx-arm64`, `osx-x64`): `deploy/publish-vscodehost-macos.sh` exists and is complete
-  (codesign + notarize + best-effort staple, reusing the exact `APPLE_SIGN_IDENTITY`/`APPLE_ID`/
-  `APPLE_TEAM_ID`/`APPLE_APP_PASSWORD` secrets `release-console.yml`/`release-macos.yml` already use
-  for `Litos.Console`/`Litos.Gui`) but has **never actually been run**. Note this is a *different*
-  signing shape than `release-macos.yml`'s — that workflow signs `Litos.Gui`'s `.app` bundle with
-  entitlements; this signs a plain headless binary, no bundle, no entitlements, `codesign --sign`
-  only. Same certificate/credentials, different artifact — no new Apple Developer enrollment needed,
-  just a first real run of the existing script.
-- **Linux** (`linux-x64`, `linux-arm64`): `deploy/publish-vscodehost-linux.sh` exists, no signing
-  required (no Gatekeeper-equivalent gate), also never actually run.
-- Each binary should be smoke-tested end to end — spawn it, confirm the stdout port handshake
-  (§4.1), confirm a real chat turn works — ideally from a locally `vsce package`'d `.vsix` actually
-  installed into a real VS Code, not just the raw published binary, since installing from a `.vsix`
-  is the one step (zip-and-re-extract) that can silently drop the executable bit (§6) or otherwise
-  behave differently than a binary sitting directly in a dev checkout.
+### 10.3 Host binaries — win-x64, osx-arm64, osx-x64 built, signed, verified
 
-### 10.4 `release-vscode.yml` CI workflow — not yet written
+All three built successfully via `release-vscode.yml`. Each was actually installed from its real
+`.vsix` into a real VS Code (not just F5) and confirmed to complete a live chat turn.
 
-Structurally: `release-console.yml`'s tag-triggered, per-RID matrix (already flagged in §6 as the
-correct template — same shape of plain headless binary, not a windowed bundle) plus a packaging
-stage Console's own workflow doesn't need (Console ships raw zipped exes; this needs `vsce package`/
-`vsce publish` on top of the binaries):
+**macOS entitlements gotcha, found the hard way**: an initial version of
+`deploy/publish-vscodehost-macos.sh` signed with `codesign --options runtime` but no
+`--entitlements`, on the mistaken assumption (stated in the script's own original header comment)
+that entitlements were an `.app`-bundle-only concern. The resulting signed-and-notarized binary
+crashed immediately when spawned by the extension: `Failed to create CoreCLR, HRESULT: 0x80070008`,
+`SIGKILL` (exit 137) — hardened runtime blocks CoreCLR's JIT/dynamic-library-loading without
+`com.apple.security.cs.allow-jit` and related entitlements, regardless of bundling.
+`EnableCompressionInSingleFile=false` (also required per Ken Muse's "Notarizing .NET Console Apps
+for macOS") was tried first and ruled out on its own — the crash was byte-for-byte identical with
+compression off and the binary confirmed uncompressed (172MB vs. 66MB compressed). The real fix was
+passing `--entitlements deploy/entitlements.plist` to `codesign`, the same file
+`publish-macos.sh`/`Litos.Gui` already uses. Confirmed fixed live on a real Mac.
 
-```
-tag push (vscode-v*.*.*)
- ├─ publish-windows     → dotnet publish win-x64 → upload-artifact
- ├─ publish-macos (matrix: osx-arm64, osx-x64)
- │    → import cert (same steps as release-macos.yml/release-console.yml)
- │    → deploy/publish-vscodehost-macos.sh (sign + notarize)
- │    → upload-artifact
- ├─ publish-linux (matrix: linux-x64, linux-arm64)
- │    → deploy/publish-vscodehost-linux.sh → upload-artifact
- └─ package (needs: all above)
-      → download all 5 binaries into their bin/<rid>/ slots
-      → npm ci && npm run compile (src/Litos.VsCode)
-      → per target: vsce package --target <target>
-      → attach .vsix's to a GitHub Release (softprops/action-gh-release, same as the other
-        release-*.yml workflows) and/or `vsce publish` straight to the Marketplace using VSCE_PAT
-```
+Linux (`linux-x64`, `linux-arm64`) has not been built or tested — `deploy/publish-vscodehost-linux.sh`
+exists but `release-vscode.yml` doesn't build it yet (§10.5).
 
-**Open decision, not yet made**: publish straight to the Marketplace from CI on tag push, vs. build
-and attach `.vsix`s to a GitHub Release only, with a manual `vsce publish <file>.vsix` run by hand
-for the first release or two. The latter is safer for a first release specifically — it allows
-inspecting the actual packaged `.vsix` contents and size before anything goes out publicly — and
-should be the default until the packaging step (§10.2) is proven trustworthy; switch to full
-CI auto-publish only after that.
+### 10.4 `release-vscode.yml` CI workflow — done, including Marketplace auto-publish
 
-**Recommended sequencing**: do §10.3 (produce one real signed macOS binary and one Linux binary,
-package a `.vsix` locally, install it in a real VS Code, confirm chat works end to end) *before*
-writing §10.4's CI workflow. The unknowns here — the stray `.pdb`s, whether `vsce package --target`
-actually produces a clean per-platform bundle, whether a notarized-but-not-stapled macOS binary
-passes Gatekeeper when spawned silently as a child process rather than user-launched — are all far
-cheaper to debug locally than inside CI's slower feedback loop.
+Builds win-x64 + osx-{arm64,x64}, packages one `.vsix` per platform target via
+`deploy/package-vscode-extension.ps1`, attaches them to a GitHub Release, and publishes each to the
+Marketplace via `vsce publish --packagePath <file>.vsix -p $VSCE_PAT` (the `publish-marketplace`
+job). Triggered by tags shaped `litos-vscode-v*.*.*` — **not** `vscode-v*.*.*` as originally
+planned; see the workflow file's own header comment for why (a tag starting with `v` collided with
+`release-gui.yml`/`release-macos.yml`'s `v*.*.*` pattern, confirmed live, firing both unrelated
+workflows under the wrong tag before either failed harmlessly).
+
+`litos-vscode-v0.1.3` was published by hand first (three manual `vsce publish --packagePath`
+commands, one per platform) specifically to verify the packaging pipeline before trusting CI to
+auto-publish unattended — consistent with this section's original recommendation. That
+verification is done; every release from here on publishes automatically on tag push, no manual
+step required.
+
+### 10.5 Remaining gap: Linux
+
+`deploy/publish-vscodehost-linux.sh` exists and needs no signing (no Gatekeeper-equivalent gate on
+Linux), but `release-vscode.yml` has no `build-linux` job yet, and no `linux-x64`/`linux-arm64`
+`vsce package --target` step. Adding it should follow the same shape as `build-macos`: a matrix job
+building both RIDs, staging into `bin/<rid>/`, and two more `package-vscode-extension.ps1`
+invocations (`linux-x64` RID → `linux-x64` target, `linux-arm64` RID → `linux-arm64` target).
 
 ## 11. Design decisions confirmed during scoping
 
