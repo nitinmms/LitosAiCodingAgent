@@ -213,6 +213,41 @@ describe("LitosClient — /mcp", () => {
     });
 });
 
+describe("LitosClient — /config", () => {
+    it("getConfigStatus issues a plain GET and passes through keyStatus", async () => {
+        mockFetch(() => new Response(JSON.stringify({
+            configured: true,
+            availableProviders: ["anthropic"],
+            keyStatus: { anthropic: "env", openai: "unset" },
+        }), { status: 200 }));
+
+        const result = await client.getConfigStatus();
+
+        expect(capturedRequests[0].url).toBe("http://127.0.0.1:12345/config/status");
+        expect(result.configured).toBe(true);
+        expect(result.keyStatus).toEqual({ anthropic: "env", openai: "unset" });
+    });
+
+    it("saveKeys POSTs PascalCase Entries/LocalBaseUrl, null when no local base URL was entered", async () => {
+        mockFetch(() => new Response(JSON.stringify({ configured: true, availableProviders: ["anthropic"] }), { status: 200 }));
+
+        await client.saveKeys([{ provider: "anthropic", apiKey: "sk-abc" }]);
+
+        expect(capturedRequests[0].url).toBe("http://127.0.0.1:12345/config/keys");
+        const body = JSON.parse(capturedRequests[0].init!.body as string);
+        expect(body).toEqual({ Entries: [{ Provider: "anthropic", ApiKey: "sk-abc" }], LocalBaseUrl: null });
+    });
+
+    it("saveKeys passes a non-empty local base URL through as-is", async () => {
+        mockFetch(() => new Response(JSON.stringify({ configured: true, availableProviders: [] }), { status: 200 }));
+
+        await client.saveKeys([], "http://localhost:1234/v1");
+
+        const body = JSON.parse(capturedRequests[0].init!.body as string);
+        expect(body).toEqual({ Entries: [], LocalBaseUrl: "http://localhost:1234/v1" });
+    });
+});
+
 describe("LitosClient — error handling is consistent across the new methods", () => {
     it("a non-ok GET throws including the response body", async () => {
         mockFetch(() => new Response("workspace not found", { status: 400 }));

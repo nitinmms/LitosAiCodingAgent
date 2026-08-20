@@ -11,6 +11,10 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.VsCodeHost.Tests" />
+  </ItemGroup>
+
   <!-- dotnet publish -c Release -r (win-x64|osx-x64|osx-arm64|linux-x64|linux-arm64), self-contained,
        single-file. Same pattern as Litos.Console.csproj — bundled into the VS Code extension's
        .vsix per-RID so end users need no separate .NET install (see ReadMe_VsCodeExtension.md). -->

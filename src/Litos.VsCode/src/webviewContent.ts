@@ -423,20 +423,35 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   }
   #pickerOverlay.visible { display: block; }
 
-  #firstRun {
+  /* Keys popup — same overlay/card visual language as #picker/#pickerOverlay above (dim backdrop +
+     centered floating card), just holding a labeled form instead of a searchable list. Used both
+     for /keys (dismissable) and, in its isFirstRun mode, for the "no key configured yet" gate
+     shown automatically on startup (not dismissable — mirrors Litos.Gui's ApiKeysWindow being one
+     shared dialog for both entry points rather than two separate UIs). */
+  #keysPopup {
     display: none;
-    flex: 1;
+    position: fixed;
+    top: 8%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(480px, 90vw);
+    max-height: 84vh;
     overflow-y: auto;
-    padding: 24px;
-    max-width: 480px;
+    background: var(--vscode-dropdown-background, var(--vscode-editor-background));
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    z-index: 100;
+    padding: 16px;
+    box-sizing: border-box;
   }
-  #firstRun.visible { display: block; }
-  #firstRun h2 { margin-top: 0; }
-  #firstRun p { color: var(--vscode-descriptionForeground); }
-  #firstRun .field { margin-bottom: 10px; }
-  #firstRun label { display: block; font-size: 0.85em; opacity: 0.8; margin-bottom: 2px; }
-  #firstRun input[type="password"],
-  #firstRun input[type="text"] {
+  #keysPopup.visible { display: block; }
+  #keysPopup h2 { margin-top: 0; }
+  #keysPopup p { color: var(--vscode-descriptionForeground); }
+  #keysPopup .field { margin-bottom: 10px; }
+  #keysPopup label { display: block; font-size: 0.85em; opacity: 0.8; margin-bottom: 2px; }
+  #keysPopup input[type="password"],
+  #keysPopup input[type="text"] {
     width: 100%;
     box-sizing: border-box;
     background: var(--vscode-input-background);
@@ -447,36 +462,38 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     font-family: inherit;
     font-size: inherit;
   }
-  #firstRunError { color: var(--vscode-errorForeground); margin-top: 8px; display: none; }
-  #firstRunError.visible { display: block; }
-  #firstRunSave {
+  #keysPopupError { color: var(--vscode-errorForeground); margin-top: 8px; display: none; }
+  #keysPopupError.visible { display: block; }
+  #keysPopupActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  #keysPopupCancel {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    cursor: pointer;
+  }
+  #keysPopupSave {
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     border: none;
     border-radius: 4px;
     padding: 6px 16px;
     cursor: pointer;
-    margin-top: 8px;
   }
-  #firstRunSave:disabled { opacity: 0.5; cursor: default; }
-  #chatArea { display: none; flex-direction: column; flex: 1; min-height: 0; }
-  #chatArea.visible { display: flex; }
+  #keysPopupSave:disabled { opacity: 0.5; cursor: default; }
+  #keysPopupOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 99;
+  }
+  #keysPopupOverlay.visible { display: block; }
+  #chatArea { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 </style>
 </head>
 <body>
-<div id="firstRun">
-  <h2>Set up an API key</h2>
-  <p>No API key was found for any provider. Enter at least one below — saved keys are shared with
-     Litos.Console and Litos.Gui too. Saving restarts the local Litos agent process.</p>
-  <div class="field"><label for="key-anthropic">Anthropic (ANTHROPIC_API_KEY)</label><input type="password" id="key-anthropic"></div>
-  <div class="field"><label for="key-openai">OpenAI (OPENAI_API_KEY)</label><input type="password" id="key-openai"></div>
-  <div class="field"><label for="key-gemini">Gemini (GEMINI_API_KEY)</label><input type="password" id="key-gemini"></div>
-  <div class="field"><label for="key-openrouter">OpenRouter (OPENROUTER_API_KEY)</label><input type="password" id="key-openrouter"></div>
-  <div class="field"><label for="key-local-url">Local server URL (optional, e.g. LM Studio/Ollama)</label><input type="text" id="key-local-url" placeholder="http://localhost:1234/v1"></div>
-  <div class="field"><label for="key-local">Local server API key (optional)</label><input type="password" id="key-local"></div>
-  <div id="firstRunError"></div>
-  <button id="firstRunSave">Save and continue</button>
-</div>
 <div id="chatArea">
 <div id="transcript"></div>
 <div id="pendingAttachments"></div>
@@ -501,14 +518,34 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <div id="pickerList"></div>
   <div id="pickerEmpty" style="display:none">No matches.</div>
 </div>
+<div id="keysPopupOverlay"></div>
+<div id="keysPopup">
+  <h2 id="keysPopupHeading">API Keys</h2>
+  <p id="keysPopupSubtext">Saved keys are shared with Litos.Console and Litos.Gui too. Leave a field blank to keep its current value. Saving restarts the local Litos agent process.</p>
+  <div class="field"><label for="key-anthropic">Anthropic</label><input type="password" id="key-anthropic"></div>
+  <div class="field"><label for="key-openai">OpenAI</label><input type="password" id="key-openai"></div>
+  <div class="field"><label for="key-gemini">Gemini</label><input type="password" id="key-gemini"></div>
+  <div class="field"><label for="key-openrouter">OpenRouter</label><input type="password" id="key-openrouter"></div>
+  <div class="field"><label for="key-local-url">Local base URL</label><input type="text" id="key-local-url"></div>
+  <div class="field"><label for="key-local">Local key (optional)</label><input type="password" id="key-local"></div>
+  <div class="field"><label for="key-tavily">Tavily (Websearch)</label><input type="password" id="key-tavily"></div>
+  <div id="keysPopupError"></div>
+  <div id="keysPopupActions">
+    <button id="keysPopupCancel">Close</button>
+    <button id="keysPopupSave">Save</button>
+  </div>
+</div>
 <script>${markedSource}</script>
 <script>
 (function () {
   const vscode = acquireVsCodeApi();
-  const firstRunEl = document.getElementById('firstRun');
-  const chatAreaEl = document.getElementById('chatArea');
-  const firstRunErrorEl = document.getElementById('firstRunError');
-  const firstRunSaveButton = document.getElementById('firstRunSave');
+  const keysPopupOverlayEl = document.getElementById('keysPopupOverlay');
+  const keysPopupEl = document.getElementById('keysPopup');
+  const keysPopupHeadingEl = document.getElementById('keysPopupHeading');
+  const keysPopupSubtextEl = document.getElementById('keysPopupSubtext');
+  const keysPopupErrorEl = document.getElementById('keysPopupError');
+  const keysPopupCancelButton = document.getElementById('keysPopupCancel');
+  const keysPopupSaveButton = document.getElementById('keysPopupSave');
   const transcriptEl = document.getElementById('transcript');
   const pendingAttachmentsEl = document.getElementById('pendingAttachments');
   const inputEl = document.getElementById('composerInput');
@@ -595,34 +632,93 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     vscode.postMessage({ type: 'openLink', url: target.getAttribute('data-share-link') });
   });
 
-  function showFirstRun() {
-    firstRunEl.classList.add('visible');
-    chatAreaEl.classList.remove('visible');
-  }
-  function showChat() {
-    firstRunEl.classList.remove('visible');
-    chatAreaEl.classList.add('visible');
+  // --- Keys popup (/keys and, in isFirstRun mode, the automatic "no key configured" gate) ---
+  // One shared popup for both entry points, mirroring Litos.Gui's ApiKeysWindow being a single
+  // dialog opened two ways (CreateForFirstRun vs ShowAsync) rather than two separate UIs.
+  // provider -> [input id, env var name, placeholder shown when totally unset] — env var names
+  // mirror ConfigEndpoints.cs's own EnvVarName switch; placeholder-based "already set" hints match
+  // Litos.Gui's ApiKeysWindow constructor exactly (field(this).PlaceholderText = ...), not a
+  // separate label below the field.
+  const KEY_FIELDS = [
+    ['anthropic', 'key-anthropic', 'ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY'],
+    ['openai', 'key-openai', 'OPENAI_API_KEY', 'OPENAI_API_KEY'],
+    ['gemini', 'key-gemini', 'GEMINI_API_KEY', 'GEMINI_API_KEY'],
+    ['openrouter', 'key-openrouter', 'OPENROUTER_API_KEY', 'OPENROUTER_API_KEY'],
+    ['local', 'key-local', 'LOCAL_API_KEY', "Most local servers (e.g. LM Studio) don't need one"],
+    ['tavily', 'key-tavily', 'TAVILY_API_KEY', 'TAVILY_API_KEY — enables web search'],
+  ];
+  let keysPopupIsFirstRun = false;
+
+  function renderKeyHints(keyStatus) {
+    const status = keyStatus || {};
+    KEY_FIELDS.forEach(([provider, id, envVar, unsetPlaceholder]) => {
+      const inputEl2 = document.getElementById(id);
+      inputEl2.placeholder =
+        status[provider] === 'env' ? envVar + ' — already set'
+        : status[provider] === 'config' ? 'Already set — leave blank to keep'
+        : unsetPlaceholder;
+    });
+    const localUrlInputEl = document.getElementById('key-local-url');
+    localUrlInputEl.placeholder =
+      status.localBaseUrl === 'config' ? 'Already set — leave blank to keep' : 'http://localhost:1234/v1';
   }
 
-  firstRunSaveButton.addEventListener('click', () => {
+  function openKeysPopup(isFirstRun, keyStatus) {
+    keysPopupIsFirstRun = isFirstRun;
+    KEY_FIELDS.forEach(([, id]) => { document.getElementById(id).value = ''; });
+    document.getElementById('key-local-url').value = '';
+    keysPopupErrorEl.classList.remove('visible');
+    keysPopupSaveButton.disabled = false;
+    keysPopupSaveButton.textContent = 'Save';
+
+    if (isFirstRun) {
+      keysPopupHeadingEl.textContent = 'No API key was found for any provider.';
+      keysPopupSubtextEl.textContent = 'Enter at least one key below. Saved keys are shared with Litos.Console and Litos.Gui too. Saving restarts the local Litos agent process.';
+      keysPopupCancelButton.style.display = 'none';
+      renderKeyHints(null);
+    } else {
+      keysPopupHeadingEl.textContent = 'API Keys';
+      keysPopupSubtextEl.textContent = 'Saved keys are shared with Litos.Console and Litos.Gui too. Leave a field blank to keep its current value. Saving restarts the local Litos agent process.';
+      keysPopupCancelButton.style.display = '';
+      renderKeyHints(keyStatus);
+    }
+
+    keysPopupOverlayEl.classList.add('visible');
+    keysPopupEl.classList.add('visible');
+  }
+
+  function closeKeysPopup() {
+    // First-run is not dismissable without saving — mirrors ApiKeysWindow's first-run mode having
+    // no way out except Save (its own Cancel there exits the whole process instead).
+    if (keysPopupIsFirstRun) return;
+    keysPopupOverlayEl.classList.remove('visible');
+    keysPopupEl.classList.remove('visible');
+  }
+
+  keysPopupCancelButton.addEventListener('click', closeKeysPopup);
+  keysPopupOverlayEl.addEventListener('click', closeKeysPopup);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && keysPopupEl.classList.contains('visible')) closeKeysPopup();
+  });
+
+  keysPopupSaveButton.addEventListener('click', () => {
     const entries = [];
-    [['anthropic', 'key-anthropic'], ['openai', 'key-openai'], ['gemini', 'key-gemini'], ['openrouter', 'key-openrouter'], ['local', 'key-local']]
-      .forEach(([provider, id]) => {
-        const value = document.getElementById(id).value.trim();
-        if (value) entries.push({ provider, apiKey: value });
-      });
+    KEY_FIELDS.forEach(([provider, id]) => {
+      const value = document.getElementById(id).value.trim();
+      if (value) entries.push({ provider, apiKey: value });
+    });
     const localBaseUrl = document.getElementById('key-local-url').value.trim();
 
     if (entries.length === 0 && !localBaseUrl) {
-      firstRunErrorEl.textContent = 'Enter at least one API key or a local server URL.';
-      firstRunErrorEl.classList.add('visible');
+      keysPopupErrorEl.textContent = 'Enter at least one key or a local server URL.';
+      keysPopupErrorEl.classList.add('visible');
       return;
     }
 
-    firstRunErrorEl.classList.remove('visible');
-    firstRunSaveButton.disabled = true;
-    firstRunSaveButton.textContent = 'Saving and restarting...';
-    vscode.postMessage({ type: 'saveKeys', entries, localBaseUrl });
+    keysPopupErrorEl.classList.remove('visible');
+    keysPopupSaveButton.disabled = true;
+    keysPopupSaveButton.textContent = 'Saving and restarting...';
+    vscode.postMessage({ type: 'saveKeys', entries, localBaseUrl, isFirstRun: keysPopupIsFirstRun });
   });
 
   let currentAssistantBubble = null;
@@ -730,6 +826,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     { name: 'compact', desc: 'Compact the conversation now' },
     { name: 'reflect', desc: 'Distill this session into AGENTS.md' },
     { name: 'mcp', desc: 'Manage MCP servers' },
+    { name: 'keys', desc: 'Add or update API keys' },
   ];
 
   const commandMenuEl = document.getElementById('commandMenu');
@@ -1278,15 +1375,15 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
       hideWorkingIndicator();
     } else if (message.type === 'system') {
       addEntry('system', message.text);
-    } else if (message.type === 'showFirstRun') {
-      showFirstRun();
-    } else if (message.type === 'showChat') {
-      showChat();
+    } else if (message.type === 'openKeysPopup') {
+      openKeysPopup(!!message.isFirstRun, message.keyStatus);
+    } else if (message.type === 'saveKeysSuccess') {
+      closeKeysPopup();
     } else if (message.type === 'saveKeysError') {
-      firstRunSaveButton.disabled = false;
-      firstRunSaveButton.textContent = 'Save and continue';
-      firstRunErrorEl.textContent = message.text;
-      firstRunErrorEl.classList.add('visible');
+      keysPopupSaveButton.disabled = false;
+      keysPopupSaveButton.textContent = 'Save';
+      keysPopupErrorEl.textContent = message.text;
+      keysPopupErrorEl.classList.add('visible');
     } else if (message.type === 'sessionReset') {
       resetSessionUi();
       renderContextUsage(null);

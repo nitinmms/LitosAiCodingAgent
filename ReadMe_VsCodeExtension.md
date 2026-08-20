@@ -225,7 +225,7 @@ a live integration smoke test against the real binary (§7.6 confirms the exact 
 | `/compact` | `Compactor` was never invoked by any HTTP endpoint | **Done** — `POST /sessions/{id}/compact` |
 | `/reflect` | No endpoint anywhere | **Done** — `POST /sessions/{id}/reflect` (proposes text only; the extension writes AGENTS.md via VS Code's own filesystem API and native `vscode.diff`) |
 | `/mcp` (+ MCP prompts) | **Was the largest gap**: no `McpConfigStore`/`McpToolProvider`/`McpToolSource` wiring, no JSON CRUD anywhere | **Done** — full `McpToolProvider`/`McpToolRefreshService` wiring (Litos.Api's pattern, not Litos.Gui's manual-refresh one — see §7.4) + `GET/POST/DELETE /mcp/servers`, `POST /mcp/refresh`, own dedicated webview panel. MCP *prompts*-as-commands not yet added (see §7.8 remaining gaps) |
-| `/keys` | No endpoint | **Done** (§8, built in an earlier pass) |
+| `/keys` | No endpoint, and no slash command either — only an automatic, always-inline first-run page | **Done** — `GET /config/status` (now includes per-provider `keyStatus`), `POST /config/keys` (§8). `/keys` is now a real command menu entry that opens the same overlay popup the automatic first-run gate uses, not a separate page |
 | `/update` | N/A | **Dropped from parity** — see confirmed decision below |
 | Abort mid-turn | Not a slash command in Gui either | **Not yet built** — see §7.8 |
 
@@ -577,22 +577,37 @@ file, so the stored host:port is simply discarded and replaced at click-time. A 
 resolves correctly as long as the token is still within its 24h window, independent of how many
 times the host process has restarted since the link was generated.
 
-## 8. API-key first-run UX — implemented
+## 8. API keys — /keys and the first-run UX — implemented
 
 `ConfigEndpoints.cs` (`GET /config/status`, `POST /config/keys`) exposes the same persistence
 `Litos.Gui`'s `ApiKeysWindow` already uses — Windows: user-scope env var via
 `Environment.SetEnvironmentVariable(..., EnvironmentVariableTarget.User)`; else: `~/.litos/
 config.json` — over JSON instead of a modal window, so the same key works across every face. Not
 VS Code `SecretStorage` — a deliberate choice (see §11) so a key entered once in VS Code is
-immediately usable by `Litos.Console`/`Litos.Gui` too, not siloed to this extension.
+immediately usable by `Litos.Console`/`Litos.Gui` too, not siloed to this extension. `/config/status`
+also returns a per-provider `keyStatus` map (`"env" | "config" | "unset"`, built by
+`ConfigEndpoints.BuildKeyStatus`) so the popup can show "already set" hints without ever echoing a
+real secret back to the client.
+
+**One popup, two entry points** — mirrors `ApiKeysWindow` being a single dialog opened two ways
+(`CreateForFirstRun()` vs `ShowAsync()`) rather than two separate UIs, which the extension's earlier
+always-inline `#firstRun` page (no `/keys` command, no Tavily field) did not match. `webviewContent.ts`'s
+`#keysPopup`/`#keysPopupOverlay` is the same dim-overlay-plus-centered-card component every other
+slash command's popup (`/resume`, `/provider`, `/model`, `/branch`, `/skills`) already uses, just
+holding a labeled form instead of a searchable list, and is shown two ways: automatically on startup
+when `/config/status` reports `configured: false` (`isFirstRun: true` — not dismissable, no Cancel
+button, matching `ApiKeysWindow`'s first-run mode having no way out except Save), and via the `/keys`
+command menu entry any time after (`isFirstRun: false` — dismissable via Cancel, Escape, or clicking
+the overlay). The chat area itself is now always visible underneath, unlike the old page-swap.
 
 **No live reload**: `LitosHostBuilder.AddLitosAgent` conditionally registers each keyed
 `IChatProvider` once, at DI-container-build time — there is no seam to swap a provider registration
 into an already-built `IServiceProvider`. `Program.cs` therefore stays alive with no `AgentWorker`/
 turns endpoints registered at all when unconfigured (only `/config/*`), and `extension.ts`'s
 `saveKeys` handler kills and respawns the whole host process after a successful save, then re-checks
-`/config/status` before showing the chat UI — the automated equivalent of `ApiKeysWindow`'s own
-first-run message, "Litos will then close so you can restart it."
+`/config/status` and broadcasts `saveKeysSuccess` (closes the popup) or `saveKeysError` (keeps it
+open) to every open panel — the automated equivalent of `ApiKeysWindow`'s own first-run message,
+"Litos will then close so you can restart it."
 
 **Caution for anyone testing this locally**: the Windows env-var write path cannot be sandboxed by
 overriding `USERPROFILE`/`HOME` in a test process's environment the way the file-based `config.json`
@@ -611,7 +626,7 @@ accept the real-env-var side effect deliberately, never accidentally.
 | `src/Litos.VsCodeHost/AgentWorker.cs` | Trimmed copy of `Litos.Api`'s `AgentWorker` (no attachment queueing). |
 | `src/Litos.VsCodeHost/AutoApprovalGate.cs` | Copy of `Litos.Api`'s, zero dependencies. |
 | `src/Litos.VsCodeHost/Turns/TurnsEndpoints.cs` | Trimmed copy of `Litos.Api`'s, no auth, `SessionOwner.Local` fixed, JSON-only; merges `PendingApprovalRelay` onto the SSE stream. |
-| `src/Litos.VsCodeHost/Config/ConfigEndpoints.cs` | `GET /config/status`, `POST /config/keys` — first-run key setup (§8). |
+| `src/Litos.VsCodeHost/Config/ConfigEndpoints.cs` | `GET /config/status` (incl. per-provider `keyStatus`), `POST /config/keys` — backs both `/keys` and first-run key setup (§8). |
 | `src/Litos.VsCodeHost/ChannelContext.cs` | Local copy of `Litos.Api`'s, trimmed to `Owner`/`SessionId` only — tags each turn so approvals route back to the right SSE stream. |
 | `src/Litos.VsCodeHost/Approvals/PendingApprovalRelay.cs` | Bridges `PendingApprovalStore`'s process-wide events to the one turn/session that triggered each approval. |
 | `src/Litos.VsCodeHost/Approvals/PendingApprovalWireEvents.cs` | `PendingApprovalRequested`/`Resolved` wire shapes merged onto the SSE stream — deliberately not `AgentEvent` subtypes. |

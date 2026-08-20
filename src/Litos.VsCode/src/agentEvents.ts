@@ -149,7 +149,10 @@ export async function* readAgentEvents(response: Response): AsyncGenerator<Agent
 
 export type SendTurnOutcome = { kind: "started"; events: AsyncGenerator<AgentEventParsed> } | { kind: "steered"; message: string };
 
-export type ConfigStatus = { configured: boolean; availableProviders: string[] };
+// keyStatus maps each provider name (plus "localBaseUrl") to "env" | "config" | "unset" — see
+// ConfigEndpoints.cs's BuildKeyStatus for what each value means and why the real secret is never
+// included.
+export type ConfigStatus = { configured: boolean; availableProviders: string[]; keyStatus?: Record<string, string> };
 
 export class LitosClient {
     constructor(private readonly baseUrl: string) {}

@@ -202,7 +202,9 @@ async function initializeChatSurface(context: vscode.ExtensionContext, surface: 
     }
 
     const status = await sharedHost!.client.getConfigStatus();
-    surface.webview.postMessage({ type: status.configured ? "showChat" : "showFirstRun" });
+    if (!status.configured) {
+        surface.webview.postMessage({ type: "openKeysPopup", isFirstRun: true, keyStatus: status.keyStatus });
+    }
     void refreshContextUsage(state);
     void refreshWorkingDirectory(state);
     void refreshModelSettings(state);
@@ -506,6 +508,12 @@ async function runSlashCommand(context: vscode.ExtensionContext, state: PanelSta
                 break;
             }
 
+            case "keys": {
+                const status = await client.getConfigStatus();
+                panel.webview.postMessage({ type: "openKeysPopup", isFirstRun: false, keyStatus: status.keyStatus });
+                break;
+            }
+
             default:
                 panel.webview.postMessage({ type: "system", text: `Unknown command: /${command}` });
         }
@@ -731,7 +739,8 @@ async function spawnSharedHost(
     return sharedHost;
 }
 
-/** Kills and respawns the shared host, then tells every open panel to re-check status and resume showing chat — not just the panel whose saveKeys triggered this. */
+/** Kills and respawns the shared host, then tells every open panel's keys popup (not just the one
+ * whose saveKeys triggered this — the host is shared) whether it can close or needs to stay open. */
 async function respawnSharedHost(context: vscode.ExtensionContext, cwd: string): Promise<void> {
     sharedHost?.process.stop();
     const host = await spawnSharedHost(context, cwd);
@@ -740,7 +749,7 @@ async function respawnSharedHost(context: vscode.ExtensionContext, cwd: string):
     for (const state of openPanels.values()) {
         state.panel.webview.postMessage(
             status.configured
-                ? { type: "showChat" }
+                ? { type: "saveKeysSuccess" }
                 : {
                       type: "saveKeysError",
                       text: "Saved, but no chat provider is configured yet. Enter a chat-provider key (Anthropic/OpenAI/Gemini/OpenRouter) or a local server URL.",

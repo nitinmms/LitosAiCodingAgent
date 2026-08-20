@@ -25,6 +25,7 @@ public static class ConfigEndpoints
         {
             configured = config.AvailableChatProviders.Count > 0,
             availableProviders = config.AvailableChatProviders,
+            keyStatus = BuildKeyStatus(config),
         }));
 
         app.MapPost("/config/keys", (SaveKeysRequest request) =>
@@ -42,11 +43,42 @@ public static class ConfigEndpoints
             {
                 configured = reloaded.AvailableChatProviders.Count > 0,
                 availableProviders = reloaded.AvailableChatProviders,
+                keyStatus = BuildKeyStatus(reloaded),
                 restartRequired = true,
             });
         });
 
         return app;
+    }
+
+    // Every provider the webview's keys popup has a field for — mirrors Litos.Gui's
+    // ApiKeysWindow.Fields provider list plus LocalBaseUrl, which isn't a key but gets the same
+    // "already set" treatment. Kept here (not EnvVarName's switch) since it also drives what
+    // /config/status reports even for a provider with no key set yet.
+    private static readonly string[] KeyStatusProviders = ["anthropic", "openai", "gemini", "openrouter", "local", "tavily"];
+
+    /// <summary>
+    /// Per-provider "is a key already set, and if so where" — lets the webview's keys popup show
+    /// the same "ANTHROPIC_API_KEY — already set" / "already set — leave blank to keep" placeholder
+    /// hints as Litos.Gui's ApiKeysWindow, without ever echoing the real secret back to the client.
+    /// Internal (not private), and takes a plain LitosConfig rather than reading env vars/disk
+    /// itself, purely so Litos.VsCodeHost.Tests can exercise the "env wins over config.json wins
+    /// over unset" precedence without touching real environment variables or ~/.litos/config.json —
+    /// same "extract the pure decision, test that" shape as ApiKeysDialog.MergeConfig.
+    /// </summary>
+    internal static Dictionary<string, string> BuildKeyStatus(LitosConfig config)
+    {
+        var status = new Dictionary<string, string>();
+        foreach (var provider in KeyStatusProviders)
+        {
+            status[provider] = LitosConfig.IsSetByEnvironmentVariable(provider)
+                ? "env"
+                : config.ApiKeys.ContainsKey(provider)
+                    ? "config"
+                    : "unset";
+        }
+        status["localBaseUrl"] = string.IsNullOrEmpty(config.LocalBaseUrl) ? "unset" : "config";
+        return status;
     }
 
     // Same persistence split as Litos.Gui's ApiKeysWindow.TrySave: Windows writes user-scope

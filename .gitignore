@@ -383,3 +383,9 @@ deploy/out/
 
 # Packaged VS Code extension output (deploy/package-vscode-extension.ps1 / npx vsce package)
 *.vsix
+Litos-Agent-Loop.mmd
+Litos-Agent-Loop.png
+Litos-Agent-Prompt-Construction.mmd
+.gitignore
+.gitignore
+Litos-Agent-Prompt-Construction.png
