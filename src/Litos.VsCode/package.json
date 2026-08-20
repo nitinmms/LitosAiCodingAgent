@@ -3,7 +3,7 @@
   "displayName": "Litos",
   "description": "Chat with the Litos AI coding agent inside VS Code.",
   "version": "0.1.0",
-  "publisher": "litos",
+  "publisher": "litosai",
   "icon": "media/icon.png",
   "license": "SEE LICENSE IN LICENSE.txt",
   "repository": {

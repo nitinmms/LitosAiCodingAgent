@@ -639,21 +639,21 @@ accept the real-env-var side effect deliberately, never accidentally.
 Scoped but not yet executed. Nothing below has been run for real; this is the plan, not a status
 report. Split into four buckets, in dependency order.
 
-### 10.1 One-time account setup (portal work, outside CI)
+### 10.1 One-time account setup (portal work, outside CI) — done
 
-1. Create a publisher at https://marketplace.visualstudio.com/manage (creates an Azure DevOps org
-   as a side effect if one doesn't exist yet). The **Publisher ID** must exactly match
-   `"publisher": "litos"` already in `src/Litos.VsCode/package.json` — if `litos` is taken on the
-   Marketplace, either the ID needs a suffix or `package.json` needs updating to match, not the
-   other way around.
-2. Generate a Personal Access Token at `https://dev.azure.com/{org}` → User settings → Personal
-   access tokens → **Organization: All accessible organizations**, **Scope: Marketplace (Manage)**.
-   Max expiry is 1 year — this will need periodic rotation, and an expired token fails CI publishing
-   silently (no advance warning), so whoever rotates it should also update the GitHub secret at the
-   same time.
-3. Store the token as a GitHub Actions repository secret named `VSCE_PAT`.
-4. Verify locally before wiring any CI around it: `npx vsce login litos` (after `@vscode/vsce` is
-   added per §10.2), paste the PAT — confirms the publisher ID and token are both valid.
+1. **Done.** Publisher created at https://marketplace.visualstudio.com/manage as **`litosai`**
+   (`litos` was unavailable). `src/Litos.VsCode/package.json`'s `"publisher"` field was updated to
+   match (`litos`→`litosai`) — per this section's own original guidance, the ID drives
+   `package.json`, not the other way around. No other file references the publisher ID by name
+   (`name`/`contributes.*.id` are extension-namespaced, unaffected by publisher).
+2. **Done.** PAT generated at `https://dev.azure.com/{org}` → User settings → Personal access
+   tokens, **Organization: All accessible organizations**, **Scope: Marketplace (Manage)**. Max
+   expiry is 1 year — needs periodic rotation; an expired token fails CI publishing silently (no
+   advance warning), so whoever rotates it should also update the GitHub secret at the same time.
+3. **Done.** Token stored as the GitHub Actions repository secret `VSCE_PAT`.
+4. **Not yet done.** Verify locally before trusting CI to publish: `npx vsce login litosai`, paste
+   the PAT — confirms the publisher ID and token are both valid. Recommended before the first real
+   `vsce publish`.
 
 ### 10.2 Extension packaging plumbing (`src/Litos.VsCode/`) — not yet added
 
