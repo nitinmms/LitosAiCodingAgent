@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 # Publishes Litos.VsCodeHost as a self-contained macOS executable — a plain headless binary, not
-# an .app bundle (unlike publish-macos.sh/Litos.Gui): this process has no window, no Dock icon,
-# and no Info.plist/entitlements to provide — it's a background agent host the Litos VS Code
-# extension (src/Litos.VsCode) spawns silently as a child process and bundles per-RID under
-# src/Litos.VsCode/bin/<rid>/ (see ReadMe_VsCodeExtension.md §6). Structurally identical to the
-# now-shelved Litos.Console's own macOS publish script (deploy/publish-console-macos.sh) — that
-# script's shape is still the correct reference here even though Litos.Console itself is shelved,
-# since Litos.VsCodeHost is the same kind of plain headless binary.
+# an .app bundle (unlike publish-macos.sh/Litos.Gui): this process has no window, no Dock icon, and
+# no Info.plist — it's a background agent host the Litos VS Code extension (src/Litos.VsCode)
+# spawns silently as a child process and bundles per-RID under src/Litos.VsCode/bin/<rid>/ (see
+# ReadMe_VsCodeExtension.md §6). Structurally identical to the now-shelved Litos.Console's own
+# macOS publish script (deploy/publish-console-macos.sh) — that script's shape is still the correct
+# reference here even though Litos.Console itself is shelved, since Litos.VsCodeHost is the same
+# kind of plain headless binary.
+#
+# Entitlements ARE required, though, despite the "no bundle" framing above — an earlier version of
+# this script assumed entitlements were an .app-bundle-only concern and omitted them, which shipped
+# a real signed+notarized-but-broken build: confirmed live, running the signed osx-arm64 binary
+# printed "Failed to create CoreCLR, HRESULT: 0x80070008" and got SIGKILL'd (exit 137) when the VS
+# Code extension spawned it. Root cause: hardened runtime (--options runtime, required for
+# notarization) blocks CoreCLR's JIT/dynamic-library-loading unless the process carries the same
+# com.apple.security.cs.* entitlements publish-macos.sh already applies to Litos.Gui's .app bundle
+# — deploy/entitlements.plist is not bundle-specific, it applies to any hardened-runtime-signed
+# Mach-O binary. Disabling EnableCompressionInSingleFile (Litos.VsCodeHost.csproj) was a necessary
+# but insufficient fix on its own; entitlements were the actual missing piece.
 # Must be run on macOS (or a runner capable of producing osx-* builds).
 # Usage: deploy/publish-vscodehost-macos.sh [osx-arm64|osx-x64]
 #
@@ -50,7 +61,9 @@ if [ -z "${APPLE_SIGN_IDENTITY:-}" ]; then
     echo "to also notarize) before publishing a real release."
 else
     echo "Signing with identity: $APPLE_SIGN_IDENTITY"
-    codesign --force --options runtime --sign "$APPLE_SIGN_IDENTITY" "$PUBLISH_DIR/$BIN_NAME"
+    codesign --force --options runtime \
+        --entitlements "$REPO_ROOT/deploy/entitlements.plist" \
+        --sign "$APPLE_SIGN_IDENTITY" "$PUBLISH_DIR/$BIN_NAME"
 fi
 
 ZIP_PATH="$REPO_ROOT/deploy/out/vscodehost/macos/$RUNTIME/Litos.VsCodeHost-$RUNTIME.zip"
