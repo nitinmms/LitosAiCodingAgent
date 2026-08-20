@@ -1,0 +1,187 @@
+name: Release Litos.VsCode
+
+# Triggered by pushing a tag like "vscode-v1.2.3" — separate from Litos.Gui's "v*.*.*" tags
+# (release-gui.yml) and Litos.Console's "console-v*.*.*" tags (release-console.yml) so every face
+# versions and releases independently.
+#
+# Builds the win-x64 and osx-{arm64,x64} Litos.VsCodeHost binaries, bundles each into
+# src/Litos.VsCode/bin/<rid>/, then packages one .vsix per platform target and attaches them to a
+# GitHub Release. Does NOT run `vsce publish` — per ReadMe_VsCodeExtension.md §10.4, the first
+# release(s) should be inspected and published to the Marketplace by hand
+# (`npx vsce publish --packagePath <file>.vsix -p <VSCE_PAT>`) before trusting CI to auto-publish.
+#
+# Linux is intentionally out of scope for now — win-x64 and osx-{arm64,x64} only.
+on:
+  push:
+    tags:
+      - "vscode-v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish Litos.VsCodeHost (win-x64)
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^vscode-v', ''
+          dotnet publish src/Litos.VsCodeHost/Litos.VsCodeHost.csproj `
+            -c Release -r win-x64 -o deploy/out/vscodehost/windows/win-x64 `
+            --self-contained true -p:PublishSingleFile=true `
+            -p:Version=$version -p:InformationalVersion=$version
+
+      - name: Stage binary into extension bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src/Litos.VsCode/bin/win-x64 | Out-Null
+          Copy-Item deploy/out/vscodehost/windows/win-x64/Litos.VsCodeHost.exe src/Litos.VsCode/bin/win-x64/ -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscodehost-win-x64
+          path: src/Litos.VsCode/bin/win-x64/Litos.VsCodeHost.exe
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        runtime: [osx-arm64, osx-x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+
+          echo -n "$APPLE_CERT_P12" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/"//g')
+
+          rm -f "$CERT_PATH"
+
+      - name: Publish, sign, and notarize
+        env:
+          APPLE_SIGN_IDENTITY: "Developer ID Application: Nitin Sharma (${{ secrets.APPLE_TEAM_ID }})"
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          LITOS_VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${LITOS_VERSION#vscode-v}"
+          LITOS_VERSION="$VERSION" ./deploy/publish-vscodehost-macos.sh ${{ matrix.runtime }}
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
+      - name: Stage binary into extension bundle
+        run: |
+          mkdir -p "src/Litos.VsCode/bin/${{ matrix.runtime }}"
+          cp "deploy/out/vscodehost/macos/${{ matrix.runtime }}/publish/Litos.VsCodeHost" "src/Litos.VsCode/bin/${{ matrix.runtime }}/"
+          chmod +x "src/Litos.VsCode/bin/${{ matrix.runtime }}/Litos.VsCodeHost"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscodehost-${{ matrix.runtime }}
+          path: src/Litos.VsCode/bin/${{ matrix.runtime }}/Litos.VsCodeHost
+
+  package:
+    needs: [build-windows, build-macos]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Download all host binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vscodehost-*
+          path: staged-binaries
+
+      - name: Stage binaries into bin/<rid>/
+        shell: pwsh
+        run: |
+          $rids = @{
+            "vscodehost-win-x64"   = "win-x64"
+            "vscodehost-osx-arm64" = "osx-arm64"
+            "vscodehost-osx-x64"   = "osx-x64"
+          }
+          foreach ($artifact in $rids.Keys) {
+            $rid = $rids[$artifact]
+            $destDir = "src/Litos.VsCode/bin/$rid"
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            Copy-Item "staged-binaries/$artifact/*" $destDir -Force
+          }
+
+      - name: Install dependencies and compile
+        working-directory: src/Litos.VsCode
+        run: |
+          npm ci
+          npm run compile
+
+      - name: Run tests
+        working-directory: src/Litos.VsCode
+        run: npm test
+
+      - name: Set extension version from tag
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^vscode-v', ''
+          $pkgPath = "src/Litos.VsCode/package.json"
+          $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
+          $pkg.version = $version
+          $pkg | ConvertTo-Json -Depth 100 | Set-Content $pkgPath -Encoding UTF8
+
+      - name: Package win32-x64 .vsix
+        run: .\deploy\package-vscode-extension.ps1 -Target win32-x64 -Rid win-x64
+
+      - name: Package darwin-arm64 .vsix
+        run: .\deploy\package-vscode-extension.ps1 -Target darwin-arm64 -Rid osx-arm64
+
+      - name: Package darwin-x64 .vsix
+        run: .\deploy\package-vscode-extension.ps1 -Target darwin-x64 -Rid osx-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-packages
+          path: src/Litos.VsCode/*.vsix
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix-packages
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*.vsix

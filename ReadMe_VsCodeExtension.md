@@ -203,7 +203,8 @@ something the RID-bundling step alone guarantees.
 
 The extension itself has never been packaged as a `.vsix` — it has only been run via VS Code's
 Extension Development Host (`F5` with `src/Litos.VsCode` open as the workspace root, using the
-`.vscode/launch.json`/`tasks.json` checked in there).
+`.vscode/launch.json`/`tasks.json` checked in there). See §11 for what a real Marketplace release
+(Windows + macOS + Linux) requires from here.
 
 ## 7. Slash-command parity with `Litos.Gui` — implemented
 
@@ -582,7 +583,7 @@ times the host process has restarted since the link was generated.
 `Litos.Gui`'s `ApiKeysWindow` already uses — Windows: user-scope env var via
 `Environment.SetEnvironmentVariable(..., EnvironmentVariableTarget.User)`; else: `~/.litos/
 config.json` — over JSON instead of a modal window, so the same key works across every face. Not
-VS Code `SecretStorage` — a deliberate choice (see §10) so a key entered once in VS Code is
+VS Code `SecretStorage` — a deliberate choice (see §11) so a key entered once in VS Code is
 immediately usable by `Litos.Console`/`Litos.Gui` too, not siloed to this extension.
 
 **No live reload**: `LitosHostBuilder.AddLitosAgent` conditionally registers each keyed
@@ -631,9 +632,109 @@ accept the real-env-var side effect deliberately, never accidentally.
 | `src/Litos.VsCode/src/mcpPanelContent.ts` | `/mcp`'s own dedicated webview panel — server list, live status, add/enable-disable/remove form. |
 | `src/Litos.VsCode/src/__tests__/` | `agentEvents.test.ts`, `litosClientCommands.test.ts`, `hostProcess.test.ts`, `webviewMarkdown.test.ts` (vitest, 47 passing) — the `vscode`-free, unit-testable modules, plus the generated-`<script>`-text extraction tests for Markdown rendering. |
 | `src/Litos.VsCode/media/marked.min.js` | Vendored `marked` v12.0.2 (MIT), inlined verbatim into the webview's `<script>` — see §7.7. |
-| `deploy/publish-vscodehost-{windows,linux,macos}.{ps1,sh}` | Per-platform publish scripts, mirroring the now-shelved `Litos.Console`'s own (§10) — only Windows has been run/tested so far. |
+| `deploy/publish-vscodehost-{windows,linux,macos}.{ps1,sh}` | Per-platform publish scripts, mirroring the now-shelved `Litos.Console`'s own (§11) — only Windows has been run/tested so far. |
 
-## 10. Design decisions confirmed during scoping
+## 10. Publishing to the VS Code Marketplace — not yet done
+
+Scoped but not yet executed. Nothing below has been run for real; this is the plan, not a status
+report. Split into four buckets, in dependency order.
+
+### 10.1 One-time account setup (portal work, outside CI)
+
+1. Create a publisher at https://marketplace.visualstudio.com/manage (creates an Azure DevOps org
+   as a side effect if one doesn't exist yet). The **Publisher ID** must exactly match
+   `"publisher": "litos"` already in `src/Litos.VsCode/package.json` — if `litos` is taken on the
+   Marketplace, either the ID needs a suffix or `package.json` needs updating to match, not the
+   other way around.
+2. Generate a Personal Access Token at `https://dev.azure.com/{org}` → User settings → Personal
+   access tokens → **Organization: All accessible organizations**, **Scope: Marketplace (Manage)**.
+   Max expiry is 1 year — this will need periodic rotation, and an expired token fails CI publishing
+   silently (no advance warning), so whoever rotates it should also update the GitHub secret at the
+   same time.
+3. Store the token as a GitHub Actions repository secret named `VSCE_PAT`.
+4. Verify locally before wiring any CI around it: `npx vsce login litos` (after `@vscode/vsce` is
+   added per §10.2), paste the PAT — confirms the publisher ID and token are both valid.
+
+### 10.2 Extension packaging plumbing (`src/Litos.VsCode/`) — not yet added
+
+- `@vscode/vsce` as a devDependency — not present in `package.json` today; `npx vsce` currently
+  fails locally with no package installed.
+- A `.vscodeignore` — doesn't exist yet. Needs to exclude `node_modules/*` (check whether any
+  runtime `dependencies` actually exist first — `dist/extension.js` may already be self-contained
+  via `tsc`'s plain `commonjs` output, in which case this is `node_modules/**`, full stop),
+  `src/**`, `**/__tests__/**`, `.vscode/**`, `*.map`, `package-lock.json` — and, per platform-target
+  build, the **other four RIDs'** `bin/<rid>/` folders. `vsce`'s `--target` flag does not do this
+  exclusion automatically; each targeted `vsce package --target <target>` needs the unrelated
+  `bin/*` directories moved aside (or a filtered copy of the tree staged) before packaging, or
+  every platform's `.vsix` silently balloons to include all five binaries.
+- Missing `package.json` fields the Marketplace expects: `repository`, `license` (repo root already
+  has `LICENSE.txt`, Apache 2.0 — the `license` field should reference that, e.g. `"license": "SEE
+  LICENSE IN LICENSE.txt"` since it isn't a bare SPDX identifier), optionally `bugs`/`homepage`.
+- Investigate and strip the stray `.pdb` files currently sitting in `bin/win-x64/` alongside the
+  real `.exe` (`libSkiaSharp.pdb` alone is ~84MB, plus nine smaller ones) — these must never enter a
+  packaged `.vsix`. Worth checking *why* `dotnet publish -p:PublishSingleFile=true` is emitting
+  `.pdb` output into that folder at all before just deleting them in a build step — possible stale
+  `-o` directory reused across a non-single-file and a single-file publish.
+
+### 10.3 Producing and verifying all 5 host binaries
+
+- **Windows** (`win-x64`): already built (§6), but never smoke-tested from an actually-*packaged*
+  extension — only from F5, which never exercises the `.vscodeignore`/packaging path at all.
+- **macOS** (`osx-arm64`, `osx-x64`): `deploy/publish-vscodehost-macos.sh` exists and is complete
+  (codesign + notarize + best-effort staple, reusing the exact `APPLE_SIGN_IDENTITY`/`APPLE_ID`/
+  `APPLE_TEAM_ID`/`APPLE_APP_PASSWORD` secrets `release-console.yml`/`release-macos.yml` already use
+  for `Litos.Console`/`Litos.Gui`) but has **never actually been run**. Note this is a *different*
+  signing shape than `release-macos.yml`'s — that workflow signs `Litos.Gui`'s `.app` bundle with
+  entitlements; this signs a plain headless binary, no bundle, no entitlements, `codesign --sign`
+  only. Same certificate/credentials, different artifact — no new Apple Developer enrollment needed,
+  just a first real run of the existing script.
+- **Linux** (`linux-x64`, `linux-arm64`): `deploy/publish-vscodehost-linux.sh` exists, no signing
+  required (no Gatekeeper-equivalent gate), also never actually run.
+- Each binary should be smoke-tested end to end — spawn it, confirm the stdout port handshake
+  (§4.1), confirm a real chat turn works — ideally from a locally `vsce package`'d `.vsix` actually
+  installed into a real VS Code, not just the raw published binary, since installing from a `.vsix`
+  is the one step (zip-and-re-extract) that can silently drop the executable bit (§6) or otherwise
+  behave differently than a binary sitting directly in a dev checkout.
+
+### 10.4 `release-vscode.yml` CI workflow — not yet written
+
+Structurally: `release-console.yml`'s tag-triggered, per-RID matrix (already flagged in §6 as the
+correct template — same shape of plain headless binary, not a windowed bundle) plus a packaging
+stage Console's own workflow doesn't need (Console ships raw zipped exes; this needs `vsce package`/
+`vsce publish` on top of the binaries):
+
+```
+tag push (vscode-v*.*.*)
+ ├─ publish-windows     → dotnet publish win-x64 → upload-artifact
+ ├─ publish-macos (matrix: osx-arm64, osx-x64)
+ │    → import cert (same steps as release-macos.yml/release-console.yml)
+ │    → deploy/publish-vscodehost-macos.sh (sign + notarize)
+ │    → upload-artifact
+ ├─ publish-linux (matrix: linux-x64, linux-arm64)
+ │    → deploy/publish-vscodehost-linux.sh → upload-artifact
+ └─ package (needs: all above)
+      → download all 5 binaries into their bin/<rid>/ slots
+      → npm ci && npm run compile (src/Litos.VsCode)
+      → per target: vsce package --target <target>
+      → attach .vsix's to a GitHub Release (softprops/action-gh-release, same as the other
+        release-*.yml workflows) and/or `vsce publish` straight to the Marketplace using VSCE_PAT
+```
+
+**Open decision, not yet made**: publish straight to the Marketplace from CI on tag push, vs. build
+and attach `.vsix`s to a GitHub Release only, with a manual `vsce publish <file>.vsix` run by hand
+for the first release or two. The latter is safer for a first release specifically — it allows
+inspecting the actual packaged `.vsix` contents and size before anything goes out publicly — and
+should be the default until the packaging step (§10.2) is proven trustworthy; switch to full
+CI auto-publish only after that.
+
+**Recommended sequencing**: do §10.3 (produce one real signed macOS binary and one Linux binary,
+package a `.vsix` locally, install it in a real VS Code, confirm chat works end to end) *before*
+writing §10.4's CI workflow. The unknowns here — the stray `.pdb`s, whether `vsce package --target`
+actually produces a clean per-platform bundle, whether a notarized-but-not-stapled macOS binary
+passes Gatekeeper when spawned silently as a child process rather than user-launched — are all far
+cheaper to debug locally than inside CI's slower feedback loop.
+
+## 11. Design decisions confirmed during scoping
 
 - **Backend**: new minimal local face (`Litos.VsCodeHost`), not a `Litos.Api` "local mode" —
   avoids fighting that project's multi-tenant assumptions.

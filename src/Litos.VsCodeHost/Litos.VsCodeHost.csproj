@@ -21,6 +21,10 @@
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- No .pdb output: this binary is bundled straight into the VS Code extension's own bin/<rid>/
+         folder (see ReadMe_VsCodeExtension.md §10.2), unlike Litos.Console which publishes to a
+         separate deploy/out/ dir — a stray .pdb here would otherwise ship inside the .vsix. -->
+    <DebugType>None</DebugType>
   </PropertyGroup>
 
 </Project>

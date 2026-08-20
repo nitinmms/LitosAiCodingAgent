@@ -5,10 +5,21 @@
   "version": "0.1.0",
   "publisher": "litos",
   "icon": "media/icon.png",
+  "license": "SEE LICENSE IN LICENSE.txt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nitinmms/LitosAiCodingAgent.git",
+    "directory": "src/Litos.VsCode"
+  },
+  "bugs": {
+    "url": "https://github.com/nitinmms/LitosAiCodingAgent/issues"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
@@ -61,6 +72,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.9.2",
     "typescript": "^5.5.0",
     "vitest": "^2.1.0"
   }

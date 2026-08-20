@@ -1,0 +1,22 @@
+# Source and dev-only files — dist/ (tsc output) is what actually ships.
+src/**
+.vscode/**
+**/__tests__/**
+**/*.map
+**/*.test.ts
+
+# Dev tooling / lockfiles / config, not needed at runtime.
+node_modules/**
+package-lock.json
+tsconfig.json
+.gitignore
+.vscodeignore
+.vscodeignore.*.generated
+
+# Litos.VsCodeHost publish-directory noise that isn't the binary itself.
+bin/**/*.pdb
+bin/**/web.config
+bin/**/*.staticwebassets.endpoints.json
+
+# vsce packages per-platform via --target; each targeted RID folder is excluded except the one
+# matching that target via the corresponding vsce package invocation (see deploy tooling).

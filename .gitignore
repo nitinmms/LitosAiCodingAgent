@@ -380,3 +380,6 @@ src/Litos.Api/examples/BlazorChat/appsettings.Development.json
 
 # Local publish output from deploy/publish-*.ps1 / deploy/publish-*.sh
 deploy/out/
+
+# Packaged VS Code extension output (deploy/package-vscode-extension.ps1 / npx vsce package)
+*.vsix
