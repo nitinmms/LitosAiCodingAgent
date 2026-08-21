@@ -122,6 +122,33 @@ describe("LitosHostProcess.start", () => {
         await expect(host.start(fake.extensionPath, process.cwd())).rejects.toThrow(/exited early/);
     });
 
+    it("merges extraEnv into the spawned process's environment, on top of the inherited one", async () => {
+        // start() only resolves { port }, not anything about the child's own env — so the fake
+        // host instead writes what it saw to a file the test can read once the process is up,
+        // rather than trying to smuggle it through the handshake line's shape.
+        const sawEnvPath = path.join(os.tmpdir(), `litos-hostprocess-saw-env-${process.pid}-${Date.now()}.json`);
+        const fake = makeFakeExtension(
+            [
+                `const fs = require('fs');`,
+                `fs.writeFileSync(${JSON.stringify(sawEnvPath)}, JSON.stringify({ key: process.env.OPENROUTER_API_KEY || null }));`,
+                "console.log(JSON.stringify({ port: 54321 }));",
+                "setTimeout(() => {}, 10000);",
+            ].join("\n"),
+        );
+        cleanup = fake.cleanup;
+        host = new LitosHostProcess();
+
+        try {
+            const result = await host.start(fake.extensionPath, process.cwd(), { OPENROUTER_API_KEY: "sk-or-test-123" });
+
+            expect(result.port).toBe(54321);
+            const seen = JSON.parse(fs.readFileSync(sawEnvPath, "utf8"));
+            expect(seen.key).toBe("sk-or-test-123");
+        } finally {
+            fs.rmSync(sawEnvPath, { force: true });
+        }
+    });
+
     it("throws a clear error when no binary exists for this platform", async () => {
         const extensionPath = fs.mkdtempSync(path.join(os.tmpdir(), "litos-hostprocess-test-empty-"));
         try {

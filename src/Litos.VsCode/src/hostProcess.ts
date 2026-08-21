@@ -12,7 +12,7 @@ import * as fs from "fs";
 export class LitosHostProcess {
     private child: cp.ChildProcess | undefined;
 
-    async start(extensionPath: string, cwd: string): Promise<{ port: number }> {
+    async start(extensionPath: string, cwd: string, extraEnv?: Record<string, string>): Promise<{ port: number }> {
         const binaryPath = resolveBinaryPath(extensionPath);
         if (!fs.existsSync(binaryPath)) {
             throw new Error(
@@ -34,7 +34,16 @@ export class LitosHostProcess {
             }
         }
 
-        this.child = cp.spawn(binaryPath, [], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+        // cp.spawn with no explicit `env` inherits this (the VS Code extension host's) own
+        // process.env — a snapshot taken once, when VS Code itself launched. A key just saved to
+        // the OS-level user environment (ConfigEndpoints.cs's SaveKeys, Windows User-scope
+        // registry) or session environment is invisible to that stale snapshot until VS Code
+        // itself is fully relaunched by the OS, not just this child respawned — see
+        // respawnSharedHost's own remarks. extraEnv (the entries the caller just saved) is merged
+        // on top so the freshly spawned process sees them immediately regardless of platform,
+        // without waiting on any environment-propagation mechanism.
+        const env = extraEnv ? { ...process.env, ...extraEnv } : process.env;
+        this.child = cp.spawn(binaryPath, [], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
 
         const port = await new Promise<number>((resolve, reject) => {
             let buffer = "";
