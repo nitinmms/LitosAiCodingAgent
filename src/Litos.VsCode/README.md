@@ -7,7 +7,7 @@ multi-step development tasks without making you leave your editor.
 
 No Docker, database, or Litos account required.
 
-![Litos adding a copy feature to a PostgreSQL query app](media/demo.gif)
+![Litos adding a copy feature to a PostgreSQL query app](https://raw.githubusercontent.com/nitinmms/LitosAiCodingAgent/HEAD/src/Litos.VsCode/media/demo.gif)
 
 ## What Litos can do
 
@@ -31,11 +31,7 @@ models running through Ollama, LM Studio, and compatible endpoints.
 
 1. Install **Litos** from the Visual Studio Marketplace.
 2. Open the Litos icon in the VS Code activity bar.
-3. Run `/keys`. For a cloud provider, add an API key (Anthropic, OpenAI, Gemini, or OpenRouter).
-   For a local model, set the local server URL instead (e.g. `http://localhost:1234/v1` for LM
-   Studio) — most local servers don't need a key. Everything you enter here is stored once and
-   shared with any other Litos client on your machine (CLI, desktop app) — you won't need to
-   enter it twice.
+3. Run `/keys` and set up a provider: add an API key for a cloud provider (Anthropic, OpenAI, Gemini, or OpenRouter), or a local server URL for a local model (e.g. `http://localhost:1234/v1` for LM Studio — most local servers don't need a key). This is stored once and shared with any other Litos client on your machine (CLI, desktop app).
 4. Run `/provider` to choose a cloud provider or local endpoint, then `/model` to pick a model.
 5. Open a project and describe the change you want.
 
