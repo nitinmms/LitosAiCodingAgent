@@ -1,7 +1,7 @@
 {
   "name": "litos-vscode",
   "displayName": "Litos",
-  "description": "Chat with the Litos AI coding agent inside VS Code.",
+  "description": "Open-source AI coding agent for VS Code. Reads and edits files, runs commands, uses MCP servers, and works with cloud or local models.",
   "version": "0.1.0",
   "publisher": "litosai",
   "icon": "media/icon.png",
@@ -22,7 +22,23 @@
     "darwin"
   ],
   "categories": [
-    "Other"
+    "AI"
+  ],
+  "keywords": [
+    "ai",
+    "ai-agent",
+    "coding-agent",
+    "code-assistant",
+    "mcp",
+    "ollama",
+    "lm-studio",
+    "local-llm",
+    "open-source",
+    "csharp",
+    "dotnet",
+    "claude",
+    "openai",
+    "gemini"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
