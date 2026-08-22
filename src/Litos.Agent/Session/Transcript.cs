@@ -79,6 +79,23 @@ public sealed class Transcript
     public static Transcript CreateNew(string workingDirectory) =>
         new() { WorkingDirectory = workingDirectory };
 
+    /// <summary>
+    /// Replays a session's JSONL entries into a fresh Transcript. The JSONL itself is
+    /// append-only — compaction never rewrites or deletes prior lines (see Compactor and
+    /// ApplyCompaction's remarks) — so a message carrying a CompactionSummaryBlock is a
+    /// checkpoint marker, not just another entry: replay discards every message
+    /// accumulated so far and restarts from the summary, mirroring what ApplyCompaction
+    /// already does to the live in-memory Transcript at compaction time. Without this, a
+    /// resumed session would replay the full pre-compaction history AND the summary,
+    /// which is worse than not compacting at all. Mirrors pi's compaction.ts, which skips
+    /// straight to its own checkpoint marker (firstKeptEntryId) on reload instead of
+    /// replaying everything the checkpoint already summarized.
+    ///
+    /// A session compacted more than once has one such checkpoint per compaction; only
+    /// the latest is kept (each is discarded in turn as a later one is reached), same as
+    /// ApplyCompaction discarding an earlier summary when a later compaction's cut point
+    /// passes over it.
+    /// </summary>
     public static async Task<Transcript> LoadAsync(ITranscriptStore store, SessionOwner owner, string sessionId, CancellationToken ct)
     {
         var transcript = new Transcript();
@@ -86,9 +103,22 @@ public sealed class Transcript
         {
             if (entry.Kind == "session" && entry.WorkingDirectory is not null)
                 transcript.WorkingDirectory = entry.WorkingDirectory;
+            else if (entry.Message is not null && entry.Message.Content.OfType<CompactionSummaryBlock>().Any())
+                transcript.RestartFromCheckpoint(entry.Message);
             else if (entry.Message is not null)
                 transcript.Append(entry.Message, entry.Usage);
         }
         return transcript;
+    }
+
+    /// <summary>
+    /// Discards every message replayed so far and starts over from a compaction-summary
+    /// checkpoint — the replay-time counterpart to ApplyCompaction. See LoadAsync's remarks.
+    /// </summary>
+    private void RestartFromCheckpoint(ChatMessage summaryMessage)
+    {
+        _messages.Clear();
+        _usageByIndex.Clear();
+        _messages.Add(summaryMessage);
     }
 }

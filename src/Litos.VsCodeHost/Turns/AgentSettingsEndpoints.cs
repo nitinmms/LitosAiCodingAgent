@@ -103,9 +103,9 @@ public static class SessionActionsEndpoints
             // JSONL is append-only — the original messages stay on disk; only the synthetic
             // summary (now transcript.Messages[0] after ApplyCompaction) is appended, mirroring
             // both AgentLoop.RunTurnAsync's own automatic-compaction persistence and Litos.Gui's
-            // /compact handler exactly. A resume-after-compact replay still sees the original
-            // messages followed by the summary, same pre-existing tradeoff as those two — not
-            // something introduced or fixed here.
+            // /compact handler exactly. Transcript.LoadAsync treats the summary as a checkpoint on
+            // replay, so a resume-after-compact correctly starts from the summary rather than
+            // replaying the original messages too — see LoadAsync's remarks.
             await store.AppendAsync(SessionOwner.Local, id, TranscriptEntry.FromMessage(transcript.Messages[0]), ct);
             return Results.Ok(new { compacted = true });
         });

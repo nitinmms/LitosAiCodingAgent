@@ -196,4 +196,128 @@ public class TranscriptTests
         Assert.Empty(transcript.Messages);
         Assert.Null(transcript.WorkingDirectory);
     }
+
+    [Fact]
+    public async Task LoadAsync_DiscardsMessagesBeforeACompactionSummary()
+    {
+        var store = new FakeTranscriptStore();
+        var owner = SessionOwner.Local;
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.SessionHeader("/repo"), CancellationToken.None);
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(ChatMessage.User("old 1")), CancellationToken.None);
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(ChatMessage.Assistant([new TextBlock("old 2")]), new UsageInfo(100, 50)), CancellationToken.None);
+        var summary = ChatMessage.CompactionSummary("summary text", tokensBefore: 150);
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(summary), CancellationToken.None);
+        var kept = ChatMessage.User("kept 1");
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(kept), CancellationToken.None);
+
+        var transcript = await Transcript.LoadAsync(store, owner, "session-1", CancellationToken.None);
+
+        Assert.Equal([summary, kept], transcript.Messages);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithCompactionSummary_DoesNotCarryForwardPreCompactionUsage()
+    {
+        // Mirrors ApplyCompaction_DiscardsAllPriorUsageTracking above: real, cumulative
+        // pre-compaction usage doesn't decompose into "cut vs. kept" once replayed, so
+        // LoadAsync must drop it the same way ApplyCompaction does in-memory rather than
+        // reporting a stale/misleading LastUsage after a resume.
+        var store = new FakeTranscriptStore();
+        var owner = SessionOwner.Local;
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(ChatMessage.User("old")), CancellationToken.None);
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(ChatMessage.Assistant([new TextBlock("reply")]), new UsageInfo(10, 5)), CancellationToken.None);
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(ChatMessage.CompactionSummary("summary", tokensBefore: 15)), CancellationToken.None);
+
+        var transcript = await Transcript.LoadAsync(store, owner, "session-1", CancellationToken.None);
+
+        Assert.Null(transcript.LastUsage);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithMultipleCompactionSummaries_KeepsOnlyTheLatest()
+    {
+        var store = new FakeTranscriptStore();
+        var owner = SessionOwner.Local;
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(ChatMessage.User("old 1")), CancellationToken.None);
+        var firstSummary = ChatMessage.CompactionSummary("first summary", tokensBefore: 100);
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(firstSummary), CancellationToken.None);
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(ChatMessage.User("kept between compactions")), CancellationToken.None);
+        var secondSummary = ChatMessage.CompactionSummary("second summary", tokensBefore: 200);
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(secondSummary), CancellationToken.None);
+        var kept = ChatMessage.User("kept after second compaction");
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(kept), CancellationToken.None);
+
+        var transcript = await Transcript.LoadAsync(store, owner, "session-1", CancellationToken.None);
+
+        Assert.Equal([secondSummary, kept], transcript.Messages);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithOnlyACompactionSummary_ProducesJustTheSummary()
+    {
+        var store = new FakeTranscriptStore();
+        var owner = SessionOwner.Local;
+        var summary = ChatMessage.CompactionSummary("summary", tokensBefore: 0);
+        await store.AppendAsync(owner, "session-1", TranscriptEntry.FromMessage(summary), CancellationToken.None);
+
+        var transcript = await Transcript.LoadAsync(store, owner, "session-1", CancellationToken.None);
+
+        Assert.Equal([summary], transcript.Messages);
+    }
+
+    [Fact]
+    public async Task LoadAsync_AfterBranchingFromBeforeACompaction_ReplaysFullHistory_NoSummary()
+    {
+        var store = new FakeTranscriptStore();
+        var owner = SessionOwner.Local;
+        var q1 = ChatMessage.User("Q1");
+        var a1 = ChatMessage.Assistant([new TextBlock("A1")]);
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(q1), CancellationToken.None); // entry 0
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(a1), CancellationToken.None); // entry 1
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(ChatMessage.CompactionSummary("summary", tokensBefore: 50)), CancellationToken.None); // entry 2
+
+        // Branch from entry 1 (+1, matching the UI's inclusive-of-picked-message convention) — before the compaction.
+        var branchedId = await store.BranchAsync(owner, "source", uptoEntryIndex: 1 + 1, CancellationToken.None);
+        var transcript = await Transcript.LoadAsync(store, owner, branchedId, CancellationToken.None);
+
+        Assert.Equal([q1, a1], transcript.Messages);
+    }
+
+    [Fact]
+    public async Task LoadAsync_AfterBranchingFromAfterACompaction_StartsFromTheSummary()
+    {
+        var store = new FakeTranscriptStore();
+        var owner = SessionOwner.Local;
+        var summary = ChatMessage.CompactionSummary("summary", tokensBefore: 50);
+        var q2 = ChatMessage.User("Q2");
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(ChatMessage.User("Q1")), CancellationToken.None); // entry 0
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(summary), CancellationToken.None); // entry 1
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(q2), CancellationToken.None); // entry 2
+
+        // Branch from entry 2 ("Q2") — after the compaction.
+        var branchedId = await store.BranchAsync(owner, "source", uptoEntryIndex: 2 + 1, CancellationToken.None);
+        var transcript = await Transcript.LoadAsync(store, owner, branchedId, CancellationToken.None);
+
+        Assert.Equal([summary, q2], transcript.Messages);
+    }
+
+    [Fact]
+    public async Task LoadAsync_AfterBranchingFromBetweenTwoCompactions_StartsFromTheEarlierSummary()
+    {
+        var store = new FakeTranscriptStore();
+        var owner = SessionOwner.Local;
+        var firstSummary = ChatMessage.CompactionSummary("first summary", tokensBefore: 50);
+        var betweenMessage = ChatMessage.User("Q2 between compactions");
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(ChatMessage.User("Q1")), CancellationToken.None); // entry 0
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(firstSummary), CancellationToken.None); // entry 1
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(betweenMessage), CancellationToken.None); // entry 2
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(ChatMessage.CompactionSummary("second summary", tokensBefore: 200)), CancellationToken.None); // entry 3
+        await store.AppendAsync(owner, "source", TranscriptEntry.FromMessage(ChatMessage.User("Q3")), CancellationToken.None); // entry 4
+
+        // Branch from entry 2 ("Q2 between compactions") — after the first compaction, before the second.
+        var branchedId = await store.BranchAsync(owner, "source", uptoEntryIndex: 2 + 1, CancellationToken.None);
+        var transcript = await Transcript.LoadAsync(store, owner, branchedId, CancellationToken.None);
+
+        Assert.Equal([firstSummary, betweenMessage], transcript.Messages);
+    }
 }

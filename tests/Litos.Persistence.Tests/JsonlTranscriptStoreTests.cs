@@ -140,6 +140,76 @@ public sealed class JsonlTranscriptStoreTests : IDisposable
     private string SessionFilePath(string sessionId) => Path.Combine(_root, "local", sessionId + ".jsonl");
 
     [Fact]
+    public async Task AppendAsync_OfACompactionSummary_IsJustOneMoreAppendedLine_SourceLinesUntouched()
+    {
+        // What every /compact call site (AgentLoop's automatic compaction, Litos.Gui's
+        // /compact, VsCodeHost's endpoint, Telegram's /compact) actually does at the store
+        // level: append exactly one new entry carrying a CompactionSummaryBlock. JSONL is
+        // append-only, so the prior lines must come back byte-identical.
+        await _store.AppendAsync(SessionOwner.Local, "s1", EntryFor(ChatMessage.User("old 1")), CancellationToken.None);
+        await _store.AppendAsync(SessionOwner.Local, "s1", EntryFor(ChatMessage.Assistant([new TextBlock("old 2")])), CancellationToken.None);
+        var before = await File.ReadAllLinesAsync(SessionFilePath("s1"));
+
+        await _store.AppendAsync(SessionOwner.Local, "s1", EntryFor(ChatMessage.CompactionSummary("summary text", tokensBefore: 100)), CancellationToken.None);
+
+        var after = await File.ReadAllLinesAsync(SessionFilePath("s1"));
+        Assert.Equal(before, after[..before.Length]); // prior lines untouched
+        Assert.Equal(3, after.Length); // exactly one new line appended
+
+        var entries = await ReadAllAsync("s1");
+        var summaryBlock = Assert.IsType<CompactionSummaryBlock>(entries[2].Message!.Content[0]);
+        Assert.Equal("summary text", summaryBlock.Summary);
+        Assert.Equal(100, summaryBlock.TokensBefore);
+    }
+
+    [Fact]
+    public async Task BranchAsync_FromBeforeACompaction_OmitsTheCompactionLineEntirely()
+    {
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.User("Q1")), CancellationToken.None); // entry 0
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.Assistant([new TextBlock("A1")])), CancellationToken.None); // entry 1
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.CompactionSummary("summary", tokensBefore: 50)), CancellationToken.None); // entry 2
+
+        var branchedId = await _store.BranchAsync(SessionOwner.Local, "source", uptoEntryIndex: 2, CancellationToken.None);
+
+        var branched = await ReadAllAsync(branchedId);
+        Assert.Equal(2, branched.Count);
+        Assert.DoesNotContain(branched, e => e.Message?.Content.OfType<CompactionSummaryBlock>().Any() == true);
+    }
+
+    [Fact]
+    public async Task BranchAsync_FromAfterACompaction_KeepsTheCompactionLine()
+    {
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.User("Q1")), CancellationToken.None); // entry 0
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.CompactionSummary("summary", tokensBefore: 50)), CancellationToken.None); // entry 1
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.User("Q2")), CancellationToken.None); // entry 2
+
+        var branchedId = await _store.BranchAsync(SessionOwner.Local, "source", uptoEntryIndex: 3, CancellationToken.None);
+
+        var branched = await ReadAllAsync(branchedId);
+        Assert.Equal(3, branched.Count);
+        Assert.True(branched[1].Message!.Content.OfType<CompactionSummaryBlock>().Any());
+    }
+
+    [Fact]
+    public async Task BranchAsync_FromBetweenTwoCompactions_KeepsOnlyTheEarlierOne()
+    {
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.User("Q1")), CancellationToken.None); // entry 0
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.CompactionSummary("first summary", tokensBefore: 50)), CancellationToken.None); // entry 1
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.User("Q2 between compactions")), CancellationToken.None); // entry 2
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.CompactionSummary("second summary", tokensBefore: 200)), CancellationToken.None); // entry 3
+        await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.User("Q3")), CancellationToken.None); // entry 4
+
+        // Branch from entry 2 ("Q2 between compactions") — after the first compaction, before the second.
+        var branchedId = await _store.BranchAsync(SessionOwner.Local, "source", uptoEntryIndex: 3, CancellationToken.None);
+
+        var branched = await ReadAllAsync(branchedId);
+        Assert.Equal(3, branched.Count);
+        var summaries = branched.Select(e => e.Message?.Content.OfType<CompactionSummaryBlock>().FirstOrDefault()).Where(s => s is not null).ToList();
+        Assert.Single(summaries);
+        Assert.Equal("first summary", summaries[0]!.Summary);
+    }
+
+    [Fact]
     public async Task BranchAsync_ReturnsNewSessionId_DifferentFromSource()
     {
         await _store.AppendAsync(SessionOwner.Local, "source", EntryFor(ChatMessage.User("hi")), CancellationToken.None);

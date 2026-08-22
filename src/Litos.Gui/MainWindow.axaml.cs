@@ -894,7 +894,8 @@ public sealed partial class MainWindow : Window
 
             // Mirrors AgentLoop.RunTurnAsync's own persistence of an automatic compaction: only the
             // synthetic summary message is appended (JSONL is append-only — the original messages
-            // stay on disk, replaying on the next /resume the same way auto-compaction's already do).
+            // stay on disk, but Transcript.LoadAsync treats the summary as a checkpoint on replay
+            // and skips them on the next /resume — see LoadAsync's remarks).
             await _session.TranscriptStore.AppendAsync(SessionOwner.Local, _sessionId, TranscriptEntry.FromMessage(_transcript.Messages[0]), CancellationToken.None);
 
             RenderTranscriptHistory(_transcript);
