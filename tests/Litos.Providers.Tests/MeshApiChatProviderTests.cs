@@ -127,12 +127,15 @@ public class MeshApiChatProviderTests
     }
 
     [Fact]
-    public async Task StreamAsync_AssistantMessageWithUnrecognizedBlockType_SilentlyDropsIt_NoThrow()
+    public async Task StreamAsync_AssistantMessageWithUnrecognizedBlockType_SendsEmptyStringContent_NoThrow()
     {
         // Documents MeshAPI's asymmetry vs. the other native providers: the assistant branch of
         // ToMeshApiMessage only pulls ToolUseBlock/TextBlock via OfType<>() — a
-        // CompactionSummaryBlock on an assistant-role message vanishes with no error, same as
-        // OpenRouterChatProvider (this provider's own template).
+        // CompactionSummaryBlock on an assistant-role message contributes no text and no tool
+        // calls, same as OpenRouterChatProvider (this provider's own template). Regression test:
+        // this used to serialize as an omitted/null content field, which some models MeshAPI
+        // proxies to (e.g. glm-4.7-flash, via AWS Bedrock's Converse API) reject outright
+        // ("The content field in the Message object ... is empty") — must send "" instead.
         var (provider, handler) = CreateProvider();
         handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
         var message = ChatMessage.Assistant([new CompactionSummaryBlock("summary", 100)]);
@@ -143,8 +146,26 @@ public class MeshApiChatProviderTests
         var body = handler.CapturedRequests[0].Body!;
         using var json = JsonDocument.Parse(body);
         var serialized = json.RootElement.GetProperty("messages")[0];
-        // DefaultIgnoreCondition.WhenWritingNull omits a null Content property entirely
-        // rather than serializing "content":null.
+        Assert.Equal("", serialized.GetProperty("content").GetString());
+    }
+
+    [Fact]
+    public async Task StreamAsync_AssistantMessageWithToolUseOnly_StillOmitsNullContent()
+    {
+        // The empty-string substitution above must not regress the tool_calls-only case: OpenAI-
+        // compatible chat/completions expects null/omitted content alongside tool_calls, so this
+        // must remain distinct from the neither-text-nor-tool-calls case.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var toolUseArgs = JsonDocument.Parse("""{"path":"foo.cs"}""").RootElement;
+        var message = ChatMessage.Assistant([new ToolUseBlock("call_1", "read_file", toolUseArgs)]);
+        var request = new ChatRequest([message], [], "model");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var body = handler.CapturedRequests[0].Body!;
+        using var json = JsonDocument.Parse(body);
+        var serialized = json.RootElement.GetProperty("messages")[0];
         Assert.False(serialized.TryGetProperty("content", out _));
     }
 
@@ -167,14 +188,25 @@ public class MeshApiChatProviderTests
     [Fact]
     public async Task StreamAsync_ToolSchema_SerializesAsFunctionTool()
     {
+        // A tools-bearing request now tries /v1/responses first (see the /v1/responses routing
+        // tests below), so this exercises the /v1/chat/completions tool-serialization shape via
+        // the real fallback path: a first call against a fresh, uniquely-named model fails with
+        // model_capability_not_supported, then the (asserted-on) second call falls back to
+        // chat/completions.
         var (provider, handler) = CreateProvider();
+        var errorBody = """{"error":{"code":"model_capability_not_supported","message":"nope"}}""";
+        handler.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(errorBody, System.Text.Encoding.UTF8, "application/json"),
+        });
         handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
         var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
-        var request = new ChatRequest([ChatMessage.User("hi")], [schema], "model");
+        var request = new ChatRequest([ChatMessage.User("hi")], [schema], $"model-no-tools-routing-{Guid.NewGuid()}");
 
         await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
 
-        var body = handler.CapturedRequests[0].Body!;
+        Assert.Equal(2, handler.CapturedRequests.Count);
+        var body = handler.CapturedRequests[1].Body!;
         using var json = JsonDocument.Parse(body);
         var tool = json.RootElement.GetProperty("tools")[0];
         Assert.Equal("function", tool.GetProperty("type").GetString());
@@ -283,6 +315,208 @@ public class MeshApiChatProviderTests
 
         await Assert.ThrowsAsync<HttpRequestException>(
             () => DrainAsync(provider.StreamAsync(request, CancellationToken.None)));
+    }
+
+    // ---- /v1/responses routing (reasoning models + function tools) ----
+
+    private const string MinimalResponsesCompletion =
+        """{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":3,"output_tokens":1}}""";
+
+    [Fact]
+    public async Task StreamAsync_ToolsPresent_TriesResponsesApiFirst()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalResponsesCompletion));
+        var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
+        var request = new ChatRequest([ChatMessage.User("hi")], [schema], $"openai/gpt-5.6-luna-{Guid.NewGuid()}");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        Assert.Single(handler.CapturedRequests);
+        Assert.EndsWith("responses", handler.CapturedRequests[0].Uri!.AbsolutePath);
+        Assert.Contains(events, e => e is TextDelta { Text: "hi" });
+    }
+
+    [Fact]
+    public async Task StreamAsync_NoTools_NeverTriesResponsesApi()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], $"openai/gpt-5.6-luna-{Guid.NewGuid()}");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        Assert.Single(handler.CapturedRequests);
+        Assert.EndsWith("chat/completions", handler.CapturedRequests[0].Uri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task StreamAsync_ResponsesApiParsesFunctionCall_YieldsToolCallEvents()
+    {
+        var (provider, handler) = CreateProvider();
+        var body = """
+            {"status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"foo.cs\"}"}],"usage":{"input_tokens":5,"output_tokens":2}}
+            """;
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(body));
+        var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
+        var request = new ChatRequest([ChatMessage.User("read foo.cs")], [schema], $"openai/gpt-5.6-luna-{Guid.NewGuid()}");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        Assert.Contains(events, e => e is ToolCallStarted { CallId: "call_1", ToolName: "read_file" });
+        Assert.Contains(events, e => e is ToolCallCompleted { CallId: "call_1", ToolName: "read_file" });
+        var completed = Assert.Single(events.OfType<MessageCompleted>());
+        Assert.Equal(5, completed.Usage.InputTokens);
+        Assert.Equal(2, completed.Usage.OutputTokens);
+    }
+
+    [Fact]
+    public async Task StreamAsync_ResponsesApiRequestBody_UsesInputNotMessages()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalResponsesCompletion));
+        var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
+        var request = new ChatRequest([ChatMessage.User("hello")], [schema], $"openai/gpt-5.6-luna-{Guid.NewGuid()}");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var body = handler.CapturedRequests[0].Body!;
+        using var json = JsonDocument.Parse(body);
+        Assert.True(json.RootElement.TryGetProperty("input", out _));
+        Assert.False(json.RootElement.TryGetProperty("messages", out _));
+        var firstInput = json.RootElement.GetProperty("input")[0];
+        Assert.Equal("user", firstInput.GetProperty("role").GetString());
+        Assert.Equal("hello", firstInput.GetProperty("content").GetString());
+    }
+
+    [Fact]
+    public async Task StreamAsync_ResponsesApiRequestBody_ToolsAreFlatShape_NotNestedUnderFunction()
+    {
+        // Regression test: the Responses API's function-tool shape is flat (type/name/description/
+        // parameters as siblings), unlike /v1/chat/completions' nested {"function":{"name":...}}
+        // shape. Sending the nested shape here previously failed Mesh's schema validation for
+        // every tool (ResponsesFunctionTool.name "Field required"), which silently fell back to
+        // chat/completions on every request instead of surfacing as a routing bug.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalResponsesCompletion));
+        var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
+        var request = new ChatRequest([ChatMessage.User("hello")], [schema], $"openai/gpt-5.6-luna-{Guid.NewGuid()}");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var body = handler.CapturedRequests[0].Body!;
+        using var json = JsonDocument.Parse(body);
+        var tool = json.RootElement.GetProperty("tools")[0];
+        Assert.Equal("function", tool.GetProperty("type").GetString());
+        Assert.Equal("read_file", tool.GetProperty("name").GetString());
+        Assert.Equal("Reads a file.", tool.GetProperty("description").GetString());
+        Assert.False(tool.TryGetProperty("function", out _));
+    }
+
+    [Fact]
+    public async Task StreamAsync_ResponsesApi_AssistantMessageWithTextAndToolUse_TextItemPrecedesFunctionCallItem()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalResponsesCompletion));
+        var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
+        var toolUseArgs = JsonDocument.Parse("""{"path":"foo.cs"}""").RootElement;
+        var assistantMessage = ChatMessage.Assistant([new TextBlock("Let me check that file."), new ToolUseBlock("call_1", "read_file", toolUseArgs)]);
+        var request = new ChatRequest([assistantMessage], [schema], $"openai/gpt-5.6-luna-{Guid.NewGuid()}");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var body = handler.CapturedRequests[0].Body!;
+        using var json = JsonDocument.Parse(body);
+        var input = json.RootElement.GetProperty("input");
+        Assert.Equal("assistant", input[0].GetProperty("role").GetString());
+        Assert.Equal("Let me check that file.", input[0].GetProperty("content").GetString());
+        Assert.Equal("function_call", input[1].GetProperty("type").GetString());
+        Assert.Equal("call_1", input[1].GetProperty("call_id").GetString());
+        Assert.Equal("read_file", input[1].GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task StreamAsync_ResponsesApi_ToolResultMessage_SerializesAsFunctionCallOutput()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalResponsesCompletion));
+        var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
+        var toolResultMessage = ChatMessage.ToolResult("call_1", ToolResult.Ok("file contents"));
+        var request = new ChatRequest([toolResultMessage], [schema], $"openai/gpt-5.6-luna-{Guid.NewGuid()}");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var body = handler.CapturedRequests[0].Body!;
+        using var json = JsonDocument.Parse(body);
+        var item = json.RootElement.GetProperty("input")[0];
+        Assert.Equal("function_call_output", item.GetProperty("type").GetString());
+        Assert.Equal("call_1", item.GetProperty("call_id").GetString());
+        Assert.Equal("file contents", item.GetProperty("output").GetString());
+    }
+
+    [Fact]
+    public async Task StreamAsync_ResponsesApiErrorBody_NotJson_FallsBackToChatCompletions()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("<html>Bad Request</html>", System.Text.Encoding.UTF8, "text/html"),
+        });
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
+        var request = new ChatRequest([ChatMessage.User("hi")], [schema], $"openai/gpt-5.6-luna-{Guid.NewGuid()}");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        Assert.Equal(2, handler.CapturedRequests.Count);
+        Assert.EndsWith("chat/completions", handler.CapturedRequests[1].Uri!.AbsolutePath);
+        Assert.Contains(events, e => e is TextDelta { Text: "hi" });
+    }
+
+    [Fact]
+    public async Task StreamAsync_ResponsesApiReturnsModelCapabilityNotSupported_FallsBackToChatCompletions()
+    {
+        var (provider, handler) = CreateProvider();
+        var errorBody = """{"error":{"code":"model_capability_not_supported","message":"nope"}}""";
+        handler.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(errorBody, System.Text.Encoding.UTF8, "application/json"),
+        });
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
+        var request = new ChatRequest([ChatMessage.User("hi")], [schema], $"unsupported-model-{Guid.NewGuid()}");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        Assert.Equal(2, handler.CapturedRequests.Count);
+        Assert.EndsWith("responses", handler.CapturedRequests[0].Uri!.AbsolutePath);
+        Assert.EndsWith("chat/completions", handler.CapturedRequests[1].Uri!.AbsolutePath);
+        Assert.Contains(events, e => e is TextDelta { Text: "hi" });
+    }
+
+    [Fact]
+    public async Task StreamAsync_ModelPreviouslyConfirmedUnsupported_SkipsResponsesApiOnNextCall()
+    {
+        var (provider, handler) = CreateProvider();
+        var model = $"unsupported-model-{Guid.NewGuid()}";
+        var errorBody = """{"error":{"code":"model_capability_not_supported","message":"nope"}}""";
+        handler.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(errorBody, System.Text.Encoding.UTF8, "application/json"),
+        });
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var schema = new ToolSchema("read_file", "Reads a file.", JsonDocument.Parse("""{"type":"object"}""").RootElement);
+        var firstRequest = new ChatRequest([ChatMessage.User("hi")], [schema], model);
+        await DrainAsync(provider.StreamAsync(firstRequest, CancellationToken.None));
+        Assert.Equal(2, handler.CapturedRequests.Count);
+
+        // Second call for the same model should go straight to chat/completions.
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var secondRequest = new ChatRequest([ChatMessage.User("hi again")], [schema], model);
+        await DrainAsync(provider.StreamAsync(secondRequest, CancellationToken.None));
+
+        Assert.Equal(3, handler.CapturedRequests.Count);
+        Assert.EndsWith("chat/completions", handler.CapturedRequests[2].Uri!.AbsolutePath);
     }
 
     [Fact]
