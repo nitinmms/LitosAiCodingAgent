@@ -6,7 +6,7 @@
         Width="480" SizeToContent="Height"
         CanResize="False"
         Background="#1E1E1E">
-  <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="20">
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="20">
     <TextBlock Name="HeadingText" Grid.Row="0" FontWeight="Bold" Margin="0,0,0,4" />
     <TextBlock Name="SubText" Grid.Row="1" TextWrapping="Wrap" Foreground="#9A9A9A" Margin="0,0,0,16" />
 
@@ -26,29 +26,34 @@
     </Grid>
 
     <Grid Grid.Row="5" ColumnDefinitions="140,*" Margin="0,0,0,8">
+      <TextBlock Grid.Column="0" Text="MeshAPI" VerticalAlignment="Center" />
+      <TextBox Name="MeshApiBox" Grid.Column="1" PasswordChar="•" />
+    </Grid>
+
+    <Grid Grid.Row="6" ColumnDefinitions="140,*" Margin="0,0,0,8">
       <TextBlock Grid.Column="0" Text="OpenRouter" VerticalAlignment="Center" />
       <TextBox Name="OpenRouterBox" Grid.Column="1" PasswordChar="•" />
     </Grid>
 
-    <Grid Grid.Row="6" ColumnDefinitions="140,*" Margin="0,0,0,8">
+    <Grid Grid.Row="7" ColumnDefinitions="140,*" Margin="0,0,0,8">
       <TextBlock Grid.Column="0" Text="Local base URL" VerticalAlignment="Center" />
       <TextBox Name="LocalBaseUrlBox" Grid.Column="1" PlaceholderText="http://localhost:1234/v1" />
     </Grid>
 
-    <Grid Grid.Row="7" ColumnDefinitions="140,*" Margin="0,0,0,8">
+    <Grid Grid.Row="8" ColumnDefinitions="140,*" Margin="0,0,0,8">
       <TextBlock Grid.Column="0" Text="Local key (optional)" VerticalAlignment="Center" />
       <TextBox Name="LocalApiKeyBox" Grid.Column="1" PasswordChar="•" PlaceholderText="Most local servers (e.g. LM Studio) don't need one" />
     </Grid>
 
-    <Grid Grid.Row="8" ColumnDefinitions="140,*" Margin="0,0,0,4">
+    <Grid Grid.Row="9" ColumnDefinitions="140,*" Margin="0,0,0,4">
       <TextBlock Grid.Column="0" Text="Tavily (optional)" VerticalAlignment="Center" />
       <TextBox Name="TavilyBox" Grid.Column="1" PasswordChar="•" PlaceholderText="TAVILY_API_KEY — enables web search" />
     </Grid>
 
-    <TextBlock Name="ErrorText" Grid.Row="9" Text="Enter at least one key." Foreground="#F48771"
+    <TextBlock Name="ErrorText" Grid.Row="10" Text="Enter at least one key." Foreground="#F48771"
                IsVisible="False" Margin="0,8,0,0" />
 
-    <StackPanel Grid.Row="10" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,16,0,0">
+    <StackPanel Grid.Row="11" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,16,0,0">
       <Button Name="CancelButton" />
       <Button Name="SaveButton" />
     </StackPanel>

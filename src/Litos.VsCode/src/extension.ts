@@ -755,6 +755,7 @@ const KEY_ENV_VAR_NAMES: Record<string, string> = {
     anthropic: "ANTHROPIC_API_KEY",
     openai: "OPENAI_API_KEY",
     gemini: "GEMINI_API_KEY",
+    mesh_api: "MESHAPI_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
     local: "LOCAL_API_KEY",
     tavily: "TAVILY_API_KEY",
@@ -785,7 +786,7 @@ async function respawnSharedHost(context: vscode.ExtensionContext, cwd: string, 
                 ? { type: "saveKeysSuccess" }
                 : {
                       type: "saveKeysError",
-                      text: "Saved, but no chat provider is configured yet. Enter a chat-provider key (Anthropic/OpenAI/Gemini/OpenRouter) or a local server URL.",
+                      text: "Saved, but no chat provider is configured yet. Enter a chat-provider key (Anthropic/OpenAI/Gemini/OpenRouter/MeshAPI) or a local server URL.",
                   },
         );
     }

@@ -525,6 +525,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <div class="field"><label for="key-anthropic">Anthropic</label><input type="password" id="key-anthropic"></div>
   <div class="field"><label for="key-openai">OpenAI</label><input type="password" id="key-openai"></div>
   <div class="field"><label for="key-gemini">Gemini</label><input type="password" id="key-gemini"></div>
+  <div class="field"><label for="key-mesh_api">MeshAPI</label><input type="password" id="key-mesh_api"></div>
   <div class="field"><label for="key-openrouter">OpenRouter</label><input type="password" id="key-openrouter"></div>
   <div class="field"><label for="key-local-url">Local base URL</label><input type="text" id="key-local-url"></div>
   <div class="field"><label for="key-local">Local key (optional)</label><input type="password" id="key-local"></div>
@@ -643,6 +644,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     ['anthropic', 'key-anthropic', 'ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY'],
     ['openai', 'key-openai', 'OPENAI_API_KEY', 'OPENAI_API_KEY'],
     ['gemini', 'key-gemini', 'GEMINI_API_KEY', 'GEMINI_API_KEY'],
+    ['mesh_api', 'key-mesh_api', 'MESHAPI_API_KEY', 'MESHAPI_API_KEY'],
     ['openrouter', 'key-openrouter', 'OPENROUTER_API_KEY', 'OPENROUTER_API_KEY'],
     ['local', 'key-local', 'LOCAL_API_KEY', "Most local servers (e.g. LM Studio) don't need one"],
     ['tavily', 'key-tavily', 'TAVILY_API_KEY', 'TAVILY_API_KEY — enables web search'],

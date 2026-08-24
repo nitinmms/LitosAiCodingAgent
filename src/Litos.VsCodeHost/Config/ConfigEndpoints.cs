@@ -55,7 +55,7 @@ public static class ConfigEndpoints
     // ApiKeysWindow.Fields provider list plus LocalBaseUrl, which isn't a key but gets the same
     // "already set" treatment. Kept here (not EnvVarName's switch) since it also drives what
     // /config/status reports even for a provider with no key set yet.
-    private static readonly string[] KeyStatusProviders = ["anthropic", "openai", "gemini", "openrouter", "local", "tavily"];
+    private static readonly string[] KeyStatusProviders = ["anthropic", "openai", "gemini", "mesh_api", "openrouter", "local", "tavily"];
 
     /// <summary>
     /// Per-provider "is a key already set, and if so where" — lets the webview's keys popup show
@@ -117,6 +117,7 @@ public static class ConfigEndpoints
         "anthropic" => "ANTHROPIC_API_KEY",
         "openai" => "OPENAI_API_KEY",
         "gemini" => "GEMINI_API_KEY",
+        "mesh_api" => "MESHAPI_API_KEY",
         "openrouter" => "OPENROUTER_API_KEY",
         "local" => "LOCAL_API_KEY",
         "tavily" => "TAVILY_API_KEY",

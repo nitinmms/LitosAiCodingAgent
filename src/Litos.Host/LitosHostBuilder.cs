@@ -10,6 +10,7 @@ using Litos.Persistence;
 using Litos.Providers.Anthropic;
 using Litos.Providers.Gemini;
 using Litos.Providers.Local;
+using Litos.Providers.MeshApi;
 using Litos.Providers.OpenAI;
 using Litos.Providers.OpenRouter;
 using Litos.Tools.Attachments;
@@ -92,6 +93,11 @@ public static class LitosHostBuilder
             services.AddKeyedSingleton<IChatProvider>("gemini", (sp, _) =>
                 new GeminiChatProvider(new GoogleAi(geminiKey), sp.GetRequiredService<OpenRouterModelCatalog>()));
 
+        var meshApiKey = config.GetApiKey("mesh_api");
+        if (meshApiKey is not null)
+            services.AddKeyedSingleton<IChatProvider>("mesh_api", (_, _) =>
+                new MeshApiChatProvider(CreateMeshApiHttpClient(meshApiKey)));
+
         var openRouterKey = config.GetApiKey("openrouter");
         if (openRouterKey is not null)
             services.AddKeyedSingleton<IChatProvider>("openrouter", (_, _) =>
@@ -113,6 +119,13 @@ public static class LitosHostBuilder
     private static HttpClient CreateOpenRouterHttpClient(string apiKey)
     {
         var client = new HttpClient { BaseAddress = new Uri("https://openrouter.ai/api/v1/") };
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+        return client;
+    }
+
+    private static HttpClient CreateMeshApiHttpClient(string apiKey)
+    {
+        var client = new HttpClient { BaseAddress = new Uri("https://api.meshapi.ai/v1/") };
         client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
         return client;
     }

@@ -8,6 +8,7 @@
     <ProjectReference Include="..\Litos.Providers.OpenAI\Litos.Providers.OpenAI.csproj" />
     <ProjectReference Include="..\Litos.Providers.Gemini\Litos.Providers.Gemini.csproj" />
     <ProjectReference Include="..\Litos.Providers.OpenRouter\Litos.Providers.OpenRouter.csproj" />
+    <ProjectReference Include="..\Litos.Providers.MeshApi\Litos.Providers.MeshApi.csproj" />
     <ProjectReference Include="..\Litos.Providers.Local\Litos.Providers.Local.csproj" />
   </ItemGroup>
 

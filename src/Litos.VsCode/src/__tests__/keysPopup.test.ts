@@ -28,13 +28,13 @@ describe("/keys is a real slash command", () => {
 
 describe("keys popup markup", () => {
     it("renders one field per provider Litos.Gui's ApiKeysWindow has, including Tavily", () => {
-        ["key-anthropic", "key-openai", "key-gemini", "key-openrouter", "key-local-url", "key-local", "key-tavily"].forEach((id) => {
+        ["key-anthropic", "key-openai", "key-gemini", "key-openrouter", "key-mesh_api", "key-local-url", "key-local", "key-tavily"].forEach((id) => {
             expect(html).toContain(`id="${id}"`);
         });
     });
 
     it("masks every secret field but leaves the local base URL as plain text", () => {
-        ["key-anthropic", "key-openai", "key-gemini", "key-openrouter", "key-local", "key-tavily"].forEach((id) => {
+        ["key-anthropic", "key-openai", "key-gemini", "key-openrouter", "key-mesh_api", "key-local", "key-tavily"].forEach((id) => {
             const fieldMatch = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
             expect(fieldMatch).toBeTruthy();
             expect(fieldMatch![0]).toContain('type="password"');
@@ -99,11 +99,12 @@ describe("keys popup validation and save", () => {
         expect(saveHandler).toContain("vscode.postMessage({ type: 'saveKeys', entries, localBaseUrl, isFirstRun: keysPopupIsFirstRun })");
     });
 
-    it("collects all six provider entries under KEY_FIELDS, not just the original four", () => {
+    it("collects all seven provider entries under KEY_FIELDS, not just the original four", () => {
         expect(innerScript).toContain("['anthropic', 'key-anthropic'");
         expect(innerScript).toContain("['openai', 'key-openai'");
         expect(innerScript).toContain("['gemini', 'key-gemini'");
         expect(innerScript).toContain("['openrouter', 'key-openrouter'");
+        expect(innerScript).toContain("['mesh_api', 'key-mesh_api'");
         expect(innerScript).toContain("['local', 'key-local'");
         expect(innerScript).toContain("['tavily', 'key-tavily'");
     });

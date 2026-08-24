@@ -27,6 +27,7 @@ public sealed partial class ApiKeysWindow : Window
         ("anthropic", "ANTHROPIC_API_KEY", w => w.AnthropicBox),
         ("openai", "OPENAI_API_KEY", w => w.OpenAiBox),
         ("gemini", "GEMINI_API_KEY", w => w.GeminiBox),
+        ("mesh_api", "MESHAPI_API_KEY", w => w.MeshApiBox),
         ("openrouter", "OPENROUTER_API_KEY", w => w.OpenRouterBox),
         ("local", "LOCAL_API_KEY", w => w.LocalApiKeyBox),
         ("tavily", "TAVILY_API_KEY", w => w.TavilyBox),

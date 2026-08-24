@@ -31,6 +31,7 @@ public sealed record LitosConfig(
         ["anthropic"] = "ANTHROPIC_API_KEY",
         ["openai"] = "OPENAI_API_KEY",
         ["gemini"] = "GEMINI_API_KEY",
+        ["mesh_api"] = "MESHAPI_API_KEY",
         ["openrouter"] = "OPENROUTER_API_KEY",
         ["local"] = "LOCAL_API_KEY",
         ["tavily"] = "TAVILY_API_KEY",
@@ -42,7 +43,7 @@ public sealed record LitosConfig(
     /// "tavily") — callers that pick/prompt-for an active chat provider filter to these
     /// rather than assuming every key in ApiKeys is one.
     /// </summary>
-    public static readonly IReadOnlyList<string> ChatProviderNames = ["anthropic", "openai", "gemini", "openrouter", "local"];
+    public static readonly IReadOnlyList<string> ChatProviderNames = ["anthropic", "openai", "gemini", "mesh_api", "openrouter", "local"];
 
     /// <summary>
     /// True if <paramref name="providerName"/> has enough configuration to be usable. Every

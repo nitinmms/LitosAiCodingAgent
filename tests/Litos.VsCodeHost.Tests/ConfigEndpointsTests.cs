@@ -18,7 +18,7 @@ namespace Litos.VsCodeHost.Tests;
 public sealed class ConfigEndpointsTests
 {
     private static readonly string[] EnvVarsUnderTest =
-        ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "LOCAL_API_KEY", "TAVILY_API_KEY"];
+        ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "MESHAPI_API_KEY", "LOCAL_API_KEY", "TAVILY_API_KEY"];
 
     private static LitosConfig EmptyConfig() =>
         new(DefaultProvider: "anthropic", DefaultModel: null, LastWorkingDirectory: null, ApiKeys: new Dictionary<string, string>());
@@ -97,7 +97,7 @@ public sealed class ConfigEndpointsTests
         // Matches KEY_FIELDS in webviewContent.ts plus the separate local-base-url field — a
         // missing key here would leave that field's hint silently blank in the popup instead of
         // throwing, which is exactly the kind of drift this test exists to catch.
-        var expected = new[] { "anthropic", "openai", "gemini", "openrouter", "local", "tavily", "localBaseUrl" };
+        var expected = new[] { "anthropic", "openai", "gemini", "openrouter", "mesh_api", "local", "tavily", "localBaseUrl" };
         Assert.Equal(expected.OrderBy(k => k, StringComparer.Ordinal), status.Keys.OrderBy(k => k, StringComparer.Ordinal));
     }
 

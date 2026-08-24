@@ -11,7 +11,7 @@ public class LitosConfigTests
         // an active chat provider from ApiKeys.Keys must filter through this list, or a
         // Tavily-only key (no LLM key configured) gets mistaken for an available provider.
         Assert.DoesNotContain("tavily", LitosConfig.ChatProviderNames);
-        Assert.Equal(["anthropic", "openai", "gemini", "openrouter", "local"], LitosConfig.ChatProviderNames);
+        Assert.Equal(["anthropic", "openai", "gemini", "mesh_api", "openrouter", "local"], LitosConfig.ChatProviderNames);
     }
 
     [Fact]

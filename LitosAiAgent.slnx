@@ -8,6 +8,7 @@
     <Project Path="src/Litos.Persistence/Litos.Persistence.csproj" />
     <Project Path="src/Litos.Providers.Anthropic/Litos.Providers.Anthropic.csproj" />
     <Project Path="src/Litos.Providers.Gemini/Litos.Providers.Gemini.csproj" />
+    <Project Path="src/Litos.Providers.MeshApi/Litos.Providers.MeshApi.csproj" />
     <Project Path="src/Litos.Providers.OpenAI/Litos.Providers.OpenAI.csproj" />
     <Project Path="src/Litos.Providers.OpenRouter/Litos.Providers.OpenRouter.csproj" />
     <Project Path="src/Litos.Tools/Litos.Tools.csproj" />

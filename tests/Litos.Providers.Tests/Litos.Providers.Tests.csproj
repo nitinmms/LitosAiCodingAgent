@@ -24,6 +24,7 @@
     <ProjectReference Include="..\..\src\Litos.Providers.OpenAI\Litos.Providers.OpenAI.csproj" />
     <ProjectReference Include="..\..\src\Litos.Providers.Gemini\Litos.Providers.Gemini.csproj" />
     <ProjectReference Include="..\..\src\Litos.Providers.OpenRouter\Litos.Providers.OpenRouter.csproj" />
+    <ProjectReference Include="..\..\src\Litos.Providers.MeshApi\Litos.Providers.MeshApi.csproj" />
     <ProjectReference Include="..\..\src\Litos.Providers.Local\Litos.Providers.Local.csproj" />
   </ItemGroup>
 
