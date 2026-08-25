@@ -429,6 +429,36 @@ without a forced migration step. Either way, `ResolveSessionPath` and every othe
 in the implementation phase's task list (§7), not folded silently into kernel-mode work as a side
 effect.
 
+### 4.6 Persistence alone does not save tokens — the separation has to actually hold
+
+§1's whole motivation is token/latency savings from collapsing multi-round orchestration into one
+kernel program. It's worth stating the mechanism behind that saving explicitly, because it's easy
+to build something that looks like this design but defeats it: **a kernel variable only avoids
+resending its content if the script never also returns or prints that content.** If a script
+loads a large file into a kernel variable *and* the model's script has it print the full contents
+back (or the script's return value gets serialized in full into the `ToolResultBlock`, §8.4 step
+11), that content still lands in the transcript exactly like a direct tool call would — the design
+has then added a subprocess round-trip and gotten zero token savings for it, strictly worse than
+today.
+
+The saving comes entirely from §4.4/§4.5's existing separation between what's *kernel state* and
+what's *transcript content* — this subsection just names the principle and generalizes it to one
+more location the rest of the document already implies but never states as a rule:
+
+| Where it lives | What belongs there | Why |
+|---|---|---|
+| Transcript (`ToolResultBlock`, resent every round) | The user's goal, conclusions the model has drawn, current plan, small/concise evidence needed to justify the next step | This is the only one of the four the model re-reads on every single round — anything here is paid for repeatedly, so it should already be the *distilled* answer, not raw material. |
+| Kernel state (in-process variables, §4.4) | Parsed/loaded data, indexes, reusable functions, intermediate working values a later round's script will reference by name | Survives across rounds (until `/new`/`/kernel-reset`, §4.4's table) without ever being serialized into the transcript — this is where the actual saving comes from. |
+| Scratch files (`scratch/`, §4.5) | Large raw outputs, checkpoints, anything too big or unwieldy to hold as an in-memory kernel variable across a long session | Durable across process restarts within the reset-trigger rules, still never enters the transcript — a script reads it back by path, not by the model re-quoting its contents. |
+| Session metadata (the JSONL transcript itself, outside any single `ToolResultBlock`) | IDs/paths/short descriptions *of* kernel variables or scratch files — e.g. "wrote `scratch/checkpoint.csv`, 40k rows" — not the data itself | Lets the model's own future reasoning (and a human reading the transcript) know *that* something exists and roughly what it is, without paying to carry the payload. |
+
+The practical implication for §6's system-prompt guidance (carried into §8.8's open item): the
+prompt should steer the model toward writing kernel scripts that return short summaries
+("loaded 40k rows into `df`", not the 40k rows), consistent with how the model is presumably
+already expected to write concise tool-result-worthy output today — this isn't a new constraint
+the kernel introduces, just one where getting it wrong is easier to do by accident, since the
+script controls its own output shape in a way a fixed-format tool result doesn't.
+
 ## 5. Safety and the trust boundary
 
 **Revised decision: Litos follows Prime Agent's trust model, not a per-call-gated one.** An
@@ -1005,7 +1035,9 @@ this document actually decided.
   there is no "toward vs. away from the kernel" choice left to steer when the toggle is ON (it is
   the model's only tool), so this is now in-kernel usage guidance instead: how to structure a
   script for multi-step, result-dependent orchestration (§1's "read A, and if it imports X also
-  read B" pattern), not whether to use one. Drafted in Milestone 2, not before.
+  read B" pattern), not whether to use one — plus §4.6's return-short-summaries-not-raw-data
+  guidance, since that's the one place the model's own script-writing choices can silently defeat
+  this design's token savings. Drafted in Milestone 2, not before.
 - **Provider audit beyond Anthropic** — per §8.3, the reserved-tool-name approach needs zero
   provider changes for Anthropic; OpenAI/Gemini/OpenRouter/MeshApi/Local are out of scope per §2's
   `Litos.Gui`-only framing (Anthropic is Gui's default/primary provider) but should be spot-checked
