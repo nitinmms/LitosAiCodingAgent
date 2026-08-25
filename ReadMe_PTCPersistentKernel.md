@@ -847,7 +847,87 @@ kill-on-close job-object assignment (already used for MCP server subprocesses,
 `src/Litos.Gui/Program.cs`) so kernel subprocesses are covered by the same mechanism with no new
 code. Optional: friendlier `run_kernel_code` label in `ToolCallRow`.
 
-### 8.7 Still open, carried forward from §7
+### 8.7 Realistic picture of the decided implementation
+
+The diagram below is the concrete shape of §8.1–§8.4 as decided — not the general Prime Agent
+picture (§1), which shows Python/`ipython` as the model's *only* tool and includes subagent
+spawning that this document does not propose. Two differences from that general picture are
+deliberate and worth stating up front: **Litos keeps a second, non-kernel path** — the model can
+still emit ordinary `tool_use` calls straight to `ToolRegistry` every round, per §6's "per-round
+choice the model makes," not the kernel-only shape Prime Agent itself uses — and **there is no
+subagent box**; nothing in this document proposes kernel-spawned subagents.
+
+```mermaid
+flowchart TD
+    LLM["Model"]
+
+    LLM -- "ordinary tool_use
+    (single, independent call)" --> SEQ["Sequential path — unchanged
+    AgentLoop.cs:157-193
+    ToolRegistry.Resolve -> ITool.InvokeAsync
+    gated by IToolApprovalGate, per §5.2"]
+    SEQ -- "ToolResultBlock" --> LLM
+
+    LLM -- "tool_use named run_kernel_code
+    { code: string } — §8.3" --> ROUTE["AgentLoop routing check
+    call.Name == ReservedToolNames.KernelCode"]
+
+    ROUTE --> KSM["KernelSessionManager.GetOrCreate(sessionId)
+    lazy — born on first kernel round, §4.4"]
+
+    subgraph HOST["Litos.Gui process"]
+        KSM --> KS["KernelSession
+        one per chat session
+        cwd = Transcript.WorkingDirectory, §4.4"]
+    end
+
+    subgraph SUB["Litos.Kernel.Host subprocess — Roslyn/C#, §4.3"]
+        SCRIPT["ScriptState
+        persists across eval calls
+        Script.ContinueWithAsync"]
+    end
+
+    KS -- "stdio: Handshake, then
+    EvalRequest(code) — §8.2" --> SCRIPT
+    SCRIPT -- "ToolCallRequest(name, args)
+    blocks pending response" --> KS
+
+    KS -- "built-in tools: ITool.InvokeAsync
+    ungated — §5.1" --> REG["ToolRegistry
+    read_file, shell, write_file, ..."]
+    KS -- "MCP tools: InvokeDirectAsync
+    ungated, bypasses McpToolProxy's
+    gate — §7/§8.2 fix" --> MCP["McpToolProvider
+    scoped to enabled servers, §4.1"]
+
+    KS -. "SCRATCH_DIR injected
+    at init, §4.5" .-> SCRATCH[("~/.litos/sessions/{owner}/
+    {sessionId}/scratch/")]
+
+    REG -- "ToolCallResponse" --> KS
+    MCP -- "ToolCallResponse" --> KS
+    KS -- "ToolCallResponse" --> SCRIPT
+
+    SCRIPT -- "EvalResult:
+    captured stdout + return value" --> KS
+    KS -- "ToolResult.Ok/.Error" --> ROUTE
+    ROUTE -- "one ToolResultBlock
+    per round, §8.3 — no ContentBlock
+    or provider changes" --> LLM
+
+    style LLM fill:#2d6a4f,color:#fff
+    style SUB fill:#1d3557,color:#fff
+```
+
+Reading it against §8.4's numbered steps: the model picks one of the two top branches each round
+(§6); the kernel branch is intercepted by name before `ToolRegistry.Resolve` is ever reached
+(§8.3); the subprocess is spawned lazily and reused for the rest of the chat session, not
+per-round (§4.4); every bridged call — built-in or MCP — returns through the same
+`KernelSession`/`ScriptState` boundary and comes back to the model as a single reduced
+`ToolResultBlock`, matching the "reduced result" idea in the general picture but scoped to what
+this document actually decided.
+
+### 8.8 Still open, carried forward from §7
 
 - **Exact wording of the system-prompt `Guidelines` addition** (§6) — steering the model toward
   kernel mode for multi-step, result-dependent orchestration and away from it for single
