@@ -566,40 +566,302 @@ request-shape differences already handled in `Litos.Providers.MeshApi`, e.g. the
 reasoning-model/Bedrock-model request-building fixes) — left for the implementation phase, not
 resolved here.
 
-## 7. Open questions for the implementation phase
+## 7. Resolved during the architecture phase
 
-- **Resolved, not open**: kernel language/engine selection for `Litos.Gui` — Roslyn/C# scripting,
-  out-of-process (§4.3). Retained here only as a marker that this used to be an open item.
-- **Resolved, not open**: `Litos.Gui`'s consent gap for kernel mode's ungated local-code-execution
-  capability — accepted, no new consent mechanism added (§5.3). Retained here only as a marker that
-  this was weighed and decided, not overlooked.
-- Exact wire format for the tool bridge and host-request channel (§4.1/§5.2) — likely a small
-  JSON-RPC-shaped protocol over the interpreter subprocess's stdio, mirroring how `IChatProvider`
-  already normalizes very different vendor wire formats into one `AgentEvent` vocabulary. For a
-  Roslyn-hosted subprocess specifically, this could plausibly reuse .NET-native serialization
-  (`System.Text.Json` over stdio, or named pipes) rather than needing a foreign-process RPC library.
-- The exact wording of the system-prompt additions this design requires (§6) — a schema entry
-  advertising the kernel-program capability, and fixed `Guidelines` text steering the model toward
-  using it for multi-step, result-dependent orchestration rather than single independent calls.
-  Not drafted in this document.
-- Auditing every `IChatProvider` implementation (Anthropic, OpenAI, Gemini, OpenRouter, MeshApi,
-  Local) for how a kernel-program block is represented on the wire and parsed back — confirmed for
-  Anthropic specifically that `AnthropicChatProvider.ToAnthropicMessage`'s `ContentBlock` switch
-  (`AnthropicChatProvider.cs:104-138`) is not compiler-exhaustive and would throw
-  `NotSupportedException` at runtime, on the *next* round after a kernel round, if a new
-  `ContentBlock` type is added without a corresponding switch arm — not yet checked for the other
-  five providers.
-- Session lifecycle: does a `KernelSession` restart on `/compact`, on `/new`, on face restart?
-  Persistent-across-the-session is the goal (§4.1), but "session" needs a precise boundary.
-- How a kernel-mode round's activity is surfaced to the user mid-execution (Litos.Console/Gui/Api
-  all stream tool-call events live today; a long-running script executing several tool calls
-  needs equivalent incremental visibility, not just a single result at the end).
-- Migrating `Litos.Persistence`/`JsonlTranscriptStore` from one-file-per-session to
-  folder-per-session (§4.5) — a one-time migration vs. a legacy-path fallback is an implementation
-  choice this document doesn't resolve, but the change itself (needed for `scratch/`) is a
-  prerequisite for kernel-mode rollout, not optional.
-- Test coverage for the new `Litos.Kernel` project and `AgentLoop`'s kernel-mode routing — this
-  feature must ship with its own tests (unit coverage for `KernelSession` lifecycle/reset triggers
-  per §4.4, the tool bridge per §4.1, and `AgentLoop`'s block-type routing per §6), mirroring the
-  existing `tests/{ProjectName}.Tests` pattern already used for every other `src/` project in this
-  repository (e.g. `tests/Litos.Tools.Tests`, `tests/Litos.Agent.Tests`). Not yet scoped in detail.
+The items below were open questions in earlier drafts of this document. All were resolved by
+running three independent implementation blueprints (minimal-change, clean-architecture,
+pragmatic-balance) against the settled decisions in §1–§6, comparing their trade-offs, and
+selecting an approach. §8 records the chosen architecture in full; this section only marks what
+moved from open to resolved and why.
+
+- **Kernel language/engine selection for `Litos.Gui`** — Roslyn/C# scripting, out-of-process
+  (§4.3). Resolved earlier in this document, unaffected by the architecture phase.
+- **`Litos.Gui`'s consent gap for kernel mode's ungated local-code-execution capability** —
+  accepted, no new consent mechanism added (§5.3). Resolved earlier in this document.
+- **Kernel-call wire signal: a reserved tool name, not a new `ContentBlock` type.** All three
+  independent blueprints converged on this without prompting — a genuinely new `ContentBlock` kind
+  would require auditing and patching every `IChatProvider`'s message-mapping switch (confirmed
+  non-exhaustive in `AnthropicChatProvider.ToAnthropicMessage` today, throws
+  `NotSupportedException` at runtime rather than failing to compile) for a capability that, on the
+  wire, is indistinguishable from an ordinary tool call anyway. A reserved tool name needs **zero**
+  provider code changes on any of the six providers — the model already emits a standard
+  `tool_use` block; `AgentLoop` alone is responsible for recognizing the reserved name and routing
+  to `KernelSession` instead of `ToolRegistry.Resolve`. See §8 for the concrete mechanism.
+- **Engine abstraction**: no `IKernelEngine` interface for now. Considered and rejected — real
+  value if a second engine (Node) or a second face ever needs to reuse `KernelSession`'s lifecycle
+  logic, but speculative today given §2's `Litos.Gui`-only, Roslyn-only scope. `KernelSession`
+  talks to the Roslyn subprocess directly; revisit if a second engine becomes concrete need, not
+  before.
+- **Wire protocol shape**: flat, `System.Text.Json`-serialized, newline-delimited request/response
+  records — no JSON-RPC library, no `[JsonPolymorphic]` envelope. One addition kept from the
+  clean-architecture blueprint: a version handshake on subprocess startup (a single
+  `ProtocolVersion` int exchanged before any real message), cheap insurance against a silent
+  protocol mismatch as this evolves, without the larger versioned-envelope machinery.
+- **A real, separate bug found during the architecture phase, independent of which approach was
+  chosen**: `McpToolProxy.InvokeAsync` (`src/Litos.Tools.Mcp/McpToolProxy.cs`) calls
+  `IToolApprovalGate` internally. If the kernel's tool bridge invoked MCP tools through
+  `McpToolProxy` unmodified, MCP tools would stay **gated** from inside kernel-mode scripts —
+  directly contradicting §5.1's "ungated inside the kernel" decision. Invisible today only because
+  `Litos.Gui`'s `GuiApprovalGate` auto-approves unconditionally; a real, silent correctness bug the
+  moment any face has genuine per-call gating. Fix scoped in §8.
+- **Test coverage** — scoped concretely in §8's build sequence, per milestone, rather than left as
+  a general obligation.
+- **System-prompt wording, provider audit beyond Anthropic, mid-execution incremental visibility**
+  — still genuinely open, carried forward into §8's own open-items list rather than resolved here.
+
+## 8. Implementation blueprint
+
+The pragmatic-balance blueprint, chosen over the minimal-change and clean-architecture
+alternatives (§7), with the MCP ungated-invocation fix and the protocol version handshake folded
+in from the clean-architecture blueprint. This section is the concrete plan; §4–§6 remain the
+record of *why* the design looks this way.
+
+### 8.1 New projects
+
+```
+src/Litos.Kernel/Litos.Kernel.csproj          — library: KernelSession, tool bridge, protocol types
+src/Litos.Kernel.Host/Litos.Kernel.Host.csproj — exe: the Roslyn-hosted subprocess entry point
+tests/Litos.Kernel.Tests/Litos.Kernel.Tests.csproj
+```
+
+`Litos.Kernel.Host` is a separate executable project rather than a `Main` embedded in
+`Litos.Kernel`, mirroring `Litos.VsCodeHost`'s existing precedent in this codebase — it keeps
+`Microsoft.CodeAnalysis.CSharp.Scripting`'s dependency footprint isolated to the subprocess alone
+and makes the subprocess independently runnable/debuggable from the command line. `Litos.Kernel`
+references `Litos.Agent` (for `ITool`/`ToolRegistry`/`ToolResult`); `Litos.Kernel.Host` references
+`Litos.Kernel` only for the shared protocol record types.
+
+### 8.2 Component design
+
+**`Litos.Agent.Tools.ReservedToolNames`** (new, in `Litos.Agent`) — one constant,
+`KernelCode = "run_kernel_code"`. Lives in `Litos.Agent` (not `Litos.Kernel`) since `AgentLoop` is
+the thing switching on it and must not need a `Litos.Kernel` reference to do so — `Litos.Kernel`
+depends on `Litos.Agent`, never the reverse, matching every existing dependency direction in this
+codebase (`Litos.Agent` defines contracts, downstream projects implement/consume them).
+
+**`Litos.Gui.KernelCodeTool : ITool`** (new, registered in `Litos.Gui/Program.cs` only, not in the
+shared `LitosHostBuilder`, since kernel mode is `Litos.Gui`-scoped per §2 and other faces must not
+silently advertise a capability that doesn't work for them) — schema-only. `Name` is
+`ReservedToolNames.KernelCode`, `ParameterSchema` is `{ code: string }`, `Description` carries the
+§6 steering guidance. `InvokeAsync` returns `ToolResult.Error("internal routing error")` as a
+canary — `AgentLoop` must always intercept calls to this name before `ToolRegistry.Resolve` is
+reached, so this body should be unreachable in practice; a test asserts that invariant directly.
+
+**`Litos.Kernel.KernelProtocol`** — flat `System.Text.Json` record types, one JSON object per line
+over stdio: a `Handshake`/`HandshakeAck` pair carrying a single `ProtocolVersion` int (mismatch
+throws immediately, not a silent misbehavior); `EvalRequest(string Code)` /
+`EvalResult(string? Output, string? ReturnValueText, bool IsError)`; `ToolCallRequest(string
+RequestId, string ToolName, JsonElement Arguments)` / `ToolCallResponse(string RequestId, string
+Text, bool IsError)` for the tool-bridge round trip. No JSON-RPC library — matches how
+`ContentBlock`/`TranscriptEntry` already do plain `System.Text.Json` polymorphism/records
+elsewhere in this codebase, no new serialization convention introduced.
+
+**`Litos.Kernel.KernelSession`** — one instance per chat session (§4.4).
+- Constructor: `(string sessionId, string workingDirectory, string scratchDirectory, ToolRegistry tools)`.
+- Subprocess is **not** started in the constructor — spawned lazily on the first `RunAsync` call
+  (§4.4 "born lazily on first kernel-mode round"), via `ProcessStartInfo` with
+  `WorkingDirectory = workingDirectory` (§4.4), redirected stdio, `CreateNoWindow = true` — the
+  same shape `ShellTool` already uses (`src/Litos.Tools/Shell/ShellTool.cs`).
+- On spawn: performs the `Handshake`/`HandshakeAck` exchange, then sends one `init` message
+  carrying `scratchDirectory` and the bridged-tool schema list, so the subprocess can pre-inject
+  `SCRATCH_DIR` and generate per-tool wrapper functions into the Roslyn globals (§4.1, §4.5) before
+  any `EvalRequest` is sent.
+- `Task<ToolResult> RunAsync(string code, CancellationToken ct)` — sends `EvalRequest`, then
+  services any `ToolCallRequest` messages the subprocess emits by calling
+  `tools.Resolve(name).InvokeAsync(args, ct)` (the same `ITool` instance the sequential path would
+  use, per §4.1 — no `IToolApprovalGate` call anywhere in this path, per §5.1) and replying with
+  `ToolCallResponse`, until the matching `EvalResult` arrives. Wrapped in a hard timeout mirroring
+  `ShellTool._hardTimeout` (default ~5 min, overridable), tree-killing the process on timeout or
+  cancellation and marking the session dead so the *next* call transparently respawns rather than
+  writing to a closed stdin.
+- **MCP tool calls from inside `RunAsync`'s tool-call servicing must not go through
+  `McpToolProxy.InvokeAsync` unmodified** — per §7's flagged bug, that path calls
+  `IToolApprovalGate` internally, which would silently re-gate MCP tools from inside a supposedly
+  ungated kernel. Fix: `Litos.Tools.Mcp.McpToolProvider` gains a small `InvokeDirectAsync(serverName,
+  toolName, args, ct)` method that talks to `McpServerConnection.CallToolAsync` directly, with
+  `McpToolProxy.InvokeAsync` refactored to call through the same method before adding its own gate
+  check — one invocation path, two callers (gated for the direct/sequential path, ungated for
+  `KernelSession`'s tool-call servicing), no duplicated protocol-translation logic.
+- `Task ResetAsync(CancellationToken ct)` — kills the subprocess and clears lazy-start state, so
+  the next `RunAsync` respawns fresh. Backs `/kernel-reset` and crash/hang recovery (§4.4 table).
+- `ValueTask DisposeAsync()` — kills the subprocess if running. Called by `/new`, never by
+  `/compact` (§4.4 table — deliberately absent, with a one-line comment at the `/compact` handler
+  making that omission visibly intentional rather than something a future reader wonders was
+  forgotten).
+
+**`Litos.Kernel.KernelSessionManager`** — owns the `chatSessionId -> KernelSession` map (modeled as
+a dictionary keyed by session id, not a single nullable field, even though `Litos.Gui` only ever
+has one active chat session per window today — costs nothing and matches §4.4's "never shared
+across two different chat sessions" precisely). `GetOrCreate`, `ResetAsync`, `DestroyAsync`. No
+method reacts to `/compact` at all.
+
+**`Litos.Kernel.Host/Program.cs`** — the subprocess entry point. Reads `KernelProtocol` messages
+from stdin in a loop. On `init`, builds a `ScriptOptions` with the BCL imports the workload
+actually needs (`System`, `System.IO`, `System.Linq`, `System.Text.Json`, `System.Net.Http` — per
+§4.3's "file/data wrangling, light control flow" scope) and a globals object exposing `SCRATCH_DIR`
+plus one generated wrapper function per bridged tool name (a thin `Task<string>
+{toolName}(string argsJson)` that sends a `ToolCallRequest` and blocks on the matching
+`ToolCallResponse` — this is what lets synchronous-looking script code like `var text =
+read_file("a.txt");` actually be backed by a round trip to the host process). On `eval`, runs the
+code against the persisted `ScriptState` via `Script.ContinueWith`/`ContinueWithAsync` (Roslyn's
+mechanism for exactly the "accumulated state across many executions" requirement in §4.3) —
+**the script's own stdout must be redirected to a captured buffer, not left pointed at the
+subprocess's real stdout**, since that stream is reserved for the protocol; a script's ordinary
+`Console.WriteLine` writing directly to real stdout would corrupt the next protocol message with
+raw text, producing a confusing deserialization failure far from its actual cause. This is a
+specific, easy-to-miss correctness detail worth a dedicated test (§8.3).
+
+### 8.3 Routing in `AgentLoop`
+
+`AgentLoop`'s sequential `for` loop (`AgentLoop.cs:157-193`) gains one branch, no new outer
+structure:
+
+```csharp
+for (var i = 0; i < pendingToolCalls.Count; i++)
+{
+    var call = pendingToolCalls[i];
+    var result = call.Name == ReservedToolNames.KernelCode
+        ? await InvokeKernelSafelyAsync(call.Args, ct)   // mirrors InvokeToolSafelyAsync's try/catch shape
+        : await InvokeToolSafelyAsync(call.Name, call.Args, ct);
+    yield return new ToolCallResult(call.CallId, call.Name, result);
+    // unchanged from here — same ToolResultBlock append/persist/steering-check
+}
+```
+
+`AgentLoop` needs a `KernelSession?` reference to route to (nullable — a face without kernel mode,
+or a turn before the first kernel-mode round, has none). To avoid `Litos.Agent` taking a
+`ProjectReference` on `Litos.Kernel` (which would invert the existing dependency direction), this
+is threaded through as a small delegate — `Func<string, Task<ToolResult>>? kernelRunner` — an
+optional constructor parameter on `AgentLoop`, alongside the existing `compactor`/
+`streamIdleTimeout` optional parameters (`AgentLoop.cs:12-19` already has this exact pattern).
+`AgentLoopFactory.Create` gains a matching optional parameter; `Litos.Gui`'s per-turn
+`_session.LoopFactory.Create(...)` call (`MainWindow.axaml.cs:373`) supplies a closure capturing
+the current `KernelSession` from `KernelSessionManager.GetOrCreate(...)`.
+
+This means: **zero changes to `ContentBlock`, zero changes to any `IChatProvider`, zero changes to
+`JsonlTranscriptStore`'s message-persistence path.** A kernel round produces exactly one ordinary
+`ToolResultBlock`, indistinguishable in the persisted JSONL from any other tool call — the entire
+payoff of the reserved-tool-name decision made concrete.
+
+The kernel tool's schema reaches the model exactly like any other tool's: `KernelCodeTool` is
+registered as an ordinary `ITool` (in `Litos.Gui/Program.cs`, per §8.2), so it flows through
+`ToolRegistry.Schemas` → `ContextAccountant.BuildRequest` → `ChatRequest.Tools` →
+`AnthropicChatProvider.ToAnthropicTool` with no provider-side code path added at all.
+
+### 8.4 Data flow — one kernel-mode round, end to end
+
+1. `MainWindow.SubmitAsync` → `RunTurnFromTextAsync` → `_session.Loop.RunTurnAsync(...)` — no
+   change to how a turn is kicked off.
+2. `AgentLoop` builds the request; `tools.Schemas` includes `run_kernel_code` (registered
+   unconditionally for `Litos.Gui`, per §6's "always on" decision — no conditional system-prompt
+   branching, so no prompt-cache risk, per §6's caching note).
+3. The model, judging this round benefits from collapsing orchestration (§1), emits an ordinary
+   `tool_use` block named `run_kernel_code` with `{ "code": "..." }`. `AnthropicChatProvider`
+   parses this exactly like any other tool call — **zero Anthropic code changes**.
+4. `AgentLoop`'s round loop collects it into `pendingToolCalls` unchanged.
+5. The sequential loop reaches this call, matches `call.Name == ReservedToolNames.KernelCode`,
+   calls `kernelRunner(code)` instead of `InvokeToolSafelyAsync`.
+6. The closure resolves (lazily creating, if needed) this chat session's `KernelSession` via
+   `KernelSessionManager`, and calls `KernelSession.RunAsync(code, ct)`.
+7. First call for this session: `KernelSession` spawns `Litos.Kernel.Host` with
+   `cwd = workingDirectory`, performs the version handshake, sends `init` with the tool bridge's
+   schema list and the scratch path.
+8. The subprocess evaluates `code` against its persisted `ScriptState`. A bridged-tool call inside
+   the script (e.g. `read_file(...)`) sends a `ToolCallRequest` back over stdio and blocks; the
+   host process's `RunAsync` loop resolves and invokes the real `ITool` (MCP tools going through
+   the new ungated `InvokeDirectAsync` path, §8.2), replies with `ToolCallResponse`.
+9. The subprocess finishes, sends `EvalResult` with captured stdout/return value.
+10. `KernelSession.RunAsync` returns `ToolResult.Ok(...)`/`ToolResult.Error(...)` — same type the
+    sequential path already produces.
+11. `AgentLoop` yields `ToolCallResult`, appends `ChatMessage.ToolResult(call.CallId, result)`,
+    persists via `store.AppendAsync` — an ordinary `ToolResultBlock`. `MainWindow`'s existing
+    `ToolCallResult` handling renders it as a normal tool-call row, `run_kernel_code` shown as the
+    tool name — cosmetic, not required for correctness, a friendlier label is a deferred nicety.
+12. Loop continues; the model sees the program's output on the next request like any tool result.
+
+### 8.5 `Litos.Persistence` folder-per-session migration (§4.5, prerequisite)
+
+`src/Litos.Persistence/JsonlTranscriptStore.cs`:
+- `ResolveSessionPath` splits into a read path (checks the new `{sessionId}/transcript.jsonl`
+  form first, falls back to the legacy flat `{sessionId}.jsonl` if absent) and a write path (always
+  targets the new form). `AppendAsync` performs a one-time `File.Move` of a found legacy file into
+  the new folder shape before appending — a session migrates itself the next time anyone writes to
+  it, no separate migration command, no batch first-run scan, no partial-migration recovery story
+  needed. A session never touched again simply stays in its legacy flat form forever, which the
+  read-fallback still serves correctly.
+- `ListSessionsAsync` enumerates both shapes (`*.jsonl` directly under the owner directory, and
+  `*/transcript.jsonl` one level down) and de-duplicates by session id.
+- `BranchAsync`'s source read uses the fallback-aware read path; its new-session write always
+  targets the new folder form regardless of the source's shape.
+- New method `GetScratchDirectory(SessionOwner owner, string sessionId)` — added to
+  `ITranscriptStore` (a small, necessary interface change, since `Litos.Gui` only holds
+  `ITranscriptStore` via DI, not the concrete `JsonlTranscriptStore`) — returns
+  `{root}/{owner}/{sessionId}/scratch`, composing with the store's existing `_rootDirectory`
+  convention rather than introducing a second, potentially-divergent path scheme.
+
+### 8.6 Build sequence — shippable milestones
+
+**Milestone 0 — prove the riskiest unknowns, no tool bridge yet.**
+`Litos.Kernel`/`Litos.Kernel.Host` scaffolding; `KernelProtocol` with just `Handshake`/`eval`
+messages; `Litos.Kernel.Host/Program.cs` with a stdin loop and persisted `ScriptState`, no tool
+bridge, no `SCRATCH_DIR`; `KernelSession` process spawn + hard timeout + tree-kill;
+`ReservedToolNames`/`KernelCodeTool` stub; `AgentLoop`'s `kernelRunner` routing branch; minimal
+`Litos.Gui` wiring (`KernelSessionManager`, `/new` teardown) with a temp folder standing in for
+scratch. Manual test: `1+1` via kernel mode round-trips; a later round sees a variable set by an
+earlier one. `tests/Litos.Kernel.Tests`: lazy start, state persists across two `RunAsync` calls,
+`ResetAsync` clears state, a `while(true){}` script hits the hard timeout and is tree-killed.
+
+This milestone alone validates the two highest-risk unknowns: whether a `dotnet`-hosted subprocess
+can be spawned and reliably communicate over stdio from Avalonia's UI-thread context without
+deadlocking or leaking zombie processes (no existing precedent for this in the codebase — `ShellTool`
+is request/response-per-call, never long-lived), and whether Roslyn's `ScriptState` continuation
+actually gives the persistent-REPL semantics this whole design depends on.
+
+**Milestone 1 — tool bridge, scratch dir, MCP fix.**
+`init` protocol message carrying tool schemas + scratch path; Roslyn host generates per-tool
+wrapper functions; `JsonlTranscriptStore` folder-per-session migration + `GetScratchDirectory`;
+`McpToolProvider.InvokeDirectAsync` + `McpToolProxy` refactor (§8.2's flagged fix). Tests: tool-bridge
+round-trip with a fake `ITool`; folder-per-session + legacy-fallback coverage for all four
+`ITranscriptStore` methods; a test confirming the ungated MCP path never calls
+`IToolApprovalGate` while the direct/sequential path still does; a test confirming a script's
+`Console.WriteLine` mid-eval does not corrupt the next protocol message (§8.2's stdout-capture
+detail).
+
+**Milestone 2 — system prompt, real steering, `/kernel-reset`.**
+Fixed `Guidelines` steering text (§6, wording still to be drafted) added unconditionally for
+`Litos.Gui`; `/kernel-reset` slash command wired into `TryHandleSlashCommandAsync` and
+`SlashCommands.All`. Manual end-to-end test: a multi-step prompt ("read file A, and if it imports
+X also read file B") actually collapses into one round in the transcript. Tests: `AgentLoop`
+routing (a fake provider emitting `run_kernel_code` routes to `kernelRunner`, not
+`ToolRegistry.Resolve`; ordinary calls are unaffected; a null `kernelRunner` produces a clean
+`ToolResult.Error`, not a `NullReferenceException`); `/new` disposes the kernel session;
+`/kernel-reset` resets it.
+
+**Milestone 3 — hardening, pre-ship.**
+Deployment: `Litos.Kernel.Host`'s published path resolution for `Litos.Gui`'s self-contained
+single-file publish (a `ProjectReference` alone won't bundle a second executable into a
+single-file publish output — needs its own publish step alongside `Litos.Gui.exe`, resolved via
+`AppContext.BaseDirectory` + a fixed relative filename at runtime, with a clear startup error if
+missing). Process-leak audit on crash/force-quit paths — reuse `Win32JobObject`'s existing
+kill-on-close job-object assignment (already used for MCP server subprocesses,
+`src/Litos.Gui/Program.cs`) so kernel subprocesses are covered by the same mechanism with no new
+code. Optional: friendlier `run_kernel_code` label in `ToolCallRow`.
+
+### 8.7 Still open, carried forward from §7
+
+- **Exact wording of the system-prompt `Guidelines` addition** (§6) — steering the model toward
+  kernel mode for multi-step, result-dependent orchestration and away from it for single
+  independent calls. Drafted in Milestone 2, not before.
+- **Provider audit beyond Anthropic** — per §8.3, the reserved-tool-name approach needs zero
+  provider changes for Anthropic; OpenAI/Gemini/OpenRouter/MeshApi/Local are out of scope per §2's
+  `Litos.Gui`-only framing (Anthropic is Gui's default/primary provider) but should be spot-checked
+  before any of those providers is used with kernel mode enabled.
+- **Mid-execution incremental visibility** — v1 is request/response only, matching `ShellTool`'s
+  own today (no incremental output either); the UI shows nothing until a kernel round finishes.
+  `KernelProtocol`'s `ToolCallRequest` messages are already observed one at a time inside
+  `KernelSession.RunAsync` (§8.2 step 8), so a future revision could surface each as a new
+  `AgentEvent` (e.g. `KernelToolCallObserved`) without a protocol change — deferred, not designed
+  away.
+- **`ScriptState` unbounded memory growth** across a very long session (every variable/import from
+  every prior kernel round stays alive in the subprocess) — no mitigation planned for v1, `/kernel-reset`
+  is the accepted escape hatch; worth a code comment marking this a known, accepted limitation.
