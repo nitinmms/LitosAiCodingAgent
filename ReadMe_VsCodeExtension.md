@@ -615,21 +615,52 @@ window (a "Reload Window" button in the popup after a successful save) to actual
 key, which VS Code performs reliably by tearing down and restarting the whole extension host — not
 just the one child process this extension spawned itself.
 
-**Windows regression, fixed**: `POST /config/keys`' `configured` flag was computed by calling
-`LitosConfig.Load()` *in the same still-running process* right after `SaveKeys` wrote the entries —
-correct on macOS/Linux, where keys go to `~/.litos/config.json` and `Load()` re-reads that file fresh
-off disk, but wrong on Windows, where keys go to `EnvironmentVariableTarget.User` (a registry write)
-that `Environment.GetEnvironmentVariable`'s default process-scope target cannot observe until the
-process actually restarts. The saved key was always written correctly; only the immediate
-"configured?" check was wrong. This made every Windows save of a chat-provider key (e.g. pasting an
-OpenRouter key into `/keys`) report "Saved, but no chat provider is configured yet" even though the
-key was on disk in the registry and a window reload would have picked it up fine.
-`ConfigEndpoints.IsConfiguredAfterSave` fixes this: `configured` is now
+**Windows regression #1, fixed — the immediate post-save check**: `POST /config/keys`' `configured`
+flag was computed by calling `LitosConfig.Load()` *in the same still-running process* right after
+`SaveKeys` wrote the entries — correct on macOS/Linux, where keys go to `~/.litos/config.json` and
+`Load()` re-reads that file fresh off disk, but wrong on Windows, where keys go to
+`EnvironmentVariableTarget.User` (a registry write) that `Environment.GetEnvironmentVariable`'s
+default process-scope target cannot observe until the process actually restarts. The saved key was
+always written correctly; only the immediate "configured?" check was wrong. This made every Windows
+save of a chat-provider key (e.g. pasting an OpenRouter key into `/keys`) report "Saved, but no chat
+provider is configured yet". `ConfigEndpoints.IsConfiguredAfterSave` fixes this: `configured` is now
 `reloaded.AvailableChatProviders.Count > 0` (the config.json/non-Windows case, and any provider that
 was already configured before this save) **or** the just-submitted request contained an entry for a
 chat-provider name (`LitosConfig.ChatProviderNames`) — covering the Windows env-var case, where the
 write is real but this process can't see it yet. Extracted as a pure static method (same shape as
 `BuildKeyStatus` below) specifically so it's unit-testable without touching real user-scope env vars.
+
+**Windows regression #2, fixed — "Reload Window" still didn't pick up the key**: fixing regression #1
+surfaced a second, deeper problem. Even after the popup correctly reported success and the user
+clicked "Reload Window", the *next* `Litos.VsCodeHost.exe` process — freshly spawned by
+`hostProcess.ts`'s `cp.spawn` — still didn't see the key. `workbench.action.reloadWindow` tears down
+and rebuilds VS Code's *extension host*, but not the underlying OS-level VS Code process; `cp.spawn`
+inherits `env: process.env`, which is a snapshot of that OS process's environment taken once, when
+VS Code itself was launched — before the key was ever saved. Only a full quit-and-relaunch of VS Code
+itself (not just a window reload) gave the child process a fresh environment block that included the
+registry write. Root-caused to `LitosConfig.Load()` (and `IsSetByEnvironmentVariable`) calling the
+parameterless `Environment.GetEnvironmentVariable(name)` overload, which is a **process-scope
+snapshot** — confirmed experimentally: within a single process, writing a var via
+`SetEnvironmentVariable(name, value, EnvironmentVariableTarget.User)` and immediately reading it back
+via the parameterless overload returns null, while reading it back via the `EnvironmentVariableTarget.
+User` overload returns the value live off the registry, in that same process, no restart needed. Fixed
+by adding `LitosConfig.GetEnvironmentVariable` (a private helper `Load()`/`IsSetByEnvironmentVariable`
+now both route through): process-scope first, then — Windows only, guarded by
+`OperatingSystem.IsWindows()` since `EnvironmentVariableTarget.User` throws
+`PlatformNotSupportedException` elsewhere — `EnvironmentVariableTarget.User` as a live fallback. This
+makes a Windows key save take effect immediately in every already-running Litos process (Gui, Console,
+a VsCodeHost spawned before the save) with no restart of any kind required; "Reload Window" remains
+useful only because a stopped `Litos.VsCodeHost.exe` process must still be *spawned* the first time
+(there's still no live DI-container reload — see "No live reload" above), not because the environment
+needs refreshing anymore. macOS/Linux are untouched by this change (the `IsWindows()` guard means
+`GetEnvironmentVariable` is exactly its old parameterless-only behavior there) since they never had
+this problem — `SaveKeys` writes `config.json` on those platforms, which `LoadFromDisk` already
+re-reads fresh on every `Load()` call regardless of process age.
+`tests/Litos.VsCodeHost.Tests/ConfigEndpointsTests.cs`'s `ClearedEnvironment` helper had to grow a
+matching Windows-only User-scope save/restore (never a bare clear, to avoid ever permanently deleting
+a real key that happened to be set on the test-running machine) once `IsSetByEnvironmentVariable`
+started reading that scope too — a real `OPENROUTER_API_KEY` on the dev machine leaking into an
+"unset" assertion is exactly the regression that caught this.
 
 **Caution for anyone testing this locally**: the Windows env-var write path cannot be sandboxed by
 overriding `USERPROFILE`/`HOME` in a test process's environment the way the file-based `config.json`

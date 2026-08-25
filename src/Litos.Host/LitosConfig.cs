@@ -74,8 +74,8 @@ public sealed record LitosConfig(
         {
             // Environment variable always wins; the config file is only a fallback
             // for a provider whose env var is absent.
-            var value = Environment.GetEnvironmentVariable(envVar)
-                ?? (provider == "gemini" ? Environment.GetEnvironmentVariable("GOOGLE_API_KEY") : null)
+            var value = GetEnvironmentVariable(envVar)
+                ?? (provider == "gemini" ? GetEnvironmentVariable("GOOGLE_API_KEY") : null)
                 ?? onDisk?.ApiKeys.GetValueOrDefault(provider);
 
             if (!string.IsNullOrEmpty(value))
@@ -87,7 +87,7 @@ public sealed record LitosConfig(
             DefaultModel: onDisk?.DefaultModel,
             LastWorkingDirectory: onDisk?.LastWorkingDirectory,
             ApiKeys: apiKeys,
-            LocalBaseUrl: Environment.GetEnvironmentVariable("LOCAL_BASE_URL") ?? onDisk?.LocalBaseUrl,
+            LocalBaseUrl: GetEnvironmentVariable("LOCAL_BASE_URL") ?? onDisk?.LocalBaseUrl,
             ShellCommandTimeoutSeconds: onDisk?.ShellCommandTimeoutSeconds);
     }
 
@@ -102,8 +102,29 @@ public sealed record LitosConfig(
     /// </summary>
     public static bool IsSetByEnvironmentVariable(string providerName) =>
         EnvVarNames.TryGetValue(providerName, out var envVar) &&
-        (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(envVar))
-            || (providerName == "gemini" && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GOOGLE_API_KEY"))));
+        (!string.IsNullOrEmpty(GetEnvironmentVariable(envVar))
+            || (providerName == "gemini" && !string.IsNullOrEmpty(GetEnvironmentVariable("GOOGLE_API_KEY"))));
+
+    /// <summary>
+    /// Reads an environment variable the way a value just saved by ConfigEndpoints.cs/
+    /// ApiKeysWindow's Windows path needs to be observed: process-scope first (so a real value the
+    /// user's own shell/session/CI exported before launching Litos always wins), then — Windows
+    /// only — falling back to EnvironmentVariableTarget.User. That fallback is not a snapshot the
+    /// way the parameterless overload is: .NET reads it live from the registry on every call, in
+    /// any process, regardless of when that process started. Without it, a key saved via
+    /// SetEnvironmentVariable(..., EnvironmentVariableTarget.User) — which persists to the registry
+    /// correctly — stayed invisible to every already-running process, including a freshly spawned
+    /// Litos.VsCodeHost.exe child of a VS Code "Reload Window", which restarts the extension host
+    /// but not the underlying OS process whose environment block was captured at VS Code's own
+    /// launch. That forced a full VS Code quit-and-relaunch (not just a reload) for a newly saved
+    /// key to ever take effect. EnvironmentVariableTarget.User throws
+    /// PlatformNotSupportedException on non-Windows, hence the OperatingSystem.IsWindows() guard —
+    /// non-Windows platforms have no such fallback to make and don't need one, since SaveKeys
+    /// writes config.json there instead, which LoadFromDisk already re-reads fresh every call.
+    /// </summary>
+    private static string? GetEnvironmentVariable(string name) =>
+        Environment.GetEnvironmentVariable(name)
+        ?? (OperatingSystem.IsWindows() ? Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User) : null);
 
     public void Save()
     {
