@@ -2,7 +2,7 @@
   "name": "litos-vscode",
   "displayName": "Litos",
   "description": "Open-source AI coding agent for VS Code. Reads and edits files, runs commands, uses MCP servers, and works with cloud or local models.",
-  "version": "0.1.13",
+  "version": "0.1.15",
   "publisher": "litosai",
   "icon": "media/icon.png",
   "license": "SEE LICENSE IN LICENSE.txt",
