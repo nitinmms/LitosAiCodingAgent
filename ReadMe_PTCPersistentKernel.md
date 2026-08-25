@@ -30,19 +30,39 @@ Agent's own trust model rather than routing every kernel action through a per-ca
 `ITool`/`ToolRegistry` are still reused as the tool surface, but `IToolApprovalGate` is not the
 kernel's authorization boundary the way it is for direct tool calls.
 
-**Decided for `Litos.Gui`: kernel mode is always on, with no session-level opt-in and no
-replacement consent checkpoint (§5.1), and the engine is Roslyn/C# scripting, out-of-process
-(§4.3).** Earlier drafts of this document treated kernel mode as a per-session, per-face opt-in
-(closer to OpenAI PTC's framing) specifically so that "the user turned this on" could stand in for
-the per-call approval this design otherwise removes (§5.1). That framing has been superseded for
-`Litos.Gui`: kernel mode is available in every session from the start, unconditionally, matching
-how Prime Agent itself has no on/off switch for its own kernel at all (confirmed directly against
-Prime Agent's own docs — `settings.md` and `rlm-runtime.md` describe the kernel as "created lazily
-on first IPython use," a startup-cost optimization, not a user-facing toggle). This is a deliberate
-choice, not an oversight, and it removes the one consent moment §5.1 previously rested its
-"ungated but explicitly opted into" argument on — see §5.1's revised text for what this actually
-means and what remains unresolved as a result. `Litos.Console`/`Litos.Api`/`Litos.VsCodeHost` are
-out of scope for this decision (not addressed by this document at all, for now) — see §2.
+**Final decision for `Litos.Gui`: kernel mode is a session-level toggle, and the tool surface
+exposed to the model depends entirely on its state — OFF exposes today's full tool list with no
+kernel involved at all; ON exposes `run_kernel_code` as the model's *only* tool, with every other
+capability reachable only through the kernel's bridge (§8.7).** This document went through two
+earlier framings before landing here, and both are worth recording since the reasoning that ruled
+each one out still matters:
+
+1. **Earlier still: a session-level opt-in, closer to OpenAI PTC's framing**, where "the user
+   turned this on" stood in for the per-call approval this design otherwise removes (§5.1's
+   original argument), but the *model* still chose per round whether to use it, alongside every
+   ordinary tool call remaining directly visible.
+2. **Superseded next: always on, no toggle at all**, matching Prime Agent's own posture (its
+   `settings.md`/`rlm-runtime.md` describe the kernel as "created lazily on first IPython use," a
+   startup-cost detail, not a user-facing on/off decision) — but *both* the kernel tool and every
+   ordinary tool stayed visible to the model simultaneously, every round, with no exposure
+   difference between the two. This surfaced a real risk: with nothing forcing the model toward
+   the kernel and no consequence for ignoring it, adoption depended entirely on unwritten
+   system-prompt wording (§6), and the model could validly skip `run_kernel_code` for an entire
+   session with no way to tell from the architecture alone whether that was ever a problem.
+3. **Final, current decision**: bring back a toggle (reversing step 2), but change *what the
+   toggle controls* — not "is the kernel available at all" (step 1's framing, which left the
+   model's per-round judgment as the only lever), but "is the kernel the model's *only* tool right
+   now." This closes step 2's adoption-risk gap outright — when the toggle is ON, there is no
+   judgment call left for the model to get wrong, since it has exactly one tool — while confining
+   the resulting cost (subprocess overhead on every call, an ungated tool surface with no
+   sequential fallback if a kernel round fails) to sessions where the user deliberately chose it,
+   rather than paying that cost unconditionally the way step 2 did. It also restores the consent
+   checkpoint step 2 removed: flipping the toggle ON is now the explicit, visible act of granting
+   ungated kernel access (§5.3's "accept the gap" reasoning is revised accordingly — see §5.3).
+
+The engine remains Roslyn/C# scripting, out-of-process (§4.3), unaffected by this reversal.
+`Litos.Console`/`Litos.Api`/`Litos.VsCodeHost` are out of scope for this decision (not addressed by
+this document at all, for now) — see §2.
 
 ## 2. Design goals and non-goals
 
@@ -54,12 +74,14 @@ out of scope for this decision (not addressed by this document at all, for now) 
   other five providers Litos supports).
 - Reuse `ITool`/`ToolRegistry` for the tool surface where a kernel-mode script calls a tool
   Litos already defines — same schema, same underlying implementation as a direct call.
-- Ship kernel mode as an always-available capability for `Litos.Gui`, present in every session
-  from the start (§5.1) — not gated behind a per-session opt-in decision. `IToolApprovalGate`
-  remains the authorization boundary for the existing direct/sequential tool-calling path,
-  unchanged (§5.2); kernel-mode rounds have no equivalent boundary at all (§5.1).
+- Ship kernel mode as a **session-level toggle** for `Litos.Gui` (§1, §5.1) — OFF exposes today's
+  full tool list with the kernel absent entirely; ON exposes `run_kernel_code` as the model's only
+  tool, routing every capability through the kernel's bridge. `IToolApprovalGate` remains the
+  authorization boundary for the direct/sequential path when the toggle is OFF, unchanged (§5.2);
+  when the toggle is ON, there is no equivalent per-call boundary at all (§5.1) — flipping the
+  toggle itself is the authorization moment (§5.3).
 - **Scoped to `Litos.Gui` only, for now.** `Litos.Console`, `Litos.Api`, and `Litos.VsCodeHost` are
-  explicitly out of scope for this document's decisions (always-on, Roslyn/C#) — those faces may
+  explicitly out of scope for this document's decisions (the kernel toggle, Roslyn/C#) — those faces may
   eventually want kernel mode, but nothing here should be read as having decided their engine
   choice, their opt-in model, or their timeline. Where earlier sections still describe multi-face
   reasoning (e.g. §4.3's original Node-vs-Python-per-face discussion), that reasoning is retained
@@ -67,11 +89,10 @@ out of scope for this decision (not addressed by this document at all, for now) 
 
 **Non-goals**
 - Not a replacement for the existing sequential tool-calling path as a mechanism — `AgentLoop`'s
-  sequential `ToolUseBlock` handling (§6) is untouched code-wise. But unlike earlier drafts, this
-  document no longer treats "kernel mode is optional, off by default" as a design goal for
-  `Litos.Gui`: it is on, unconditionally, in every session (§5.1). Whether the model *chooses* to
-  emit a kernel-program block vs. an ordinary tool call in a given round is still a per-round model
-  decision (§6) — only the session-level availability is no longer conditional.
+  sequential `ToolUseBlock` handling (§6) is untouched code-wise, and remains the *only* path when
+  the toggle is OFF. When the toggle is ON, though, this is a deliberate, full replacement for that
+  round's tool surface — not a per-round model choice between the two (§6 revised accordingly):
+  the toggle decides which mode a session is in, not the model.
 - Not an attempt to reproduce OpenAI's hosted, network-less, disk-less V8 sandbox. Litos runs
   locally with the user's own filesystem/shell access already exposed through `ShellTool`; a
   from-scratch hermetic sandbox is a much larger undertaking than this document scopes (see §5.4).
@@ -171,11 +192,10 @@ flowchart TD
 
 ### 4.1 What runs where
 
-- **`AgentLoop`** stays the turn/round driver. Kernel mode's *availability* is no longer a
-  per-round or per-session condition `AgentLoop` checks (§5.1 — always on for `Litos.Gui`); what
-  `AgentLoop` still does per round is route based on *which kind of block the model actually
-  emitted* (see §6) — an ordinary `ToolUseBlock` still takes the existing sequential path, a
-  kernel-program block routes to `KernelSession`. Everything about request-building, transcript
+- **`AgentLoop`** stays the turn/round driver. What `AgentLoop` does per round is route based on
+  *which kind of block the model actually emitted* (see §6 for the final, toggle-gated shape this
+  takes) — an ordinary `ToolUseBlock` still takes the existing sequential path, a kernel-program
+  block routes to `KernelSession`. Everything about request-building, transcript
   persistence, and the turn-ends-when-no-tool-calls condition is unchanged for non-kernel rounds.
 - **`KernelSession`** owns one interpreter process for the *lifetime of the chat session* (not
   reset per round, not reset per turn) — this is the specific thing that makes this a "persistent
@@ -441,26 +461,27 @@ The previous draft's protections are gone, and should be named rather than left 
   covers, not a special case: `npm install` from inside a kernel script is exactly as available,
   and exactly as ungated, as everything else the process can already do.
 
-**Superseded for `Litos.Gui`: there is no longer an enable-kernel-mode decision to serve as that
-authorization boundary.** The paragraph above (retained for its reasoning, since it still explains
-*why* per-call gating was rejected) originally concluded that responsibility moves up to "the point
-where a user opts a session into kernel mode" — modeled on how enabling an MCP server is a
-whole-server decision, not a per-tool-call one. That conclusion assumed kernel mode would stay an
-opt-in. Per the decision recorded in §1, `Litos.Gui` instead follows Prime Agent's own shape
-exactly: kernel mode is present, unconditionally, in every session from the start, with no toggle
-and no first-run consent screen substituting for it. This is a direct, confirmed match to Prime
-Agent's own behavior (its settings/runtime docs describe the kernel as created lazily on first use,
-a startup-cost detail, not a user-facing on/off decision) — Litos is not inventing a gap Prime
-Agent avoided, it is adopting the same posture Prime Agent already ships with.
+**Final decision (reversing an intermediate always-on draft): the enable-kernel-mode decision is
+restored as the authorization boundary, via the session-level toggle from §1.** The paragraph above
+concluded that responsibility for authorization sits at "the point where a user opts a session into
+kernel mode" — modeled on how enabling an MCP server is a whole-server decision, not a
+per-tool-call one. An intermediate draft of this document dropped that opt-in entirely, matching
+Prime Agent's own always-on posture (its settings/runtime docs describe the kernel as created
+lazily on first use, a startup-cost detail, not a user-facing on/off decision) — but doing so also
+removed the one moment a `Litos.Gui` user could knowingly grant ungated kernel access, and (per §1)
+left the kernel's actual *usage* dependent entirely on unwritten system-prompt persuasion rather
+than anything the architecture itself guaranteed. §1 records why that framing was superseded a
+second time: the toggle is back, but now controls tool-surface exclusivity (kernel-only when ON)
+rather than mere availability alongside everything else.
 
-**What this honestly means: for `Litos.Gui`, there is currently no user-facing checkpoint at all
-between "kernel mode exists" and "a kernel-mode script has ambient, ungated OS access."** Naming
-this plainly rather than re-deriving a substitute checkpoint that isn't actually built: the
+**What this means concretely**: flipping the toggle ON *is* the authorization moment — the same
 "roughly the same magnitude of trust as `ApproveAlways` for the whole session" comparison this
-section previously used to justify the enable-decision as sufficient no longer has an enable-
-decision to attach to — the trust extended is the same, but the moment where a user could
-knowingly grant it does not exist in the always-on design. §5.3 discusses what, if anything, should
-replace it.
+section originally used now has a real decision to attach to again. Once ON, everything inside a
+kernel round is ungated exactly as described above (no per-call approval, no host-request-channel
+gating, package installs and file/network/subprocess access all in scope) — the toggle is a
+whole-session decision, not a per-round or per-call one, consistent with how enabling an MCP server
+already works in this codebase (§3's recap). §5.3 covers what UI surfaces this toggle and what, if
+anything, should accompany it.
 
 ### 5.2 Direct tool calls are unaffected
 
@@ -472,38 +493,36 @@ for every round that isn't a kernel-mode round. The trust boundary described her
 what a script running inside `KernelSession` can do on its own, not a blanket loosening of Litos's
 existing tool-approval model.
 
-### 5.3 The `Litos.Gui` gap, under the always-on decision — accepted, not fixed
+### 5.3 The `Litos.Gui` gap — resolved by the toggle, not accepted
 
 §3's recap still applies: `Litos.Gui`'s `GuiApprovalGate` auto-approves everything, and `Litos.Gui`
-has no per-tool MCP gating at all, only a whole-server toggle. An earlier draft of this section
-argued that gap "matters more, not less" under the Prime-Agent trust model, but resolved it by
-pointing at a checkpoint that has since been removed: "the decision to enable kernel mode for a
-session at all," surfaced as an explicit, visible per-session opt-in. Per §1/§5.1, that checkpoint
-no longer exists for `Litos.Gui` — kernel mode is on, unconditionally, in every session, with no
-toggle to point at.
+has no per-tool MCP gating at all, only a whole-server toggle. Two earlier drafts of this section
+went through different resolutions worth recording: the first pointed at "the decision to enable
+kernel mode for a session at all" as the checkpoint; the second (an intermediate always-on draft)
+removed that checkpoint entirely and this section briefly concluded `Litos.Gui` should simply
+**accept** having zero consent moments anywhere in its tool-execution model. §1 records why
+always-on was itself superseded — the toggle is back, so that "accept the gap" conclusion no
+longer applies and is reversed here.
 
-**Decision: accept the gap.** `Litos.Gui` gets no new consent mechanism for kernel mode — no
-per-session toggle (already ruled out, §5.1), no first-run notice, no wired-up approval dialog.
-The reasoning: `GuiApprovalGate` already auto-approves every direct tool call today
-(`shell`/`write_file`/everything, §3), so a user running `Litos.Gui` at all is already trusting the
-process with broad local capability; kernel mode's ambient access is a difference in *how* that
-capability is reached (a script vs. a sequence of already-auto-approved calls), not a new category
-of trust the user hasn't implicitly already granted by running Gui unconfigured. This is
-consistent with the always-on decision in §1/§5.1 rather than an inconsistent carve-out for kernel
-mode specifically.
+**Current decision: the kernel toggle itself is the consent checkpoint, and it needs to read as
+one, not as an incidental settings switch.** Flipping it ON is the explicit, visible act that
+grants a session ungated, kernel-only local-code-execution capability (§5.1) — this should be
+surfaced as a deliberate control (e.g. a labeled toggle near `ProviderButton`/`ModelButton` in
+`MainWindow.axaml.cs`, not buried in a settings submenu), consistent with how enabling an MCP
+server is already a whole-server, user-initiated decision in this codebase (§3). Whether the
+toggle additionally warrants a one-time confirmation the first time a user turns it on (vs. simply
+flipping state immediately) is left to the implementation phase (§8) — either is consistent with
+this decision, since the toggle's mere existence and visibility is the load-bearing part, not the
+exact click-through ceremony.
 
-**Stated plainly, not glossed over: this means `Litos.Gui` has zero consent moments anywhere in
-its tool-execution model, kernel or otherwise, and this document leaves it that way.** Two other
-options were considered and rejected for now, recorded here so the reasoning isn't lost:
-- A one-time first-run notice (shown once on install, describing the agent's local-code-execution
-  capability) — rejected as adding process without changing the actual trust posture; `Litos.Gui`
-  would still auto-approve everything the moment past that one screen.
-- Finally wiring `ConfirmationDialog.axaml.cs` into `GuiApprovalGate` for the *direct* sequential
-  tool-calling path (not kernel-mode itself, since §5.1 already rejected per-call gating inside the
-  kernel as self-defeating) — a real, valid improvement to `Litos.Gui`'s existing approval gap, but
-  scoped as separate, pre-existing technical debt this feature does not need to fix as a
-  prerequisite. If `Litos.Gui`'s auto-approve-everything posture changes in the future, this
-  section's reasoning should be revisited, since it currently depends on that posture holding.
+**What this does *not* revisit**: `GuiApprovalGate`'s auto-approve-everything behavior for the
+*direct* sequential path (toggle OFF) is unchanged and out of scope here, same as before — this
+feature does not require fixing that pre-existing gap as a prerequisite. The difference from the
+earlier "accept the gap" conclusion is narrower and specific: kernel mode, when the toggle is ON,
+now has its own dedicated consent moment that does not depend on `GuiApprovalGate`'s posture at all
+— it is not inherited from "Gui already trusts everything," it is a decision the user makes
+explicitly by flipping the toggle, independent of how permissive the rest of Gui's tool-approval
+model is or ever becomes.
 
 ### 5.4 What this document is not attempting
 
@@ -517,54 +536,70 @@ hosted-sandbox model) and would need to be evaluated as such, not layered on top
 
 ## 6. Where this plugs into `AgentLoop`
 
-Kernel mode's *availability* is unconditional for `Litos.Gui` (§5.1), but which path a given round
-actually takes is still a **per-round choice the model makes**, not a global replacement for the
-sequential path — the model can still emit an ordinary `tool_use` block for a simple, single,
-independent call, and reach for a kernel-program block only when it judges a round's work benefits
-from collapsing multi-step, result-dependent orchestration (§1):
+The toggle from §1 decides which tool surface a session has **before** any round starts — this is
+no longer a per-round choice the model makes between two visible options. When the toggle is OFF,
+`AgentLoop` behaves exactly as it does today, full stop, no kernel awareness at all. When the
+toggle is ON, `run_kernel_code` is the *only* entry in `tools.Schemas` — the sequential path
+(`AgentLoop.cs:157-194`) is still the exact same code, unchanged, but the model has no ordinary
+tool left to call into it with, since `ToolRegistry`'s advertised schema list has been reduced to
+one entry:
 
 ```mermaid
 flowchart TD
-    START(["Round starts"]) --> REQ["Build request, stream model response"]
-    REQ --> CHECK{"Tool calls in
-    the response?"}
-    CHECK -- "No" --> DONE(["Turn ends"])
-    CHECK -- "Yes, ordinary tool_use blocks" --> SEQ["Existing sequential path
-    (AgentLoop.cs:157-194, unchanged)"]
-    CHECK -- "Yes, a kernel-program block" --> KER["KernelSession.RunAsync(code)
+    TOGGLE{"Session's kernel
+    toggle state"}
+    TOGGLE -- "OFF" --> REQ_OFF["Build request —
+    tools.Schemas = today's full list,
+    no run_kernel_code"]
+    REQ_OFF --> SEQ["Sequential path, unchanged
+    (AgentLoop.cs:157-194)
+    gated by IToolApprovalGate, §5.2"]
+    SEQ --> REQ_OFF
+
+    TOGGLE -- "ON" --> REQ_ON["Build request —
+    tools.Schemas = [run_kernel_code] ONLY"]
+    REQ_ON --> CHECK{"Model called
+    run_kernel_code?"}
+    CHECK -- "No tool call at all" --> DONE(["Turn ends"])
+    CHECK -- "Yes" --> KER["KernelSession.RunAsync(code)
     — persistent Roslyn/C# interpreter, tool bridge,
     ungated inside — no IToolApprovalGate, per §5.1"]
-    SEQ --> REQ
     KER --> DONE2["One ToolResultBlock:
     program's captured output"]
-    DONE2 --> REQ
+    DONE2 --> REQ_ON
 
-    style START fill:#2d6a4f,color:#fff
+    style TOGGLE fill:#2d6a4f,color:#fff
     style DONE fill:#2d6a4f,color:#fff
 ```
 
 This preserves the existing turn/round vocabulary from `ReadMe_Architecture.md`: a kernel-mode
 round is still exactly one round (one pass through `AgentLoop`'s `while (true)`), it simply may
 contain many tool invocations and control flow that would otherwise have needed several rounds to
-express. A model that never emits a kernel-program block behaves exactly as it does today — this
-is additive, not a fork of the loop.
+express. There is no longer a "the model chose not to use it" outcome to worry about when the
+toggle is ON — with exactly one tool available, the model either calls it or ends the turn with
+plain text, the same binary choice it already faces today when only one tool happens to be
+relevant.
 
-**System-prompt implication of "always on" (ties to §7's caching note):** since kernel mode is
-unconditional for every `Litos.Gui` session, the system prompt's description of this capability —
-a schema entry in the tools section, plus fixed steering guidance on *when* to reach for it vs. an
-ordinary tool call (the §1 "read A, and if it imports X also read B" framing) — is itself
-unconditional, static content, present in every session's prompt in the same position every time.
-This is deliberately simpler than the alternative an opt-in design would have required (a system
-prompt that varies per session based on a kernel-enabled flag): because there is no branch, adding
-this guidance carries no risk of prompt-prefix divergence between sessions or turns, so it is
-exactly as cache-safe as any other fixed content already in the `Guidelines`/`ToolsList` sections
-described in `ReadMe_Architecture.md`'s system-prompt breakdown.
+**System-prompt implication of the toggle (ties to §7's caching note):** unlike the intermediate
+always-on draft, the system prompt's tool-schema section and `Guidelines` steering text now
+genuinely differ by toggle state, not just by one added entry — OFF renders today's content
+unchanged; ON renders a single-tool schema list plus different steering guidance (there's no "when
+to reach for it vs. an ordinary call" framing left to write, since there is no ordinary call
+available — the guidance instead needs to cover how to use the kernel well, e.g. §1's "read A, and
+if it imports X also read B" as an in-kernel pattern rather than a decision point). This means the
+system prompt's prefix is **stable within one toggle state but changes when the toggle flips** —
+a real, one-time prompt-cache invalidation at the moment of the flip, not a per-turn cost. This is
+no worse than switching providers or models already is in this codebase (both already vary the
+system prompt/request shape) and is fully cache-safe across sessions sharing the same toggle state.
 
-Whether a given provider/model can even emit a "kernel-program block" is itself a per-provider
-question (analogous to PTC's own `allowed_callers` opt-in, and to the existing per-provider
-request-shape differences already handled in `Litos.Providers.MeshApi`, e.g. the
-reasoning-model/Bedrock-model request-building fixes) — left for the implementation phase, not
-resolved here.
+Whether a given provider/model can even emit a `run_kernel_code` call the same way it emits any
+other tool call is itself a per-provider question (analogous to PTC's own `allowed_callers` opt-in,
+and to the existing per-provider request-shape differences already handled in
+`Litos.Providers.MeshApi`, e.g. the reasoning-model/Bedrock-model request-building fixes) — left
+for the implementation phase, not resolved here. Note this question is now lower-stakes than under
+the always-on/per-round-choice framing: if a given provider mishandles it, the failure mode with
+the toggle ON is "the model has no usable tool this session," an immediately visible and diagnosable
+failure — not a silently-skipped capability the way an ignorable per-round option could be.
 
 ## 7. Resolved during the architecture phase
 
@@ -575,9 +610,17 @@ selecting an approach. §8 records the chosen architecture in full; this section
 moved from open to resolved and why.
 
 - **Kernel language/engine selection for `Litos.Gui`** — Roslyn/C# scripting, out-of-process
-  (§4.3). Resolved earlier in this document, unaffected by the architecture phase.
+  (§4.3). Resolved earlier in this document, unaffected by the architecture phase or the
+  toggle reversal below.
 - **`Litos.Gui`'s consent gap for kernel mode's ungated local-code-execution capability** —
-  accepted, no new consent mechanism added (§5.3). Resolved earlier in this document.
+  resolved by the session-level toggle itself (§5.3), which superseded an intermediate always-on
+  draft's "accept the gap" conclusion. Flipping the toggle ON is the consent moment.
+- **Tool exposure while the toggle is ON**: kernel-only, not kernel-plus-everything-else (§1, §6).
+  An intermediate draft kept every tool visible alongside `run_kernel_code` at all times and relied
+  on the model's own per-round judgment (steered only by unwritten system-prompt guidance) to
+  decide when to use it — this was identified as a real adoption risk (the model could validly
+  ignore the kernel for an entire session with no architectural signal that anything was wrong) and
+  resolved by making the toggle control tool-list exclusivity rather than mere kernel presence.
 - **Kernel-call wire signal: a reserved tool name, not a new `ContentBlock` type.** All three
   independent blueprints converged on this without prompting — a genuinely new `ContentBlock` kind
   would require auditing and patching every `IChatProvider`'s message-mapping switch (confirmed
@@ -646,6 +689,18 @@ silently advertise a capability that doesn't work for them) — schema-only. `Na
 §6 steering guidance. `InvokeAsync` returns `ToolResult.Error("internal routing error")` as a
 canary — `AgentLoop` must always intercept calls to this name before `ToolRegistry.Resolve` is
 reached, so this body should be unreachable in practice; a test asserts that invariant directly.
+
+**Registry construction respects the toggle, per §1/§6 — this is where "kernel-only when ON" is
+actually enforced.** `ToolRegistryFactory.Create()` (rebuilt fresh every turn, per its existing
+`MainWindow.axaml.cs:372` call site) takes the session's current toggle state as an input: OFF
+builds the registry exactly as today (every static tool + live `IToolSource.CurrentTools`, no
+`KernelCodeTool`); ON builds a registry containing **only** `KernelCodeTool` — every other `ITool`
+registration is *not* added to this turn's `ToolRegistry`, so `tools.Schemas` genuinely has one
+entry, not one entry plus everything else filtered client-side. The tool bridge (§4.1, §8.2 below)
+still needs the *full* tool set to resolve bridged calls from inside a script — it is handed a
+separate, unfiltered `ToolRegistry` reference (or the same factory called with OFF-equivalent
+scope internally) specifically for that purpose, so "hidden from the model" and "unavailable to the
+bridge" are not conflated into the same registry instance.
 
 **`Litos.Kernel.KernelProtocol`** — flat `System.Text.Json` record types, one JSON object per line
 over stdio: a `Handshake`/`HandshakeAck` pair carrying a single `ProtocolVersion` int (mismatch
@@ -752,12 +807,14 @@ registered as an ordinary `ITool` (in `Litos.Gui/Program.cs`, per §8.2), so it 
 
 1. `MainWindow.SubmitAsync` → `RunTurnFromTextAsync` → `_session.Loop.RunTurnAsync(...)` — no
    change to how a turn is kicked off.
-2. `AgentLoop` builds the request; `tools.Schemas` includes `run_kernel_code` (registered
-   unconditionally for `Litos.Gui`, per §6's "always on" decision — no conditional system-prompt
-   branching, so no prompt-cache risk, per §6's caching note).
-3. The model, judging this round benefits from collapsing orchestration (§1), emits an ordinary
-   `tool_use` block named `run_kernel_code` with `{ "code": "..." }`. `AnthropicChatProvider`
-   parses this exactly like any other tool call — **zero Anthropic code changes**.
+2. `AgentLoop` builds the request; `tools.Schemas` reflects this session's toggle state (§8.2) —
+   ON means `run_kernel_code` is the only entry, OFF means it is entirely absent. The system prompt
+   varies by toggle state too (§6's caching note — stable within one state, one-time cache
+   invalidation on flip).
+3. With the toggle ON, the model's only option to accomplish anything beyond plain text is to emit
+   an ordinary `tool_use` block named `run_kernel_code` with `{ "code": "..." }`.
+   `AnthropicChatProvider` parses this exactly like any other tool call — **zero Anthropic code
+   changes**.
 4. `AgentLoop`'s round loop collects it into `pendingToolCalls` unchanged.
 5. The sequential loop reaches this call, matches `call.Name == ReservedToolNames.KernelCode`,
    calls `kernelRunner(code)` instead of `InvokeToolSafelyAsync`.
@@ -827,15 +884,21 @@ round-trip with a fake `ITool`; folder-per-session + legacy-fallback coverage fo
 `Console.WriteLine` mid-eval does not corrupt the next protocol message (§8.2's stdout-capture
 detail).
 
-**Milestone 2 — system prompt, real steering, `/kernel-reset`.**
-Fixed `Guidelines` steering text (§6, wording still to be drafted) added unconditionally for
-`Litos.Gui`; `/kernel-reset` slash command wired into `TryHandleSlashCommandAsync` and
-`SlashCommands.All`. Manual end-to-end test: a multi-step prompt ("read file A, and if it imports
-X also read file B") actually collapses into one round in the transcript. Tests: `AgentLoop`
-routing (a fake provider emitting `run_kernel_code` routes to `kernelRunner`, not
-`ToolRegistry.Resolve`; ordinary calls are unaffected; a null `kernelRunner` produces a clean
-`ToolResult.Error`, not a `NullReferenceException`); `/new` disposes the kernel session;
-`/kernel-reset` resets it.
+**Milestone 2 — the toggle itself, system prompt, real steering, `/kernel-reset`.**
+The session-level kernel toggle UI (§5.3 — a visible control, not buried in a settings submenu)
+and the toggle-aware `ToolRegistryFactory.Create()` path from §8.2 (OFF = today's registry, ON =
+`KernelCodeTool` only); toggle-conditional `Guidelines` steering text (§6, wording still to be
+drafted, now two variants — none needed for OFF, in-kernel usage guidance for ON); `/kernel-reset`
+slash command wired into `TryHandleSlashCommandAsync` and `SlashCommands.All` (available only when
+the toggle is ON — a no-op or clear error otherwise). Manual end-to-end test: with the toggle ON, a
+multi-step prompt ("read file A, and if it imports X also read file B") collapses into one round
+in the transcript; with the toggle OFF, behavior is indistinguishable from `Litos.Gui` today.
+Tests: `AgentLoop` routing (a fake provider emitting `run_kernel_code` routes to `kernelRunner`,
+not `ToolRegistry.Resolve`; a null `kernelRunner` produces a clean `ToolResult.Error`, not a
+`NullReferenceException`); `ToolRegistryFactory` produces the correct schema list for each toggle
+state; `/new` disposes the kernel session and does not reset the toggle itself (a session's toggle
+choice is independent of `/new`'s transcript/kernel-state reset, unless decided otherwise);
+`/kernel-reset` resets the kernel session.
 
 **Milestone 3 — hardening, pre-ship.**
 Deployment: `Litos.Kernel.Host`'s published path resolution for `Litos.Gui`'s self-contained
@@ -852,24 +915,31 @@ code. Optional: friendlier `run_kernel_code` label in `ToolCallRow`.
 The diagram below is the concrete shape of §8.1–§8.4 as decided — not the general Prime Agent
 picture (§1), which shows Python/`ipython` as the model's *only* tool and includes subagent
 spawning that this document does not propose. Two differences from that general picture are
-deliberate and worth stating up front: **Litos keeps a second, non-kernel path** — the model can
-still emit ordinary `tool_use` calls straight to `ToolRegistry` every round, per §6's "per-round
-choice the model makes," not the kernel-only shape Prime Agent itself uses — and **there is no
-subagent box**; nothing in this document proposes kernel-spawned subagents.
+deliberate and worth stating up front: **Litos's two paths are mutually exclusive per session, not
+a per-round model choice** — the session-level toggle (§1, §6) decides which tool surface exists at
+all *before* any round starts, closer to Prime Agent's own kernel-only shape than an earlier draft
+of this document was — and **there is no subagent box**; nothing in this document proposes
+kernel-spawned subagents.
 
 ```mermaid
 flowchart TD
+    TOGGLE{"Session's kernel
+    toggle — §1, §5.3"}
     LLM["Model"]
 
+    TOGGLE -- "OFF" --> LLM
     LLM -- "ordinary tool_use
-    (single, independent call)" --> SEQ["Sequential path — unchanged
+    (the only mode available)" --> SEQ["Sequential path — unchanged
     AgentLoop.cs:157-193
     ToolRegistry.Resolve -> ITool.InvokeAsync
     gated by IToolApprovalGate, per §5.2"]
     SEQ -- "ToolResultBlock" --> LLM
 
+    TOGGLE -- "ON — tools.Schemas
+    = [run_kernel_code] only, §8.2" --> LLM
     LLM -- "tool_use named run_kernel_code
-    { code: string } — §8.3" --> ROUTE["AgentLoop routing check
+    { code: string } — the only tool call
+    the model can make — §8.3" --> ROUTE["AgentLoop routing check
     call.Name == ReservedToolNames.KernelCode"]
 
     ROUTE --> KSM["KernelSessionManager.GetOrCreate(sessionId)
@@ -915,12 +985,14 @@ flowchart TD
     per round, §8.3 — no ContentBlock
     or provider changes" --> LLM
 
-    style LLM fill:#2d6a4f,color:#fff
+    style TOGGLE fill:#2d6a4f,color:#fff
     style SUB fill:#1d3557,color:#fff
 ```
 
-Reading it against §8.4's numbered steps: the model picks one of the two top branches each round
-(§6); the kernel branch is intercepted by name before `ToolRegistry.Resolve` is ever reached
+Reading it against §8.4's numbered steps: the toggle decides which branch exists for the entire
+session, not which one a given round picks (§6) — a session with the toggle OFF never sees
+`run_kernel_code` at all, and a session with it ON has no ordinary tool left to fall back to; the
+kernel branch, when reachable, is intercepted by name before `ToolRegistry.Resolve` is ever reached
 (§8.3); the subprocess is spawned lazily and reused for the rest of the chat session, not
 per-round (§4.4); every bridged call — built-in or MCP — returns through the same
 `KernelSession`/`ScriptState` boundary and comes back to the model as a single reduced
