@@ -101,6 +101,38 @@ public sealed class ConfigEndpointsTests
         Assert.Equal(expected.OrderBy(k => k, StringComparer.Ordinal), status.Keys.OrderBy(k => k, StringComparer.Ordinal));
     }
 
+    [Fact]
+    public void Configured_after_save_when_reloaded_config_already_shows_a_provider()
+    {
+        var reloaded = EmptyConfig() with { ApiKeys = new Dictionary<string, string> { ["anthropic"] = "sk-from-disk" } };
+        var request = new SaveKeysRequest(Entries: [], LocalBaseUrl: null);
+
+        Assert.True(ConfigEndpoints.IsConfiguredAfterSave(request, reloaded));
+    }
+
+    [Fact]
+    public void Configured_after_save_when_a_chat_provider_key_was_just_submitted_even_if_reloaded_cannot_see_it_yet()
+    {
+        // Reproduces the Windows bug: SaveKeys wrote the OpenRouter key to
+        // EnvironmentVariableTarget.User, which this same process's LitosConfig.Load() (process-scope
+        // env only) cannot see yet — reloaded is empty even though the save succeeded.
+        var reloaded = EmptyConfig();
+        var request = new SaveKeysRequest(Entries: [new KeyEntry("openrouter", "sk-or-123")], LocalBaseUrl: null);
+
+        Assert.True(ConfigEndpoints.IsConfiguredAfterSave(request, reloaded));
+    }
+
+    [Fact]
+    public void Not_configured_after_save_when_only_a_non_chat_provider_key_was_submitted_and_nothing_else_is_set()
+    {
+        // Tavily is tool-only, not a chat provider (LitosConfig.ChatProviderNames) — submitting only
+        // that key should not be reported as "a chat provider is configured".
+        var reloaded = EmptyConfig();
+        var request = new SaveKeysRequest(Entries: [new KeyEntry("tavily", "tvly-123")], LocalBaseUrl: null);
+
+        Assert.False(ConfigEndpoints.IsConfiguredAfterSave(request, reloaded));
+    }
+
     /// <summary>
     /// Saves and restores the exact set of env vars BuildKeyStatus/IsSetByEnvironmentVariable
     /// consults, process-scoped only (Environment.SetEnvironmentVariable with no

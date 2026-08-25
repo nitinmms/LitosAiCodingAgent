@@ -603,11 +603,33 @@ the overlay). The chat area itself is now always visible underneath, unlike the 
 **No live reload**: `LitosHostBuilder.AddLitosAgent` conditionally registers each keyed
 `IChatProvider` once, at DI-container-build time — there is no seam to swap a provider registration
 into an already-built `IServiceProvider`. `Program.cs` therefore stays alive with no `AgentWorker`/
-turns endpoints registered at all when unconfigured (only `/config/*`), and `extension.ts`'s
-`saveKeys` handler kills and respawns the whole host process after a successful save, then re-checks
-`/config/status` and broadcasts `saveKeysSuccess` (closes the popup) or `saveKeysError` (keeps it
-open) to every open panel — the automated equivalent of `ApiKeysWindow`'s own first-run message,
-"Litos will then close so you can restart it."
+turns endpoints registered at all when unconfigured (only `/config/*`). `extension.ts`'s `saveKeys`
+handler used to kill and respawn the whole host process after a successful save so a fresh
+`LitosConfig.Load()` would pick up the new key, then re-check `/config/status` before reporting
+success — but that respawn (a child process spawn racing a not-yet-dead old process, then a status
+fetch with no visibility into the new process's stderr) had no reliable timeout on some platforms and
+left the popup's "Saving..." button stuck forever when it stalled (seen on macOS even with a fetch
+timeout on the status fetch itself). Saving now only writes the key and reports the `configured` flag
+`saveKeys`'s own response already carries (see below); the webview then asks the user to reload the
+window (a "Reload Window" button in the popup after a successful save) to actually pick up the new
+key, which VS Code performs reliably by tearing down and restarting the whole extension host — not
+just the one child process this extension spawned itself.
+
+**Windows regression, fixed**: `POST /config/keys`' `configured` flag was computed by calling
+`LitosConfig.Load()` *in the same still-running process* right after `SaveKeys` wrote the entries —
+correct on macOS/Linux, where keys go to `~/.litos/config.json` and `Load()` re-reads that file fresh
+off disk, but wrong on Windows, where keys go to `EnvironmentVariableTarget.User` (a registry write)
+that `Environment.GetEnvironmentVariable`'s default process-scope target cannot observe until the
+process actually restarts. The saved key was always written correctly; only the immediate
+"configured?" check was wrong. This made every Windows save of a chat-provider key (e.g. pasting an
+OpenRouter key into `/keys`) report "Saved, but no chat provider is configured yet" even though the
+key was on disk in the registry and a window reload would have picked it up fine.
+`ConfigEndpoints.IsConfiguredAfterSave` fixes this: `configured` is now
+`reloaded.AvailableChatProviders.Count > 0` (the config.json/non-Windows case, and any provider that
+was already configured before this save) **or** the just-submitted request contained an entry for a
+chat-provider name (`LitosConfig.ChatProviderNames`) — covering the Windows env-var case, where the
+write is real but this process can't see it yet. Extracted as a pure static method (same shape as
+`BuildKeyStatus` below) specifically so it's unit-testable without touching real user-scope env vars.
 
 **Caution for anyone testing this locally**: the Windows env-var write path cannot be sandboxed by
 overriding `USERPROFILE`/`HOME` in a test process's environment the way the file-based `config.json`
@@ -615,8 +637,9 @@ path can — `EnvironmentVariableTarget.User` always targets the real Windows us
 of what the calling process's own environment looks like. A local smoke test of `POST /config/keys`
 with a real provider name (not just `LocalBaseUrl`) on Windows **will** write to the real machine's
 user environment variables; this was hit and had to be manually reverted once already during
-development. Test this path with `LocalBaseUrl` only (config-file-only, safely sandboxable) or
-accept the real-env-var side effect deliberately, never accidentally.
+development. Test this path with `LocalBaseUrl` only (config-file-only, safely sandboxable), or
+`IsConfiguredAfterSave`/`BuildKeyStatus` directly (pure, take a `LitosConfig` rather than reading the
+environment), or accept the real-env-var side effect deliberately, never accidentally.
 
 ## 9. Key files
 

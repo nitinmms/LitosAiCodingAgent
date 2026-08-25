@@ -39,9 +39,10 @@ public static class ConfigEndpoints
             // will use for chat providers (see class remarks). The caller must restart the host
             // process for a new key to actually take effect.
             var reloaded = LitosConfig.Load();
+
             return Results.Ok(new
             {
-                configured = reloaded.AvailableChatProviders.Count > 0,
+                configured = IsConfiguredAfterSave(request, reloaded),
                 availableProviders = reloaded.AvailableChatProviders,
                 keyStatus = BuildKeyStatus(reloaded),
                 restartRequired = true,
@@ -56,6 +57,25 @@ public static class ConfigEndpoints
     // "already set" treatment. Kept here (not EnvVarName's switch) since it also drives what
     // /config/status reports even for a provider with no key set yet.
     private static readonly string[] KeyStatusProviders = ["anthropic", "openai", "gemini", "mesh_api", "openrouter", "local", "tavily"];
+
+    /// <summary>
+    /// Whether the just-submitted save should be reported as "configured" — deliberately not just
+    /// <c>reloaded.AvailableChatProviders.Count > 0</c>. On Windows, SaveKeys writes chat-provider
+    /// keys to <c>EnvironmentVariableTarget.User</c> (the registry), which
+    /// Environment.GetEnvironmentVariable (process-scope, the target LitosConfig.Load reads) cannot
+    /// see from this already-running process — that write is only observable after a restart. Left
+    /// unaccounted for, that made the popup report "no chat provider is configured yet" immediately
+    /// after a successful save, on Windows only (config.json, the non-Windows path, is re-read from
+    /// disk by Load() and so shows up immediately). So: treat any chat-provider key submitted in
+    /// this request as configured too, since SaveKeys either wrote it to the registry (Windows,
+    /// invisible to `reloaded` until restart but written) or `reloaded` already reflects it
+    /// (config.json, every other platform). Takes the plain request/config rather than reading
+    /// environment/disk itself so it can be unit tested without touching real user-scope env vars —
+    /// same shape as BuildKeyStatus, just below.
+    /// </summary>
+    internal static bool IsConfiguredAfterSave(SaveKeysRequest request, LitosConfig reloaded) =>
+        reloaded.AvailableChatProviders.Count > 0
+        || request.Entries.Any(e => LitosConfig.ChatProviderNames.Contains(e.Provider));
 
     /// <summary>
     /// Per-provider "is a key already set, and if so where" — lets the webview's keys popup show
