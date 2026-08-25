@@ -464,6 +464,17 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   }
   #keysPopupError { color: var(--vscode-errorForeground); margin-top: 8px; display: none; }
   #keysPopupError.visible { display: block; }
+  #keysPopupSuccess { margin-top: 8px; display: none; }
+  #keysPopupSuccess.visible { display: block; }
+  #keysPopupSuccess p { margin: 0 0 8px; }
+  #keysPopupReload {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    cursor: pointer;
+  }
   #keysPopupActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
   #keysPopupCancel {
     background: var(--vscode-button-secondaryBackground);
@@ -531,6 +542,10 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <div class="field"><label for="key-local">Local key (optional)</label><input type="password" id="key-local"></div>
   <div class="field"><label for="key-tavily">Tavily (Websearch)</label><input type="password" id="key-tavily"></div>
   <div id="keysPopupError"></div>
+  <div id="keysPopupSuccess">
+    <p>Keys saved. Reload the window to start using them.</p>
+    <button id="keysPopupReload">Reload Window</button>
+  </div>
   <div id="keysPopupActions">
     <button id="keysPopupCancel">Close</button>
     <button id="keysPopupSave">Save</button>
@@ -545,6 +560,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const keysPopupHeadingEl = document.getElementById('keysPopupHeading');
   const keysPopupSubtextEl = document.getElementById('keysPopupSubtext');
   const keysPopupErrorEl = document.getElementById('keysPopupError');
+  const keysPopupSuccessEl = document.getElementById('keysPopupSuccess');
+  const keysPopupReloadButton = document.getElementById('keysPopupReload');
   const keysPopupCancelButton = document.getElementById('keysPopupCancel');
   const keysPopupSaveButton = document.getElementById('keysPopupSave');
   const transcriptEl = document.getElementById('transcript');
@@ -670,17 +687,19 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     KEY_FIELDS.forEach(([, id]) => { document.getElementById(id).value = ''; });
     document.getElementById('key-local-url').value = '';
     keysPopupErrorEl.classList.remove('visible');
+    keysPopupSuccessEl.classList.remove('visible');
     keysPopupSaveButton.disabled = false;
     keysPopupSaveButton.textContent = 'Save';
+    keysPopupSaveButton.style.display = '';
 
     if (isFirstRun) {
       keysPopupHeadingEl.textContent = 'No API key was found for any provider.';
-      keysPopupSubtextEl.textContent = 'Enter at least one key below. Saved keys are shared with Litos.Console and Litos.Gui too. Saving restarts the local Litos agent process.';
+      keysPopupSubtextEl.textContent = 'Enter at least one key below. Saved keys are shared with Litos.Console and Litos.Gui too. Reloading the window afterward is required to start using them.';
       keysPopupCancelButton.style.display = 'none';
       renderKeyHints(null);
     } else {
       keysPopupHeadingEl.textContent = 'API Keys';
-      keysPopupSubtextEl.textContent = 'Saved keys are shared with Litos.Console and Litos.Gui too. Leave a field blank to keep its current value. Saving restarts the local Litos agent process.';
+      keysPopupSubtextEl.textContent = 'Saved keys are shared with Litos.Console and Litos.Gui too. Leave a field blank to keep its current value. Reloading the window afterward is required to start using them.';
       keysPopupCancelButton.style.display = '';
       renderKeyHints(keyStatus);
     }
@@ -718,9 +737,14 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     }
 
     keysPopupErrorEl.classList.remove('visible');
+    keysPopupSuccessEl.classList.remove('visible');
     keysPopupSaveButton.disabled = true;
-    keysPopupSaveButton.textContent = 'Saving and restarting...';
+    keysPopupSaveButton.textContent = 'Saving...';
     vscode.postMessage({ type: 'saveKeys', entries, localBaseUrl, isFirstRun: keysPopupIsFirstRun });
+  });
+
+  keysPopupReloadButton.addEventListener('click', () => {
+    vscode.postMessage({ type: 'reloadWindow' });
   });
 
   let currentAssistantBubble = null;
@@ -1380,7 +1404,10 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     } else if (message.type === 'openKeysPopup') {
       openKeysPopup(!!message.isFirstRun, message.keyStatus);
     } else if (message.type === 'saveKeysSuccess') {
-      closeKeysPopup();
+      keysPopupSuccessEl.classList.add('visible');
+      keysPopupSaveButton.style.display = 'none';
+      keysPopupCancelButton.textContent = 'Close';
+      keysPopupCancelButton.style.display = keysPopupIsFirstRun ? 'none' : '';
     } else if (message.type === 'saveKeysError') {
       keysPopupSaveButton.disabled = false;
       keysPopupSaveButton.textContent = 'Save';

@@ -79,13 +79,22 @@ describe("keys popup open/close wiring", () => {
         expect(innerScript).toContain("event.key === 'Escape' && keysPopupEl.classList.contains('visible')");
     });
 
-    it("a successful save closes the popup instead of swapping to a separate chat view", () => {
+    it("a successful save shows a reload prompt instead of auto-restarting the host and closing", () => {
         expect(innerScript).toContain("message.type === 'saveKeysSuccess'");
         const successHandler = innerScript.slice(
             innerScript.indexOf("message.type === 'saveKeysSuccess'"),
             innerScript.indexOf("message.type === 'saveKeysError'")
         );
-        expect(successHandler).toContain("closeKeysPopup()");
+        expect(successHandler).toContain("keysPopupSuccessEl.classList.add('visible')");
+        expect(successHandler).not.toContain("closeKeysPopup()");
+    });
+
+    it("the reload button asks the extension host to reload the window", () => {
+        expect(innerScript).toContain("keysPopupReloadButton.addEventListener('click'");
+        const reloadHandler = innerScript.slice(
+            innerScript.indexOf("keysPopupReloadButton.addEventListener('click'"),
+        );
+        expect(reloadHandler).toContain("vscode.postMessage({ type: 'reloadWindow' })");
     });
 });
 

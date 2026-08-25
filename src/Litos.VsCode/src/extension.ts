@@ -297,28 +297,39 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
 
     if (message.type === "saveKeys") {
         try {
-            await sharedHost!.client.saveKeys(message.entries, message.localBaseUrl);
-
             // ConfigEndpoints.cs's own remarks: LitosHostBuilder.AddLitosAgent gates each keyed
             // IChatProvider registration once, at DI-container-build time — there's no seam to
             // swap a provider into an already-built IServiceProvider, so the freshly saved key
-            // only takes effect in a NEW process. Kill-and-respawn here is the automated
-            // equivalent of Litos.Gui's ApiKeysWindow first-run flow telling the user "Litos will
-            // then close so you can restart it." Because the host is shared, this respawn affects
-            // every open panel, not just this one — respawnSharedHost broadcasts the outcome to
-            // all of them.
-            //
-            // The entries are also passed straight through as extraEnv (see
-            // envForJustSavedEntries) rather than relying on the respawned process re-reading the
-            // OS-level environment on its own: ConfigEndpoints.cs's SaveKeys writes Windows keys
-            // to the User-scope registry only, and that write is invisible to any process's
-            // process.env — including a freshly spawned child of this still-running VS Code
-            // instance — until VS Code itself is fully relaunched by the OS. Passing the entries
-            // directly sidesteps that propagation gap entirely, on every platform.
-            await respawnSharedHost(context, sharedHost!.cwd, envForJustSavedEntries(message.entries));
+            // only takes effect in a NEW process. This used to kill-and-respawn sharedHost right
+            // here and wait on the new process's own /config/status before telling the webview it
+            // could close — but that respawn (a child process spawn racing a not-yet-dead old
+            // process, then a status fetch with no visibility into the new process's stderr) had
+            // no reliable timeout on some platforms and left the dialog's "Saving and
+            // restarting..." button stuck forever when it stalled (seen on macOS even after adding
+            // a fetch timeout to the status fetch itself — something upstream of that was also
+            // hanging). Saving now only writes the key and reports the same "configured" check
+            // saveKeys's own response already carries — no respawn or extra round-trip needed for
+            // that. The webview then asks the user to reload the window (see the "reloadWindow"
+            // handler below) to actually pick up the new key, which VS Code itself performs
+            // reliably — tearing down and restarting the whole extension host, not just one child
+            // process this extension spawned itself.
+            const status = await sharedHost!.client.saveKeys(message.entries, message.localBaseUrl);
+            panel.webview.postMessage(
+                status.configured
+                    ? { type: "saveKeysSuccess" }
+                    : {
+                          type: "saveKeysError",
+                          text: "Saved, but no chat provider is configured yet. Enter a chat-provider key (Anthropic/OpenAI/Gemini/OpenRouter/MeshAPI) or a local server URL.",
+                      },
+            );
         } catch (err: any) {
             panel.webview.postMessage({ type: "saveKeysError", text: err.message });
         }
+        return;
+    }
+
+    if (message.type === "reloadWindow") {
+        await vscode.commands.executeCommand("workbench.action.reloadWindow");
         return;
     }
 
@@ -738,56 +749,12 @@ async function ensureSharedHost(
 }
 
 async function spawnSharedHost(
-    context: vscode.ExtensionContext, cwd: string, extraEnv?: Record<string, string>,
+    context: vscode.ExtensionContext, cwd: string,
 ): Promise<{ process: LitosHostProcess; client: LitosClient; cwd: string; baseUrl: string }> {
     const process_ = new LitosHostProcess();
-    const { port } = await process_.start(context.extensionPath, cwd, extraEnv);
+    const { port } = await process_.start(context.extensionPath, cwd);
     const baseUrl = `http://127.0.0.1:${port}`;
     sharedHost = { process: process_, client: new LitosClient(baseUrl), cwd, baseUrl };
     return sharedHost;
 }
 
-// Mirrors ConfigEndpoints.cs's own EnvVarName switch — the env var each provider's key is read
-// back from by LitosConfig.Load(). Used only to hand the respawned host process the keys just
-// saved (see saveKeys handler's own remarks); ConfigEndpoints.cs remains the single source of
-// truth for where each key is actually persisted to disk/registry.
-const KEY_ENV_VAR_NAMES: Record<string, string> = {
-    anthropic: "ANTHROPIC_API_KEY",
-    openai: "OPENAI_API_KEY",
-    gemini: "GEMINI_API_KEY",
-    mesh_api: "MESHAPI_API_KEY",
-    openrouter: "OPENROUTER_API_KEY",
-    local: "LOCAL_API_KEY",
-    tavily: "TAVILY_API_KEY",
-};
-
-function envForJustSavedEntries(entries: { provider: string; apiKey: string }[]): Record<string, string> {
-    const env: Record<string, string> = {};
-    for (const entry of entries) {
-        const envVar = KEY_ENV_VAR_NAMES[entry.provider];
-        if (envVar) env[envVar] = entry.apiKey;
-    }
-    return env;
-}
-
-/** Kills and respawns the shared host, then tells every open panel's keys popup (not just the one
- * whose saveKeys triggered this — the host is shared) whether it can close or needs to stay open.
- * extraEnv (if given) is merged into the new process's environment on top of whatever this VS
- * Code instance's own process.env has — see spawnSharedHost/LitosHostProcess.start's own remarks
- * for why that's necessary right after a saveKeys call specifically. */
-async function respawnSharedHost(context: vscode.ExtensionContext, cwd: string, extraEnv?: Record<string, string>): Promise<void> {
-    sharedHost?.process.stop();
-    const host = await spawnSharedHost(context, cwd, extraEnv);
-
-    const status = await host.client.getConfigStatus();
-    for (const state of openPanels.values()) {
-        state.panel.webview.postMessage(
-            status.configured
-                ? { type: "saveKeysSuccess" }
-                : {
-                      type: "saveKeysError",
-                      text: "Saved, but no chat provider is configured yet. Enter a chat-provider key (Anthropic/OpenAI/Gemini/OpenRouter/MeshAPI) or a local server URL.",
-                  },
-        );
-    }
-}

@@ -38,10 +38,11 @@ export class LitosHostProcess {
         // process.env — a snapshot taken once, when VS Code itself launched. A key just saved to
         // the OS-level user environment (ConfigEndpoints.cs's SaveKeys, Windows User-scope
         // registry) or session environment is invisible to that stale snapshot until VS Code
-        // itself is fully relaunched by the OS, not just this child respawned — see
-        // respawnSharedHost's own remarks. extraEnv (the entries the caller just saved) is merged
-        // on top so the freshly spawned process sees them immediately regardless of platform,
-        // without waiting on any environment-propagation mechanism.
+        // itself is fully relaunched by the OS. extraEnv lets a caller merge extra entries on top
+        // of that inherited snapshot regardless — currently unused (extension.ts's only caller
+        // doesn't pass it, since a saved key now takes effect via a full window reload rather than
+        // a same-process respawn), kept as general-purpose spawn capability with its own test
+        // coverage below.
         const env = extraEnv ? { ...process.env, ...extraEnv } : process.env;
         this.child = cp.spawn(binaryPath, [], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
 

@@ -157,12 +157,6 @@ export type ConfigStatus = { configured: boolean; availableProviders: string[]; 
 export class LitosClient {
     constructor(private readonly baseUrl: string) {}
 
-    // A generous but bounded timeout: without one, a respawned host that hangs or dies silently
-    // during startup (no stdout/stderr surfaced anywhere today) leaves this fetch pending forever
-    // — respawnSharedHost's caller (the /keys "Save and Restart" flow) then never gets a
-    // saveKeysSuccess/saveKeysError postMessage, and the dialog stays stuck with its button
-    // disabled indefinitely. Throwing here instead lets that flow's existing try/catch report the
-    // failure to the webview like any other saveKeys error.
     async getConfigStatus(): Promise<ConfigStatus> {
         const response = await fetch(`${this.baseUrl}/config/status`, { signal: AbortSignal.timeout(15_000) });
         if (!response.ok) throw new Error(`Litos host returned ${response.status}`);
