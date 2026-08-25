@@ -1,0 +1,605 @@
+# Programmatic Tool Calling via a Persistent Kernel — Architecture
+
+Status: **design only, not implemented.** This document proposes an architecture; it does not
+change any code. See [ReadMe_Architecture.md](ReadMe_Architecture.md) for the current agent loop
+this proposal extends, and [ReadMe_AgentDesign.md](ReadMe_AgentDesign.md) for the surrounding
+design philosophy this proposal must stay consistent with.
+
+## 1. Problem statement
+
+`AgentLoop.RunTurnAsync` (`src/Litos.Agent/AgentLoop.cs`) drives every turn as a sequence of
+**rounds**: one round is one request to the model, followed by sequential execution of whatever
+tool calls came back (a plain `for` loop, `AgentLoop.cs:157-194`, one `await` per call, no
+parallelism). Any orchestration logic that depends on one tool's result to decide the next
+call — "read file A, and if it imports X also read file B" — cannot be expressed within a round.
+It costs a full extra round: a new model inference (latency) plus the entire transcript
+re-sent (tokens), just to let the model see A's content before it can decide about B.
+
+This is the pattern OpenAI's Programmatic Tool Calling (PTC) targets: instead of the model
+approving one tool call at a time, the model emits a short program — call several tools, use the
+results to decide what to call next, filter/aggregate before anything returns — and a runtime
+executes that whole program before coming back to the model. Prime Agent
+(`github.com/PrimeIntellect-ai/prime-agent`) takes this further: tool calls aren't a distinct
+protocol at all, they're just function calls available inside a **persistent** Python/IPython
+kernel that keeps its state across the entire session, not just one program execution.
+
+This document sketches what a Prime-Agent-shaped version of this would look like for Litos: a
+persistent scripting kernel, tools exposed to it as callable functions, wired into the existing
+`AgentLoop` round/turn structure rather than replacing it. Per §5, this proposal follows Prime
+Agent's own trust model rather than routing every kernel action through a per-call approval gate —
+`ITool`/`ToolRegistry` are still reused as the tool surface, but `IToolApprovalGate` is not the
+kernel's authorization boundary the way it is for direct tool calls.
+
+**Decided for `Litos.Gui`: kernel mode is always on, with no session-level opt-in and no
+replacement consent checkpoint (§5.1), and the engine is Roslyn/C# scripting, out-of-process
+(§4.3).** Earlier drafts of this document treated kernel mode as a per-session, per-face opt-in
+(closer to OpenAI PTC's framing) specifically so that "the user turned this on" could stand in for
+the per-call approval this design otherwise removes (§5.1). That framing has been superseded for
+`Litos.Gui`: kernel mode is available in every session from the start, unconditionally, matching
+how Prime Agent itself has no on/off switch for its own kernel at all (confirmed directly against
+Prime Agent's own docs — `settings.md` and `rlm-runtime.md` describe the kernel as "created lazily
+on first IPython use," a startup-cost optimization, not a user-facing toggle). This is a deliberate
+choice, not an oversight, and it removes the one consent moment §5.1 previously rested its
+"ungated but explicitly opted into" argument on — see §5.1's revised text for what this actually
+means and what remains unresolved as a result. `Litos.Console`/`Litos.Api`/`Litos.VsCodeHost` are
+out of scope for this decision (not addressed by this document at all, for now) — see §2.
+
+## 2. Design goals and non-goals
+
+**Goals**
+- Let the model collapse multi-round, result-dependent tool orchestration into one round.
+- Keep it provider-agnostic — every `IChatProvider` (Anthropic, OpenAI, Gemini, OpenRouter,
+  MeshApi, Local) must be able to drive it, since this is a Litos-native capability, not a
+  pass-through to a vendor-hosted sandbox (PTC itself is OpenAI-only and out of reach for the
+  other five providers Litos supports).
+- Reuse `ITool`/`ToolRegistry` for the tool surface where a kernel-mode script calls a tool
+  Litos already defines — same schema, same underlying implementation as a direct call.
+- Ship kernel mode as an always-available capability for `Litos.Gui`, present in every session
+  from the start (§5.1) — not gated behind a per-session opt-in decision. `IToolApprovalGate`
+  remains the authorization boundary for the existing direct/sequential tool-calling path,
+  unchanged (§5.2); kernel-mode rounds have no equivalent boundary at all (§5.1).
+- **Scoped to `Litos.Gui` only, for now.** `Litos.Console`, `Litos.Api`, and `Litos.VsCodeHost` are
+  explicitly out of scope for this document's decisions (always-on, Roslyn/C#) — those faces may
+  eventually want kernel mode, but nothing here should be read as having decided their engine
+  choice, their opt-in model, or their timeline. Where earlier sections still describe multi-face
+  reasoning (e.g. §4.3's original Node-vs-Python-per-face discussion), that reasoning is retained
+  for its historical context but the actual decision below applies to `Litos.Gui` alone.
+
+**Non-goals**
+- Not a replacement for the existing sequential tool-calling path as a mechanism — `AgentLoop`'s
+  sequential `ToolUseBlock` handling (§6) is untouched code-wise. But unlike earlier drafts, this
+  document no longer treats "kernel mode is optional, off by default" as a design goal for
+  `Litos.Gui`: it is on, unconditionally, in every session (§5.1). Whether the model *chooses* to
+  emit a kernel-program block vs. an ordinary tool call in a given round is still a per-round model
+  decision (§6) — only the session-level availability is no longer conditional.
+- Not an attempt to reproduce OpenAI's hosted, network-less, disk-less V8 sandbox. Litos runs
+  locally with the user's own filesystem/shell access already exposed through `ShellTool`; a
+  from-scratch hermetic sandbox is a much larger undertaking than this document scopes (see §5.4).
+- **Superseded**: an earlier draft deferred the scripting language/engine choice to the
+  implementation phase. For `Litos.Gui` specifically, that choice is now made — Roslyn/C# scripting,
+  out-of-process (§4.3) — for the reasons in §4.3. The engine for any other face remains
+  undecided and out of scope per the goals above.
+
+## 3. Current architecture recap (what this extends)
+
+```
+AgentLoop.RunTurnAsync                              (src/Litos.Agent/AgentLoop.cs)
+  while (true):                                      — one iteration = one round
+    request  = accountant.BuildRequest(transcript, tools.Schemas, model, systemPrompt)
+    response = provider.StreamAsync(request)          — IChatProvider, one per vendor
+    if response has no tool calls: turn ends
+    for each pending tool call (sequential):
+      result = tool.InvokeAsync(args, ct)              — ITool, resolved via ToolRegistry
+      transcript.Append(ToolResultBlock)
+    loop back to request  (transcript now includes all this round's tool results)
+```
+
+Key existing seams this proposal reuses rather than replaces:
+
+| Seam | Type | Role |
+|---|---|---|
+| Tool contract | `ITool` (`src/Litos.Agent/Tools/ITool.cs`) | `Name`, `Description`, `ParameterSchema`, `InvokeAsync` |
+| Tool lookup | `ToolRegistry` (`src/Litos.Agent/Tools/ToolRegistry.cs`) | name → `ITool`, schema list for the provider request |
+| Authorization | `IToolApprovalGate` (`src/Litos.Tools/Shell/IToolApprovalGate.cs`) | `RequestAsync(preview) -> Approve/ApproveAlways/Deny`, per call |
+| Message content | `ContentBlock` union (`src/Litos.Agent/Messages/ContentBlock.cs`) | `TextBlock`/`ToolUseBlock`/`ToolResultBlock`/... — JSON-polymorphic, persisted to JSONL |
+| Provider abstraction | `IChatProvider` | `StreamAsync(ChatRequest) -> IAsyncEnumerable<AgentEvent>`, one adapter per vendor |
+
+Note on approval gating today (relevant to §5): it is **not uniform across faces**. Native tools
+(`read_file`, `shell`, etc.) go through each face's own `IToolApprovalGate` — real per-call
+Approve/Deny prompts in `Litos.Console` (`ApprovalDialog`) and `Litos.Api`
+(web panel / Telegram buttons), but `Litos.Gui`'s `GuiApprovalGate` auto-approves everything
+unconditionally (`src/Litos.Gui/GuiApprovalGate.cs:11-15`) — a stub, not yet a real dialog. For
+MCP tools specifically, only `Litos.Api` and `Litos.VsCodeHost` wrap the gate with
+`McpAwareApprovalGate`, giving genuine per-tool Ask/Approve/Deny gating sourced from
+`McpConfigStore`. `Litos.Gui` does not wrap it at all — MCP tool access there is only ever an
+entire-server enable/disable toggle (`McpServersWindow`), with no per-tool or per-call gating
+underneath it, since the outer `GuiApprovalGate` already approves everything unconditionally
+regardless of what the inner gate would have decided.
+
+## 4. Proposed component: the Kernel
+
+A new component, sitting alongside `AgentLoop` rather than inside it, analogous to Prime Agent's
+`AgentSession` + IPython kernel split.
+
+```mermaid
+flowchart TD
+    subgraph Face["A face (Console / Gui / Api / VsCodeHost)"]
+        UI["UI / chat surface"]
+    end
+
+    subgraph AgentCore["Litos.Agent"]
+        LOOP["AgentLoop.RunTurnAsync"]
+        REG["ToolRegistry"]
+    end
+
+    subgraph KernelHost["New: Litos.Kernel (proposed)"]
+        SESSION["KernelSession
+        — owns one persistent interpreter process
+        — lives as long as the chat session, not one round
+        — runs with real OS/user permissions, per §5"]
+        BRIDGE["Tool bridge
+        — exposes ToolRegistry entries as callables
+        inside the interpreter's namespace, as a convenience
+        — NOT the interpreter's only way to reach the outside world"]
+        HOSTREQ["Host-request channel
+        — interpreter -> Litos process, for provider-side
+        state the interpreter has no other way to reach"]
+        SCRATCH["Scratch dir — §4.5
+        ~/.litos/sessions/{owner}/{sessionId}/scratch/
+        path pre-injected into the interpreter's
+        namespace as SCRATCH_DIR, not an env var"]
+    end
+
+    UI --> LOOP
+    LOOP -- "kernel-mode round only" --> SESSION
+    SESSION --> BRIDGE
+    BRIDGE -- "ITool.InvokeAsync
+    (a convenience call,
+    not a gate)" --> REG
+    SESSION -. "direct filesystem / network /
+    subprocess access, ungated — §5" .-> OS[("Local OS")]
+    SESSION -- "typed request
+    (provider call, etc.)" --> HOSTREQ
+    HOSTREQ --> LOOP
+    SESSION -- "SCRATCH_DIR injected
+    at kernel startup" --> SCRATCH
+    SESSION -- "captured stdout / return value" --> LOOP
+    LOOP -- "one ToolResultBlock
+    (the program's output, not each
+    individual call's raw output)" --> Transcript[("Transcript")]
+```
+
+### 4.1 What runs where
+
+- **`AgentLoop`** stays the turn/round driver. Kernel mode's *availability* is no longer a
+  per-round or per-session condition `AgentLoop` checks (§5.1 — always on for `Litos.Gui`); what
+  `AgentLoop` still does per round is route based on *which kind of block the model actually
+  emitted* (see §6) — an ordinary `ToolUseBlock` still takes the existing sequential path, a
+  kernel-program block routes to `KernelSession`. Everything about request-building, transcript
+  persistence, and the turn-ends-when-no-tool-calls condition is unchanged for non-kernel rounds.
+- **`KernelSession`** owns one interpreter process for the *lifetime of the chat session* (not
+  reset per round, not reset per turn) — this is the specific thing that makes this a "persistent
+  kernel" design rather than a stateless "run one program" design like OpenAI's PTC. Variables,
+  imported modules, open file handles the model's code created earlier in the session are still
+  there on the next kernel-mode round.
+- **The tool bridge** is a convenience, not a gate: it lets a kernel-mode script call
+  `read_file(...)`/`shell(...)`/etc. using the exact same `ITool` implementations and schemas the
+  direct-calling path uses, so Litos doesn't need two implementations of the same capability. Per
+  §5, calling a tool this way does **not** go through `IToolApprovalGate` the way a direct
+  `ToolUseBlock` call does — the script could equally reach the filesystem, network, or a
+  subprocess directly, without going through the bridge or `ToolRegistry` at all, since the
+  interpreter has that access natively (§5.1).
+  - The bridge covers **both** built-in tools and MCP tools, but the two are scoped differently.
+    All `ToolRegistry`-registered built-in tools are bridged unconditionally — the same full set
+    the sequential path already sees, no smaller subset carved out for kernel mode. MCP tools are
+    scoped to whatever servers are actually **enabled** for the session at the time — the existing
+    whole-server enable/disable toggle (`McpServersWindow` in `Litos.Gui`) is still the gate on
+    *availability*; a disabled server's tools are absent from the bridge entirely, not merely
+    ungated. This mirrors Prime Agent's own MCP integration shape rather than flat function
+    injection: curated servers can be exposed as typed, importable skill wrappers (e.g.
+    `import linear; await linear.list_issues(...)`), and any other enabled server is reachable
+    through a generic discover-then-call surface, modeled on Prime Agent's pre-imported `mcp`
+    module (`docs/mcp-integrations.md` — "the tool set is defined by the server, not the skill, so
+    discover before you call"). Either way, once a server is enabled and its tools are bridged,
+    calling them is ungated inside the kernel exactly like a built-in tool call, per §5.
+- **The host-request channel** is for the narrower set of things the interpreter has no native
+  way to reach at all — not "anything risky," since risky-but-native operations (file/network/
+  shell) are already directly available per §5. Its role is provider-side or host-process state
+  boundary Prime Agent's architecture doc describes for its own kernel/session split.
+
+### 4.2 Process isolation
+
+The interpreter runs as a **separate OS process from the face**, communicating over a local
+transport (stdio or a loopback socket — same category of choice `ReadMe_Extensibility.md` §10
+already made for extension isolation, and for the same reason: "process boundary catches an
+extension that corrupts its own heap or deadlocks its own thread pool... the host process is
+unaffected"). This is a *process/failure* isolation boundary, explicitly not a *security* sandbox
+by default — see §5.4 for why closing that gap further is out of scope for this document.
+
+### 4.3 Language/runtime choice — decided for `Litos.Gui`: Roslyn/C# scripting, out-of-process
+
+**Decision: `Litos.Gui`'s `KernelSession` runs C# via Roslyn scripting
+(`Microsoft.CodeAnalysis.CSharp.Scripting`) in a separate `dotnet`-hosted subprocess, communicating
+over stdio.** This section originally deferred the engine choice to implementation time; for
+`Litos.Gui` specifically that deferral is over. The requirements that motivated the deferral still
+apply and Roslyn/C# satisfies all of them:
+
+- Runs as a genuinely separate process reachable from .NET (§4.2) — the subprocess is a plain
+  `dotnet`-hosted host process running a Roslyn scripting loop, not an in-process
+  `CSharpScript.EvaluateAsync` call inside Gui's own process. §4.3's original candidate list
+  explicitly ruled out in-process embeddings "with no process boundary" — a C#-based kernel does
+  not get an exemption from that requirement just because it shares a language with the host; the
+  isolation argument in §4.2 (a runaway/crashing script must not take down the face) applies
+  identically regardless of which language the script is written in.
+- Supports persistent state across many executions within one process lifetime — Roslyn scripting
+  supports exactly this shape via `Script.ContinueWith`/a persisted `ScriptState`, which is the
+  direct C# analog of what a Python/Node REPL process gives you: each new snippet evaluates against
+  the accumulated state (locals, `using`s) of everything run before it in that process.
+- Realistically embeddable/launchable from a .NET host with **no new runtime dependency at all**
+  for `Litos.Gui` specifically — this is the deciding factor over Node/Python for this face. See
+  the size/maintenance comparison below.
+
+**Why Roslyn over Node or Python for `Litos.Gui`, concretely — the trade-offs actually weighed:**
+
+- **Bundling cost: zero for Roslyn, real for Node/Python.** `Litos.Gui` is already a .NET process;
+  a Roslyn-scripting subprocess needs no additional runtime shipped, signed, notarized, or
+  version-tracked beyond what Gui's own release pipeline already produces. Node or Python would
+  each need a bundled per-platform runtime (~40–90 MB for Node per platform/architecture, ~100–150
+  MB for Python once the standard library is included) or a required separate user install —
+  either way, new build-matrix artifacts and a new patch/LTS-tracking obligation Gui's release
+  process does not carry today (unlike .NET's own runtime lifecycle, which the team already tracks
+  as part of shipping Gui at all).
+- **Ecosystem/package-manager breadth: genuinely narrower for NuGet in this specific use case, but
+  this workload doesn't need that breadth.** Node's npm and Python's PyPI both have a much richer
+  long tail of small, install-and-use-immediately scripting utilities than NuGet, which is
+  fundamentally project/assembly-oriented rather than built for casual mid-script package pulls;
+  Python's `pandas`/`numpy`-class scientific ecosystem in particular has no strong .NET equivalent.
+  But per §1/§4.3's own framing of the actual workload this kernel targets — "file/data wrangling,
+  light control flow," concretely: read a tool's result, branch on it, call another tool, filter or
+  aggregate the output — that workload is covered by .NET's base class library alone (JSON parsing,
+  regex, `HttpClient`, file I/O, LINQ for filtering/aggregation) with no package installation
+  needed at all in the common case. The scenario where this trade-off would actually bite — a
+  script wanting `pandas`-equivalent statistical analysis, or a narrow npm utility with no BCL
+  analog — is not the motivating use case for this design and is treated as an accepted, uncommon
+  gap rather than a blocking concern.
+- **Model generation fluency is the honest remaining risk.** A model is plausibly more practiced at
+  writing idiomatic throwaway Python/JS scripts than idiomatic ad-hoc C# scripting (C# in most
+  training data is compiled project code, not REPL-style snippets) — this is a real quality risk
+  Roslyn does not avoid, and nothing in this design mitigates it beyond the system-prompt guidance
+  discussed in §6.
+
+**This decision does not extend to any other face.** `Litos.VsCode` runs inside VS Code's own
+Extension Host (itself Node/Electron, `ReadMe_VsCodeExtension.md:41,70`), so a Node-based kernel
+remains the natural choice there — genuinely zero extra install, using the Node binary VS Code
+already ships — but that face is out of scope for this document (§2). `Litos.Console` and
+`Litos.Api` are plain .NET processes like `Litos.Gui` and could plausibly reuse the same
+Roslyn-based `KernelSession` if/when kernel mode is extended to them, but that is future work this
+document does not decide now.
+
+### 4.4 Lifecycle: scope, working directory, and reset triggers
+
+**Scope: one `KernelSession` per chat session, not per turn and not global.** Litos already
+anchors a session to exactly one working directory for its entire life —
+`Transcript.WorkingDirectory` is set once, from the session's first `SessionHeader` entry
+(`src/Litos.Agent/Session/Transcript.cs:104-105`), and read on every turn by `AgentLoop`
+(`AgentLoop.cs:64-65,76`). `KernelSession` should ride this same boundary rather than invent a
+new one: born lazily on a chat session's first kernel-mode round, torn down when that session
+ends, never shared across two different chat sessions even if they happen to point at the same
+working directory. Per-turn scratch (killed and recreated every turn) would throw away the one
+thing this design exists to provide — variables and imports surviving across rounds; a kernel
+shared across the whole face's lifetime (all sessions) would leak one session's state into an
+unrelated project the moment two sessions are open against different working directories.
+
+**Working directory: the kernel process should be launched *in* it, not merely told about it.**
+Since the owning session's working directory never changes, `KernelSession` should set the
+interpreter subprocess's own working directory (cwd) to it at launch, the same way `ShellTool`
+already runs commands relative to a resolved directory rather than expecting every command to
+carry a full path. This is also a safety property, not just a convenience: paired with §5.2's "no
+ambient filesystem access outside the tool bridge," a script that never gets an ambient path
+capability of its own has nothing to construct an out-of-project absolute path *from* — the only
+paths available to it are whatever the model passed as tool arguments, evaluated through the same
+tools (and the same approval gate) a direct call would use.
+
+**Reset triggers — three distinct events, not one:**
+
+| Trigger | Kernel behavior | Why |
+|---|---|---|
+| `/new` (new session) | Kill old `KernelSession` (if any), no carry-over | Matches existing precedent exactly — `WorkingDirectory` itself resets the same way on `/new`; a new session already means a new transcript and (potentially) a new working directory, so a stale kernel pointed at the old directory would be actively wrong, not just unnecessary. |
+| `/compact` (transcript compaction) | **No effect on the kernel** | `Compactor.TryCompactAsync` (`src/Litos.Agent/Session/Compactor.cs:34`) rewrites the model-visible *message* transcript only — it has no relationship to kernel variables, which were never part of that transcript. Killing the kernel here would be a surprising side effect of a routine token-management operation the model didn't request and has no visibility into. |
+| Explicit reset (e.g. a `/kernel-reset` command) or crash/hang recovery | Kill and lazily recreate on next kernel-mode round | A deliberate escape hatch for "the interpreter is in a bad state" (leaked file handles, an infinite loop the hard-timeout killed, corrupted in-process state) — independent of both session lifecycle and compaction, the same way `ShellTool`'s own hard-timeout-and-kill path exists independently of the turn's own cancellation token. |
+
+This table is the concrete answer to "how do we clear the kernel out": there is no single
+"clear" operation, because the three things a reset could mean (start fresh on a new task,
+manage token budget, recover from a stuck interpreter) are already three separate, independent
+operations elsewhere in `AgentLoop`, and the kernel should follow whichever one actually applies
+
+**`/new` followed by `/resume` does not bring the kernel back — this is a real gap, not an
+edge case to hand-wave.** Worth separating two things that sound like the same question:
+**the process can restart on demand, any time; its state cannot.** The moment the model emits
+another kernel-program block in the resumed session, a new `KernelSession` spins up exactly like
+it would for any session's first kernel-mode round — the *capability* is never gone, never needs
+re-enabling, nothing about `/new` disables kernel mode itself. What's gone is continuity: the new
+interpreter starts from zero, not from wherever the pre-`/new` interpreter left off. If the model's
+generated code references a variable an earlier round created, it isn't there — only what already
+made it into a tool result's text (now sitting in the replayed transcript) is visible to the model
+at all, the same ceiling ordinary tool calls already have.
+
+`/resume` is not "reattach to a session that kept running in the
+background": `Transcript.LoadAsync` (`Transcript.cs:99-112`) builds a brand-new `Transcript` from
+scratch and replays it from the session's JSONL log — `WorkingDirectory` and `ChatMessage`s only.
+There is no notion of "kernel variable state" anywhere in that log format, and no mechanism
+proposed above could add one: a live interpreter's variables, open handles, and imports are
+process memory, not serializable transcript content. So the honest sequence is: `/new` kills the
+kernel (per the table above) → `/resume` faithfully replays the *conversation* exactly where it
+left off, including every past `ToolResultBlock` the model already saw → but the next
+kernel-mode round starts a fresh interpreter with none of the variables an earlier round in that
+same resumed session had built up. The model sees its own prior turns in context (so it "remembers"
+what it did, the same way it does today with ordinary tool calls) but a resumed kernel round
+cannot reference an actual live object, open file handle, or unsaved computation from before the
+`/new` — only what already made it into a tool result's text, same ceiling ordinary sequential
+tool calls already have today. This is consistent with how `/new` already behaves for everything
+else in the session (a fresh `Transcript`, not a suspended one), but it is worth stating
+explicitly here because kernel mode is the first thing in this design where "the model has
+state that isn't in the transcript" becomes possible at all — every other piece of Litos's
+session state already round-trips through the JSONL log by construction, and kernel variables are
+the first exception. A future revision could explore serializing a restartable checkpoint (e.g.
+Python's `dill`/pickle-style state dump) if this gap proves costly in practice, but that is
+speculative and explicitly out of scope for this document — the safe, honest default is "kernel
+state does not survive `/new`, full stop," not a partial or best-effort revival."
+
+### 4.5 Scratch storage for files the kernel writes mid-computation
+
+Per §5, a kernel-mode script has ambient filesystem access and will routinely want to persist
+things *as it works* — a checkpoint of an expensive computation, an intermediate CSV, a cached
+download — independent of whatever it ultimately reports back in a `ToolResultBlock`. Left alone,
+the natural default is for these files to land wherever the interpreter's cwd points, which per
+§4.4 is the session's working directory — i.e. directly inside the user's project. That pollutes
+the project a script's author never explicitly chose to write into: stray checkpoint files
+showing up in `git status`, in a `find`, in the user's own editor, with no natural place to
+`.gitignore` them from since nothing about the project itself anticipates a kernel-scratch
+convention.
+
+**Decision: scratch storage lives under the session's existing storage root, not the project.**
+`JsonlTranscriptStore` already persists one session as a single flat file,
+`~/.litos/sessions/{owner}/{sessionId}.jsonl` (`src/Litos.Persistence/JsonlTranscriptStore.cs:19,24`
+— `ResolveSessionPath`). This proposal promotes that to a **folder per session**:
+
+```
+~/.litos/sessions/{owner}/{sessionId}/
+    transcript.jsonl        (today's file, moved in as-is, same content/format)
+    scratch/                (new — where a kernel-mode script's own file writes land)
+```
+
+This keeps kernel scratch files entirely out of the user's project — never visible to `git
+status`, never needs a project-level `.gitignore` entry, and is trivially cleaned up alongside the
+rest of the session's data (deleting a session's folder removes its scratch files too, with no
+separate cleanup step). It also composes with §4.4's existing reset-trigger table rather than
+inventing a new one: since `scratch/` is keyed to the same `sessionId` a `KernelSession` already
+is, "does scratch get wiped" follows the same three-way split as kernel process state — untouched
+by `/compact` (a message-transcript-only operation, per the table), and a candidate for clearing
+on `/new`/`/kernel-reset` the same way in-memory kernel state is, though unlike process memory
+these are ordinary files, so a future revision could choose to leave them in place across a reset
+if that proves more useful in practice — this document does not resolve that either way, only
+that scratch files are not required to be wiped for the same reason process memory is (they're
+real files, not un-serializable process state).
+
+**How the interpreter finds this path: a pre-injected variable, not an environment variable.**
+`KernelSession` already knows `sessionId` (and hence the scratch path) at construction time, so no
+discovery mechanism is needed on the .NET side. The open question is only how the *interpreter
+subprocess* — whose own cwd is the project directory per §4.4, not the scratch folder — learns
+the path. An environment variable was an earlier candidate but is the wrong fit for a *persistent*
+process meant to feel like a live REPL rather than a one-shot CLI invocation: env vars are
+conventionally snapshotted at process spawn, awkward to reason about for something long-lived, and
+solve a problem this design doesn't have (the value never changes for the session's life). Instead,
+`KernelSession` should pre-inject a variable (e.g. `SCRATCH_DIR`, an absolute path string) directly
+into the interpreter's global namespace at kernel startup, using the exact same
+namespace-population channel §4.1 already proposes for exposing bridged tool functions
+(`read_file`, `shell`, etc.) — this is not new plumbing, just one more thing injected alongside
+those callables. A script then simply does e.g. `open(f"{SCRATCH_DIR}/checkpoint.csv", "w")` with
+no discovery step of its own.
+
+**Migration cost, stated plainly.** This is a real, scoped change to `Litos.Persistence`, not a
+free addition: every existing user has flat `{sessionId}.jsonl` files under
+`~/.litos/sessions/{owner}/`, and moving to a folder-per-session layout means either (a) a
+one-time migration that moves each `{sessionId}.jsonl` to `{sessionId}/transcript.jsonl` the first
+time `JsonlTranscriptStore` runs against the old layout, or (b) a fallback read path that checks
+the legacy flat location when the new folder form isn't found, so old sessions keep resolving
+without a forced migration step. Either way, `ResolveSessionPath` and every other
+`JsonlTranscriptStore` method that assumes "one session = one file" needs updating — this belongs
+in the implementation phase's task list (§7), not folded silently into kernel-mode work as a side
+effect.
+
+## 5. Safety and the trust boundary
+
+**Revised decision: Litos follows Prime Agent's trust model, not a per-call-gated one.** An
+earlier draft of this section proposed routing every kernel-initiated action — file I/O, network,
+shell, package installs — back through `IToolApprovalGate`, one prompt per call. In practice that
+defeats the reason kernel mode exists at all: the value of collapsing many rounds into one program
+(§1) is largely erased if the program itself can pause mid-execution on an unpredictable number of
+approval dialogs — worse, in fact, than the sequential loop it replaces, since those prompts
+appear at a point the user can't see coming (buried inside a running script) rather than before
+each visible tool call in the normal flow. A script that touches three new packages and two files
+would mean five blocking interruptions inside what was supposed to read as a single round.
+
+So this document now adopts Prime Agent's actual position directly: **the kernel process runs
+with real OS/user permissions — full filesystem, network, and subprocess access — the same
+"not a security sandbox... executes model-generated code with your user permissions" posture
+Prime Agent states outright.** There is no tool bridge chokepoint forcing every action through
+`ITool.InvokeAsync`/`IToolApprovalGate`; a kernel-mode script can call packages, hit the network,
+write files, and run subprocesses directly, the same way any locally-running script the user
+wrote themselves could.
+
+### 5.1 What this trades away — stated plainly, not glossed over
+
+The previous draft's protections are gone, and should be named rather than left implicit:
+- No per-call approval on file writes, shell commands, or network access made from inside a
+  kernel-mode script — contrast with the *direct* tool-calling path, where `ShellTool` and friends
+  still go through `IToolApprovalGate` exactly as they do today (§5.3 below).
+- No narrow, schema-checked host-request channel gating what the interpreter can reach (§5.2 in
+  the earlier draft is now moot) — the interpreter has ambient capability, full stop.
+- Package installation (the question that prompted this revision) is simply one more thing this
+  covers, not a special case: `npm install` from inside a kernel script is exactly as available,
+  and exactly as ungated, as everything else the process can already do.
+
+**Superseded for `Litos.Gui`: there is no longer an enable-kernel-mode decision to serve as that
+authorization boundary.** The paragraph above (retained for its reasoning, since it still explains
+*why* per-call gating was rejected) originally concluded that responsibility moves up to "the point
+where a user opts a session into kernel mode" — modeled on how enabling an MCP server is a
+whole-server decision, not a per-tool-call one. That conclusion assumed kernel mode would stay an
+opt-in. Per the decision recorded in §1, `Litos.Gui` instead follows Prime Agent's own shape
+exactly: kernel mode is present, unconditionally, in every session from the start, with no toggle
+and no first-run consent screen substituting for it. This is a direct, confirmed match to Prime
+Agent's own behavior (its settings/runtime docs describe the kernel as created lazily on first use,
+a startup-cost detail, not a user-facing on/off decision) — Litos is not inventing a gap Prime
+Agent avoided, it is adopting the same posture Prime Agent already ships with.
+
+**What this honestly means: for `Litos.Gui`, there is currently no user-facing checkpoint at all
+between "kernel mode exists" and "a kernel-mode script has ambient, ungated OS access."** Naming
+this plainly rather than re-deriving a substitute checkpoint that isn't actually built: the
+"roughly the same magnitude of trust as `ApproveAlways` for the whole session" comparison this
+section previously used to justify the enable-decision as sufficient no longer has an enable-
+decision to attach to — the trust extended is the same, but the moment where a user could
+knowingly grant it does not exist in the always-on design. §5.3 discusses what, if anything, should
+replace it.
+
+### 5.2 Direct tool calls are unaffected
+
+This trust model applies only *inside* a kernel-mode round. `AgentLoop`'s existing sequential path
+(§6) — a model response containing ordinary `ToolUseBlock`s, executed one at a time through
+`ToolRegistry`/`IToolApprovalGate` — is untouched by this section. `ShellTool`,
+`WriteFileTool`/`EditFileTool`, and MCP tools keep exactly the approval behavior they have today
+for every round that isn't a kernel-mode round. The trust boundary described here is specific to
+what a script running inside `KernelSession` can do on its own, not a blanket loosening of Litos's
+existing tool-approval model.
+
+### 5.3 The `Litos.Gui` gap, under the always-on decision — accepted, not fixed
+
+§3's recap still applies: `Litos.Gui`'s `GuiApprovalGate` auto-approves everything, and `Litos.Gui`
+has no per-tool MCP gating at all, only a whole-server toggle. An earlier draft of this section
+argued that gap "matters more, not less" under the Prime-Agent trust model, but resolved it by
+pointing at a checkpoint that has since been removed: "the decision to enable kernel mode for a
+session at all," surfaced as an explicit, visible per-session opt-in. Per §1/§5.1, that checkpoint
+no longer exists for `Litos.Gui` — kernel mode is on, unconditionally, in every session, with no
+toggle to point at.
+
+**Decision: accept the gap.** `Litos.Gui` gets no new consent mechanism for kernel mode — no
+per-session toggle (already ruled out, §5.1), no first-run notice, no wired-up approval dialog.
+The reasoning: `GuiApprovalGate` already auto-approves every direct tool call today
+(`shell`/`write_file`/everything, §3), so a user running `Litos.Gui` at all is already trusting the
+process with broad local capability; kernel mode's ambient access is a difference in *how* that
+capability is reached (a script vs. a sequence of already-auto-approved calls), not a new category
+of trust the user hasn't implicitly already granted by running Gui unconfigured. This is
+consistent with the always-on decision in §1/§5.1 rather than an inconsistent carve-out for kernel
+mode specifically.
+
+**Stated plainly, not glossed over: this means `Litos.Gui` has zero consent moments anywhere in
+its tool-execution model, kernel or otherwise, and this document leaves it that way.** Two other
+options were considered and rejected for now, recorded here so the reasoning isn't lost:
+- A one-time first-run notice (shown once on install, describing the agent's local-code-execution
+  capability) — rejected as adding process without changing the actual trust posture; `Litos.Gui`
+  would still auto-approve everything the moment past that one screen.
+- Finally wiring `ConfirmationDialog.axaml.cs` into `GuiApprovalGate` for the *direct* sequential
+  tool-calling path (not kernel-mode itself, since §5.1 already rejected per-call gating inside the
+  kernel as self-defeating) — a real, valid improvement to `Litos.Gui`'s existing approval gap, but
+  scoped as separate, pre-existing technical debt this feature does not need to fix as a
+  prerequisite. If `Litos.Gui`'s auto-approve-everything posture changes in the future, this
+  section's reasoning should be revisited, since it currently depends on that posture holding.
+
+### 5.4 What this document is not attempting
+
+A hermetic, OS-level sandbox (container, VM, seccomp/AppContainer-style syscall filtering) around
+the interpreter process remains out of scope — this section is not proposing one; it is
+explicitly choosing *not* to build one, the same choice Prime Agent made, rather than proposing a
+cooperative narrow-channel alternative as the earlier draft did. If a future revision wants
+stronger isolation than "runs with user permissions, gated only at the enable-kernel-mode
+decision," that is a materially different design (closer to the earlier draft, or to OpenAI's own
+hosted-sandbox model) and would need to be evaluated as such, not layered on top of this one.
+
+## 6. Where this plugs into `AgentLoop`
+
+Kernel mode's *availability* is unconditional for `Litos.Gui` (§5.1), but which path a given round
+actually takes is still a **per-round choice the model makes**, not a global replacement for the
+sequential path — the model can still emit an ordinary `tool_use` block for a simple, single,
+independent call, and reach for a kernel-program block only when it judges a round's work benefits
+from collapsing multi-step, result-dependent orchestration (§1):
+
+```mermaid
+flowchart TD
+    START(["Round starts"]) --> REQ["Build request, stream model response"]
+    REQ --> CHECK{"Tool calls in
+    the response?"}
+    CHECK -- "No" --> DONE(["Turn ends"])
+    CHECK -- "Yes, ordinary tool_use blocks" --> SEQ["Existing sequential path
+    (AgentLoop.cs:157-194, unchanged)"]
+    CHECK -- "Yes, a kernel-program block" --> KER["KernelSession.RunAsync(code)
+    — persistent Roslyn/C# interpreter, tool bridge,
+    ungated inside — no IToolApprovalGate, per §5.1"]
+    SEQ --> REQ
+    KER --> DONE2["One ToolResultBlock:
+    program's captured output"]
+    DONE2 --> REQ
+
+    style START fill:#2d6a4f,color:#fff
+    style DONE fill:#2d6a4f,color:#fff
+```
+
+This preserves the existing turn/round vocabulary from `ReadMe_Architecture.md`: a kernel-mode
+round is still exactly one round (one pass through `AgentLoop`'s `while (true)`), it simply may
+contain many tool invocations and control flow that would otherwise have needed several rounds to
+express. A model that never emits a kernel-program block behaves exactly as it does today — this
+is additive, not a fork of the loop.
+
+**System-prompt implication of "always on" (ties to §7's caching note):** since kernel mode is
+unconditional for every `Litos.Gui` session, the system prompt's description of this capability —
+a schema entry in the tools section, plus fixed steering guidance on *when* to reach for it vs. an
+ordinary tool call (the §1 "read A, and if it imports X also read B" framing) — is itself
+unconditional, static content, present in every session's prompt in the same position every time.
+This is deliberately simpler than the alternative an opt-in design would have required (a system
+prompt that varies per session based on a kernel-enabled flag): because there is no branch, adding
+this guidance carries no risk of prompt-prefix divergence between sessions or turns, so it is
+exactly as cache-safe as any other fixed content already in the `Guidelines`/`ToolsList` sections
+described in `ReadMe_Architecture.md`'s system-prompt breakdown.
+
+Whether a given provider/model can even emit a "kernel-program block" is itself a per-provider
+question (analogous to PTC's own `allowed_callers` opt-in, and to the existing per-provider
+request-shape differences already handled in `Litos.Providers.MeshApi`, e.g. the
+reasoning-model/Bedrock-model request-building fixes) — left for the implementation phase, not
+resolved here.
+
+## 7. Open questions for the implementation phase
+
+- **Resolved, not open**: kernel language/engine selection for `Litos.Gui` — Roslyn/C# scripting,
+  out-of-process (§4.3). Retained here only as a marker that this used to be an open item.
+- **Resolved, not open**: `Litos.Gui`'s consent gap for kernel mode's ungated local-code-execution
+  capability — accepted, no new consent mechanism added (§5.3). Retained here only as a marker that
+  this was weighed and decided, not overlooked.
+- Exact wire format for the tool bridge and host-request channel (§4.1/§5.2) — likely a small
+  JSON-RPC-shaped protocol over the interpreter subprocess's stdio, mirroring how `IChatProvider`
+  already normalizes very different vendor wire formats into one `AgentEvent` vocabulary. For a
+  Roslyn-hosted subprocess specifically, this could plausibly reuse .NET-native serialization
+  (`System.Text.Json` over stdio, or named pipes) rather than needing a foreign-process RPC library.
+- The exact wording of the system-prompt additions this design requires (§6) — a schema entry
+  advertising the kernel-program capability, and fixed `Guidelines` text steering the model toward
+  using it for multi-step, result-dependent orchestration rather than single independent calls.
+  Not drafted in this document.
+- Auditing every `IChatProvider` implementation (Anthropic, OpenAI, Gemini, OpenRouter, MeshApi,
+  Local) for how a kernel-program block is represented on the wire and parsed back — confirmed for
+  Anthropic specifically that `AnthropicChatProvider.ToAnthropicMessage`'s `ContentBlock` switch
+  (`AnthropicChatProvider.cs:104-138`) is not compiler-exhaustive and would throw
+  `NotSupportedException` at runtime, on the *next* round after a kernel round, if a new
+  `ContentBlock` type is added without a corresponding switch arm — not yet checked for the other
+  five providers.
+- Session lifecycle: does a `KernelSession` restart on `/compact`, on `/new`, on face restart?
+  Persistent-across-the-session is the goal (§4.1), but "session" needs a precise boundary.
+- How a kernel-mode round's activity is surfaced to the user mid-execution (Litos.Console/Gui/Api
+  all stream tool-call events live today; a long-running script executing several tool calls
+  needs equivalent incremental visibility, not just a single result at the end).
+- Migrating `Litos.Persistence`/`JsonlTranscriptStore` from one-file-per-session to
+  folder-per-session (§4.5) — a one-time migration vs. a legacy-path fallback is an implementation
+  choice this document doesn't resolve, but the change itself (needed for `scratch/`) is a
+  prerequisite for kernel-mode rollout, not optional.
+- Test coverage for the new `Litos.Kernel` project and `AgentLoop`'s kernel-mode routing — this
+  feature must ship with its own tests (unit coverage for `KernelSession` lifecycle/reset triggers
+  per §4.4, the tool bridge per §4.1, and `AgentLoop`'s block-type routing per §6), mirroring the
+  existing `tests/{ProjectName}.Tests` pattern already used for every other `src/` project in this
+  repository (e.g. `tests/Litos.Tools.Tests`, `tests/Litos.Agent.Tests`). Not yet scoped in detail.
