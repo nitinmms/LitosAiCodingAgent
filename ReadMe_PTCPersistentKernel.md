@@ -1001,9 +1001,11 @@ this document actually decided.
 
 ### 8.8 Still open, carried forward from §7
 
-- **Exact wording of the system-prompt `Guidelines` addition** (§6) — steering the model toward
-  kernel mode for multi-step, result-dependent orchestration and away from it for single
-  independent calls. Drafted in Milestone 2, not before.
+- **Exact wording of the system-prompt `Guidelines` addition** (§6) — per the toggle-gated design,
+  there is no "toward vs. away from the kernel" choice left to steer when the toggle is ON (it is
+  the model's only tool), so this is now in-kernel usage guidance instead: how to structure a
+  script for multi-step, result-dependent orchestration (§1's "read A, and if it imports X also
+  read B" pattern), not whether to use one. Drafted in Milestone 2, not before.
 - **Provider audit beyond Anthropic** — per §8.3, the reserved-tool-name approach needs zero
   provider changes for Anthropic; OpenAI/Gemini/OpenRouter/MeshApi/Local are out of scope per §2's
   `Litos.Gui`-only framing (Anthropic is Gui's default/primary provider) but should be spot-checked
