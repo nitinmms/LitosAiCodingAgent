@@ -32,7 +32,7 @@ public sealed class AgentWorker : BackgroundService
     private readonly CancellationTokenSource _stopping = new();
 
     private readonly Lock _settingsLock = new();
-    private readonly LitosConfig _config;
+    private LitosConfig _config;
     private string _providerName;
     private string _model;
     private int? _contextLength;
@@ -97,6 +97,7 @@ public sealed class AgentWorker : BackgroundService
             _providerName = providerName;
             _model = defaultModelInfo.Id;
             _contextLength = defaultModelInfo.ContextLength;
+            SaveLastUsedProviderAndModel();
         }
     }
 
@@ -109,7 +110,19 @@ public sealed class AgentWorker : BackgroundService
         {
             _model = modelId;
             _contextLength = contextLength;
+            SaveLastUsedProviderAndModel();
         }
+    }
+
+    /// <summary>Persists the just-changed provider/model to ~/.litos/config.json so the next
+    /// Litos.VsCodeHost process (spawned on the next VS Code launch, or after a saveKeys respawn)
+    /// starts with the same selection instead of falling back to DefaultModel: null — the same
+    /// write-on-select approach Litos.Gui's own SaveLastUsedProviderAndModel uses. Must be called
+    /// under _settingsLock, since it reads _providerName/_model.</summary>
+    private void SaveLastUsedProviderAndModel()
+    {
+        _config = _config with { DefaultProvider = _providerName, DefaultModel = _model };
+        _config.Save();
     }
 
     /// <summary>Resolves the IChatProvider for the current ProviderName — used by /compact and
