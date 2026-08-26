@@ -491,6 +491,25 @@ This table is the concrete answer to "how do we clear the kernel out": there is 
 manage token budget, recover from a stuck interpreter) are already three separate, independent
 operations elsewhere in `AgentLoop`, and the kernel should follow whichever one actually applies
 
+**`/compact` leaving the kernel process untouched is not the same as `/compact` leaving the
+model's *knowledge* of kernel state untouched — these can diverge, and it's worth tracing where.**
+The table above is correct that `/compact` has no effect on `KernelSession`/`ScriptState`/the
+function registry (§4.1) — none of that is message-transcript content, so `Compactor.TryCompactAsync`
+has nothing to touch. But `EvalResult.StateDelta` (§4.1/§4.6's "push, don't rely on pull" fix)
+*is* message-transcript content — it's a trailer appended into an ordinary `ToolResultBlock` — and
+that block is exactly the kind of thing compaction is free to summarize or drop. If the round that
+announced `FindGreatest`'s existence gets compacted away before the model ever acts on it, the
+model loses its only *automatic* notice that `FindGreatest` exists, even though `FindGreatest`
+itself is still perfectly callable in the still-alive kernel process — the capability was never
+lost, only the model's push-based awareness of it. This is not a bug to fix so much as a case to
+name: it's exactly the scenario `KernelState.List()`'s "supplementary re-orientation" role (§4.1)
+exists for, and the honest expectation is that a model working in a long, compacted session should
+lean on `KernelState.List()` more, not that `StateDelta` should somehow survive compaction when
+ordinary tool results don't. §6's system-prompt guidance should mention this connection explicitly
+(call `KernelState.List()` after noticing a summarized/compacted history, not just when starting a
+long session) rather than leaving the two mechanisms' interaction undiscovered until it surprises
+someone in practice.
+
 **`/new` followed by `/resume` does not bring the kernel back — this is a real gap, not an
 edge case to hand-wave.** Worth separating two things that sound like the same question:
 **the process can restart on demand, any time; its state cannot.** The moment the model emits
@@ -982,9 +1001,20 @@ ever sent back over the protocol — starting values, revisited once Milestone 1
 |---|---:|
 | Captured `Console.Out` per eval | 64 KiB |
 | `ReturnValueText` per eval | 32 KiB |
+| `StateDelta` per eval | 4 KiB, or 20 changed names, whichever comes first |
 | Combined model-visible `EvalResult` text | 96 KiB |
 | A single `ToolCallResponse`'s `Text` | 32 KiB |
 | Nested `ToolCallRequest`s per eval | 100 |
+
+`StateDelta` gets its own, much smaller cap rather than sharing headroom with `Output`/
+`ReturnValueText`: it's a mechanical list of names/signatures (§4.1), not payload the model asked
+for, so a script that happens to declare an unusual number of functions or variables in one eval
+(a code-gen loop, say) should never be able to make the *notification* about that eval as expensive
+as the eval's actual output. Past the name/count limit, `StateDelta` reports the first 20 by
+declaration order and appends "+N more — call `KernelState.List()` for the full set," steering the
+model at exactly the point its own delta feed stopped being sufficient (§4.4's `/compact`
+interaction note above makes the same point for a different reason: `KernelState.List()` is the
+fallback whenever the automatic push channel isn't enough).
 
 When a ceiling is hit, the host does not silently cut the string: it writes the full, untruncated
 content to a file under `SCRATCH_DIR` (§4.5) — reusing the same scratch mechanism already proposed
@@ -1113,15 +1143,26 @@ for (var i = 0; i < pendingToolCalls.Count; i++)
 }
 ```
 
+`InvokeKernelSafelyAsync` itself does one small thing `InvokeToolSafelyAsync` doesn't need to:
+`call.Args` arrives as the raw `{ "code": "..." }` argument payload (a `JsonElement`, same shape
+`InvokeToolSafelyAsync` already receives for every other tool), so before calling `kernelRunner` —
+which takes a bare `string`, not a `JsonElement` — it pulls `code` out via
+`call.Args.GetProperty("code").GetString()`, the same one-line extraction `KernelCodeTool`'s own
+(unreachable, per §8.2) `InvokeAsync` would otherwise have needed to do. A missing or non-string
+`code` property is treated as a malformed call and produces `ToolResult.Error(...)` without ever
+reaching `kernelRunner`, mirroring how `InvokeToolSafelyAsync` already handles a tool receiving
+arguments that don't match its schema.
+
 `AgentLoop` needs a `KernelSession?` reference to route to (nullable — a face without kernel mode,
 or a turn before the first kernel-mode round, has none). To avoid `Litos.Agent` taking a
 `ProjectReference` on `Litos.Kernel` (which would invert the existing dependency direction), this
-is threaded through as a small delegate — `Func<string, Task<ToolResult>>? kernelRunner` — an
-optional constructor parameter on `AgentLoop`, alongside the existing `compactor`/
-`streamIdleTimeout` optional parameters (`AgentLoop.cs:12-19` already has this exact pattern).
-`AgentLoopFactory.Create` gains a matching optional parameter; `Litos.Gui`'s per-turn
-`_session.LoopFactory.Create(...)` call (`MainWindow.axaml.cs:373`) supplies a closure capturing
-the current `KernelSession` from `KernelSessionManager.GetOrCreate(...)`.
+is threaded through as a small delegate — `Func<string, Task<ToolResult>>? kernelRunner`, taking the
+already-extracted code string, not the raw `JsonElement` — an optional constructor parameter on
+`AgentLoop`, alongside the existing `compactor`/`streamIdleTimeout` optional parameters
+(`AgentLoop.cs:12-19` already has this exact pattern). `AgentLoopFactory.Create` gains a matching
+optional parameter; `Litos.Gui`'s per-turn `_session.LoopFactory.Create(...)` call
+(`MainWindow.axaml.cs:373`) supplies a closure capturing the current `KernelSession` from
+`KernelSessionManager.GetOrCreate(...)`.
 
 This means: **zero changes to `ContentBlock`, zero changes to any `IChatProvider`, zero changes to
 `JsonlTranscriptStore`'s message-persistence path.** A kernel round produces exactly one ordinary
@@ -1344,7 +1385,8 @@ flowchart TD
     KS -- "ToolCallResponse" --> SCRIPT
 
     SCRIPT -- "EvalResult:
-    captured stdout + return value" --> KS
+    captured stdout + return value
+    + StateDelta, §4.1/§8.2" --> KS
     KS -- "ToolResult.Ok/.Error" --> ROUTE
     ROUTE -- "one ToolResultBlock
     per round, §8.3 — no ContentBlock
