@@ -158,5 +158,16 @@ public sealed class AgentLoopFactory(
     ISystemPromptProvider systemPromptProvider,
     Compactor compactor)
 {
-    public AgentLoop Create(IChatProvider provider, ToolRegistry tools) => new(provider, tools, store, accountant, systemPromptProvider, compactor);
+    public AgentLoop Create(IChatProvider provider, ToolRegistry tools) =>
+        new(provider, tools, store, accountant, systemPromptProvider, compactor);
+
+    /// <summary>
+    /// kernelRunner routes AgentLoop's reserved run_kernel_code tool name to a kernel-mode session
+    /// instead of ToolRegistry.Resolve (ReadMe_PTCPersistentKernel.md §8.3) — an optional extra
+    /// parameter here rather than a new overload's own positional slot, since most callers (every
+    /// face without kernel mode) never pass one and AgentLoop already treats a null kernelRunner as
+    /// "kernel mode unavailable this turn."
+    /// </summary>
+    public AgentLoop Create(IChatProvider provider, ToolRegistry tools, Func<string, CancellationToken, Task<ToolResult>>? kernelRunner) =>
+        new(provider, tools, store, accountant, systemPromptProvider, compactor, kernelRunner: kernelRunner);
 }

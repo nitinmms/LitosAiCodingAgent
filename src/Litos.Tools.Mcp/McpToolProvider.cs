@@ -172,6 +172,26 @@ public sealed class McpToolProvider(McpConfigStore configStore, ILoggerFactory l
         }
     }
 
+    /// <summary>
+    /// Ungated MCP invocation for a kernel-mode script's tool bridge (ReadMe_PTCPersistentKernel.md
+    /// §7/§8.2's flagged fix) — resolves the live connection for serverName and calls
+    /// McpToolProxy.InvokeDirectAsync, the same underlying call McpToolProxy.InvokeAsync makes after
+    /// its own gate check, just without that gate. Returns a ToolResult.Error (not an exception) if
+    /// the server isn't currently connected, mirroring how ToolRegistry.Resolve failing for an
+    /// unknown tool becomes an error result rather than propagating.
+    /// </summary>
+    public async Task<ToolResult> InvokeDirectAsync(string serverName, string toolName, System.Text.Json.JsonElement arguments, CancellationToken ct)
+    {
+        McpServerConnection? connection;
+        lock (_lock)
+            connection = _connections.FirstOrDefault(c => c.ServerName == serverName && c.Status == McpConnectionStatus.Connected);
+
+        if (connection is null)
+            return ToolResult.Error($"MCP server '{serverName}' is not currently connected.");
+
+        return await McpToolProxy.InvokeDirectAsync(serverName, toolName, connection, arguments, ct);
+    }
+
     public async Task ShutdownAsync()
     {
         List<McpServerConnection> connections;

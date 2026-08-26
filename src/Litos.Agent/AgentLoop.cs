@@ -16,7 +16,8 @@ public sealed class AgentLoop(
     ContextAccountant accountant,
     ISystemPromptProvider? systemPromptProvider = null,
     Compactor? compactor = null,
-    TimeSpan? streamIdleTimeout = null)
+    TimeSpan? streamIdleTimeout = null,
+    Func<string, CancellationToken, Task<ToolResult>>? kernelRunner = null)
 {
     /// <summary>
     /// How long to wait for the NEXT chunk of a provider's response stream before treating the
@@ -157,7 +158,9 @@ public sealed class AgentLoop(
             for (var i = 0; i < pendingToolCalls.Count; i++)
             {
                 var call = pendingToolCalls[i];
-                var result = await InvokeToolSafelyAsync(call.Name, call.Args, ct);
+                var result = call.Name == ReservedToolNames.KernelCode
+                    ? await InvokeKernelSafelyAsync(call.Args, ct)
+                    : await InvokeToolSafelyAsync(call.Name, call.Args, ct);
                 yield return new ToolCallResult(call.CallId, call.Name, result);
                 var resultMsg = ChatMessage.ToolResult(call.CallId, result);
                 transcript.Append(resultMsg);
@@ -293,6 +296,47 @@ public sealed class AgentLoop(
         catch (Exception ex)
         {
             return ToolResult.Error($"Tool '{toolName}' failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Mirrors InvokeToolSafelyAsync's try/catch shape for the one reserved tool name that routes
+    /// to kernelRunner instead of ToolRegistry.Resolve (ReadMe_PTCPersistentKernel.md §8.3). Extracts
+    /// the "code" argument here (the one thing an ordinary ITool call doesn't need to do, since
+    /// kernelRunner takes a bare string, not a JsonElement) rather than inside KernelCodeTool's own
+    /// unreachable InvokeAsync — a missing/non-string "code" property is treated as a malformed call
+    /// and produces ToolResult.Error without ever reaching kernelRunner, mirroring how
+    /// InvokeToolSafelyAsync already handles a tool receiving arguments that don't match its schema.
+    /// A null kernelRunner (a face/turn with no kernel session wired up) also produces a clean error
+    /// rather than a NullReferenceException.
+    /// </summary>
+    private async Task<ToolResult> InvokeKernelSafelyAsync(JsonElement args, CancellationToken ct)
+    {
+        if (kernelRunner is null)
+            return ToolResult.Error("Kernel mode is not available in this session.");
+
+        string code;
+        try
+        {
+            code = args.GetProperty("code").GetString()
+                ?? throw new JsonException("'code' property was null.");
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or JsonException or InvalidOperationException)
+        {
+            return ToolResult.Error($"Malformed {ReservedToolNames.KernelCode} call: missing or invalid 'code' argument.");
+        }
+
+        try
+        {
+            return await kernelRunner(code, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return ToolResult.Error($"Kernel execution failed: {ex.Message}");
         }
     }
 }

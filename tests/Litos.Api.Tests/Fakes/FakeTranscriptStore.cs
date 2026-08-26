@@ -38,4 +38,7 @@ public sealed class FakeTranscriptStore : ITranscriptStore
 
     public Task<string> BranchAsync(SessionOwner owner, string sourceSessionId, int uptoEntryIndex, CancellationToken ct) =>
         throw new NotSupportedException("Not needed by AgentWorker tests.");
+
+    public string GetScratchDirectory(SessionOwner owner, string sessionId) =>
+        $"/fake-scratch/{owner.Value}/{sessionId}";
 }

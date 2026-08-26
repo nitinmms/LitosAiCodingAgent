@@ -31,5 +31,6 @@ internal static class SlashCommands
         new("/mcp", "Manage MCP servers"),
         new("/keys", "Add or update API keys"),
         new("/update", "Check for and install an update"),
+        new("/kernel-reset", "Restart the kernel session (kernel mode only)"),
     ];
 }
