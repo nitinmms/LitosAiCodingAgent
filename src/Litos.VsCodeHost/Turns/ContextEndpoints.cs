@@ -28,6 +28,7 @@ public static class ContextEndpoints
                 contextLength = snapshot.ContextLength,
                 fraction = snapshot.Fraction,
                 level = snapshot.Level.ToString(),
+                isStale = snapshot.IsStale,
             });
         });
 

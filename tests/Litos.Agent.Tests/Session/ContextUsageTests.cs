@@ -95,6 +95,74 @@ public class ContextUsageTests
         Assert.Equal(0, snapshot!.Fraction);
     }
 
+    // ---- Fraction clamp and staleness: the estimate this is built from (real usage plus a
+    // char/4 count of every message since) can run past a real conversation's actual size when
+    // many messages pile up with no fresh usage report in between — e.g. repeated
+    // sends/steering against a turn stuck mid-tool-call (McpServerConnection.CallToolAsync's
+    // hard timeout was added for the same underlying bug). These guard the display side of that:
+    // never show more than 100%, and flag when the number can no longer be trusted.
+
+    [Fact]
+    public void Compute_ClampsFractionToOneHundredPercent_WhenEstimateExceedsContextLength()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        // Real usage already at 90% of the window, plus a huge trailing message pushes the raw
+        // estimate well past contextLength.
+        transcript.Append(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(180_000, 0));
+        transcript.Append(ChatMessage.User(new string('x', 400_000))); // +100_000 estimated tokens
+
+        var snapshot = ContextUsage.Compute(transcript, contextLength: 200_000);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(280_000, snapshot!.UsedTokens); // the raw estimate is preserved for display...
+        Assert.Equal(1.0, snapshot.Fraction);         // ...but Fraction itself never exceeds 100%.
+    }
+
+    [Fact]
+    public void Compute_IsNotStale_WhenFewMessagesSinceLastUsage()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(10_000, 0));
+        transcript.Append(ChatMessage.User("a normal follow-up"));
+
+        var snapshot = ContextUsage.Compute(transcript, contextLength: 200_000);
+
+        Assert.NotNull(snapshot);
+        Assert.False(snapshot!.IsStale);
+    }
+
+    [Fact]
+    public void Compute_IsStale_WhenManyMessagesHavePiledUpSinceTheLastRealUsageReport()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(10_000, 0));
+        // Simulates repeated retries against a turn that never completes a round (so LastUsage
+        // never refreshes) — e.g. the user hitting Send/steering again and again against a stuck
+        // tool call, each attempt appending another message with no new usage report to anchor to.
+        for (var i = 0; i <= ContextUsage.StaleAfterMessagesSinceLastUsage; i++)
+            transcript.Append(ChatMessage.User("retry"));
+
+        var snapshot = ContextUsage.Compute(transcript, contextLength: 200_000);
+
+        Assert.NotNull(snapshot);
+        Assert.True(snapshot!.IsStale);
+    }
+
+    [Fact]
+    public void Compute_IsNotStale_ExactlyAtTheThreshold()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(10_000, 0));
+        for (var i = 0; i < ContextUsage.StaleAfterMessagesSinceLastUsage; i++)
+            transcript.Append(ChatMessage.User("retry"));
+
+        var snapshot = ContextUsage.Compute(transcript, contextLength: 200_000);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(ContextUsage.StaleAfterMessagesSinceLastUsage, transcript.MessagesSinceLastUsage);
+        Assert.False(snapshot!.IsStale);
+    }
+
     // ---- Branch/resume scenarios: the context meter must reflect only the loaded transcript,
     // never anything left behind by BranchAsync's truncation or carried over from a prior session.
 
