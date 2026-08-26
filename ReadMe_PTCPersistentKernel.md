@@ -334,6 +334,43 @@ flowchart TD
     designed) and functions (from this registry) — so "what do I already have to work with" is one
     call covering both, not a caveat the model has to remember applies only to half of it.
 
+  - **`KernelState.List()` alone is not enough — it's pull-based, and nothing makes the model pull
+    it.** Being *able* to ask "what functions exist" is not the same as the model actually asking.
+    Walk the concrete sequence: round N's script defines `FindGreatest`; the registry above records
+    it; but `EvalResult` (§8.2) only carries *that script's own* `Output`/`ReturnValueText` — nothing
+    about the registry update rides along. Round N+1 starts a fresh model turn that sees round N's
+    `ToolResultBlock` in its transcript (whatever `FindGreatest`'s own script happened to print or
+    return) and nothing else; unless the model spontaneously decides to open its next script with
+    `KernelState.List()`, it has no signal that `FindGreatest` exists at all, and may simply
+    redefine it from scratch — functionally harmless (the redefinition overwrites the registry entry
+    and the old one, per above) but silently defeats the reuse this whole mechanism exists for.
+
+    **Fix: push, don't rely on pull.** Every `EvalResult` carries a second field,
+    `StateDelta: string?` (alongside `Output`/`ReturnValueText` in `KernelProtocol`, §8.2),
+    populated unconditionally by the host on every eval — not something the model has to request.
+    Computed cheaply from data the host already has at that point: the function registry's diff
+    (any name newly added or overwritten by this submission's syntax scan, from the mechanism just
+    above) plus a shallow diff of `ScriptState.Variables` between this eval's start and end (any
+    variable name that's new, or whose declared type changed). `KernelSession.RunAsync` appends this
+    delta to the `ToolResult` text it hands back to `AgentLoop` — so the *same* `ToolResultBlock`
+    that already carries the script's own output also carries a short, mechanical trailer, e.g.:
+
+    ```
+    [kernel state changed this round: +function FindGreatest(int a, int b) -> int]
+    ```
+
+    for a function, or `[kernel state changed this round: +variable df (DataFrame-shaped, ~40k rows)]`
+    for a variable (reusing §4.6's "short summary, not raw content" framing for the *value* half of
+    this, so a large variable's delta line doesn't itself become the token cost this design is
+    trying to avoid). **This is the actual answer to "how does the model find out `FindGreatest`
+    exists" — it's in round N+1's context automatically, because it was appended to round N's own
+    `ToolResultBlock`, with no extra call and no dependence on the model thinking to check.**
+    `KernelState.List()`/`Describe()` remain useful for a different case this delta doesn't cover —
+    a long session where the model wants to re-orient on *everything* built so far, not just what
+    changed last round — but they are now a supplementary lookup, not the only mechanism, which is
+    the load-bearing fix here: automatic beats discoverable-on-request for exactly the reason
+    ordinary tool results are never opt-in to see either.
+
     This is deliberately a source-level scan, not reflection on `ScriptState`'s compiled output: the
     submission source is already in hand (it's the `EvalRequest.Code` the host just received), a
     syntax parse is a stable, public Roslyn API unlikely to shift under a compiler version bump, and
@@ -925,11 +962,13 @@ bridge" are not conflated into the same registry instance.
 over stdio: a `Handshake`/`HandshakeAck` pair carrying a single `ProtocolVersion` int (mismatch
 throws immediately, not a silent misbehavior); `EvalRequest(string Code)` /
 `EvalResult(string? Output, string? ReturnValueText, bool IsError, bool Truncated, string?
-ArtifactPath)`; `ToolCallRequest(string RequestId, string ToolName, JsonElement Arguments)` /
-`ToolCallResponse(string RequestId, string Text, bool IsError)` for the tool-bridge round trip. No
-JSON-RPC library — matches how `ContentBlock`/`TranscriptEntry` already do plain
+ArtifactPath, string? StateDelta)`; `ToolCallRequest(string RequestId, string ToolName, JsonElement
+Arguments)` / `ToolCallResponse(string RequestId, string Text, bool IsError)` for the tool-bridge
+round trip. No JSON-RPC library — matches how `ContentBlock`/`TranscriptEntry` already do plain
 `System.Text.Json` polymorphism/records elsewhere in this codebase, no new serialization
-convention introduced.
+convention introduced. `EvalResult.StateDelta` is populated on every eval per §4.1's "push, don't
+rely on pull" fix — the mechanical function/variable-diff trailer that makes new kernel state
+visible to the model automatically, without a `KernelState.List()` call.
 
 **Output size is enforced in code, not left to prompt guidance — §4.6's principle needs a backstop.**
 §4.6 argues a script *should* return short summaries rather than raw data, but per the general
@@ -1118,14 +1157,23 @@ registered as an ordinary `ITool` (in `Litos.Gui/Program.cs`, per §8.2), so it 
    the script (e.g. `read_file(...)`) sends a `ToolCallRequest` back over stdio and blocks; the
    host process's `RunAsync` loop resolves and invokes the real `ITool` (MCP tools going through
    the new ungated `InvokeDirectAsync` path, §8.2), replies with `ToolCallResponse`.
-9. The subprocess finishes, sends `EvalResult` with captured stdout/return value.
-10. `KernelSession.RunAsync` returns `ToolResult.Ok(...)`/`ToolResult.Error(...)` — same type the
-    sequential path already produces.
+9. The subprocess finishes. Before replying, it diffs this eval's syntax-scanned function
+   declarations and `ScriptState.Variables` against their pre-eval state (§4.1) and sends one
+   `EvalResult` carrying both the script's own captured stdout/return value **and** the resulting
+   `StateDelta` (§4.1/§8.2 — e.g. "+function FindGreatest(int a, int b) -> int"), never just the
+   former.
+10. `KernelSession.RunAsync` concatenates the script's own output with the `StateDelta` trailer into
+    one string and returns `ToolResult.Ok(...)`/`ToolResult.Error(...)` — same type the sequential
+    path already produces, `StateDelta` folded in rather than carried as a separate field past this
+    point.
 11. `AgentLoop` yields `ToolCallResult`, appends `ChatMessage.ToolResult(call.CallId, result)`,
-    persists via `store.AppendAsync` — an ordinary `ToolResultBlock`. `MainWindow`'s existing
-    `ToolCallResult` handling renders it as a normal tool-call row, `run_kernel_code` shown as the
-    tool name — cosmetic, not required for correctness, a friendlier label is a deferred nicety.
-12. Loop continues; the model sees the program's output on the next request like any tool result.
+    persists via `store.AppendAsync` — an ordinary `ToolResultBlock`, delta trailer included.
+    `MainWindow`'s existing `ToolCallResult` handling renders it as a normal tool-call row,
+    `run_kernel_code` shown as the tool name — cosmetic, not required for correctness, a friendlier
+    label is a deferred nicety.
+12. Loop continues; the model sees the program's output *and* what changed in kernel state on the
+    next request, in the same `ToolResultBlock` — this is what lets round N+1 know `FindGreatest`
+    exists without a separate `KernelState.List()` call (§4.1).
 
 ### 8.5 `Litos.Persistence` folder-per-session migration (§4.5, prerequisite)
 
@@ -1165,21 +1213,26 @@ deadlocking or leaking zombie processes (no existing precedent for this in the c
 is request/response-per-call, never long-lived), and whether Roslyn's `ScriptState` continuation
 actually gives the persistent-REPL semantics this whole design depends on.
 
-**Milestone 1 — tool bridge, scratch dir, `KernelState`, MCP fix.**
+**Milestone 1 — tool bridge, scratch dir, `KernelState`, `StateDelta`, MCP fix.**
 `init` protocol message carrying tool schemas + scratch path; Roslyn host generates per-tool
 wrapper functions; `KernelState.List/Describe` reflecting on `ScriptState.Variables` (§4.1) plus the
 per-submission syntax-scan function registry (§4.1's `LocalFunctionStatementSyntax` walk, run before
-every `EvalRequest`); `JsonlTranscriptStore` folder-per-session migration + `GetScratchDirectory`;
+every `EvalRequest`); `EvalResult.StateDelta` populated on every eval from that same scan plus a
+before/after `ScriptState.Variables` diff (§4.1/§8.2's "push, don't rely on pull" fix);
+`JsonlTranscriptStore` folder-per-session migration + `GetScratchDirectory`;
 `McpToolProvider.InvokeDirectAsync` + `McpToolProxy` refactor (§8.2's flagged fix). Tests: tool-bridge
 round-trip with a fake `ITool`; a test defining a function in one `RunAsync` call and confirming
-`KernelState.List()` reports it (name/signature) in a later call without the function ever being
-invoked in between (i.e. discoverable from the scan alone, not inferred from execution);
-`KernelState.List()` correctly reporting a redefinition's latest signature, not both, when the same
-function name is declared twice across separate evals; folder-per-session + legacy-fallback coverage
-for all four `ITranscriptStore` methods; a test confirming the ungated MCP path never calls
-`IToolApprovalGate` while the direct/sequential path still does; a test confirming a script's
-`Console.WriteLine` mid-eval does not corrupt the next protocol message (§8.2's stdout-capture
-detail).
+**that same call's `EvalResult.StateDelta`** already names it (the primary, automatic path — not
+deferred to a later `KernelState.List()` call); a separate test confirming `KernelState.List()`
+*also* reports it in a later, unrelated call (the supplementary re-orientation path); `StateDelta`
+correctly reporting only the net new/changed names when a script both reads an existing variable
+and declares one new function in the same eval (no false positives on unchanged state);
+`KernelState.List()`/`StateDelta` correctly reporting a redefinition's latest signature, not both,
+when the same function name is declared twice across separate evals; folder-per-session +
+legacy-fallback coverage for all four `ITranscriptStore` methods; a test confirming the ungated MCP
+path never calls `IToolApprovalGate` while the direct/sequential path still does; a test confirming
+a script's `Console.WriteLine` mid-eval does not corrupt the next protocol message (§8.2's
+stdout-capture detail).
 
 **Checkpoint — first benchmark, before Milestone 2.** Everything H1/H2 (§1.1) need to be measured
 at all already exists after Milestone 1: a working kernel round-trip with a real tool bridge, and
@@ -1319,11 +1372,12 @@ this document actually decided.
   script for multi-step, result-dependent orchestration (§1's "read A, and if it imports X also
   read B" pattern), not whether to use one — plus §4.6's return-short-summaries-not-raw-data
   guidance, since that's the one place the model's own script-writing choices can silently defeat
-  this design's token savings, and a pointer to call `KernelState.List()` at the start of a script
-  when unsure what earlier rounds already built (variables *and* functions, per §4.1's function
-  registry — the model no longer needs to narrate function definitions itself now that the registry
-  tracks them automatically, so this is a "check first" nudge, not a "remember to announce it"
-  burden). Drafted in Milestone 2, not before.
+  this design's token savings, and a short mention that `EvalResult`'s state-change trailer
+  (§4.1/§8.2's `StateDelta`) already reports new/changed functions and variables automatically each
+  round — the model does not need to announce its own definitions or proactively call
+  `KernelState.List()` for that to work, only for the separate case of re-orienting on everything
+  built across a long session when the running delta trail is no longer enough context. Drafted in
+  Milestone 2, not before.
 - **Provider audit beyond Anthropic** — per §8.3, the reserved-tool-name approach needs zero
   provider changes for Anthropic; OpenAI/Gemini/OpenRouter/MeshApi/Local are out of scope per §2's
   `Litos.Gui`-only framing (Anthropic is Gui's default/primary provider) but should be spot-checked
