@@ -311,25 +311,42 @@ flowchart TD
   session-metadata row §4.6's table already describes for scratch files, extended to cover
   in-memory variables too.
   - **A locally-declared function or method persists exactly like a variable does, but is not
-    listed by `KernelState.List()` — this asymmetry is real and worth naming, not glossed over.**
-    If a script defines `int Square(int x) => x * x;` in round 3, that definition lives in the same
-    persisted `ScriptState` a variable would (Roslyn's `Script.ContinueWithAsync` carries the whole
-    submission chain forward, functions included, per §4.3/§8.2) — round 8 can call `Square(5)` and
-    it works with no re-declaration needed, the same continuity a variable gets. What round 8 does
-    **not** get is a way to *discover* that `Square` exists without already knowing its name:
-    Roslyn's `ScriptState.Variables` — the data `KernelState.List()` reflects on — enumerates
-    top-level variables, not local functions declared in a submission, so a generated function is
-    invisible to that listing even though it is fully callable. The practical consequence is that a
-    script's only way to know "did an earlier round already define a helper I could reuse" is the
-    same ceiling ordinary tool-call memory already has (§4.4) — whatever made it into the model's
-    own transcript context (e.g. it remembers writing `Square` three rounds ago, or an earlier
-    round's `EvalResult` mentioned defining it), not a live query against the kernel. §6's
-    system-prompt guidance should say this plainly — e.g. "if you define a reusable function, note
-    its name and purpose in your output so future rounds know it exists" — since nothing in the
-    architecture surfaces it automatically the way `KernelState.List()` does for variables. Closing
-    this gap fully (reflecting on the submission chain's declared methods, not just
-    `ScriptState.Variables`) is a plausible v2 `KernelState` enhancement but is not required for v1
-    to be honest about what it does and doesn't expose — deferred, not silently assumed away.
+    listed by `ScriptState.Variables` — closed in v1 by tracking declarations separately, not by
+    reflecting on Roslyn's scripting internals.** If a script defines `int Square(int x) => x * x;`
+    in round 3, that definition lives in the same persisted `ScriptState` a variable would (Roslyn's
+    `Script.ContinueWithAsync` carries the whole submission chain forward, functions included, per
+    §4.3/§8.2) — round 8 can call `Square(5)` with no re-declaration needed. But `ScriptState.Variables`
+    — the data `KernelState.List()` reflects on for variables — enumerates top-level variable slots,
+    not local functions declared in a submission, so a generated function would otherwise be
+    invisible to that listing even though it is fully callable.
+
+    **Fix: `Litos.Kernel.Host` parses each submission's source for function declarations at the
+    point it's received, before evaluating it — it does not try to recover this from `ScriptState`
+    after the fact.** On every `EvalRequest`, before calling `Script.ContinueWithAsync`, the host
+    runs `CSharpSyntaxTree.ParseText(code)` (a parse, not a compile — cheap, and Roslyn is already
+    loaded in this process per §4.3) and walks the resulting tree for
+    `LocalFunctionStatementSyntax` nodes, recording each one's name, parameter list, return type,
+    and immediately-preceding `///` doc comment (if any) into a small dictionary `KernelSession`
+    maintains alongside the subprocess — call it the *function registry*, deliberately not part of
+    `ScriptState` itself. A later declaration with the same name overwrites the earlier entry (the
+    model redefining `Square` should show the latest signature, not both). `KernelState.List()` is
+    then extended to report **two sections**: variables (from `ScriptState.Variables`, as already
+    designed) and functions (from this registry) — so "what do I already have to work with" is one
+    call covering both, not a caveat the model has to remember applies only to half of it.
+
+    This is deliberately a source-level scan, not reflection on `ScriptState`'s compiled output: the
+    submission source is already in hand (it's the `EvalRequest.Code` the host just received), a
+    syntax parse is a stable, public Roslyn API unlikely to shift under a compiler version bump, and
+    it sidesteps needing to reach into `Script`/`ScriptState`'s internal representation of a
+    submission's emitted type — which is not a stable contract to build on. The one thing this
+    approach cannot do that a full compiled-output reflection could: if a function is defined
+    conditionally (inside an `if` the script's control flow didn't take this time), the syntax scan
+    still records it as declared even though that particular execution didn't actually run the
+    declaration. This is an acceptable, narrow inaccuracy — the registry is a discovery aid ("here's
+    what's been *written*"), not a guarantee of "here's what's *definitely callable right now*";
+    calling a function that was scanned but never actually reached at runtime fails with an ordinary
+    Roslyn "not defined" error the model can recover from like any other compile/runtime mistake
+    (§8.2's error-handling design), not a silent wrong answer.
 
 ### 4.2 Process isolation
 
@@ -1148,12 +1165,18 @@ deadlocking or leaking zombie processes (no existing precedent for this in the c
 is request/response-per-call, never long-lived), and whether Roslyn's `ScriptState` continuation
 actually gives the persistent-REPL semantics this whole design depends on.
 
-**Milestone 1 — tool bridge, scratch dir, MCP fix.**
+**Milestone 1 — tool bridge, scratch dir, `KernelState`, MCP fix.**
 `init` protocol message carrying tool schemas + scratch path; Roslyn host generates per-tool
-wrapper functions; `JsonlTranscriptStore` folder-per-session migration + `GetScratchDirectory`;
+wrapper functions; `KernelState.List/Describe` reflecting on `ScriptState.Variables` (§4.1) plus the
+per-submission syntax-scan function registry (§4.1's `LocalFunctionStatementSyntax` walk, run before
+every `EvalRequest`); `JsonlTranscriptStore` folder-per-session migration + `GetScratchDirectory`;
 `McpToolProvider.InvokeDirectAsync` + `McpToolProxy` refactor (§8.2's flagged fix). Tests: tool-bridge
-round-trip with a fake `ITool`; folder-per-session + legacy-fallback coverage for all four
-`ITranscriptStore` methods; a test confirming the ungated MCP path never calls
+round-trip with a fake `ITool`; a test defining a function in one `RunAsync` call and confirming
+`KernelState.List()` reports it (name/signature) in a later call without the function ever being
+invoked in between (i.e. discoverable from the scan alone, not inferred from execution);
+`KernelState.List()` correctly reporting a redefinition's latest signature, not both, when the same
+function name is declared twice across separate evals; folder-per-session + legacy-fallback coverage
+for all four `ITranscriptStore` methods; a test confirming the ungated MCP path never calls
 `IToolApprovalGate` while the direct/sequential path still does; a test confirming a script's
 `Console.WriteLine` mid-eval does not corrupt the next protocol message (§8.2's stdout-capture
 detail).
@@ -1296,9 +1319,11 @@ this document actually decided.
   script for multi-step, result-dependent orchestration (§1's "read A, and if it imports X also
   read B" pattern), not whether to use one — plus §4.6's return-short-summaries-not-raw-data
   guidance, since that's the one place the model's own script-writing choices can silently defeat
-  this design's token savings, and §4.1's function-discoverability gap (a script should narrate a
-  reusable function's name/purpose in its output when it defines one, since `KernelState.List()`
-  won't surface it later). Drafted in Milestone 2, not before.
+  this design's token savings, and a pointer to call `KernelState.List()` at the start of a script
+  when unsure what earlier rounds already built (variables *and* functions, per §4.1's function
+  registry — the model no longer needs to narrate function definitions itself now that the registry
+  tracks them automatically, so this is a "check first" nudge, not a "remember to announce it"
+  burden). Drafted in Milestone 2, not before.
 - **Provider audit beyond Anthropic** — per §8.3, the reserved-tool-name approach needs zero
   provider changes for Anthropic; OpenAI/Gemini/OpenRouter/MeshApi/Local are out of scope per §2's
   `Litos.Gui`-only framing (Anthropic is Gui's default/primary provider) but should be spot-checked
