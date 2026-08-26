@@ -157,7 +157,24 @@ public sealed class AgentLoop(
             for (var i = 0; i < pendingToolCalls.Count; i++)
             {
                 var call = pendingToolCalls[i];
-                var result = await InvokeToolSafelyAsync(call.Name, call.Args, ct);
+                ToolResult result;
+                try
+                {
+                    result = await InvokeToolSafelyAsync(call.Name, call.Args, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // The turn is being aborted (CancelTurn, or a face's own cancel) with this
+                    // call (i) and everything after it in pendingToolCalls still unresolved. Every
+                    // tool_use the model already emitted needs a matching tool_result before the
+                    // transcript is used again — the same invariant the steering skip-path below
+                    // maintains — or the next request this session sends is rejected outright by
+                    // the provider (a dangling tool_use with no result). Without this, a cancelled
+                    // turn left the transcript permanently broken: even a plain "please continue"
+                    // afterward would 500, since nothing had ever repaired it.
+                    await WriteCancelledToolResultsAsync(owner, sessionId, transcript, pendingToolCalls, i);
+                    throw;
+                }
                 yield return new ToolCallResult(call.CallId, call.Name, result);
                 var resultMsg = ChatMessage.ToolResult(call.CallId, result);
                 transcript.Append(resultMsg);
@@ -195,6 +212,27 @@ public sealed class AgentLoop(
 
             if (steered)
                 continue;
+        }
+    }
+
+    /// <summary>
+    /// Writes a synthetic "cancelled" tool_result for pendingToolCalls[fromIndex..] — the call
+    /// that was actually in flight when cancellation struck, plus every call after it that was
+    /// never even started. Persisted with CancellationToken.None (ct is already cancelled at this
+    /// point, so anything gated on it would throw immediately) so this cleanup write survives
+    /// the very cancellation it's repairing the transcript for. See the call site's own remarks
+    /// on why leaving any of these unresolved corrupts the transcript for every future turn.
+    /// </summary>
+    private async Task WriteCancelledToolResultsAsync(
+        SessionOwner owner, string sessionId, Transcript transcript,
+        List<(string CallId, string Name, JsonElement Args)> pendingToolCalls, int fromIndex)
+    {
+        for (var j = fromIndex; j < pendingToolCalls.Count; j++)
+        {
+            var cancelled = pendingToolCalls[j];
+            var resultMsg = ChatMessage.ToolResult(cancelled.CallId, ToolResult.Error("Cancelled by user."));
+            transcript.Append(resultMsg);
+            await store.AppendAsync(owner, sessionId, TranscriptEntry.FromMessage(resultMsg), CancellationToken.None);
         }
     }
 

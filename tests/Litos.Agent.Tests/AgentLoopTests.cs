@@ -675,6 +675,50 @@ public class AgentLoopTests
     }
 
     [Fact]
+    public async Task RunTurnAsync_CancelledMidMultiToolRound_EveryPendingCallStillGetsAToolResult()
+    {
+        // Regression test for a real bug: a model emitted 3 parallel tool_use calls in one round
+        // (e.g. 3 web_search calls), the turn was cancelled (Litos.VsCodeHost's CancelTurn) while
+        // the FIRST was still in flight, and the transcript was left with that tool_use — and the
+        // other two, never even started — permanently missing a tool_result. The next turn sent on
+        // that session (e.g. "please continue") then had providers reject the whole request with a
+        // 500, since a dangling tool_use with no result is invalid on every major provider's API.
+        var transcript = Transcript.CreateNew("/repo");
+        var provider = new FakeChatProvider();
+        var args = JsonDocument.Parse("{}").RootElement;
+        provider.Enqueue(
+            new ToolCallCompleted("call_1", "web_search", args),
+            new ToolCallCompleted("call_2", "web_search", args),
+            new ToolCallCompleted("call_3", "web_search", args));
+
+        using var cts = new CancellationTokenSource();
+        var tool = new FakeTool("web_search")
+        {
+            // Only the first invocation (call_1) actually runs; cancelling here simulates
+            // CancelTurn firing while it's in flight — call_2/call_3 never even reach InvokeAsync.
+            Handler = (_, ct) =>
+            {
+                cts.Cancel();
+                ct.ThrowIfCancellationRequested();
+                return Task.FromResult(ToolResult.Ok("unreachable"));
+            },
+        };
+        var loop = CreateLoop(provider, tools: [tool]);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in loop.RunTurnAsync(Owner, SessionId, transcript, Model, "hi", cts.Token))
+            {
+            }
+        });
+
+        var resultBlocks = transcript.Messages.SelectMany(m => m.Content).OfType<ToolResultBlock>().ToList();
+        Assert.Equal(3, resultBlocks.Count);
+        Assert.Equal(["call_1", "call_2", "call_3"], resultBlocks.Select(r => r.CallId));
+        Assert.All(resultBlocks, r => Assert.True(r.IsError));
+    }
+
+    [Fact]
     public async Task RunTurnAsync_ToolThrowsOperationCanceledException_WhenTokenIsNotCanceled_IsCaughtAsGenericError()
     {
         // Distinguishes "the caller's token was canceled" (rethrow) from "the tool threw
