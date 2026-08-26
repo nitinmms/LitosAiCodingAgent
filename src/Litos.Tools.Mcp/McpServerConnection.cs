@@ -18,10 +18,26 @@ public enum McpConnectionStatus
 /// MaxConsecutiveFailures is reached, the terminal Failed state) with the distinguishing detail
 /// preserved in Error, rather than a separate status per failure mode.
 /// </summary>
-public sealed class McpServerConnection(McpServerDefinition definition, ILoggerFactory loggerFactory, int consecutiveFailures = 0)
+public sealed class McpServerConnection(
+    McpServerDefinition definition, ILoggerFactory loggerFactory, int consecutiveFailures = 0, TimeSpan? callTimeout = null)
 {
     private static readonly TimeSpan MinBackoff = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Hard wall-clock cap on a single tool call, independent of the caller's CancellationToken —
+    /// same reasoning and same default as ShellTool's own _hardTimeout (see its doc comment). Unlike
+    /// ConnectAsync just below, which already wraps its handshake in a timeout, CallToolAsync used to
+    /// await the underlying MCP client with no bound at all: a stdio server process that goes
+    /// unresponsive mid-call (wedged, deadlocked, blocked on stdin) after a successful handshake left
+    /// the caller's await parked forever, since the caller's own ct only fires on a genuine user
+    /// cancel — which, for a face with no cancel UI wired up, may never come. That stalled AgentLoop
+    /// inside InvokeToolSafelyAsync before it could ever reach the next provider request, matching
+    /// "working indicator stuck on, zero requests reach the LLM, no amount of steering helps" (steering
+    /// is only polled after a tool call returns). Overridable purely so tests can exercise the
+    /// timeout path without a real 5-minute wait — production callers always get the default.
+    /// </summary>
+    private readonly TimeSpan _callTimeout = callTimeout ?? TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Once a server has failed this many consecutive attempts, it stops being retried
@@ -66,17 +82,22 @@ public sealed class McpServerConnection(McpServerDefinition definition, ILoggerF
     /// </summary>
     public int ConsecutiveFailures => _consecutiveFailures;
 
-    public async Task ConnectAsync(TimeSpan timeout, CancellationToken ct)
+    public Task ConnectAsync(TimeSpan timeout, CancellationToken ct) =>
+        ConnectAsync(definition.Transport == McpTransportKind.Stdio ? BuildStdioTransport() : BuildHttpTransport(), timeout, ct);
+
+    /// <summary>
+    /// Internal seam so tests can connect over an in-process transport (e.g. StreamClientTransport
+    /// over an in-memory pipe pair driving a real in-process McpServer) instead of a real external
+    /// process/URL — exercises the exact same handshake/CallToolAsync code every production path
+    /// runs, just without needing a real subprocess to spawn.
+    /// </summary>
+    internal async Task ConnectAsync(IClientTransport transport, TimeSpan timeout, CancellationToken ct)
     {
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
         try
         {
-            IClientTransport transport = definition.Transport == McpTransportKind.Stdio
-                ? BuildStdioTransport()
-                : BuildHttpTransport();
-
             _client = await McpClient.CreateAsync(
                 transport,
                 new McpClientOptions(),
@@ -152,7 +173,18 @@ public sealed class McpServerConnection(McpServerDefinition definition, ILoggerF
         if (_client is null)
             throw new InvalidOperationException($"MCP server '{definition.Name}' is not connected.");
 
-        return await _client.CallToolAsync(toolName, arguments, cancellationToken: ct);
+        using var timeoutCts = new CancellationTokenSource(_callTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+
+        try
+        {
+            return await _client.CallToolAsync(toolName, arguments, cancellationToken: linkedCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"MCP tool '{toolName}' on server '{definition.Name}' did not respond within {_callTimeout.TotalMinutes:0}m.");
+        }
     }
 
     public async ValueTask<ModelContextProtocol.Protocol.GetPromptResult> GetPromptAsync(
