@@ -60,9 +60,76 @@ each one out still matters:
    checkpoint step 2 removed: flipping the toggle ON is now the explicit, visible act of granting
    ungated kernel access (§5.3's "accept the gap" reasoning is revised accordingly — see §5.3).
 
+**Named against the three-mode framing this space is usually discussed in (Standard / Hybrid /
+Kernel-only): this document builds Kernel-only, not Hybrid, and that is a deliberate scope choice
+worth stating rather than leaving implicit.** Hybrid — direct tools and `run_kernel_code` both
+visible, the model routing between them by task shape, Litos recording which route was chosen so
+routing quality itself becomes measurable — is a real, plausible production candidate, arguably the
+better one long-term. It is not what step 3 above builds, for a concrete reason: step 2's rejected
+"always on, both visible" framing *was* essentially Hybrid, and it was rejected specifically because
+nothing in this design yet has a way to *measure* whether the model is routing well — "Litos records
+which route was chosen" is infrastructure this document does not build. Choosing Kernel-only first
+is a legitimate way to sidestep that gap rather than resolve it: it isolates the kernel path
+completely, gets H1–H5 (§1.1) a first clean measurement uncontaminated by routing quality, and only
+afterward is Hybrid's routing question (does the model choose well when both paths are visible?)
+worth spending measurement infrastructure on. **This should not be read as Kernel-only having won on
+the merits as a production mode** — per its own reasoning above, it hasn't been evaluated against
+Hybrid at all, only chosen as the cheaper first experiment. Revisiting Hybrid is the natural next
+step once §1.1's benchmark checkpoint exists and this document's Kernel-only results are in hand.
+
 The engine remains Roslyn/C# scripting, out-of-process (§4.3), unaffected by this reversal.
 `Litos.Console`/`Litos.Api`/`Litos.VsCodeHost` are out of scope for this decision (not addressed by
 this document at all, for now) — see §2.
+
+### 1.1 This is an experiment, not a committed architecture — stated explicitly
+
+Everything from §3 onward reads as a design that has already been decided, because within the
+scope it covers (engine, toggle shape, protocol, lifecycle) it has been. But the reason to build
+any of it is not "Prime Agent does this" or "this is architecturally elegant" — it's that
+collapsing multi-round orchestration into one kernel program is *hypothesized* to reduce tokens,
+rounds, and latency on suitable tasks, and that hypothesis has not yet been measured against
+`Litos.Gui` today. This document should be read as: **the architecture below is what gets built to
+run the experiment, not the conclusion of one.**
+
+**Hypotheses this is meant to test:**
+
+- **H1 — Programmatic orchestration reduces context usage.** A kernel program that calls several
+  tools and filters/aggregates before returning should send substantially less raw tool output back
+  to the model than §3's sequential loop does for the same task, because intermediate results stay
+  in kernel state/scratch (§4.6) instead of each becoming its own `ToolResultBlock`.
+- **H2 — Programmatic orchestration reduces model rounds.** Loops, fan-out, filtering, joining, and
+  conditional branching (§1's "read A, and if it imports X also read B") should complete in fewer
+  round trips through `AgentLoop.RunTurnAsync`'s `while (true)` than the sequential path needs for
+  the same task.
+- **H3 — Persistence adds value beyond one-shot programmatic execution.** On tasks that reuse a
+  parsed index, a search result set, or other data across multiple kernel-mode rounds within a
+  session, a *persistent* kernel (this design) should outperform an otherwise-equivalent kernel that
+  discarded `ScriptState` after every eval — otherwise §4.4's entire lifecycle/reset-trigger
+  complexity is not earning its cost.
+- **H4 — Roslyn is reliable enough for model-generated orchestration.** Supported models should
+  generate short C# scripts against the bridged API (§8.2) with an acceptable compile-and-run
+  success rate. §4.3 already names this as "the honest remaining risk" rather than assuming it away
+  — this hypothesis is what turns that risk into a measured number instead of a guess.
+- **H5 — Kernel benefit is workload-dependent, not universal.** Simple, single-tool tasks may see no
+  benefit, or a regression (subprocess spawn/handshake overhead per §8.6 Milestone 0, with no
+  sequential fallback once the toggle is ON per §6). Results must be reported per task shape
+  (§1.1 below reuses the shape categories the toggle is meant to eventually route on, per §1's
+  step-2 discussion of Hybrid), not collapsed into one average that could hide a real regression on
+  the common case behind a win on the uncommon one.
+
+**What "the experiment succeeds" means here, concretely — deferred to a follow-on document, not
+resolved in this one.** This document does not attempt full acceptance-gate numbers (target token
+reduction %, round reduction %, infra failure rate) or a benchmark task suite — that belongs in a
+companion evaluation plan written once Milestone 1 (§8.6) exists to measure, not invented
+speculatively here. What this document commits to instead: **§8.6's build sequence includes a
+benchmark checkpoint after Milestone 1** (before the toggle UI, `/kernel-reset`, or hardening work
+in Milestones 2–3 is built), specifically so H1/H2 get a first real measurement while the design is
+still cheap to change. If that checkpoint shows no advantage over the sequential path on any task
+shape, the honest outcome is revisiting this design — up to and including not shipping it — not
+proceeding on schedule regardless. This is the same posture §1's own decision log already models
+for architectural choices (each framing was reversed when reasoning surfaced a problem, not
+defended past the point the reasoning held up); it should apply to the empirical question too, not
+just the design one.
 
 ## 2. Design goals and non-goals
 
@@ -226,6 +293,23 @@ flowchart TD
   way to reach at all — not "anything risky," since risky-but-native operations (file/network/
   shell) are already directly available per §5. Its role is provider-side or host-process state
   boundary Prime Agent's architecture doc describes for its own kernel/session split.
+- **Kernel state is inspectable by name, not just usable by name.** §4.6 establishes that a kernel
+  variable is where reusable data should live *instead of* the transcript — but that only actually
+  saves anything if the model can find out *what* already exists in that variable space without
+  re-deriving or re-reading it, which today's design has no answer for: an ordinary C# local
+  variable in `ScriptState` has no listing mechanism at all. `Litos.Kernel.Host/Program.cs` (§8.2)
+  therefore injects one additional global alongside `SCRATCH_DIR` and the per-tool wrapper
+  functions: a small `KernelState` object exposing `KernelState.List()` (returns each top-level
+  variable's name, declared type, and an approximate size — `IEnumerable`s report a count where
+  cheap to compute, not their full contents) and `KernelState.Describe(name)` (a one-variable detail
+  view, same size/type information). This does not require the model to declare variables through a
+  special API instead of plain C# assignment — `var df = ...;` still just works — `KernelState`
+  only *reflects on* whatever the script's locals already are via the persisted `ScriptState`'s
+  variable list, the same data Roslyn already tracks internally for continuation. The payoff: a
+  script in round 7 can call `KernelState.List()` to check whether an earlier round already loaded
+  what it needs before deciding to redo that work — the in-kernel equivalent of the transcript
+  session-metadata row §4.6's table already describes for scratch files, extended to cover
+  in-memory variables too.
 
 ### 4.2 Process isolation
 
@@ -366,6 +450,26 @@ the first exception. A future revision could explore serializing a restartable c
 Python's `dill`/pickle-style state dump) if this gap proves costly in practice, but that is
 speculative and explicitly out of scope for this document — the safe, honest default is "kernel
 state does not survive `/new`, full stop," not a partial or best-effort revival."
+
+**A second, narrower staleness gap: kernel variables can go stale *within* a session, not just
+across `/new`.** The above covers state disappearing outright; the remaining risk is state that
+*silently persists but no longer reflects reality* — a script reads `Program.cs` into a kernel
+variable in round 3, and by round 7 (whether via a direct-path edit while the toggle was
+momentarily OFF, or via the kernel's own ungated file-write access per §5.1) the file on disk has
+changed. Nothing currently tells that round-7 script its round-3 variable is stale; it isn't a bug
+Roslyn/`ScriptState` can detect, since it's a facts-about-the-world problem, not a language one.
+**Minimum v1 rule, not a general dependency-tracking system**: every successful file write/edit —
+through a bridged tool, a direct-path tool, or the kernel's own ungated file I/O — increments one
+process-lifetime workspace-generation counter that `KernelSession` exposes to the interpreter (e.g.
+alongside `SCRATCH_DIR` in the injected globals, per §4.5's existing injection channel). This does
+not attempt to tag individual variables with the generation they were read at, or to invalidate
+anything automatically — that precision is deferred as genuinely speculative. What it *does* enable
+cheaply: the §6 system-prompt guidance can instruct the model to re-read a file-derived variable
+before relying on it for final verification whenever the counter has advanced since that variable
+was last populated, and a human or a future tooling pass can at least detect "this session's
+generation moved since round 3" without per-variable tracking. This mirrors the same "state doesn't
+survive `/new`, full stop" honesty principle above: the rule is coarse and conservative by design,
+not a partial correctness guarantee dressed up as a complete one.
 
 ### 4.5 Scratch storage for files the kernel writes mid-computation
 
@@ -554,6 +658,22 @@ now has its own dedicated consent moment that does not depend on `GuiApprovalGat
 explicitly by flipping the toggle, independent of how permissive the rest of Gui's tool-approval
 model is or ever becomes.
 
+**Where the toggle's value actually lives — stated explicitly, since "a visible control" says
+nothing about persistence.** The toggle is **per-chat-session state, persisted in that session's own
+storage, not a global app preference and not in-memory-only UI state that silently resets.**
+Concretely: it is recorded in the session's `SessionHeader` (the same record that already carries
+`WorkingDirectory`, per §4.4) and written to `transcript.jsonl` the same way, so it survives
+`/resume` (a resumed session reopens with kernel mode in whatever state it was left, even though the
+*kernel's variables* do not survive per §4.4's resume gap — the toggle setting and kernel process
+state are two different things and only the latter is lost) and does not leak across sessions the
+way a global setting would (opening a second, unrelated chat session does not inherit the first
+session's toggle choice, matching §4.4's "never shared across two different chat sessions"
+precedent exactly). `/new` starts the new session with a stated default (OFF, matching "kernel mode
+is an explicit opt-in per §5.1," not carried over from whatever the previous session had it set to)
+rather than silently inheriting the prior session's choice. This is the concrete answer to "is this
+toggle a real per-session consent decision or does it quietly behave like an unrecorded window
+preference" — it is the former, by construction, not merely by UI framing.
+
 ### 5.4 What this document is not attempting
 
 A hermetic, OS-level sandbox (container, VM, seccomp/AppContainer-style syscall filtering) around
@@ -621,6 +741,15 @@ system prompt's prefix is **stable within one toggle state but changes when the 
 a real, one-time prompt-cache invalidation at the moment of the flip, not a per-turn cost. This is
 no worse than switching providers or models already is in this codebase (both already vary the
 system prompt/request shape) and is fully cache-safe across sessions sharing the same toggle state.
+
+Note the "single-tool schema list" above is doing more work than it looks like: since
+`run_kernel_code`'s own parameter schema is opaque (`{ code: string }`, §8.3), the model's *entire*
+knowledge of what functions/globals exist inside the kernel comes from that one tool's generated
+`Description` (§8.2's "how the model learns the bridged function/global names") — there is no
+separate schema section listing `read_file`/`shell`/`KernelState` the way OFF's full tool list
+would. This is why §8.2 requires that description to be built from the live bridged-tool list rather
+than hand-written: a static description would drift the moment a new tool or MCP server changed
+what's actually bridged for a session.
 
 Whether a given provider/model can even emit a `run_kernel_code` call the same way it emits any
 other tool call is itself a per-provider question (analogous to PTC's own `allowed_callers` opt-in,
@@ -720,6 +849,29 @@ silently advertise a capability that doesn't work for them) — schema-only. `Na
 canary — `AgentLoop` must always intercept calls to this name before `ToolRegistry.Resolve` is
 reached, so this body should be unreachable in practice; a test asserts that invariant directly.
 
+**How the model learns the bridged function/global names — this must be answered explicitly, since
+`{ code: string }` gives it nothing to go on.** Unlike an ordinary `ITool`, whose `ParameterSchema`
+itself documents what the model needs to know to call it, `run_kernel_code`'s schema is opaque by
+design (§8.3 — it's a code string, not structured arguments); nothing about a one-field schema tells
+the model that `read_file(path)`, `shell(command)`, `KernelState.List()`, or `SCRATCH_DIR` exist, or
+what they're named. Left unaddressed, the model would be guessing function names blind the first
+time it writes a script — a real, concrete gap, not a wording nicety left to "steering guidance."
+The fix is generative, not hand-written: `KernelCodeTool.Description` is **built dynamically from
+the same bridged-tool list `ToolRegistryFactory` already assembles for the tool bridge** (§4.1),
+not a static string — one line per bridged tool naming its bridged function signature and a
+one-sentence purpose (reusing each `ITool.Description` already defined for the sequential path, so
+this is a projection of existing data, not new copy to maintain), plus the fixed globals
+(`SCRATCH_DIR`, `KernelState.List/Describe` per §4.1) and a compact usage example. Concretely, this
+means `KernelCodeTool` cannot be a static, schema-fixed-at-registration singleton the way most
+`ITool`s are — its `Description` is recomputed by `ToolRegistryFactory.Create()` on ON, from
+whatever tools/MCP servers are actually bridged *for that session* (§4.1's "MCP tools scoped to
+enabled servers" already makes the bridged set session-dependent, so the description was already
+going to need to vary — this makes explicit that it must). This keeps the model's only source of
+truth about the kernel API and the bridge's actual contents from ever drifting apart, since one is
+mechanically derived from the other rather than hand-synced. The example in §6 ("read A, and if it
+imports X also read B") should show these generated names being used, not placeholder ones, so the
+system-prompt guidance and the tool description agree on vocabulary.
+
 **Registry construction respects the toggle, per §1/§6 — this is where "kernel-only when ON" is
 actually enforced.** `ToolRegistryFactory.Create()` (rebuilt fresh every turn, per its existing
 `MainWindow.axaml.cs:372` call site) takes the session's current toggle state as an input: OFF
@@ -735,11 +887,56 @@ bridge" are not conflated into the same registry instance.
 **`Litos.Kernel.KernelProtocol`** — flat `System.Text.Json` record types, one JSON object per line
 over stdio: a `Handshake`/`HandshakeAck` pair carrying a single `ProtocolVersion` int (mismatch
 throws immediately, not a silent misbehavior); `EvalRequest(string Code)` /
-`EvalResult(string? Output, string? ReturnValueText, bool IsError)`; `ToolCallRequest(string
-RequestId, string ToolName, JsonElement Arguments)` / `ToolCallResponse(string RequestId, string
-Text, bool IsError)` for the tool-bridge round trip. No JSON-RPC library — matches how
-`ContentBlock`/`TranscriptEntry` already do plain `System.Text.Json` polymorphism/records
-elsewhere in this codebase, no new serialization convention introduced.
+`EvalResult(string? Output, string? ReturnValueText, bool IsError, bool Truncated, string?
+ArtifactPath)`; `ToolCallRequest(string RequestId, string ToolName, JsonElement Arguments)` /
+`ToolCallResponse(string RequestId, string Text, bool IsError)` for the tool-bridge round trip. No
+JSON-RPC library — matches how `ContentBlock`/`TranscriptEntry` already do plain
+`System.Text.Json` polymorphism/records elsewhere in this codebase, no new serialization
+convention introduced.
+
+**Output size is enforced in code, not left to prompt guidance — §4.6's principle needs a backstop.**
+§4.6 argues a script *should* return short summaries rather than raw data, but per the general
+"prompt guidance alone is not a control" concern, an oversized result must not simply flow through
+to the transcript when a script gets this wrong (or a tool bridged into the script returns
+something large). `Litos.Kernel.Host/Program.cs` enforces fixed ceilings before an `EvalResult` is
+ever sent back over the protocol — starting values, revisited once Milestone 1's benchmark data
+(§1.1) exists rather than fixed permanently here:
+
+| What's capped | Starting limit |
+|---|---:|
+| Captured `Console.Out` per eval | 64 KiB |
+| `ReturnValueText` per eval | 32 KiB |
+| Combined model-visible `EvalResult` text | 96 KiB |
+| A single `ToolCallResponse`'s `Text` | 32 KiB |
+| Nested `ToolCallRequest`s per eval | 100 |
+
+When a ceiling is hit, the host does not silently cut the string: it writes the full, untruncated
+content to a file under `SCRATCH_DIR` (§4.5) — reusing the same scratch mechanism already proposed
+for a script's own deliberate writes, not a second storage path — and sets `EvalResult.Truncated =
+true` with `ArtifactPath` pointing at it, alongside a preview (the first slice of the capped
+content) in `Output`/`ReturnValueText`. `KernelSession.RunAsync` surfaces this distinction in the
+`ToolResult` text it returns (e.g. "output truncated at 64 KiB, full content at
+`scratch/eval-0f3a.txt`") so truncation is visible to the model and to a human reading the
+transcript, never silent. The same applies to a `ToolCallResponse` a bridged tool produces mid-eval
+— e.g. a bridged `read_file` call against a very large file — so a single nested call cannot blow
+the budget the eval-level cap is meant to enforce.
+
+**Return-value serialization semantics — what `ReturnValueText` actually contains.** A script's
+final expression value (Roslyn's own `ScriptState.ReturnValue`) is not passed through a bare
+`.ToString()` — for most non-primitive types that produces the unhelpful CLR default
+(`"System.Collections.Generic.List\`1[...]"` and similar), which is worse than no value at all. The
+host instead: for a `null`, `string`, or numeric/boolean primitive, uses the value directly; for
+anything else, attempts `System.Text.Json` serialization capped at the `ReturnValueText` ceiling
+above (matching the "prefer structured JSON over prose strings" preference this design already
+leans on for tool results generally); if serialization fails (a type `System.Text.Json` can't
+handle, e.g. an open `Stream`, a `Process`, or a `Task`) the host returns a short diagnostic
+("value of type `System.IO.FileStream` is not serializable — assign it to a named variable to keep
+it in kernel state instead of returning it") rather than either crashing the eval or falling back to
+a useless `.ToString()`. **An `IEnumerable` is never auto-enumerated to completion** — a lazy or
+unbounded sequence as the final expression is serialized only up to a fixed element cap (e.g. the
+first 100 elements) with a note that it was truncated, since eagerly draining an arbitrary
+`IEnumerable` inside the size-limited return path above is exactly the kind of accidental
+foot-gun §4.6 already warns a careless script can trigger.
 
 **`Litos.Kernel.KernelSession`** — one instance per chat session (§4.4).
 - Constructor: `(string sessionId, string workingDirectory, string scratchDirectory, ToolRegistry tools)`.
@@ -747,6 +944,17 @@ elsewhere in this codebase, no new serialization convention introduced.
   (§4.4 "born lazily on first kernel-mode round"), via `ProcessStartInfo` with
   `WorkingDirectory = workingDirectory` (§4.4), redirected stdio, `CreateNoWindow = true` — the
   same shape `ShellTool` already uses (`src/Litos.Tools/Shell/ShellTool.cs`).
+- **`ProcessStartInfo.EnvironmentVariables` is explicitly minimized, not inherited wholesale.**
+  `ShellTool`'s own subprocess is a deliberate stand-in for "a command the user could have typed
+  themselves," so inheriting the full parent environment there is the right default. A kernel
+  subprocess is different: it runs *model-generated* code (§5, ungated), so the least-surprise
+  default flips — start from an empty/near-empty environment and add back only what the Roslyn host
+  itself needs to run (`PATH`, `DOTNET_ROOT`-equivalent variables, `TEMP`/`TMP`), rather than
+  whatever happens to be set in the Gui process's own environment. **Provider API keys and other
+  secrets Litos itself holds (`ANTHROPIC_API_KEY` and similar, wherever `Litos.Gui`'s process
+  currently keeps them) are never copied into the subprocess's environment** — nothing in the
+  bridged-tool or host-request design (§4.1) requires the interpreter to see them directly, so the
+  default is exclusion, not inclusion-unless-proven-necessary.
 - On spawn: performs the `Handshake`/`HandshakeAck` exchange, then sends one `init` message
   carrying `scratchDirectory` and the bridged-tool schema list, so the subprocess can pre-inject
   `SCRATCH_DIR` and generate per-tool wrapper functions into the Roslyn globals (§4.1, §4.5) before
@@ -767,6 +975,22 @@ elsewhere in this codebase, no new serialization convention introduced.
   `McpToolProxy.InvokeAsync` refactored to call through the same method before adding its own gate
   check — one invocation path, two callers (gated for the direct/sequential path, ungated for
   `KernelSession`'s tool-call servicing), no duplicated protocol-translation logic.
+- **Every nested tool call is written to a durable audit trace, separate from the transcript.**
+  §4.6/§8.2's whole point is keeping nested-call detail *out* of the model-visible transcript — but
+  "not resent to the model" must not mean "not recorded anywhere." If the only trace of a
+  kernel-mode script's activity is whatever text happened to survive into the final `ToolResultBlock`,
+  a script that (for example) wrote three files and ran a shell command leaves no record of *which*
+  files or *what* command once the round completes — a real regression from the sequential path,
+  where every tool call is already an individually persisted transcript entry. `KernelSession.RunAsync`
+  appends one line to a per-session audit log (`scratch/../audit.jsonl`, alongside but distinct from
+  `transcript.jsonl` — not inside the scratch folder itself, since audit records are metadata about
+  the session, not scratch content a script owns per §4.5) for: kernel creation/reset/termination,
+  each eval's start/end and outcome (including truncation, §8.2 above), the generated code or a
+  content-addressed reference to it, each nested tool call's name/arguments/duration/status/result
+  size, and any process-tree kill. This log is written unconditionally (not user-visible UI, no
+  round-trip cost to the model) and exists purely for debugging and for the benchmark measurement
+  §1.1 depends on — none of H1–H5 can be measured (e.g. "raw tool-result bytes processed" vs. "bytes
+  shown to the model") without exactly this data existing somewhere.
 - `Task ResetAsync(CancellationToken ct)` — kills the subprocess and clears lazy-start state, so
   the next `RunAsync` respawns fresh. Backs `/kernel-reset` and crash/hang recovery (§4.4 table).
 - `ValueTask DisposeAsync()` — kills the subprocess if running. Called by `/new`, never by
@@ -914,6 +1138,21 @@ round-trip with a fake `ITool`; folder-per-session + legacy-fallback coverage fo
 `Console.WriteLine` mid-eval does not corrupt the next protocol message (§8.2's stdout-capture
 detail).
 
+**Checkpoint — first benchmark, before Milestone 2.** Everything H1/H2 (§1.1) need to be measured
+at all already exists after Milestone 1: a working kernel round-trip with a real tool bridge, and
+the audit trace (§8.2) to count nested calls and bytes. Per §1.1's commitment, this is where that
+first measurement happens — **before** building the toggle UI, `/kernel-reset`, or any hardening
+work, so a negative result is cheap to act on. Minimum scope: hand-drive a handful of tasks spanning
+§1.1's task-shape categories (a single-file read, a multi-file conditional read, a fan-out over
+several files) through both the existing sequential path and a kernel-mode round using a
+temporary/manual toggle stand-in (Milestone 2 hasn't built the real UI yet), and compare
+uncached-input-token count and model-round count for each, per task shape rather than averaged
+(§1.1's H5). **Do not proceed to Milestone 2 on schedule if this shows no advantage on any measured
+task shape** — the honest next step at that point is revisiting this design (which task shapes, if
+any, justify the added complexity; whether Hybrid's routing question, deferred in §1's toggle-vs-Hybrid
+note, should be reopened instead), not building the remaining milestones on the assumption the
+hypothesis already held.
+
 **Milestone 2 — the toggle itself, system prompt, real steering, `/kernel-reset`.**
 The session-level kernel toggle UI (§5.3 — a visible control, not buried in a settings submenu)
 and the toggle-aware `ToolRegistryFactory.Create()` path from §8.2 (OFF = today's registry, ON =
@@ -1051,3 +1290,15 @@ this document actually decided.
 - **`ScriptState` unbounded memory growth** across a very long session (every variable/import from
   every prior kernel round stays alive in the subprocess) — no mitigation planned for v1, `/kernel-reset`
   is the accepted escape hatch; worth a code comment marking this a known, accepted limitation.
+
+**Resolved in a later review pass, evaluated against `Guidelines_PTCPersistentKernelReview.md`:**
+experimental hypotheses/acceptance-gate framing (§1.1), explicit Kernel-only-vs-Hybrid positioning
+(§1), hard output-size enforcement and return-value serialization semantics (§8.2), a nested-tool-call
+audit trace separate from the transcript (§8.2), subprocess environment minimization (§8.2), kernel
+state discoverability via `KernelState.List/Describe` (§4.1), the toggle's persistence/storage
+location (§5.3), a within-session stale-state/workspace-generation rule (§4.4), and a benchmark
+checkpoint inserted into the build sequence before Milestone 2 (§8.6). What that review left as
+future work rather than resolving now: a full benchmark task suite and numeric acceptance-gate
+targets (§1.1 defers these to a companion evaluation-plan document once Milestone 1 exists to
+measure), and session-branching's artifact-copy semantics (§4.5/§16 of that Guidelines document —
+narrow enough to leave with `BranchAsync`'s existing scope).
