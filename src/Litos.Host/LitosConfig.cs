@@ -62,7 +62,13 @@ public sealed record LitosConfig(
     /// </summary>
     public IReadOnlyList<string> AvailableChatProviders => [.. ChatProviderNames.Where(IsProviderConfigured)];
 
-    public static string ConfigFilePath { get; } =
+    // internal set, not init: a test that exercises Save() (e.g. via AgentWorker.SwitchProviderAsync/
+    // SetModel) must redirect this to a scratch path first, or it silently overwrites the real
+    // developer's ~/.litos/config.json — this happened for real (a "fake"/"new-default" test
+    // fixture value ended up as someone's actual DefaultProvider/DefaultModel). No production code
+    // ever reassigns this; it exists purely so a test fixture can point it at a temp file for the
+    // duration of one test and restore it afterward.
+    public static string ConfigFilePath { get; internal set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".litos", "config.json");
 
     public static LitosConfig Load()
