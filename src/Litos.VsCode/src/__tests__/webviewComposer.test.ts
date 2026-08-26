@@ -108,6 +108,102 @@ describe("removable attachment chips (ReadMe_VsCodeExtension.md §7.10)", () => 
     });
 });
 
+describe("Stop/Cancel affordance for a stuck or long-running turn", () => {
+    // Backs the fix for a turn that hangs mid-tool-call (e.g. an MCP CallToolAsync with no
+    // response) with the working indicator stuck on forever and no way to recover short of
+    // reloading the window. sendButton relabels to Cancel (mirroring Litos.Gui's own
+    // SendButton.Content = "Cancel") and posts a 'cancel' message instead of send()'ing.
+
+    it("relabels sendButton to Cancel when a turn starts, and back to Send when it ends", () => {
+        expect(innerScript).toContain("function showWorkingIndicator");
+        expect(innerScript).toContain("function hideWorkingIndicator");
+        const showFn = innerScript.slice(innerScript.indexOf("function showWorkingIndicator"), innerScript.indexOf("function hideWorkingIndicator"));
+        expect(showFn).toContain("sendButton.textContent = 'Cancel'");
+        const hideFn = innerScript.slice(innerScript.indexOf("function hideWorkingIndicator"), innerScript.indexOf("function hideWorkingIndicator") + 300);
+        expect(hideFn).toContain("sendButton.textContent = 'Send'");
+    });
+
+    it("clicking sendButton while a turn is in progress posts 'cancel' instead of calling send()", () => {
+        const handler = innerScript.slice(
+            innerScript.indexOf("sendButton.addEventListener('click'"),
+            innerScript.indexOf("slashCommandButton.addEventListener('click'")
+        );
+        expect(handler).toContain("if (turnInProgress)");
+        expect(handler).toContain("vscode.postMessage({ type: 'cancel' })");
+        expect(handler).toContain("send();");
+    });
+
+    it("typing Enter still steers the in-progress turn — only the button's own click branches on turn state", () => {
+        // send() itself has no turnInProgress check — Enter-to-send/steer must behave exactly as
+        // it did before the Cancel button existed.
+        const sendFn = innerScript.slice(innerScript.indexOf("function send()"), innerScript.indexOf("sendButton.addEventListener"));
+        expect(sendFn).not.toContain("turnInProgress");
+    });
+});
+
+describe("\"@\"-mention file dropdown, mirroring Litos.Gui's MentionPopup", () => {
+    it("renders a dedicated dropdown element in the composer, separate from the / command menu", () => {
+        expect(html).toContain('<div id="mentionMenu">');
+    });
+
+    it("detects an active @token the same way Litos.Gui's FindActiveMentionStart does: requires whitespace or start-of-string immediately before the @", () => {
+        expect(innerScript).toContain("function findActiveMentionStart(text, caret)");
+        const fn = innerScript.slice(
+            innerScript.indexOf("function findActiveMentionStart"),
+            innerScript.indexOf("function updateMentionMenu")
+        );
+        expect(fn).toContain("if (at > 0 && !WHITESPACE.test(text[at - 1])) return -1;");
+    });
+
+    it("double-escapes \\s so the outer template literal in getWebviewHtml doesn't silently drop the backslash — a §7.6-class bug this exact change introduced and caught", () => {
+        // A bare "\s" in webviewContent.ts's source is embedded inside getWebviewHtml's own outer
+        // template literal — an unrecognized template-literal escape, so the backslash is silently
+        // dropped at build time, leaving a served regex of /s/ (matches the literal letter "s")
+        // instead of /\s/ (matches whitespace). Both are syntactically valid, so only scanning the
+        // REAL generated output (via getWebviewHtml(), same as innerScript itself is derived
+        // below) can distinguish them — a check against webviewContent.ts's own source text
+        // wouldn't catch the template literal having already eaten the backslash.
+        expect(innerScript).toContain("const WHITESPACE = /\\s/;");
+        expect(innerScript).not.toContain("const WHITESPACE = /s/;");
+    });
+
+    it("requests suggestions from the extension host (a real filesystem walk), not an in-memory list like the / menu", () => {
+        expect(innerScript).toContain("vscode.postMessage({ type: 'getFileMentions', query: token, requestToken: myToken })");
+    });
+
+    it("guards against a stale, out-of-order response clobbering a newer keystroke's request", () => {
+        const fn = innerScript.slice(
+            innerScript.indexOf("function handleFileMentionsResult"),
+            innerScript.indexOf("function renderMentionMenu")
+        );
+        expect(fn).toContain("if (requestToken !== mentionRequestToken || mentionStart < 0) return;");
+    });
+
+    it("splices the accepted path in after the @ without deleting the @ itself", () => {
+        const fn = innerScript.slice(innerScript.indexOf("function acceptMention"), innerScript.indexOf("// Auto-grow"));
+        expect(fn).toContain("const before = text.slice(0, start + 1); // includes the \"@\"");
+        expect(fn).toContain("inputEl.value = before + relativePath + spacer + after;");
+    });
+
+    it("wires ArrowUp/ArrowDown/Tab/Enter/Escape for the mention menu, separately from the command menu's own handling", () => {
+        const keydownHandler = innerScript.slice(
+            innerScript.indexOf("inputEl.addEventListener('keydown'"),
+            innerScript.lastIndexOf("if (event.key === 'Enter' && !event.shiftKey)")
+        );
+        expect(keydownHandler).toContain("mentionMenuEl.classList.contains('visible')");
+        expect(keydownHandler).toContain("acceptMention(mentionMenuMatches[mentionMenuActiveIndex])");
+    });
+
+    it("closes/refreshes the mention menu on caret-only moves (click), not just on new keystrokes", () => {
+        expect(innerScript).toContain("inputEl.addEventListener('click', updateMentionMenu)");
+    });
+
+    it("handles the fileMentionsResult response message from the extension host", () => {
+        expect(innerScript).toContain("message.type === 'fileMentionsResult'");
+        expect(innerScript).toContain("handleFileMentionsResult(message.matches, message.requestToken)");
+    });
+});
+
 describe("attachment names shown on send (ReadMe_VsCodeExtension.md §7.12)", () => {
     // Mirrors Litos.Gui's own MainWindow.axaml.cs AddUserBubble/BuildBubbleLabel split — a 📎
     // line above the message is the only remaining record of what was attached once the composer's

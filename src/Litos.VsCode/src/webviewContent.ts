@@ -375,6 +375,37 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   #commandMenu .command-item .command-desc { opacity: 0.7; font-size: 0.85em; margin-left: 8px; }
   #commandMenu .command-item.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
 
+  /* "@"-mention dropdown — same positioning/visual language as #commandMenu above (both dock to
+     the composer's top edge), kept as a separate element rather than reused since the two can
+     never be open at once (a leading "/" and a mid-text "@" trigger are mutually exclusive) but
+     have different item content (a single monospace path vs a name+description pair). */
+  #mentionMenu {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 8px;
+    right: 8px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--vscode-dropdown-background, var(--vscode-editor-background));
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  #mentionMenu.visible { display: block; }
+  #mentionMenu .mention-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 0.9em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #mentionMenu .mention-item.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+  #mentionMenu .mention-empty { padding: 6px 10px; opacity: 0.7; font-size: 0.85em; }
+
   #picker {
     display: none;
     position: fixed;
@@ -510,8 +541,9 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 <div id="pendingAttachments"></div>
 <div id="composer">
   <div id="commandMenu"></div>
+  <div id="mentionMenu"></div>
   <button id="slashCommandButton" title="Slash commands">/</button>
-  <textarea id="composerInput" rows="4" placeholder="Message Litos... (type / for commands, paste an image to attach it)"></textarea>
+  <textarea id="composerInput" rows="4" placeholder="Message Litos... (type / for commands, @ to mention a file, paste an image to attach it)"></textarea>
   <button id="sendButton">Send</button>
 </div>
 <div id="workingIndicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
@@ -580,11 +612,20 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const workingDirIconEl = document.getElementById('workingDirIcon');
   const workingIndicatorEl = document.getElementById('workingIndicator');
 
+  // Tracks whether sendButton currently means "Cancel" — mirrors Litos.Gui's own SendButton
+  // relabeling (MainWindow.axaml.cs's RunTurnFromTextAsync sets SendButton.Content = "Cancel"),
+  // rather than adding a second button, so the composer's layout doesn't change between turns.
+  let turnInProgress = false;
+
   function showWorkingIndicator() {
     workingIndicatorEl.classList.add('visible');
+    turnInProgress = true;
+    sendButton.textContent = 'Cancel';
   }
   function hideWorkingIndicator() {
     workingIndicatorEl.classList.remove('visible');
+    turnInProgress = false;
+    sendButton.textContent = 'Send';
   }
 
   // Codicon-shaped glyphs (graph-line, root-folder, hexagon), hand-inlined as 16x16 currentColor
@@ -632,10 +673,16 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
       contextUsageTextEl.textContent = 'Context usage unavailable';
       return;
     }
-    const pct = Math.round(usage.fraction * 100);
+    // usage.fraction is already clamped to [0, 1] server-side (ContextUsage.Compute) — clamped
+    // again here too, since the char/4 trailing estimate this is built from can otherwise run
+    // past 100% of the real conversation (see ContextUsage.StaleAfterMessagesSinceLastUsage's own
+    // remarks), and a display bug should never be the only thing standing between a stale
+    // estimate and a nonsense "153%" reading.
+    const pct = Math.round(Math.min(1, usage.fraction) * 100);
     contextUsageEl.className = 'level-' + usage.level;
-    contextUsageFillEl.style.width = Math.min(100, pct) + '%';
-    contextUsageTextEl.textContent = pct + '% of context (' + usage.usedTokens.toLocaleString() + ' / ' + usage.contextLength.toLocaleString() + ' tokens)';
+    contextUsageFillEl.style.width = pct + '%';
+    const label = pct + '% of context (' + usage.usedTokens.toLocaleString() + ' / ' + usage.contextLength.toLocaleString() + ' tokens)';
+    contextUsageTextEl.textContent = usage.isStale ? label + ' — estimate may be stale' : label;
   }
 
   // Delegated click handler for every .share-link the linkify() function emits (tool-result rows,
@@ -900,6 +947,119 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     inputEl.value = '';
     resetComposerHeight();
     runSlashCommand(name, '');
+  }
+
+  // --- "@"-mention dropdown ---
+  // Mirrors Litos.Gui's MentionPopup/FindActiveMentionStart: unlike the "/" command menu above
+  // (only triggers when "/" starts the ENTIRE composer), a mention can start anywhere in the
+  // message ("please look at @src/Foo.ts") — so this tracks the caret, not just the whole value.
+  // Suggestions come from the extension host (a real filesystem walk under the session's working
+  // directory), not an in-memory list, so every keystroke's request races the next one; mentionRequestToken
+  // guards against a slow, stale response clobbering what a newer keystroke already asked for.
+  const mentionMenuEl = document.getElementById('mentionMenu');
+  let mentionMenuActiveIndex = 0;
+  let mentionMenuMatches = [];
+  let mentionStart = -1; // index of the "@" itself, or -1 when no mention is active
+  let mentionRequestToken = 0;
+
+  // Detects an in-progress "@token" ending exactly at the caret: an "@" preceded by start-of-text
+  // or whitespace (so "foo@bar" can never trigger the popup), with no whitespace between the "@"
+  // and the caret — typing a space after the "@" ends the in-progress mention.
+  function findActiveMentionStart(text, caret) {
+    // \\s, not \s: this whole script is embedded in getWebviewHtml()'s own outer template
+    // literal (see this file's top-level "return /* html */" template string) — an unescaped
+    // "\s" inside it is not a recognized template-literal escape sequence, so the backslash is
+    // silently dropped at build time, leaving a served regex of /s/ (matches the literal letter
+    // "s") rather than /\s/ (matches whitespace). FULL_COMMAND_PATTERN/LINK_PATTERN below already
+    // double-escape for the same reason — this needs the same treatment.
+    const WHITESPACE = /\\s/;
+    const at = text.lastIndexOf('@', Math.max(0, caret - 1));
+    if (at < 0) return -1;
+    if (at > 0 && !WHITESPACE.test(text[at - 1])) return -1;
+    for (let i = at + 1; i < caret; i++) {
+      if (WHITESPACE.test(text[i])) return -1;
+    }
+    return at;
+  }
+
+  function updateMentionMenu() {
+    const text = inputEl.value;
+    const caret = inputEl.selectionStart;
+    const start = findActiveMentionStart(text, caret);
+    if (start < 0) {
+      mentionStart = -1;
+      mentionMenuEl.classList.remove('visible');
+      mentionMenuMatches = [];
+      return;
+    }
+
+    mentionStart = start;
+    const token = text.slice(start + 1, caret);
+    const myToken = ++mentionRequestToken;
+    vscode.postMessage({ type: 'getFileMentions', query: token, requestToken: myToken });
+  }
+
+  // Response handler for the 'getFileMentions' request above — see the window message listener
+  // near the bottom of this script for where fileMentionsResult is dispatched here.
+  function handleFileMentionsResult(matches, requestToken) {
+    // A later keystroke already moved on (either closed the menu or fired a newer request) —
+    // discard this now-stale response rather than reopening/repopulating the menu behind the
+    // user's back.
+    if (requestToken !== mentionRequestToken || mentionStart < 0) return;
+
+    mentionMenuMatches = matches;
+    if (matches.length === 0) {
+      renderMentionMenu(); // still shown, with an "no matches" row — matches command menu leaving itself open while filtering to zero would look broken, but here the token is often mid-word, not yet wrong
+      mentionMenuEl.classList.add('visible');
+      return;
+    }
+    mentionMenuActiveIndex = Math.min(mentionMenuActiveIndex, matches.length - 1);
+    renderMentionMenu();
+    mentionMenuEl.classList.add('visible');
+  }
+
+  function renderMentionMenu() {
+    mentionMenuEl.innerHTML = '';
+    if (mentionMenuMatches.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'mention-empty';
+      empty.textContent = 'No matching files';
+      mentionMenuEl.appendChild(empty);
+      return;
+    }
+    mentionMenuMatches.forEach((relativePath, index) => {
+      const el = document.createElement('div');
+      el.className = 'mention-item' + (index === mentionMenuActiveIndex ? ' active' : '');
+      el.textContent = relativePath;
+      el.addEventListener('click', () => acceptMention(relativePath));
+      mentionMenuEl.appendChild(el);
+    });
+  }
+
+  // Splices the picked relative path into the composer in place of the partial token that follows
+  // the active "@", WITHOUT deleting the "@" itself (removing from the "@" index too would delete
+  // it along with the partial token, and extractMentionPaths — extension.ts's resolveMentionsAsync
+  // — only recognizes text starting with "@"). Re-derives the active mention from the composer's
+  // CURRENT text/caret rather than trusting the cached mentionStart: a mouse click or arrow-key
+  // caret move (no 'input' event) could leave mentionStart stale relative to where the user's
+  // caret actually is now.
+  function acceptMention(relativePath) {
+    const text = inputEl.value;
+    const caret = inputEl.selectionStart;
+    const start = findActiveMentionStart(text, caret);
+    mentionMenuEl.classList.remove('visible');
+    mentionMenuMatches = [];
+    mentionStart = -1;
+    if (start < 0) return;
+
+    const before = text.slice(0, start + 1); // includes the "@"
+    const after = text.slice(caret);
+    const spacer = after.startsWith(' ') ? '' : ' ';
+    inputEl.value = before + relativePath + spacer + after;
+    const newCaret = before.length + relativePath.length + spacer.length;
+    inputEl.setSelectionRange(newCaret, newCaret);
+    inputEl.focus();
+    autoGrowComposer();
   }
 
   // Auto-grow the composer as the user types, up to the CSS max-height cap (beyond which it
@@ -1222,7 +1382,16 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     vscode.postMessage({ type: 'send', text });
   }
 
-  sendButton.addEventListener('click', send);
+  // While a turn is running, sendButton means Cancel (relabeled in showWorkingIndicator) — typing
+  // a new message and pressing Enter still steers the in-progress turn as before (send() itself is
+  // unchanged); only the button's own click behavior branches on turn state.
+  sendButton.addEventListener('click', () => {
+    if (turnInProgress) {
+      vscode.postMessage({ type: 'cancel' });
+      return;
+    }
+    send();
+  });
   slashCommandButton.addEventListener('click', () => {
     inputEl.value = '/';
     inputEl.focus();
@@ -1231,8 +1400,14 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   });
   inputEl.addEventListener('input', () => {
     updateCommandMenu();
+    updateMentionMenu();
     autoGrowComposer();
   });
+  // Arrow-key/Home/End/click caret moves don't fire 'input' — without this, an @-mention menu
+  // opened while typing stayed open (and stale) after the user just moved the caret out of the
+  // token with no new keystroke to close it, exactly the gap Litos.Gui's own OnMentionAccepted
+  // comment documents for its InputBox.
+  inputEl.addEventListener('click', updateMentionMenu);
   inputEl.addEventListener('keydown', (event) => {
     if (commandMenuEl.classList.contains('visible')) {
       if (event.key === 'ArrowDown') {
@@ -1255,6 +1430,31 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
       if (event.key === 'Escape') {
         event.preventDefault();
         commandMenuEl.classList.remove('visible');
+        return;
+      }
+    }
+    if (mentionMenuEl.classList.contains('visible')) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        mentionMenuActiveIndex = Math.min(mentionMenuActiveIndex + 1, Math.max(0, mentionMenuMatches.length - 1));
+        renderMentionMenu();
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        mentionMenuActiveIndex = Math.max(mentionMenuActiveIndex - 1, 0);
+        renderMentionMenu();
+        return;
+      }
+      if ((event.key === 'Tab' || event.key === 'Enter') && mentionMenuMatches.length > 0 && !event.shiftKey) {
+        event.preventDefault();
+        acceptMention(mentionMenuMatches[mentionMenuActiveIndex]);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        mentionMenuEl.classList.remove('visible');
+        mentionStart = -1;
         return;
       }
     }
@@ -1419,6 +1619,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
       renderWorkingDir(null);
     } else if (message.type === 'historyLoaded') {
       renderHistory(message.history);
+    } else if (message.type === 'fileMentionsResult') {
+      handleFileMentionsResult(message.matches, message.requestToken);
     } else if (message.type === 'attachmentAdded') {
       addAttachmentChip(message.fileName, message.thumbnailDataUri, message.iconKind);
     } else if (message.type === 'contextUsage') {

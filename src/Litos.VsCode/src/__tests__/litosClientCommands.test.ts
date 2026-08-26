@@ -136,14 +136,80 @@ describe("LitosClient — attachments", () => {
     });
 });
 
+describe("LitosClient — /sessions/{id}/mentions", () => {
+    it("getFileMentions issues a GET with the query and fallbackWorkingDirectory as query parameters", async () => {
+        mockFetch(() => new Response(JSON.stringify(["src/Foo.ts", "src/Bar.ts"]), { status: 200 }));
+
+        const result = await client.getFileMentions("session-1", "Foo", "c:/repo");
+
+        expect(capturedRequests[0].url).toBe("http://127.0.0.1:12345/sessions/session-1/mentions?query=Foo&fallbackWorkingDirectory=c%3A%2Frepo");
+        expect(result).toEqual(["src/Foo.ts", "src/Bar.ts"]);
+    });
+
+    it("getFileMentions encodes special characters in the query", async () => {
+        mockFetch(() => new Response(JSON.stringify([]), { status: 200 }));
+
+        await client.getFileMentions("session-1", "a b&c", "c:/repo");
+
+        expect(capturedRequests[0].url).toContain("query=a%20b%26c");
+    });
+
+    it("getFileMentions passes an empty query through for the initial (no-token-yet) suggestion list", async () => {
+        mockFetch(() => new Response(JSON.stringify(["a.ts"]), { status: 200 }));
+
+        await client.getFileMentions("session-1", "", "c:/repo");
+
+        expect(capturedRequests[0].url).toContain("query=&fallbackWorkingDirectory=");
+    });
+
+    it("getFileMentions always passes fallbackWorkingDirectory — a brand-new session has no WorkingDirectory on its transcript until its first turn completes, so the host can't derive one on its own", async () => {
+        mockFetch(() => new Response(JSON.stringify(["src/Foo.ts"]), { status: 200 }));
+
+        await client.getFileMentions("session-1", "Foo", "c:/GenAI/pi-story-writer");
+
+        expect(capturedRequests[0].url).toContain("fallbackWorkingDirectory=c%3A%2FGenAI%2Fpi-story-writer");
+    });
+});
+
+describe("LitosClient — /sessions/{id}/cancel", () => {
+    it("cancelTurn POSTs to the session-scoped cancel path", async () => {
+        mockFetch(() => new Response(null, { status: 200 }));
+
+        await client.cancelTurn("session-1");
+
+        expect(capturedRequests[0].url).toBe("http://127.0.0.1:12345/sessions/session-1/cancel");
+        expect(capturedRequests[0].init!.method).toBe("POST");
+    });
+
+    it("cancelTurn does not throw on 404 — the turn already finished on its own, not an error", async () => {
+        mockFetch(() => new Response("No turn is currently running for this session.", { status: 404 }));
+
+        await expect(client.cancelTurn("session-1")).resolves.toBeUndefined();
+    });
+
+    it("cancelTurn throws on other non-ok statuses, including the response body", async () => {
+        mockFetch(() => new Response("host error", { status: 500 }));
+
+        await expect(client.cancelTurn("session-1")).rejects.toThrow(/500.*host error/);
+    });
+});
+
 describe("LitosClient — /sessions/{id}/context", () => {
     it("getContextUsage issues a GET to the session-scoped usage path", async () => {
-        mockFetch(() => new Response(JSON.stringify({ usedTokens: 100, contextLength: 1000, fraction: 0.1, level: "Normal" }), { status: 200 }));
+        mockFetch(() => new Response(JSON.stringify({ usedTokens: 100, contextLength: 1000, fraction: 0.1, level: "Normal", isStale: false }), { status: 200 }));
 
         const result = await client.getContextUsage("session-1");
 
         expect(capturedRequests[0].url).toBe("http://127.0.0.1:12345/sessions/session-1/context/usage");
-        expect(result).toEqual({ usedTokens: 100, contextLength: 1000, fraction: 0.1, level: "Normal" });
+        expect(result).toEqual({ usedTokens: 100, contextLength: 1000, fraction: 0.1, level: "Normal", isStale: false });
+    });
+
+    it("getContextUsage passes through isStale: true when the host flags the estimate as unreliable", async () => {
+        mockFetch(() => new Response(JSON.stringify({ usedTokens: 500_000, contextLength: 200_000, fraction: 1, level: "Critical", isStale: true }), { status: 200 }));
+
+        const result = await client.getContextUsage("session-1");
+
+        expect(result!.isStale).toBe(true);
     });
 
     it("getContextUsage returns null when the host has no usage snapshot yet", async () => {

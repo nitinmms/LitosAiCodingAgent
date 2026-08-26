@@ -22,6 +22,11 @@ public static class TurnsEndpoints
 {
     public static IEndpointRouteBuilder MapTurnsEndpoints(this IEndpointRouteBuilder app)
     {
+        app.MapPost("/sessions/{id}/cancel", (string id, AgentWorker worker) =>
+            worker.CancelTurn(SessionOwner.Local, id)
+                ? Results.Ok()
+                : Results.NotFound("No turn is currently running for this session."));
+
         app.MapPost("/sessions/{id}/approvals/{approvalId}/resolve", (
             string id, Guid approvalId, ResolveApprovalRequest request, PendingApprovalStore approvals) =>
         {

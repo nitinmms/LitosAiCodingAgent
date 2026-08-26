@@ -1,10 +1,13 @@
 import * as vscode from "vscode";
 import * as crypto from "crypto";
+import * as path from "path";
+import * as fs from "fs";
 import { LitosHostProcess } from "./hostProcess";
 import { LitosClient, AttachedContent } from "./agentEvents";
 import { getWebviewHtml } from "./webviewContent";
 import { getMcpPanelHtml } from "./mcpPanelContent";
 import { getContextPanelHtml } from "./contextPanelContent";
+import { extractMentionPaths, expandMentionCandidates } from "./mentionParser";
 
 /**
  * One Litos.VsCodeHost process is shared by every chat panel opened in this extension activation
@@ -137,6 +140,54 @@ async function refreshWorkingDirectory(state: PanelState): Promise<void> {
     }
 }
 
+/**
+ * Resolves every "@path" mention in the just-submitted text (the mention dropdown only ever
+ * inserts text into the composer — see webviewContent.ts's acceptMention — nothing is attached
+ * until send time) into AttachedContent, appended to the same array sendTurn's own attachments
+ * argument already carries — mirrors Litos.Gui's MainWindow.ResolveMentionsAsync. Unlike
+ * /attach's picker or clipboard paste, a mention leaves its text in the visible message (it reads
+ * naturally as part of the sentence), so only the attachment side effect is added here.
+ *
+ * Directories aren't supported here (v1 — files only, matching the actual ask this shipped for);
+ * a directory-shaped candidate found on disk logs a system message and is skipped rather than
+ * silently doing nothing.
+ */
+async function resolveMentionsAsync(state: PanelState, text: string): Promise<AttachedContent[]> {
+    if (!sharedHost) return [];
+
+    const { workingDirectory } = await sharedHost.client.getWorkingDirectory(state.sessionId);
+    const baseDir = workingDirectory ?? sharedHost.cwd;
+    const resolved: AttachedContent[] = [];
+
+    for (const rawMention of extractMentionPaths(text)) {
+        // The raw capture can include trailing sentence words ("@Plant Resource.png please
+        // describe it") since spaces are allowed in filenames — try the longest candidate first
+        // and shrink until something on disk actually matches.
+        const candidates = expandMentionCandidates(rawMention);
+        const found = candidates
+            .map((candidate) => (path.isAbsolute(candidate) ? candidate : path.join(baseDir, candidate)))
+            .find((absolute) => fs.existsSync(absolute));
+
+        if (!found) {
+            state.panel.webview.postMessage({ type: "system", text: `@${rawMention}: no such file, ignoring mention.` });
+            continue;
+        }
+
+        if (fs.statSync(found).isDirectory()) {
+            state.panel.webview.postMessage({ type: "system", text: `@${rawMention}: mentioning a directory isn't supported yet — mention a file instead.` });
+            continue;
+        }
+
+        try {
+            resolved.push(await sharedHost.client.attachFromPath(found));
+        } catch (err: any) {
+            state.panel.webview.postMessage({ type: "system", text: `Could not read @${rawMention}: ${err.message}` });
+        }
+    }
+
+    return resolved;
+}
+
 /** Refreshes the model/provider row. Unlike contextUsage/workingDir this isn't keyed off
  * state.sessionId at all — AgentWorker.ProviderName/Model are process-wide (switching provider
  * affects the *next* turn on any session, see AgentSettingsEndpoints.cs's remarks), so every open
@@ -253,6 +304,10 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
         const attachments = state.pendingAttachments;
         state.pendingAttachments = [];
         try {
+            // Resolved fresh from this turn's own text every send — mentions aren't staged state
+            // like the picker/paste attachments above, they're derived from whatever "@..." the
+            // user actually typed this time (see resolveMentionsAsync's own remarks).
+            attachments.push(...(await resolveMentionsAsync(state, message.text)));
             const outcome = await sharedHost!.client.sendTurn(state.sessionId, message.text, attachments);
             if (outcome.kind === "steered") {
                 panel.webview.postMessage({ type: "system", text: outcome.message });
@@ -282,6 +337,37 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
         } catch (err: any) {
             panel.webview.postMessage({ type: "turnEnded" });
             panel.webview.postMessage({ type: "system", text: `Error: ${err.message}` });
+        }
+        return;
+    }
+
+    if (message.type === "getFileMentions") {
+        // Fire-and-forget from the webview's perspective (see updateMentionMenu's own comment) —
+        // requestToken round-trips unchanged so the webview can discard a response that's no
+        // longer the latest keystroke's request by the time it arrives.
+        try {
+            // Same fallback resolveMentionsAsync uses at send time — required here too, not just
+            // there: a brand-new panel's session has no WorkingDirectory on its transcript until
+            // its first turn completes, so without this every "@"-mention in a first message
+            // always came back "no matching files" even though the file genuinely exists.
+            const { workingDirectory } = await sharedHost!.client.getWorkingDirectory(state.sessionId);
+            const matches = await sharedHost!.client.getFileMentions(state.sessionId, message.query ?? "", workingDirectory ?? sharedHost!.cwd);
+            panel.webview.postMessage({ type: "fileMentionsResult", matches, requestToken: message.requestToken });
+        } catch {
+            panel.webview.postMessage({ type: "fileMentionsResult", matches: [], requestToken: message.requestToken });
+        }
+        return;
+    }
+
+    if (message.type === "cancel") {
+        // Doesn't post turnEnded itself — CancelTurn ends the turn server-side, which unwinds the
+        // "send" handler's own `for await` loop above (the channel completes rather than throwing),
+        // so that handler's own turnEnded post already covers this. Fire-and-forget from the
+        // webview's perspective: the Cancel button doesn't block on a response.
+        try {
+            await sharedHost!.client.cancelTurn(state.sessionId);
+        } catch (err: any) {
+            panel.webview.postMessage({ type: "system", text: `Error cancelling: ${err.message}` });
         }
         return;
     }

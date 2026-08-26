@@ -148,15 +148,37 @@ public sealed class AgentWorker : BackgroundService
 
             events = Channel.CreateUnbounded<AgentEvent>();
             var steering = Channel.CreateUnbounded<SteeringMessage>();
-            turn = new ActiveTurn(steering, Task.CompletedTask);
+            // Owned independently of requestAborted (the SSE connection's own token) so a turn can
+            // be cancelled explicitly via CancelTurn — e.g. a stuck MCP tool call with no other
+            // recovery path — without requiring the client to tear down its HTTP connection, which
+            // the VS Code webview never did (no cancel UI existed before this).
+            var cancel = new CancellationTokenSource();
+            turn = new ActiveTurn(steering, cancel, Task.CompletedTask);
             _activeTurns[key] = turn;
         }
 
-        var runTask = RunTurnAsync(owner, sessionId, content, events.Writer, turn.Steering, requestAborted);
+        var runTask = RunTurnAsync(owner, sessionId, content, events.Writer, turn.Steering, requestAborted, turn.Cancel);
         lock (_turnsLock)
             _activeTurns[key] = turn with { Run = runTask };
         outcome = TurnOutcome.Started;
         return events.Reader;
+    }
+
+    /// <summary>
+    /// Explicitly aborts the session's in-progress turn, if any — backs the extension's Stop/Cancel
+    /// affordance. Returns false when there's nothing to cancel (already finished, or never
+    /// started), which the endpoint surfaces as 404 rather than treating as an error.
+    /// </summary>
+    public bool CancelTurn(SessionOwner owner, string sessionId)
+    {
+        lock (_turnsLock)
+        {
+            if (!_activeTurns.TryGetValue((owner, sessionId), out var turn))
+                return false;
+
+            turn.Cancel.Cancel();
+            return true;
+        }
     }
 
     private static string RenderForSteering(IReadOnlyList<ContentBlock> content) =>
@@ -191,17 +213,19 @@ public sealed class AgentWorker : BackgroundService
 
     private Task RunTurnAsync(
         SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content,
-        ChannelWriter<AgentEvent> events, Channel<SteeringMessage> steering, CancellationToken requestAborted) =>
+        ChannelWriter<AgentEvent> events, Channel<SteeringMessage> steering, CancellationToken requestAborted,
+        CancellationTokenSource explicitCancel) =>
         // Sets ChannelContext.Owner/SessionId for the whole turn — PendingApprovalRelay reads
         // SessionId synchronously from inside McpAwareApprovalGate's call stack (itself inside
         // AgentLoop.RunTurnAsync, itself inside this scope) to route an Ask-mode MCP approval back
         // to the SSE stream that started the turn which triggered it. See ChannelContext.cs and
         // PendingApprovalRelay.cs for the full mechanism.
-        ChannelContext.RunAsAsync(owner, sessionId, () => RunTurnCoreAsync(owner, sessionId, content, events, steering, requestAborted));
+        ChannelContext.RunAsAsync(owner, sessionId, () => RunTurnCoreAsync(owner, sessionId, content, events, steering, requestAborted, explicitCancel));
 
     private async Task RunTurnCoreAsync(
         SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content,
-        ChannelWriter<AgentEvent> events, Channel<SteeringMessage> steering, CancellationToken requestAborted)
+        ChannelWriter<AgentEvent> events, Channel<SteeringMessage> steering, CancellationToken requestAborted,
+        CancellationTokenSource explicitCancel)
     {
         try
         {
@@ -219,7 +243,11 @@ public sealed class AgentWorker : BackgroundService
             var toolRegistry = _toolRegistryFactory.Create();
             var loop = _loopFactory.Create(_providerFactory.Resolve(providerName), toolRegistry);
 
-            using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token, requestAborted);
+            // explicitCancel (CancelTurn/the Stop button) is linked in alongside requestAborted (the
+            // SSE connection dying) and _stopping (host shutdown) — any of the three ends the turn.
+            // This is what actually lets a stuck tool call be aborted from the UI instead of only
+            // ever timing out on its own (or, before this existed, never being recoverable at all).
+            using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token, requestAborted, explicitCancel.Token);
 
             var transcript = await Transcript.LoadAsync(_transcriptStore, owner, sessionId, turnCts.Token);
             if (transcript.WorkingDirectory is null)
@@ -230,17 +258,23 @@ public sealed class AgentWorker : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            // Host shutdown or the request disconnecting — nothing further to report to a writer
-            // nobody is reading from anymore.
+            // Host shutdown, the request disconnecting, or an explicit CancelTurn — nothing
+            // further to report to a writer nobody is (necessarily) reading from anymore.
         }
         finally
         {
             events.TryComplete();
             steering.Writer.TryComplete();
+            // Remove-then-dispose under the same lock CancelTurn takes, so a concurrent CancelTurn
+            // either observes the turn (and calls .Cancel() before this Dispose() can run) or
+            // doesn't find it at all — never a window where it's found but already disposed.
             lock (_turnsLock)
+            {
                 _activeTurns.Remove((owner, sessionId));
+                explicitCancel.Dispose();
+            }
         }
     }
 
-    private sealed record ActiveTurn(Channel<SteeringMessage> Steering, Task Run);
+    private sealed record ActiveTurn(Channel<SteeringMessage> Steering, CancellationTokenSource Cancel, Task Run);
 }

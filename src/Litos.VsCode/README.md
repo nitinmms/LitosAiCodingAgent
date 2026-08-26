@@ -29,11 +29,13 @@ models running through Ollama, LM Studio, and compatible endpoints.
 
 ## Getting started
 
-1. Install **Litos** from the Visual Studio Marketplace.
-2. Open the Litos icon in the VS Code activity bar.
-3. Run `/keys` and set up a provider: add an API key for a cloud provider (Anthropic, OpenAI, Gemini, or OpenRouter), or a local server URL for a local model (e.g. `http://localhost:1234/v1` for LM Studio — most local servers don't need a key). This is stored once and shared with any other Litos client on your machine (CLI, desktop app).
-4. Run `/provider` to choose a cloud provider or local endpoint, then `/model` to pick a model.
-5. Open a project and describe the change you want.
+Onboarding has three steps, in order. Litos will not respond to a request until all three are done.
+
+1. **Install and open.** Install **Litos** from the Visual Studio Marketplace, then open the Litos icon in the VS Code activity bar.
+2. **Set an API key or local endpoint.** If no provider is configured yet, the `/keys` popup opens automatically the first time you open the panel. Add an API key for a cloud provider (Anthropic, OpenAI, Gemini, or OpenRouter), or a local server URL for a local model (e.g. `http://localhost:1234/v1` for LM Studio — most local servers don't need a key). You can also open this popup yourself at any time by running `/keys`. This is stored once and shared with any other Litos client on your machine (CLI, desktop app).
+3. **Choose a provider and model.** Run `/provider` to select the cloud provider or local endpoint you just configured, then `/model` to pick a model from it. Onboarding is complete only once both are set — until then, `/provider` and `/model` are the only two commands you need.
+
+Once all three steps are done, open a project and describe the change you want.
 
 No Docker, database, or Litos account is required for the VS Code extension.
 

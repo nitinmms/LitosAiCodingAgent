@@ -39,8 +39,14 @@ public sealed class FakeChatProvider : IChatProvider
             ? _responses.Dequeue()
             : new ScriptedResponse([new TextDelta("ok"), new MessageCompleted(ChatMessage.Assistant([new TextBlock("ok")]), new UsageInfo(1, 1))], null);
 
+        // response.Gate is an arbitrary caller-supplied Task (typically a TaskCompletionSource
+        // that's deliberately never released, to simulate a stalled provider/tool call) — it has
+        // no cancellation wiring of its own, so awaiting it bare would ignore ct entirely and hang
+        // forever even once the caller cancels. A real HTTP-backed provider's in-flight call would
+        // actually observe cancellation; WaitAsync keeps this fake honest about that instead of
+        // outliving the very token meant to stop it.
         if (response.Gate is not null)
-            await response.Gate;
+            await response.Gate.WaitAsync(ct);
 
         foreach (var evt in response.Events)
         {

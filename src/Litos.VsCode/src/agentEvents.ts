@@ -216,6 +216,19 @@ export class LitosClient {
         return { kind: "started", events: readAgentEvents(response) };
     }
 
+    // Backs the composer's Stop/Cancel button — explicitly aborts a stuck or long-running turn
+    // server-side (AgentWorker.CancelTurn), rather than relying on the SSE fetch's own connection
+    // teardown, which the extension never triggers on its own (sendTurn's fetch has no
+    // AbortController). 404 means the turn already finished on its own (a normal race with the
+    // user clicking Cancel right as the last event arrives) — not an error worth surfacing.
+    async cancelTurn(sessionId: string): Promise<void> {
+        const response = await fetch(`${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" });
+        if (!response.ok && response.status !== 404) {
+            const body = await response.text();
+            throw new Error(`Litos host returned ${response.status}${body ? `: ${body}` : ""}`);
+        }
+    }
+
     // Numeric, not string — src/Litos.Tools/Shell/IToolApprovalGate.cs's ApprovalDecision enum
     // (Approve = 0, ApproveAlways = 1, Deny = 2) has no JsonStringEnumConverter configured on
     // either this endpoint's request binding or TurnsEndpoints' own serialization, so
@@ -300,6 +313,19 @@ export class LitosClient {
         return this.getJson(`/skills/${encodeURIComponent(name)}?cwd=${encodeURIComponent(cwd)}`);
     }
 
+    // --- /sessions/{id}/mentions ("@"-mention dropdown) ---
+
+    // fallbackWorkingDirectory is required: a brand-new session's transcript has no
+    // WorkingDirectory until its first turn completes, so the host can't derive one on its own
+    // for the (very common) case of "@"-mentioning a file in the first message — see
+    // FilesEndpoints.cs's own remarks. The caller already resolves this the same way
+    // resolveMentionsAsync does (getWorkingDirectory, falling back to sharedHost.cwd).
+    async getFileMentions(sessionId: string, query: string, fallbackWorkingDirectory: string): Promise<string[]> {
+        return this.getJson(
+            `/sessions/${encodeURIComponent(sessionId)}/mentions?query=${encodeURIComponent(query)}&fallbackWorkingDirectory=${encodeURIComponent(fallbackWorkingDirectory)}`,
+        );
+    }
+
     // --- /attach + clipboard paste-to-attach ---
 
     async attachFromPath(path: string): Promise<AttachedContent> {
@@ -371,6 +397,7 @@ export type ContextUsage = {
     contextLength: number;
     fraction: number;
     level: "Normal" | "Warning" | "Critical";
+    isStale: boolean;
 };
 
 export type ContextBreakdownSubItem = { label: string; estimatedTokens: number };

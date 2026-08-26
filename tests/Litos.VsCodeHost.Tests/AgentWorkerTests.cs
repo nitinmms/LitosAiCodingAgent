@@ -13,9 +13,31 @@ namespace Litos.VsCodeHost.Tests;
 /// Covers this project's trimmed AgentWorker (see its own remarks: no attachment queueing —
 /// queueIfActive doesn't exist here since the local host is text-only in v1). Adapted from
 /// Litos.Api.Tests/AgentWorkerTests.cs, dropping every case specific to the queueIfActive path.
+///
+/// IDisposable purely to redirect LitosConfig.ConfigFilePath (a hardcoded static pointing at the
+/// real ~/.litos/config.json, with an `internal set` added only for this) to a scratch file for
+/// the duration of each test and restore it afterward. Several tests below exercise
+/// AgentWorker.SwitchProviderAsync/SetModel, which call LitosConfig.Save() — without this
+/// redirect, those calls silently overwrote the real developer's config.json with this file's own
+/// "fake"/"new-default" test fixture values, a real incident this fixes (not a hypothetical).
+/// Safe without a lock: xUnit runs test methods within one class sequentially by default (no
+/// [Collection]/parallelization override here), and a fresh instance of this class — so a fresh
+/// constructor/Dispose pair — backs every single test method.
 /// </summary>
-public class AgentWorkerTests
+public class AgentWorkerTests : IDisposable
 {
+    private readonly string _originalConfigFilePath = LitosConfig.ConfigFilePath;
+    private readonly string _scratchConfigFilePath = Path.Combine(Path.GetTempPath(), $"litos-agentworker-test-config-{Guid.NewGuid():n}.json");
+
+    public AgentWorkerTests() => LitosConfig.ConfigFilePath = _scratchConfigFilePath;
+
+    public void Dispose()
+    {
+        LitosConfig.ConfigFilePath = _originalConfigFilePath;
+        if (File.Exists(_scratchConfigFilePath))
+            File.Delete(_scratchConfigFilePath);
+    }
+
     private sealed class NoopSystemPromptProvider : ISystemPromptProvider
     {
         public Task<SystemPromptSections?> BuildAsync(ToolRegistry tools, string? workingDirectory, CancellationToken ct) => Task.FromResult<SystemPromptSections?>(null);
@@ -300,6 +322,89 @@ public class AgentWorkerTests
         gate.SetResult();
         var results = await DrainAsync(events!);
         Assert.Contains(results, e => e is MessageCompleted);
+    }
+
+    // --- CancelTurn (backs POST /sessions/{id}/cancel, the composer's Stop/Cancel button) ---
+    //
+    // A stuck tool call or provider stream is simulated the same way SwitchProviderAsync_MidTurn's
+    // test above does — EnqueueAwaiting gates the fake provider's stream on a TaskCompletionSource
+    // that's never released, standing in for e.g. an MCP CallToolAsync that never returns. Before
+    // CancelTurn existed there was no way to unblock this short of the SSE connection itself
+    // dying; these tests prove CancelTurn now does it explicitly.
+
+    [Fact]
+    public async Task CancelTurn_NoActiveTurnForSession_ReturnsFalse()
+    {
+        var (worker, _) = CreateWorker();
+
+        var cancelled = worker.CancelTurn(SessionOwner.Local, "no-such-session");
+
+        Assert.False(cancelled);
+    }
+
+    [Fact]
+    public async Task CancelTurn_ActiveTurn_ReturnsTrue_AndTheTurnsEventStreamEndsWithoutFurtherRequests()
+    {
+        var (worker, provider) = CreateWorker();
+        var gate = new TaskCompletionSource(); // never released — simulates a hung tool call/provider stream
+        provider.EnqueueAwaiting(gate.Task, new TextDelta("hi"), new MessageCompleted(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(1, 1)));
+
+        var events = worker.StartOrSteerTurn(SessionOwner.Local, "session-1", [new TextBlock("hi")], CancellationToken.None, out var outcome);
+        Assert.Equal(TurnOutcome.Started, outcome);
+        await WaitUntilAsync(() => provider.ReceivedMessageLists.Count > 0); // the stalled StreamAsync call has started
+
+        var cancelled = worker.CancelTurn(SessionOwner.Local, "session-1");
+        Assert.True(cancelled);
+
+        // DrainAsync completing at all (rather than hanging on this test's own await) is the
+        // actual assertion here — before CancelTurn existed, nothing could make this happen short
+        // of the never-released gate completing, which this test deliberately never does.
+        var results = await DrainAsync(events!);
+        Assert.DoesNotContain(results, e => e is MessageCompleted);
+        // Only the one StreamAsync call this test already waited for above — cancelling means the
+        // loop never re-requests the model, matching the real bug's "zero further LLM requests".
+        Assert.Single(provider.ReceivedMessageLists);
+    }
+
+    [Fact]
+    public async Task CancelTurn_ActiveTurn_RemovesItFromActiveTurns_SoASubsequentSendStartsAFreshTurnInsteadOfSteeringTheDeadOne()
+    {
+        var (worker, provider) = CreateWorker();
+        var gate = new TaskCompletionSource();
+        provider.EnqueueAwaiting(gate.Task, new TextDelta("hi"), new MessageCompleted(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(1, 1)));
+
+        var events = worker.StartOrSteerTurn(SessionOwner.Local, "session-1", [new TextBlock("hi")], CancellationToken.None, out _);
+        await WaitUntilAsync(() => provider.ReceivedMessageLists.Count > 0);
+        worker.CancelTurn(SessionOwner.Local, "session-1");
+        await DrainAsync(events!);
+
+        // Regression guard for the "second panel doesn't help either" symptom: once a stuck turn
+        // is cancelled and torn down, the NEXT send for that session must start a brand-new turn
+        // (Started), not silently steer into the now-dead one (which nothing reads from anymore).
+        var secondEvents = worker.StartOrSteerTurn(SessionOwner.Local, "session-1", [new TextBlock("again")], CancellationToken.None, out var secondOutcome);
+        Assert.Equal(TurnOutcome.Started, secondOutcome);
+        var secondResults = await DrainAsync(secondEvents!);
+        Assert.Contains(secondResults, e => e is MessageCompleted);
+    }
+
+    [Fact]
+    public async Task CancelTurn_OneOfTwoConcurrentSessions_OnlyCancelsThatSession()
+    {
+        var (worker, provider) = CreateWorker();
+        var gate = new TaskCompletionSource();
+        provider.EnqueueAwaiting(gate.Task, new TextDelta("hi"), new MessageCompleted(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(1, 1)));
+
+        var stuckEvents = worker.StartOrSteerTurn(SessionOwner.Local, "stuck-session", [new TextBlock("hi")], CancellationToken.None, out _);
+        await WaitUntilAsync(() => provider.ReceivedMessageLists.Count > 0);
+
+        var fineEvents = worker.StartOrSteerTurn(SessionOwner.Telegram, "fine-session", [new TextBlock("hi")], CancellationToken.None, out var fineOutcome);
+        Assert.Equal(TurnOutcome.Started, fineOutcome);
+        var fineResults = await DrainAsync(fineEvents!);
+        Assert.Contains(fineResults, e => e is MessageCompleted);
+
+        var cancelled = worker.CancelTurn(SessionOwner.Local, "stuck-session");
+        Assert.True(cancelled);
+        await DrainAsync(stuckEvents!);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 2000)
