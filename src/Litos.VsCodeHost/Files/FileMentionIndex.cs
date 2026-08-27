@@ -1,4 +1,6 @@
+using Litos.Tools.Attachments;
 using Litos.Tools.FileSystem;
+using Litos.VsCodeHost.Turns;
 
 namespace Litos.VsCodeHost.Files;
 
@@ -15,6 +17,29 @@ public static class FileMentionIndex
 {
     private const int MaxEntries = 5000;
     private const int MaxSuggestions = 8;
+
+    /// <summary>
+    /// Extensions AttachEndpoints' /attachments/from-path always rejects (PlainTextMedia.IsBinary
+    /// would flag them, but that's a content sniff — this is an extension-only pre-filter so the
+    /// walk stays a pure Directory.Enumerate, no per-entry file read). Anything not in this list,
+    /// not a known image, and not a known document format is assumed to be source/text and shown;
+    /// anything in this list never resolves to an attachable file, so it's excluded from the
+    /// picker rather than shown and then failing at attach time.
+    /// </summary>
+    private static readonly HashSet<string> BinaryExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".exe", ".dll", ".pdb", ".so", ".dylib", ".bin", ".obj", ".o", ".a", ".lib",
+        ".zip", ".tar", ".gz", ".7z", ".rar",
+        ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv", ".flac",
+        ".iso", ".dmg", ".msi", ".class", ".pyc", ".wasm", ".nupkg",
+        ".ttf", ".otf", ".woff", ".woff2",
+        ".bmp", ".ico", ".tiff", ".psd",
+    };
+
+    private static bool IsAttachable(string relativePath) =>
+        ImageMedia.TryGetMimeType(relativePath, out _)
+        || PlainTextMedia.IsKnownDocumentFormat(relativePath)
+        || !BinaryExtensions.Contains(Path.GetExtension(relativePath));
 
     public static IReadOnlyList<string> Build(string workingDirectory)
     {
@@ -51,6 +76,8 @@ public static class FileMentionIndex
             var name = Path.GetFileName(entry);
             var isDirectory = Directory.Exists(entry);
             if (isDirectory ? ignoreFilter.IsDirectoryIgnored(name) : ignoreFilter.IsFileIgnored(name))
+                continue;
+            if (!isDirectory && !IsAttachable(name))
                 continue;
 
             var relative = Path.GetRelativePath(root, entry).Replace('\\', '/');

@@ -102,6 +102,42 @@ public class FileMentionIndexTests : IDisposable
         Assert.Contains("kept.txt", result);
     }
 
+    [Fact]
+    public void Build_ExcludesBinaryExtensions()
+    {
+        File.WriteAllText(Path.Combine(_root, "app.exe"), "");
+        File.WriteAllText(Path.Combine(_root, "native.dll"), "");
+        File.WriteAllText(Path.Combine(_root, "Program.cs"), "");
+
+        var result = FileMentionIndex.Build(_root);
+
+        Assert.DoesNotContain("app.exe", result);
+        Assert.DoesNotContain("native.dll", result);
+        Assert.Contains("Program.cs", result);
+    }
+
+    [Fact]
+    public void Build_IncludesImagesAndKnownDocumentFormats()
+    {
+        File.WriteAllText(Path.Combine(_root, "screenshot.png"), "");
+        File.WriteAllText(Path.Combine(_root, "report.pdf"), "");
+
+        var result = FileMentionIndex.Build(_root);
+
+        Assert.Contains("screenshot.png", result);
+        Assert.Contains("report.pdf", result);
+    }
+
+    [Fact]
+    public void Build_StillIncludesDirectories_EvenThoughDirectoriesArentAttachable()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "src"));
+
+        var result = FileMentionIndex.Build(_root);
+
+        Assert.Contains("src/", result);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))

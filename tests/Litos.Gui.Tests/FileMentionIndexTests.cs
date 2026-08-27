@@ -72,3 +72,57 @@ public class FileMentionIndexTests
         Assert.Equal(8, result.Count);
     }
 }
+
+/// <summary>
+/// Covers the real filesystem walk in FileMentionIndex.GetOrBuild/Build, specifically the
+/// attach-eligibility filtering added so the "@" popup doesn't offer files that AttachHandler
+/// (AttachPathAsync) always rejects — see FileMentionIndex.IsAttachable.
+/// </summary>
+public class FileMentionIndexBuildTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"litos-gui-mention-index-test-{Guid.NewGuid():n}");
+
+    public FileMentionIndexBuildTests() => Directory.CreateDirectory(_root);
+
+    [Fact]
+    public void GetOrBuild_ExcludesBinaryExtensions()
+    {
+        File.WriteAllText(Path.Combine(_root, "app.exe"), "");
+        File.WriteAllText(Path.Combine(_root, "native.dll"), "");
+        File.WriteAllText(Path.Combine(_root, "Program.cs"), "");
+
+        var result = new FileMentionIndex(_root).GetOrBuild();
+
+        Assert.DoesNotContain("app.exe", result);
+        Assert.DoesNotContain("native.dll", result);
+        Assert.Contains("Program.cs", result);
+    }
+
+    [Fact]
+    public void GetOrBuild_IncludesImagesAndKnownDocumentFormats()
+    {
+        File.WriteAllText(Path.Combine(_root, "screenshot.png"), "");
+        File.WriteAllText(Path.Combine(_root, "report.pdf"), "");
+
+        var result = new FileMentionIndex(_root).GetOrBuild();
+
+        Assert.Contains("screenshot.png", result);
+        Assert.Contains("report.pdf", result);
+    }
+
+    [Fact]
+    public void GetOrBuild_StillIncludesDirectories_EvenThoughDirectoriesArentAttachable()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "src"));
+
+        var result = new FileMentionIndex(_root).GetOrBuild();
+
+        Assert.Contains("src/", result);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root))
+            Directory.Delete(_root, recursive: true);
+    }
+}
