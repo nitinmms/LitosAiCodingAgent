@@ -280,11 +280,12 @@ describe("LitosClient — /mcp", () => {
 });
 
 describe("LitosClient — /config", () => {
-    it("getConfigStatus issues a plain GET and passes through keyStatus", async () => {
+    it("getConfigStatus issues a plain GET and passes through keyStatus and defaultModelSet", async () => {
         mockFetch(() => new Response(JSON.stringify({
             configured: true,
             availableProviders: ["anthropic"],
             keyStatus: { anthropic: "env", openai: "unset" },
+            defaultModelSet: false,
         }), { status: 200 }));
 
         const result = await client.getConfigStatus();
@@ -292,6 +293,7 @@ describe("LitosClient — /config", () => {
         expect(capturedRequests[0].url).toBe("http://127.0.0.1:12345/config/status");
         expect(result.configured).toBe(true);
         expect(result.keyStatus).toEqual({ anthropic: "env", openai: "unset" });
+        expect(result.defaultModelSet).toBe(false);
     });
 
     it("saveKeys POSTs PascalCase Entries/LocalBaseUrl, null when no local base URL was entered", async () => {

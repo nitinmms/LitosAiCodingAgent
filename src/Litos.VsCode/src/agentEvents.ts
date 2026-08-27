@@ -152,7 +152,14 @@ export type SendTurnOutcome = { kind: "started"; events: AsyncGenerator<AgentEve
 // keyStatus maps each provider name (plus "localBaseUrl") to "env" | "config" | "unset" — see
 // ConfigEndpoints.cs's BuildKeyStatus for what each value means and why the real secret is never
 // included.
-export type ConfigStatus = { configured: boolean; availableProviders: string[]; keyStatus?: Record<string, string> };
+export type ConfigStatus = {
+    configured: boolean;
+    availableProviders: string[];
+    keyStatus?: Record<string, string>;
+    // True once the user has explicitly run /model at least once — see ConfigEndpoints.cs's
+    // /config/status handler for why this can't be derived from AgentWorker.Model instead.
+    defaultModelSet?: boolean;
+};
 
 export class LitosClient {
     constructor(private readonly baseUrl: string) {}

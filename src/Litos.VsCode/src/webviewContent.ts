@@ -532,6 +532,46 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     z-index: 99;
   }
   #keysPopupOverlay.visible { display: block; }
+
+  /* Default-model onboarding hint — same overlay/card visual language as #keysPopup above, just a
+     plain informational message (no form) shown once per activation when a chat provider is
+     configured but the user has never explicitly run /model (see extension.ts's
+     defaultModelHintDismissed and ConfigEndpoints.cs's defaultModelSet). */
+  #defaultModelHint {
+    display: none;
+    position: fixed;
+    top: 8%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(420px, 90vw);
+    background: var(--vscode-dropdown-background, var(--vscode-editor-background));
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    z-index: 100;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+  #defaultModelHint.visible { display: block; }
+  #defaultModelHint h2 { margin-top: 0; }
+  #defaultModelHint p { color: var(--vscode-descriptionForeground); }
+  #defaultModelHintActions { display: flex; justify-content: flex-end; margin-top: 12px; }
+  #defaultModelHintClose {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    cursor: pointer;
+  }
+  #defaultModelHintOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 99;
+  }
+  #defaultModelHintOverlay.visible { display: block; }
   #chatArea { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 </style>
 </head>
@@ -583,6 +623,14 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     <button id="keysPopupSave">Save</button>
   </div>
 </div>
+<div id="defaultModelHintOverlay"></div>
+<div id="defaultModelHint">
+  <h2>No default model set yet</h2>
+  <p>Litos is running with an automatically picked provider and model for now. To choose the ones you actually want, type <code>/model</code> (or <code>/provider</code> to switch providers first).</p>
+  <div id="defaultModelHintActions">
+    <button id="defaultModelHintClose">Close</button>
+  </div>
+</div>
 <script>${markedSource}</script>
 <script>
 (function () {
@@ -596,6 +644,9 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const keysPopupReloadButton = document.getElementById('keysPopupReload');
   const keysPopupCancelButton = document.getElementById('keysPopupCancel');
   const keysPopupSaveButton = document.getElementById('keysPopupSave');
+  const defaultModelHintOverlayEl = document.getElementById('defaultModelHintOverlay');
+  const defaultModelHintEl = document.getElementById('defaultModelHint');
+  const defaultModelHintCloseButton = document.getElementById('defaultModelHintClose');
   const transcriptEl = document.getElementById('transcript');
   const pendingAttachmentsEl = document.getElementById('pendingAttachments');
   const inputEl = document.getElementById('composerInput');
@@ -767,6 +818,26 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   keysPopupOverlayEl.addEventListener('click', closeKeysPopup);
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && keysPopupEl.classList.contains('visible')) closeKeysPopup();
+  });
+
+  // --- Default-model onboarding hint (see extension.ts's initializeChatSurface/
+  // defaultModelHintDismissed) — plain informational popup, always dismissable (unlike the
+  // isFirstRun keys popup above, which blocks until a key is saved). ---
+  function openDefaultModelHint() {
+    defaultModelHintOverlayEl.classList.add('visible');
+    defaultModelHintEl.classList.add('visible');
+  }
+
+  function closeDefaultModelHint() {
+    defaultModelHintOverlayEl.classList.remove('visible');
+    defaultModelHintEl.classList.remove('visible');
+    vscode.postMessage({ type: 'dismissDefaultModelHint' });
+  }
+
+  defaultModelHintCloseButton.addEventListener('click', closeDefaultModelHint);
+  defaultModelHintOverlayEl.addEventListener('click', closeDefaultModelHint);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && defaultModelHintEl.classList.contains('visible')) closeDefaultModelHint();
   });
 
   keysPopupSaveButton.addEventListener('click', () => {
@@ -1603,6 +1674,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
       addEntry('system', message.text);
     } else if (message.type === 'openKeysPopup') {
       openKeysPopup(!!message.isFirstRun, message.keyStatus);
+    } else if (message.type === 'openDefaultModelHint') {
+      openDefaultModelHint();
     } else if (message.type === 'saveKeysSuccess') {
       keysPopupSuccessEl.classList.add('visible');
       keysPopupSaveButton.style.display = 'none';

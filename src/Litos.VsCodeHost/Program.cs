@@ -106,7 +106,7 @@ if (isConfigured)
 }
 
 var app = builder.Build();
-app.MapConfigEndpoints(config);
+app.MapConfigEndpoints();
 app.MapFilesEndpoints();
 app.MapSkillsEndpoints();
 app.MapAttachEndpoints();

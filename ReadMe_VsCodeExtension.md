@@ -600,6 +600,36 @@ button, matching `ApiKeysWindow`'s first-run mode having no way out except Save)
 command menu entry any time after (`isFirstRun: false` — dismissable via Cancel, Escape, or clicking
 the overlay). The chat area itself is now always visible underneath, unlike the old page-swap.
 
+**Default-model onboarding hint — implemented.** A key being configured doesn't mean the user ever
+actually chose a provider/model: `AgentWorker`'s constructor (both `Litos.Api` and
+`Litos.VsCodeHost`) silently falls back to the first `AvailableChatProviders` entry and, lazily on
+first turn, that provider's own default (or first) model — so a first-time user can be chatting
+against an auto-picked model with no indication a real choice exists. `DefaultProvider` on
+`LitosConfig` is never a reliable "did the user choose this" signal (`Load()` defaults it to the
+literal string `"anthropic"` even when unconfigured), but `DefaultModel` is — it stays `null` until
+`/provider` or `/model` actually persists one. `GET /config/status` now also returns
+`defaultModelSet` (`config.DefaultModel != null`); `initializeChatSurface` in `extension.ts` checks
+it right after the existing `configured` check (the two are mutually exclusive — the keys-popup gate
+only ever fires when `configured` is false) and, if unset, posts `openDefaultModelHint` to the
+webview. `webviewContent.ts`'s `#defaultModelHint`/`#defaultModelHintOverlay` is the same
+overlay-plus-card component as `#keysPopup`, holding plain text (no action buttons — pointing the
+user at typing `/model` themselves) and always dismissable (Close/Escape/overlay-click), unlike the
+first-run keys gate. Dismissing posts `dismissDefaultModelHint` back to the extension host, which
+sets a module-level `defaultModelHintDismissed` flag alongside `sharedHost` — suppressing the hint
+for every panel/sidebar view opened for the rest of this extension activation (this VS Code window),
+not just the one panel it was dismissed in; a window reload or extension restart resets it.
+
+**`/config/status` now re-reads `LitosConfig.Load()` on every call, not just at startup** — found
+while implementing the hint above. Every other field this endpoint returns is safe to read from the
+`LitosConfig` snapshot `Program.cs` captured once at boot, because API keys can only change via a
+save-then-respawn of the whole process (see "No live reload" below). `DefaultModel` breaks that
+assumption: `AgentWorker.SetModel`/`SwitchProviderAsync` persist a new `DefaultModel` to disk live,
+in this same running process, via their own `_config.Save()` — so closing over the boot-time
+snapshot (as an earlier version of this endpoint did, taking `LitosConfig` as a parameter from
+`Program.cs`) meant `defaultModelSet` would report `false` forever after the very first `/model`,
+even though the choice was correctly saved and every other face would see it. `MapConfigEndpoints`
+no longer takes a `LitosConfig` parameter at all — both handlers already reload their own copy.
+
 **No live reload**: `LitosHostBuilder.AddLitosAgent` conditionally registers each keyed
 `IChatProvider` once, at DI-container-build time — there is no seam to swap a provider registration
 into an already-built `IServiceProvider`. `Program.cs` therefore stays alive with no `AgentWorker`/

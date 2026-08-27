@@ -19,14 +19,33 @@ namespace Litos.VsCodeHost.Config;
 /// </summary>
 public static class ConfigEndpoints
 {
-    public static IEndpointRouteBuilder MapConfigEndpoints(this IEndpointRouteBuilder app, LitosConfig config)
+    public static IEndpointRouteBuilder MapConfigEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/config/status", () => Results.Ok(new
+        app.MapGet("/config/status", () =>
         {
-            configured = config.AvailableChatProviders.Count > 0,
-            availableProviders = config.AvailableChatProviders,
-            keyStatus = BuildKeyStatus(config),
-        }));
+            // Re-reads from disk/env rather than closing over the startup-time `config` snapshot,
+            // unlike every other field below (which can't change within this process's lifetime —
+            // API keys only ever change via a save-then-respawn, see this class's own remarks).
+            // DefaultModel is different: AgentWorker.SetModel/SwitchProviderAsync persist a new
+            // DefaultModel to disk live, in this same process, via their own LitosConfig.Save() —
+            // so reading the stale closed-over `config` here would keep reporting
+            // defaultModelSet: false forever after the user's very first /model, even though the
+            // choice was correctly saved.
+            var current = LitosConfig.Load();
+            return Results.Ok(new
+            {
+                configured = current.AvailableChatProviders.Count > 0,
+                availableProviders = current.AvailableChatProviders,
+                keyStatus = BuildKeyStatus(current),
+                // Whether the user has ever explicitly run /model — distinct from AgentWorker.Model,
+                // which is never null in practice (it lazily resolves to a real model on first turn,
+                // see AgentWorker.EnsureModelResolvedAsync). This is the only reliable signal for the
+                // VS Code extension's onboarding hint (openDefaultModelHint) to know whether the
+                // agent is silently running on an auto-picked model versus one the user actually
+                // chose.
+                defaultModelSet = current.DefaultModel != null,
+            });
+        });
 
         app.MapPost("/config/keys", (SaveKeysRequest request) =>
         {

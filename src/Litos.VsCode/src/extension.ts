@@ -22,6 +22,14 @@ import { extractMentionPaths, expandMentionCandidates } from "./mentionParser";
 let sharedHost: { process: LitosHostProcess; client: LitosClient; cwd: string; baseUrl: string } | undefined;
 
 /**
+ * Set once the user dismisses the "no default model set yet" onboarding hint (openDefaultModelHint,
+ * see initializeChatSurface) — suppresses it for every panel/surface opened for the rest of this
+ * extension activation (this VS Code window), the same scope sharedHost itself lives for. Reset
+ * only by a window reload or extension restart, which re-runs this module from scratch.
+ */
+let defaultModelHintDismissed = false;
+
+/**
  * The minimal shape every chat message-handler function actually needs — satisfied structurally by
  * both vscode.WebviewPanel (an editor-tab chat, see openChatPanel) and vscode.WebviewView (the
  * activity-bar sidebar chat, see LitosChatViewProvider). Letting PanelState hold this instead of a
@@ -255,6 +263,8 @@ async function initializeChatSurface(context: vscode.ExtensionContext, surface: 
     const status = await sharedHost!.client.getConfigStatus();
     if (!status.configured) {
         surface.webview.postMessage({ type: "openKeysPopup", isFirstRun: true, keyStatus: status.keyStatus });
+    } else if (!status.defaultModelSet && !defaultModelHintDismissed) {
+        surface.webview.postMessage({ type: "openDefaultModelHint" });
     }
     void refreshContextUsage(state);
     void refreshWorkingDirectory(state);
@@ -416,6 +426,11 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
 
     if (message.type === "reloadWindow") {
         await vscode.commands.executeCommand("workbench.action.reloadWindow");
+        return;
+    }
+
+    if (message.type === "dismissDefaultModelHint") {
+        defaultModelHintDismissed = true;
         return;
     }
 
