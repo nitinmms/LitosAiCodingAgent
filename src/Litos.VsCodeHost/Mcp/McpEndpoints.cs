@@ -71,6 +71,15 @@ public static class McpEndpoints
             return Results.Ok();
         });
 
+        app.MapPost("/mcp/servers/{name}/permission", (string name, SetDefaultPermissionRequest request, McpConfigStore configStore) =>
+        {
+            configStore.Update(cfg => cfg with
+            {
+                Servers = [.. cfg.Servers.Select(s => s.Name == name ? s with { DefaultPermission = request.DefaultPermission } : s)],
+            });
+            return Results.Ok();
+        });
+
         app.MapDelete("/mcp/servers/{name}", (string name, McpConfigStore configStore) =>
         {
             configStore.Update(cfg => cfg with { Servers = [.. cfg.Servers.Where(s => s.Name != name)] });
@@ -92,3 +101,5 @@ public sealed record AddMcpServerRequest(
     IReadOnlyDictionary<string, string>? Env, string? Url, ToolPermission DefaultPermission);
 
 public sealed record SetEnabledRequest(bool Enabled);
+
+public sealed record SetDefaultPermissionRequest(ToolPermission DefaultPermission);

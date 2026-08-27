@@ -766,6 +766,13 @@ function openMcpPanel(context: vscode.ExtensionContext): void {
                     await client.refreshMcpServers();
                     mcpPanel!.webview.postMessage({ type: "servers", servers: await client.listMcpServers() });
                     break;
+                case "setDefaultPermission":
+                    // No refreshMcpServers() here — McpAwareApprovalGate reads McpConfigStore fresh
+                    // on every tool call (see McpToolProvider.DefinitionsMatch's own remarks), so a
+                    // permission change applies live without needing a reconnect.
+                    await client.setMcpServerDefaultPermission(message.name, message.defaultPermission);
+                    mcpPanel!.webview.postMessage({ type: "servers", servers: await client.listMcpServers() });
+                    break;
                 case "remove":
                     await client.removeMcpServer(message.name);
                     mcpPanel!.webview.postMessage({ type: "servers", servers: await client.listMcpServers() });

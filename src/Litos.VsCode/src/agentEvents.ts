@@ -362,6 +362,15 @@ export class LitosClient {
         if (!response.ok) throw new Error(`Litos host returned ${response.status}`);
     }
 
+    async setMcpServerDefaultPermission(name: string, defaultPermission: 0 | 1 | 2): Promise<void> {
+        const response = await fetch(`${this.baseUrl}/mcp/servers/${encodeURIComponent(name)}/permission`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ DefaultPermission: defaultPermission }),
+        });
+        if (!response.ok) throw new Error(`Litos host returned ${response.status}`);
+    }
+
     async removeMcpServer(name: string): Promise<void> {
         const response = await fetch(`${this.baseUrl}/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" });
         if (!response.ok) throw new Error(`Litos host returned ${response.status}`);
@@ -390,7 +399,9 @@ export class LitosClient {
             const errorBody = await response.text();
             throw new Error(`Litos host returned ${response.status}${errorBody ? `: ${errorBody}` : ""}`);
         }
-        return response.status === 200 || response.status === 201 ? response.json() : (undefined as T);
+        if (response.status !== 200 && response.status !== 201) return undefined as T;
+        const text = await response.text();
+        return text ? JSON.parse(text) : (undefined as T);
     }
 }
 

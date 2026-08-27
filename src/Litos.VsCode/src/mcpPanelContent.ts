@@ -49,7 +49,16 @@ export function getMcpPanelHtml(webview: vscode.Webview, extensionUri: vscode.Ur
   .server-status.Connecting { background: var(--vscode-charts-yellow, #d29922); color: #000; }
   .server-status.Unreachable, .server-status.Disconnected { background: var(--vscode-errorForeground); color: #fff; }
   .server-detail { opacity: 0.75; font-size: 0.85em; margin-top: 6px; }
-  .server-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .server-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  .server-actions select {
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-family: inherit;
+    font-size: inherit;
+  }
   #empty { opacity: 0.7; padding: 20px 0; }
   #addForm {
     display: none;
@@ -162,15 +171,26 @@ export function getMcpPanelHtml(webview: vscode.Webview, extensionUri: vscode.Ur
 
       const detail = document.createElement('div');
       detail.className = 'server-detail';
-      const permissionNames = ['Deny', 'Ask', 'Full'];
       const transportLabel = server.transport === 1 ? (server.url || '') : (server.command || '') + ' ' + (server.args || []).join(' ');
-      detail.textContent = transportLabel + ' — ' + server.toolCount + ' tools, ' + server.promptCount + ' prompts — permission: ' +
-        (permissionNames[server.defaultPermission] || server.defaultPermission) +
+      detail.textContent = transportLabel + ' — ' + server.toolCount + ' tools, ' + server.promptCount + ' prompts' +
         (server.error ? ' — ' + server.error : '');
       el.appendChild(detail);
 
       const actions = document.createElement('div');
       actions.className = 'server-actions';
+
+      const permissionSelect = document.createElement('select');
+      ['Deny', 'Ask', 'Full'].forEach((label, value) => {
+        const option = document.createElement('option');
+        option.value = String(value);
+        option.textContent = label;
+        if (value === server.defaultPermission) option.selected = true;
+        permissionSelect.appendChild(option);
+      });
+      permissionSelect.addEventListener('change', () => {
+        vscode.postMessage({ type: 'setDefaultPermission', name: server.name, defaultPermission: Number(permissionSelect.value) });
+      });
+      actions.appendChild(permissionSelect);
 
       const toggleBtn = document.createElement('button');
       toggleBtn.className = 'secondary';

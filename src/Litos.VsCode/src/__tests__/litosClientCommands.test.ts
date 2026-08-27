@@ -241,7 +241,9 @@ describe("LitosClient — /mcp", () => {
     });
 
     it("addMcpServer POSTs the server object as-is (already PascalCase from the caller)", async () => {
-        mockFetch(() => new Response(JSON.stringify({}), { status: 200 }));
+        // Results.Ok() on the host returns a genuinely empty body (not "{}"), which is what
+        // triggered "Unexpected end of JSON input" — see agentEvents.ts's postJson.
+        mockFetch(() => new Response(null, { status: 200 }));
         const server = { Name: "s1", Transport: 0 as const, Command: "npx", Args: ["-y", "pkg"], DefaultPermission: 1 as const };
 
         await client.addMcpServer(server);
@@ -260,6 +262,17 @@ describe("LitosClient — /mcp", () => {
         expect(body).toEqual({ Enabled: false });
     });
 
+    it("setMcpServerDefaultPermission POSTs to the name-scoped permission path with the PascalCase DefaultPermission field", async () => {
+        mockFetch(() => new Response(null, { status: 200 }));
+
+        await client.setMcpServerDefaultPermission("my server", 2);
+
+        expect(capturedRequests[0].url).toBe("http://127.0.0.1:12345/mcp/servers/my%20server/permission");
+        expect(capturedRequests[0].init!.method).toBe("POST");
+        const body = JSON.parse(capturedRequests[0].init!.body as string);
+        expect(body).toEqual({ DefaultPermission: 2 });
+    });
+
     it("removeMcpServer issues a DELETE to the name-scoped path", async () => {
         mockFetch(() => new Response(null, { status: 200 }));
 
@@ -270,7 +283,7 @@ describe("LitosClient — /mcp", () => {
     });
 
     it("refreshMcpServers POSTs with an empty body", async () => {
-        mockFetch(() => new Response(JSON.stringify({}), { status: 200 }));
+        mockFetch(() => new Response(null, { status: 200 }));
 
         await client.refreshMcpServers();
 
