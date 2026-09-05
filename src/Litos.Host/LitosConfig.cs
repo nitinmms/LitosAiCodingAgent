@@ -13,7 +13,8 @@ public sealed record LitosConfig(
     // usable — it's gated on this being set rather than on ApiKeys containing "local" (see
     // IsProviderConfigured) — so this is its own field rather than living in ApiKeys.
     string? LocalBaseUrl = null,
-    int? ShellCommandTimeoutSeconds = null)
+    int? ShellCommandTimeoutSeconds = null,
+    int? StreamIdleTimeoutSeconds = null)
 {
     /// <summary>
     /// Hard wall-clock cap on a single `shell` tool command — see ShellTool's own doc comment
@@ -25,6 +26,20 @@ public sealed record LitosConfig(
     /// </summary>
     public TimeSpan? ShellCommandTimeout =>
         ShellCommandTimeoutSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null;
+
+    /// <summary>
+    /// How long AgentLoop waits for the NEXT chunk of a provider's response stream before treating
+    /// the connection as stalled — see AgentLoop.DefaultStreamIdleTimeout's own doc comment for why
+    /// it resets per-chunk rather than capping the whole request. That 60s default is generous
+    /// enough for the hosted providers it was tuned against, but a local model (LM Studio, Ollama,
+    /// ...) running on memory-constrained hardware can legitimately take longer than that just to
+    /// produce its first token once the transcript's context grows — confirmed live: a local
+    /// qwen3.8-27b-mlx run on a 24GB Mac hit exactly this at 54% context usage. Unset means "use
+    /// AgentLoop's own 60s default"; same int-seconds-not-TimeSpan reasoning as
+    /// ShellCommandTimeoutSeconds above.
+    /// </summary>
+    public TimeSpan? StreamIdleTimeout =>
+        StreamIdleTimeoutSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null;
 
     private static readonly IReadOnlyDictionary<string, string> EnvVarNames = new Dictionary<string, string>
     {
@@ -94,7 +109,8 @@ public sealed record LitosConfig(
             LastWorkingDirectory: onDisk?.LastWorkingDirectory,
             ApiKeys: apiKeys,
             LocalBaseUrl: GetEnvironmentVariable("LOCAL_BASE_URL") ?? onDisk?.LocalBaseUrl,
-            ShellCommandTimeoutSeconds: onDisk?.ShellCommandTimeoutSeconds);
+            ShellCommandTimeoutSeconds: onDisk?.ShellCommandTimeoutSeconds,
+            StreamIdleTimeoutSeconds: onDisk?.StreamIdleTimeoutSeconds);
     }
 
     public string? GetApiKey(string providerName) =>

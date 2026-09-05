@@ -156,7 +156,9 @@ public sealed class AgentLoopFactory(
     ITranscriptStore store,
     ContextAccountant accountant,
     ISystemPromptProvider systemPromptProvider,
-    Compactor compactor)
+    Compactor compactor,
+    LitosConfig? config = null)
 {
-    public AgentLoop Create(IChatProvider provider, ToolRegistry tools) => new(provider, tools, store, accountant, systemPromptProvider, compactor);
+    public AgentLoop Create(IChatProvider provider, ToolRegistry tools) =>
+        new(provider, tools, store, accountant, systemPromptProvider, compactor, config?.StreamIdleTimeout);
 }

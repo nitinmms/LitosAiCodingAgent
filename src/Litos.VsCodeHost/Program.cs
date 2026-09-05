@@ -20,6 +20,17 @@ using Microsoft.Extensions.Logging;
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://127.0.0.1:0"); // port 0 = OS-assigned free loopback port
 
+// TurnsEndpoints' /turns SSE response (ToSseData) only writes bytes when a real AgentEvent
+// fires — it sends no heartbeat during silence — so a quiet gap with no events (a slow tool
+// call, or a local model that hasn't produced its first token yet) can run well past Kestrel's
+// default MinResponseDataRate (240 B/s after a 5s grace period). Kestrel then aborts the
+// connection itself, which the VS Code extension's Node-side fetch (undici) surfaces as a bare
+// `TypeError: terminated` — rendered in the webview as a SYSTEM "Error: terminated" bubble with
+// no indication it was Kestrel, not the model or a tool, that gave up. That data-rate watchdog
+// exists to protect a server from slow/malicious remote clients; this process only ever listens
+// on loopback for the bundled extension, so there's nothing to protect against — disable it.
+builder.WebHost.ConfigureKestrel(o => o.Limits.MinResponseDataRate = null);
+
 var config = LitosConfig.Load();
 var isConfigured = config.AvailableChatProviders.Count > 0;
 

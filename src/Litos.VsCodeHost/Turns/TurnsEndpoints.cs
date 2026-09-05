@@ -122,7 +122,7 @@ public static class TurnsEndpoints
             try
             {
                 await foreach (var evt in events.ReadAllAsync(ct))
-                    await merged.Writer.WriteAsync(JsonSerializer.Serialize(evt, evt.GetType(), JsonOptions), ct);
+                    await merged.Writer.WriteAsync(SerializeEvent(evt), ct);
             }
             finally
             {
@@ -142,6 +142,18 @@ public static class TurnsEndpoints
             await pumpAgentEvents.ConfigureAwait(false);
         }
     }
+
+    // AgentEvent.ErrorOccurred carries the raw .NET Exception a provider/tool threw. Serializing it
+    // generically like every other AgentEvent variant throws System.NotSupportedException on
+    // properties System.Text.Json can't handle (e.g. Exception.TargetSite, a MethodBase) — crashing
+    // this SSE write entirely and turning a normal, reportable error (confirmed live: AgentLoop's
+    // own 60s stream-idle TimeoutException) into an opaque 500 with no body, since nothing had been
+    // flushed to the client yet. agentEvents.ts's parser only ever reads Exception.Message anyway
+    // (see its `obj.Exception?.Message` check), so that's all this needs to send.
+    private static string SerializeEvent(AgentEvent evt) =>
+        evt is ErrorOccurred error
+            ? JsonSerializer.Serialize(new { Exception = new { error.Exception.Message } }, JsonOptions)
+            : JsonSerializer.Serialize(evt, evt.GetType(), JsonOptions);
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 }
