@@ -51,12 +51,20 @@ public class ShellToolTests
     }
 
     [Fact]
-    public async Task InvokeAsync_MissingCommandProperty_Throws()
+    public async Task InvokeAsync_MissingCommandProperty_ReturnsError_WithoutCallingGate()
     {
+        // A local model's tool-call JSON omitting a required argument is a real, model-driven
+        // failure mode (more common for local/smaller models than hosted ones) — must degrade to
+        // a clean ToolResult.Error the model can act on, not a raw JsonElement.GetProperty
+        // KeyNotFoundException with no actionable message.
         var gate = new FakeApprovalGate();
         var tool = new ShellTool(gate);
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => tool.InvokeAsync(Args(new { }), CancellationToken.None));
+        var result = await tool.InvokeAsync(Args(new { }), CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal("A 'command' argument is required.", result.Text);
+        Assert.Equal(0, gate.CallCount);
     }
 
     [Fact]

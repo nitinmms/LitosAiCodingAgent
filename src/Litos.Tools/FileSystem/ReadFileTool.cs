@@ -30,7 +30,7 @@ public sealed class ReadFileTool : ITool
 
     public async Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
     {
-        var path = arguments.GetProperty("path").GetString();
+        var path = arguments.GetStringOrNull("path");
         if (string.IsNullOrWhiteSpace(path))
             return ToolResult.Error("A 'path' argument is required.");
 

@@ -29,6 +29,20 @@ public class EditFileToolTests : IDisposable
     }
 
     [Fact]
+    public async Task InvokeAsync_MissingRequiredProperties_ReturnsError()
+    {
+        // A local model's tool-call JSON omitting a required argument is a real, model-driven
+        // failure mode — must degrade to a clean ToolResult.Error, not throw.
+        var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };
+        var tool = new EditFileTool(gate);
+
+        var result = await tool.InvokeAsync(Args(new { }), CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal("'path', 'old_text', and 'new_text' arguments are required.", result.Text);
+    }
+
+    [Fact]
     public async Task InvokeAsync_MissingFile_ReturnsError()
     {
         var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };

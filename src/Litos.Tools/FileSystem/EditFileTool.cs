@@ -26,9 +26,9 @@ public sealed class EditFileTool(IToolApprovalGate approvalGate) : ITool
 
     public async Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
     {
-        var path = arguments.GetProperty("path").GetString();
-        var oldText = arguments.GetProperty("old_text").GetString();
-        var newText = arguments.GetProperty("new_text").GetString();
+        var path = arguments.GetStringOrNull("path");
+        var oldText = arguments.GetStringOrNull("old_text");
+        var newText = arguments.GetStringOrNull("new_text");
         if (string.IsNullOrWhiteSpace(path) || oldText is null || newText is null)
             return ToolResult.Error("'path', 'old_text', and 'new_text' arguments are required.");
 

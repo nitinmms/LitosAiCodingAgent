@@ -190,6 +190,69 @@ public class AgentLoopTests
         Assert.Contains(store.AppendedEntries, e => e.Message?.Content.OfType<CompactionSummaryBlock>().Any() == true);
     }
 
+    [Fact]
+    public async Task RunTurnAsync_ChecksCompaction_BeforeEveryToolRound_NotJustTheFirst()
+    {
+        // Regression test for the bug this fix targets: a turn that starts under budget can still
+        // spiral into many tool-calling rounds with no new user message in between, and each
+        // round's own request/response only grows the transcript further. The compaction check
+        // used to run exactly once, before the loop that drives those rounds even started — so a
+        // turn's first round staying under threshold meant compaction was never reconsidered again
+        // for the rest of that same turn, no matter how much later rounds grew the transcript by.
+        //
+        // Setup: existing history carries large-but-under-threshold usage (150_000, comfortably
+        // below the 184_000 ContextWindowTokens-ReserveTokens default threshold) so round 1's own
+        // pre-request check sees ShouldCompact=false — proving the first round is unaffected. Round
+        // 1's own response then reports usage that crosses the threshold (190_000); round 2's
+        // pre-request check must catch that and compact before its request goes out. The old
+        // 100_000-char messages give FindCutPoint real bulk to snap a cut point to (a fresh
+        // transcript of only short messages never accumulates enough estimated chars to find one),
+        // and matter for the same reason the existing turn-start compaction test above uses them.
+        var store = new FakeTranscriptStore();
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.User(new string('a', 100_000)));
+        transcript.Append(ChatMessage.Assistant([new TextBlock(new string('b', 100_000))]), new UsageInfo(150_000, 0));
+
+        var tool = new FixedResultTool("look", ToolResult.Ok("ok"));
+        var provider = new FakeChatProvider();
+
+        // Round 1: one full model response (tool call events + its MessageCompleted) whose usage
+        // pushes real usage from 150_000 to 190_000 — over threshold, but only once this round's
+        // own response comes back, not before.
+        provider.Enqueue(
+            new ToolCallCompleted("call_1", "look", JsonDocument.Parse("{}").RootElement),
+            new MessageCompleted(
+                ChatMessage.Assistant([new ToolUseBlock("call_1", "look", JsonDocument.Parse("{}").RootElement)]),
+                new UsageInfo(190_000, 0)));
+
+        // Compaction's own summarization call — only reachable if round 2's pre-request check
+        // actually fires (there is no other provider.StreamAsync call between round 1 and round 2
+        // that could otherwise consume this).
+        provider.Enqueue(new TextDelta("mid-turn summary"));
+
+        // Round 2: the turn's actual final response, once compaction has made room for it.
+        provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(1, 1)));
+
+        var compactor = new Compactor(new CompactionSettings());
+        var loop = CreateLoop(provider, tools: [tool], store: store, compactor: compactor);
+
+        var events = await RunToCompletionAsync(loop, transcript, "do a tool-heavy task");
+
+        var compactionEvent = Assert.IsType<CompactionOccurred>(Assert.Single(events, e => e is CompactionOccurred));
+        Assert.True(compactionEvent.TokensBefore > 184_000, $"Expected compaction to fire only after round 1's own usage (190_000) crossed threshold, got {compactionEvent.TokensBefore}");
+        Assert.Contains(store.AppendedEntries, e => e.Message?.Content.OfType<CompactionSummaryBlock>().Any() == true);
+        // The turn still completes normally afterward -- compaction mid-turn doesn't abort it.
+        Assert.Contains(events, e => e is MessageCompleted mc && mc.Message.Content.OfType<TextBlock>().Any(t => t.Text == "done"));
+    }
+
+    private sealed class FixedResultTool(string name, ToolResult result) : ITool
+    {
+        public string Name => name;
+        public string Description => "test tool";
+        public JsonElement ParameterSchema { get; } = JsonDocument.Parse("{}").RootElement;
+        public Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct) => Task.FromResult(result);
+    }
+
     // ---- System prompt ----
 
     [Fact]

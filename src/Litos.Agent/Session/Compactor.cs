@@ -31,8 +31,14 @@ public sealed class Compactor(CompactionSettings settings)
         Keep each section concise. Preserve exact file paths, function names, and error messages.
         """;
 
-    public Task<bool> TryCompactAsync(Transcript transcript, IChatProvider provider, string model, CancellationToken ct) =>
-        CompactAsync(transcript, provider, model, force: false, ct);
+    /// <param name="contextWindowTokens">
+    /// The active turn's real (or best-known-fallback) model context window, when the caller
+    /// knows it — see CompactionSettings.ForContextWindow. Null keeps this call measured against
+    /// the shared CompactionSettings default (200K), which is what every caller that doesn't yet
+    /// track a resolved context length per session (Litos.Console) should keep passing.
+    /// </param>
+    public Task<bool> TryCompactAsync(Transcript transcript, IChatProvider provider, string model, int? contextWindowTokens, CancellationToken ct) =>
+        CompactAsync(transcript, provider, model, contextWindowTokens, force: false, ct);
 
     /// <summary>
     /// User-requested compaction (the /compact command): skips ShouldCompact's context-window
@@ -40,15 +46,18 @@ public sealed class Compactor(CompactionSettings settings)
     /// is — but still runs FindCutPoint, so it still no-ops rather than producing a degenerate
     /// summary when there isn't yet enough history old enough to safely cut.
     /// </summary>
-    public Task<bool> ForceCompactAsync(Transcript transcript, IChatProvider provider, string model, CancellationToken ct) =>
-        CompactAsync(transcript, provider, model, force: true, ct);
+    /// <param name="contextWindowTokens">See TryCompactAsync's parameter of the same name.</param>
+    public Task<bool> ForceCompactAsync(Transcript transcript, IChatProvider provider, string model, int? contextWindowTokens, CancellationToken ct) =>
+        CompactAsync(transcript, provider, model, contextWindowTokens, force: true, ct);
 
-    private async Task<bool> CompactAsync(Transcript transcript, IChatProvider provider, string model, bool force, CancellationToken ct)
+    private async Task<bool> CompactAsync(Transcript transcript, IChatProvider provider, string model, int? contextWindowTokens, bool force, CancellationToken ct)
     {
-        if (!force && !CompactionPlanner.ShouldCompact(transcript, settings))
+        var effectiveSettings = contextWindowTokens is { } window ? settings.ForContextWindow(window) : settings;
+
+        if (!force && !CompactionPlanner.ShouldCompact(transcript, effectiveSettings))
             return false;
 
-        var cutPoint = CompactionPlanner.FindCutPoint(transcript.Messages, settings.KeepRecentTokens);
+        var cutPoint = CompactionPlanner.FindCutPoint(transcript.Messages, effectiveSettings.KeepRecentTokens);
         if (cutPoint is null)
             return false;
 

@@ -18,7 +18,7 @@ public sealed class ListDirectoryTool : ITool
 
     public Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
     {
-        var path = arguments.GetProperty("path").GetString();
+        var path = arguments.GetStringOrNull("path");
         if (string.IsNullOrWhiteSpace(path))
             return Task.FromResult(ToolResult.Error("A 'path' argument is required."));
 

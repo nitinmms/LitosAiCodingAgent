@@ -234,10 +234,12 @@ public sealed class AgentWorker : BackgroundService
             // Snapshot under the lock at turn start — a /provider or /model switch made mid-turn
             // only affects the *next* turn, matching Litos.Api's AgentWorker.RunTurnCoreAsync.
             string providerName, model;
+            int? contextLength;
             lock (_settingsLock)
             {
                 providerName = _providerName;
                 model = _model;
+                contextLength = _contextLength;
             }
 
             var toolRegistry = _toolRegistryFactory.Create();
@@ -253,7 +255,7 @@ public sealed class AgentWorker : BackgroundService
             if (transcript.WorkingDirectory is null)
                 transcript = Transcript.CreateNew(Directory.GetCurrentDirectory());
 
-            await foreach (var evt in loop.RunTurnAsync(owner, sessionId, transcript, model, content, turnCts.Token, steering.Reader))
+            await foreach (var evt in loop.RunTurnAsync(owner, sessionId, transcript, model, content, turnCts.Token, steering.Reader, contextLength))
                 await events.WriteAsync(evt, CancellationToken.None);
         }
         catch (OperationCanceledException)

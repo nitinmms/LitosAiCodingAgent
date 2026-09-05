@@ -375,7 +375,7 @@ public sealed partial class MainWindow : Window
         try
         {
             await foreach (var evt in _session.Loop.RunTurnAsync(
-                SessionOwner.Local, _sessionId, _transcript, _session.Model, turnContent, _turnCts.Token, steering.Reader))
+                SessionOwner.Local, _sessionId, _transcript, _session.Model, turnContent, _turnCts.Token, steering.Reader, _session.ContextLength))
             {
                 switch (evt)
                 {
@@ -885,7 +885,7 @@ public sealed partial class MainWindow : Window
         StatusBarWorkingIndicator.IsVisible = true;
         try
         {
-            var compacted = await _session.Compactor.ForceCompactAsync(_transcript, _session.ChatProvider, _session.Model, CancellationToken.None);
+            var compacted = await _session.Compactor.ForceCompactAsync(_transcript, _session.ChatProvider, _session.Model, _session.ContextLength, CancellationToken.None);
             if (!compacted)
             {
                 AddToolLine("Nothing to compact yet.");

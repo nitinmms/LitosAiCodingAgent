@@ -137,7 +137,8 @@
             return;
         }
 
-        Worker.SetModel(_modelInput);
+        var contextLength = _models.FirstOrDefault(m => m.Id == _modelInput)?.ContextLength;
+        Worker.SetModel(_modelInput, contextLength);
         _selectedModel = _modelInput;
         _providerMessage = $"Switched to model '{_selectedModel}'.";
     }

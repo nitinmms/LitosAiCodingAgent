@@ -29,7 +29,7 @@ public sealed class ShareFileTool(SharedFileStore store, string? publicBaseUrl) 
 
     public async Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
     {
-        var path = arguments.GetProperty("path").GetString();
+        var path = arguments.GetStringOrNull("path");
         if (string.IsNullOrWhiteSpace(path))
             return ToolResult.Error("The 'path' argument is required.");
 

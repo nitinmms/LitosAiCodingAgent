@@ -130,20 +130,20 @@ public class SendFileToolTests : IDisposable
     }
 
     [Fact]
-    public async Task InvokeAsync_MissingPathArgument_Throws()
+    public async Task InvokeAsync_MissingPathArgument_ReturnsError()
     {
-        // Matches WriteFileTool/EditFileTool's own convention: required-argument absence isn't
-        // guarded against defensively in the tool itself, since the provider's tool-call schema
-        // (ParameterSchema's "required": ["path"]) is what's relied on to prevent this — a genuinely
-        // missing property surfaces as an exception, which AgentLoop.InvokeToolSafelyAsync already
-        // catches and turns into a ToolResult.Error for the real turn-execution path.
+        // A local model's tool-call JSON omitting a required argument is a real, model-driven
+        // failure mode — must degrade to a clean ToolResult.Error, not throw.
         var bot = new FakeTelegramBotClient();
         var approvalGate = new StubApprovalGate();
         var tool = new SendFileTool(bot, approvalGate);
         var emptyArgs = JsonSerializer.SerializeToElement(new { });
 
-        await RunAsTelegramAsync(() =>
-            Assert.ThrowsAsync<KeyNotFoundException>(() => tool.InvokeAsync(emptyArgs, CancellationToken.None)));
+        var result = default(Litos.Agent.Tools.ToolResult);
+        await RunAsTelegramAsync(async () => result = await tool.InvokeAsync(emptyArgs, CancellationToken.None));
+
+        Assert.True(result!.IsError);
+        Assert.Equal("The 'path' argument is required.", result.Text);
     }
 
     public void Dispose()

@@ -107,12 +107,17 @@ public class ShareFileToolTests : IDisposable
     }
 
     [Fact]
-    public async Task InvokeAsync_MissingPathArgument_Throws()
+    public async Task InvokeAsync_MissingPathArgument_ReturnsError()
     {
+        // A local model's tool-call JSON omitting a required argument is a real, model-driven
+        // failure mode — must degrade to a clean ToolResult.Error, not throw.
         var tool = new ShareFileTool(new SharedFileStore(_root), BaseUrl());
         var emptyArgs = JsonSerializer.SerializeToElement(new { });
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => tool.InvokeAsync(emptyArgs, CancellationToken.None));
+        var result = await tool.InvokeAsync(emptyArgs, CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal("The 'path' argument is required.", result.Text);
     }
 
     public void Dispose()

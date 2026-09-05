@@ -96,7 +96,7 @@ public static class SessionActionsEndpoints
         {
             var transcript = await Transcript.LoadAsync(store, SessionOwner.Local, id, ct);
             var provider = worker.ResolveActiveProvider();
-            var compacted = await compactor.ForceCompactAsync(transcript, provider, worker.Model ?? "", ct);
+            var compacted = await compactor.ForceCompactAsync(transcript, provider, worker.Model ?? "", worker.ContextLength, ct);
             if (!compacted)
                 return Results.Ok(new { compacted = false });
 

@@ -37,9 +37,13 @@ public static class ContextUsage
     private static readonly CompactionSettings DefaultCompactionSettings = new();
 
     /// <summary>
-    /// reserveTokens defaults to CompactionSettings.ReserveTokens (the same reserve compaction
-    /// itself uses to decide when to fire) rather than restating its own constant, so the
-    /// meter's Warning/Critical banding can't silently drift from when compaction actually kicks in.
+    /// reserveTokens defaults to CompactionSettings.ForContextWindow(contextLength).ReserveTokens
+    /// (the same reserve Compactor itself uses to decide when to fire, scaled to this specific
+    /// contextLength — not the raw 16K default) rather than restating its own constant, so the
+    /// meter's Warning/Critical banding can't silently drift from when compaction actually kicks
+    /// in. Using the unscaled 16K default here directly would push reserveThreshold negative for
+    /// any contextLength below it — e.g. a local model's typical 8K-16K window — making the meter
+    /// report Critical from the very first token even at, say, 5% real usage.
     /// </summary>
     public static ContextUsageSnapshot? Compute(Transcript transcript, int contextLength, int? reserveTokens = null)
     {
@@ -49,7 +53,7 @@ public static class ContextUsage
 
         var rawFraction = contextLength <= 0 ? 0 : (double)usedTokens.Value / contextLength;
         var fraction = Math.Clamp(rawFraction, 0, 1);
-        var reserveThreshold = contextLength - (reserveTokens ?? DefaultCompactionSettings.ReserveTokens);
+        var reserveThreshold = contextLength - (reserveTokens ?? DefaultCompactionSettings.ForContextWindow(contextLength).ReserveTokens);
         var level = usedTokens >= reserveThreshold
             ? ContextUsageLevel.Critical
             : usedTokens >= reserveThreshold * WarningFractionOfReserveThreshold

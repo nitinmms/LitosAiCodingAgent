@@ -39,7 +39,7 @@ public sealed class SendFileTool(ITelegramBotClient bot, IToolApprovalGate appro
         if (ChannelContext.Current != "telegram" || ChannelContext.ChannelId is not { } chatIdText)
             return ToolResult.Error("send_file is only available in a Telegram chat.");
 
-        var path = arguments.GetProperty("path").GetString();
+        var path = arguments.GetStringOrNull("path");
         if (string.IsNullOrWhiteSpace(path))
             return ToolResult.Error("The 'path' argument is required.");
 

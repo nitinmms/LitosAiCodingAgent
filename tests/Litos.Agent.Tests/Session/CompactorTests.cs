@@ -15,7 +15,7 @@ public class CompactorTests
         var provider = new FakeChatProvider();
         var compactor = new Compactor(new CompactionSettings());
 
-        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", CancellationToken.None);
+        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         Assert.False(compacted);
         Assert.Empty(provider.ReceivedRequests);
@@ -31,7 +31,7 @@ public class CompactorTests
         var provider = new FakeChatProvider();
         var compactor = new Compactor(new CompactionSettings());
 
-        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", CancellationToken.None);
+        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         Assert.False(compacted);
     }
@@ -48,7 +48,7 @@ public class CompactorTests
         provider.Enqueue(new TextDelta("Summary "), new TextDelta("of the conversation."));
         var compactor = new Compactor(new CompactionSettings());
 
-        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", CancellationToken.None);
+        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         Assert.True(compacted);
         var summaryBlock = Assert.IsType<CompactionSummaryBlock>(Assert.Single(transcript.Messages[0].Content));
@@ -71,7 +71,7 @@ public class CompactorTests
             new TextDelta("summary"));
         var compactor = new Compactor(new CompactionSettings());
 
-        await compactor.TryCompactAsync(transcript, provider, "model", CancellationToken.None);
+        await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         var summaryBlock = Assert.IsType<CompactionSummaryBlock>(transcript.Messages[0].Content[0]);
         Assert.Equal("actual summary", summaryBlock.Summary);
@@ -89,7 +89,7 @@ public class CompactorTests
         provider.Enqueue(new ErrorOccurred(new InvalidOperationException("provider failed")));
         var compactor = new Compactor(new CompactionSettings());
 
-        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", CancellationToken.None);
+        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         Assert.True(compacted);
         var summaryBlock = Assert.IsType<CompactionSummaryBlock>(transcript.Messages[0].Content[0]);
@@ -112,7 +112,7 @@ public class CompactorTests
         provider.Enqueue(new TextDelta("summary"));
         var compactor = new Compactor(new CompactionSettings());
 
-        await compactor.TryCompactAsync(transcript, provider, "model", CancellationToken.None);
+        await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         var summaryBlock = Assert.IsType<CompactionSummaryBlock>(transcript.Messages[0].Content[0]);
         Assert.Equal(191_001, summaryBlock.TokensBefore);
@@ -137,10 +137,36 @@ public class CompactorTests
         provider.Enqueue(new TextDelta("summary"));
         var compactor = new Compactor(new CompactionSettings());
 
-        await compactor.TryCompactAsync(transcript, provider, "model", CancellationToken.None);
+        await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         Assert.Null(transcript.LastUsage);
         Assert.Null(CompactionPlanner.EstimatedTokensUsed(transcript));
+    }
+
+    // ---- contextWindowTokens (per-turn context-window awareness) ----
+
+    [Fact]
+    public async Task TryCompactAsync_ContextWindowTokens_TriggersCompaction_BelowTheSharedDefaultThreshold()
+    {
+        // Regression guard for the bug this parameter exists to fix: measured against the shared
+        // CompactionSettings default (200K), 20_000 estimated tokens is nowhere near the 184K
+        // threshold and TryCompactAsync would return false — exactly what silently happened for
+        // every local-model session before AgentLoop started passing the resolved model's own
+        // (much smaller) context window through.
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.User(new string('a', 40_000)));
+        transcript.Append(ChatMessage.Assistant([new TextBlock(new string('b', 40_000))]), new UsageInfo(19_000, 1_000));
+        transcript.Append(ChatMessage.User("recent question"));
+
+        var provider = new FakeChatProvider();
+        provider.Enqueue(new TextDelta("summary"));
+        var compactor = new Compactor(new CompactionSettings());
+
+        var compactedWithoutContextWindow = await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
+        Assert.False(compactedWithoutContextWindow);
+
+        var compactedWithContextWindow = await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: 16_000, CancellationToken.None);
+        Assert.True(compactedWithContextWindow);
     }
 
     // ---- ForceCompactAsync (/compact) ----
@@ -159,7 +185,7 @@ public class CompactorTests
         provider.Enqueue(new TextDelta("forced summary"));
         var compactor = new Compactor(new CompactionSettings());
 
-        var compacted = await compactor.ForceCompactAsync(transcript, provider, "model", CancellationToken.None);
+        var compacted = await compactor.ForceCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         Assert.True(compacted);
         var summaryBlock = Assert.IsType<CompactionSummaryBlock>(Assert.Single(transcript.Messages[0].Content));
@@ -175,7 +201,7 @@ public class CompactorTests
         var provider = new FakeChatProvider();
         var compactor = new Compactor(new CompactionSettings());
 
-        var compacted = await compactor.ForceCompactAsync(transcript, provider, "model", CancellationToken.None);
+        var compacted = await compactor.ForceCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         Assert.False(compacted);
         Assert.Empty(provider.ReceivedRequests);
@@ -191,7 +217,7 @@ public class CompactorTests
         var provider = new FakeChatProvider();
         var compactor = new Compactor(new CompactionSettings());
 
-        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", CancellationToken.None);
+        var compacted = await compactor.TryCompactAsync(transcript, provider, "model", contextWindowTokens: null, CancellationToken.None);
 
         Assert.False(compacted);
         Assert.Empty(provider.ReceivedRequests);

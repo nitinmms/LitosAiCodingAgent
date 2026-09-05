@@ -51,7 +51,7 @@ public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTime
 
     public async Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
     {
-        var command = arguments.GetProperty("command").GetString();
+        var command = arguments.GetStringOrNull("command");
         if (string.IsNullOrWhiteSpace(command))
             return ToolResult.Error("A 'command' argument is required.");
 

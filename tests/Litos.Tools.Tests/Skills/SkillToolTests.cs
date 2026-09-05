@@ -26,6 +26,21 @@ public class SkillToolTests : IDisposable
     }
 
     [Fact]
+    public async Task InvokeAsync_MissingNameProperty_ReturnsError_WithoutCallingDiscovery()
+    {
+        // A local model's tool-call JSON omitting a required argument is a real, model-driven
+        // failure mode — must degrade to a clean ToolResult.Error, not throw.
+        var discovery = new FakeSkillDiscovery([]);
+        var tool = new SkillTool(discovery);
+
+        var result = await tool.InvokeAsync(Args(new { }), CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal("A 'name' argument is required.", result.Text);
+        Assert.Equal(0, discovery.CallCount);
+    }
+
+    [Fact]
     public async Task InvokeAsync_UnknownSkillName_ReturnsError()
     {
         var discovery = new FakeSkillDiscovery([new SkillMetadata("known", "desc", _tempDir)]);

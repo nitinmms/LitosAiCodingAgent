@@ -9,6 +9,35 @@ public class CompactionPlannerTests
 {
     private static readonly CompactionSettings DefaultSettings = new();
 
+    // ---- CompactionSettings.ForContextWindow ----
+
+    [Fact]
+    public void ForContextWindow_SmallWindow_CapsReserveAndKeepRecent_ToAQuarterOfTheWindow()
+    {
+        // A local model's real (or best-known-fallback) context window is often far smaller than
+        // the 200K default this record otherwise assumes — reusing the 16K/20K defaults as-is
+        // against e.g. an 8K window would make ContextWindowTokens - ReserveTokens negative
+        // (compact on every turn) and KeepRecentTokens exceed the whole window (FindCutPoint could
+        // never find anything old enough to cut, so compaction would never actually apply).
+        var scaled = DefaultSettings.ForContextWindow(8_000);
+
+        Assert.Equal(8_000, scaled.ContextWindowTokens);
+        Assert.Equal(2_000, scaled.ReserveTokens);
+        Assert.Equal(2_000, scaled.KeepRecentTokens);
+    }
+
+    [Fact]
+    public void ForContextWindow_WindowLargerThanDefaults_LeavesReserveAndKeepRecentUnchanged()
+    {
+        // A quarter of 200K (50K) comfortably exceeds both the 16K reserve and 20K keep-recent
+        // defaults, so a hosted model's real/larger window must not perturb today's behavior.
+        var scaled = DefaultSettings.ForContextWindow(200_000);
+
+        Assert.Equal(200_000, scaled.ContextWindowTokens);
+        Assert.Equal(16_000, scaled.ReserveTokens);
+        Assert.Equal(20_000, scaled.KeepRecentTokens);
+    }
+
     // ---- ShouldCompact ----
 
     [Fact]

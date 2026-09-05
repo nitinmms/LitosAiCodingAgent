@@ -360,7 +360,7 @@ public sealed class TelegramSessionDriver(
                 var transcript = await Transcript.LoadAsync(transcriptStore, SessionOwner.Telegram, linkedChat.SessionId, ct);
                 var provider = providerFactory.Resolve(worker.ProviderName);
                 var model = worker.Model ?? "";
-                var compacted = await compactor.ForceCompactAsync(transcript, provider, model, ct);
+                var compacted = await compactor.ForceCompactAsync(transcript, provider, model, worker.ContextLength, ct);
                 if (!compacted)
                 {
                     await bot.SendMessage(chatId, "Nothing to compact yet.", cancellationToken: ct);

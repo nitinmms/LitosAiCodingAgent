@@ -21,12 +21,33 @@ namespace Litos.Providers.Local;
 /// </summary>
 public sealed class LocalChatProvider(HttpClient httpClient) : IChatProvider
 {
+    /// <summary>
+    /// Used when a local server's /models response omits context_length (the common case — LM
+    /// Studio's plain OpenAI-compatible endpoint doesn't include it; that only appears on its
+    /// separate, vendor-specific /api/v0/models). Deliberately conservative rather than reusing
+    /// ModelContextWindows.FallbackContextLength (128K, calibrated for hosted models): guessing
+    /// too high here silently defeats the context meter and compaction for exactly the small
+    /// local models most likely to hit this fallback, which is the failure mode this exists to
+    /// prevent.
+    /// 8_000 (the original guess here) turned out to cut the margin between the compaction
+    /// threshold and the assumed ceiling too thin: CompactionSettings.ForContextWindow caps
+    /// ReserveTokens/KeepRecentTokens at contextWindowTokens/4, so an 8_000 window left only a
+    /// 2_000-token gap between "compaction just fired" and "assumed full" — observed live to be
+    /// smaller than a single large tool result (e.g. a real file read), so the very next
+    /// tool-calling round after a compaction could still blow straight past the assumed window
+    /// before compaction got another chance to run. 16_000 doubles that gap to 4_000, giving one
+    /// more large tool result room to land before the next compaction check. Still far below
+    /// ModelContextWindows.FallbackContextLength for the same reason as above — this is a floor
+    /// to keep compaction functional, not an attempt to guess a specific model's real window.
+    /// </summary>
+    private const int FallbackContextLength = 16_000;
+
     public string ProviderName => "local";
 
     public async Task<IReadOnlyList<ModelInfo>> ListModelsAsync(CancellationToken ct)
     {
         var response = await httpClient.GetFromJsonAsync<LocalModelListResponse>("models", ct);
-        return [.. (response?.Data ?? []).Select(m => new ModelInfo(m.Id, m.Name ?? m.Id, IsDefault: false, ContextLength: m.ContextLength))];
+        return [.. (response?.Data ?? []).Select(m => new ModelInfo(m.Id, m.Name ?? m.Id, IsDefault: false, ContextLength: m.ContextLength ?? FallbackContextLength))];
     }
 
     public async IAsyncEnumerable<AgentEvent> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken ct)
@@ -42,7 +63,14 @@ public sealed class LocalChatProvider(HttpClient httpClient) : IChatProvider
             Stream: true,
             Temperature: request.Temperature,
             MaxTokens: request.MaxOutputTokens,
-            Tools: request.Tools.Count == 0 ? null : [.. request.Tools.Select(ToLocalTool)]);
+            Tools: request.Tools.Count == 0 ? null : [.. request.Tools.Select(ToLocalTool)],
+            // Most local OpenAI-compatible servers (LM Studio, Ollama, vLLM) only include a
+            // `usage` object on stream chunks when this is explicitly requested — without it,
+            // real token usage never reaches Transcript.LastUsage, which silently breaks both the
+            // context-usage meter and compaction (CompactionPlanner never sees real numbers to
+            // compare against the context window). An unrecognized field is ignored by any
+            // spec-compliant server, so this is safe to send unconditionally.
+            StreamOptions: new LocalStreamOptions(IncludeUsage: true));
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "chat/completions")
         {
@@ -214,7 +242,10 @@ internal sealed record LocalChatRequest(
     bool Stream,
     double? Temperature,
     int? MaxTokens,
-    List<LocalTool>? Tools);
+    List<LocalTool>? Tools,
+    LocalStreamOptions StreamOptions);
+
+internal sealed record LocalStreamOptions(bool IncludeUsage);
 
 // Content is either a plain string (text-only message) or a List<LocalContentPart> (a message
 // that includes an image) — the OpenAI-compatible wire format accepts both shapes for the same

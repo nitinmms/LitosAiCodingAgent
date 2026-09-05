@@ -39,8 +39,9 @@ public sealed class AgentLoop(
         string model,
         string userInput,
         CancellationToken ct,
-        ChannelReader<SteeringMessage>? steering = null) =>
-        RunTurnAsync(owner, sessionId, transcript, model, [new TextBlock(userInput)], ct, steering);
+        ChannelReader<SteeringMessage>? steering = null,
+        int? contextWindowTokens = null) =>
+        RunTurnAsync(owner, sessionId, transcript, model, [new TextBlock(userInput)], ct, steering, contextWindowTokens);
 
     /// <summary>
     /// When <paramref name="steering"/> is supplied, the caller (a face) can post
@@ -52,6 +53,12 @@ public sealed class AgentLoop(
     /// delivered once the turn has no more pending tool calls, i.e. appended as the next
     /// round's input instead of ending the turn. See ReadMe_AgentDesign.md §7.2.
     /// </summary>
+    /// <param name="contextWindowTokens">
+    /// The active model's real (or best-known-fallback) context window, when the caller tracks
+    /// one — passed straight through to Compactor so the automatic-compaction threshold reflects
+    /// this session's actual model rather than the app-wide CompactionSettings default. See
+    /// Compactor.TryCompactAsync's parameter of the same name.
+    /// </param>
     public async IAsyncEnumerable<AgentEvent> RunTurnAsync(
         SessionOwner owner,
         string sessionId,
@@ -59,7 +66,8 @@ public sealed class AgentLoop(
         string model,
         IReadOnlyList<ContentBlock> userContent,
         [EnumeratorCancellation] CancellationToken ct,
-        ChannelReader<SteeringMessage>? steering = null)
+        ChannelReader<SteeringMessage>? steering = null,
+        int? contextWindowTokens = null)
     {
         if (transcript.Messages.Count == 0 && transcript.WorkingDirectory is not null)
             await store.AppendAsync(owner, sessionId, TranscriptEntry.SessionHeader(transcript.WorkingDirectory), ct);
@@ -67,17 +75,34 @@ public sealed class AgentLoop(
         transcript.Append(ChatMessage.User(userContent));
         await store.AppendAsync(owner, sessionId, TranscriptEntry.FromMessage(transcript.Last), ct);
 
-        if (compactor is not null && await compactor.TryCompactAsync(transcript, provider, model, ct))
-        {
-            yield return new CompactionOccurred(TokensBefore: transcript.Messages[0].Content.OfType<Messages.CompactionSummaryBlock>().First().TokensBefore);
-            await store.AppendAsync(owner, sessionId, TranscriptEntry.FromMessage(transcript.Messages[0]), ct);
-        }
-
         var systemPromptSections = systemPromptProvider is null ? null : await systemPromptProvider.BuildAsync(tools, transcript.WorkingDirectory, ct);
         var systemPrompt = systemPromptSections?.Render();
 
         while (true)
         {
+            // Re-checked on every iteration, not just the first — a single turn can spiral into
+            // many tool-calling rounds (very common for local models doing real work) with no new
+            // user message in between, and each round's own request/response only grows the
+            // transcript further. Checking once before the loop caught only "already over budget
+            // when this turn started"; it never revisited mid-turn, so a turn that started under
+            // budget could still blow straight through the context window round after round with
+            // no intervention (observed live: a single "write a test" turn ran 10 tool-calling
+            // rounds and grew from ~1,900 to over 8,000 tokens — well past its ~6,000 compaction
+            // threshold by round 4 — before ending with an empty, unusable response once the local
+            // model's own window was actually exhausted). Safe to call here on every pass: control
+            // only reaches the top of this loop with the transcript in a structurally complete
+            // state (a fresh user/steering message, or a tool round whose every tool_use already
+            // has its tool_result appended) — never mid-stream with a dangling tool_use — so
+            // CompactionPlanner.FindCutPoint always sees a valid place to cut. And it can't thrash:
+            // ApplyCompaction leaves Transcript.LastUsage null until the next real usage report, so
+            // ShouldCompact/EstimatedTokensUsed return false/null immediately after a compaction
+            // fires, until this loop's own upcoming request produces a fresh usage report to judge.
+            if (compactor is not null && await compactor.TryCompactAsync(transcript, provider, model, contextWindowTokens, ct))
+            {
+                yield return new CompactionOccurred(TokensBefore: transcript.Messages[0].Content.OfType<Messages.CompactionSummaryBlock>().First().TokensBefore);
+                await store.AppendAsync(owner, sessionId, TranscriptEntry.FromMessage(transcript.Messages[0]), ct);
+            }
+
             var request = accountant.BuildRequest(transcript, tools.Schemas, model, systemPrompt);
             var pendingToolCalls = new List<(string CallId, string Name, JsonElement Args)>();
 

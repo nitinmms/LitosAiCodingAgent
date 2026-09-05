@@ -756,7 +756,10 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
 
         case "/compact":
         {
-            var compacted = await compactor.ForceCompactAsync(transcript, chatProvider, model, CancellationToken.None);
+            // contextWindowTokens: null — Litos.Console doesn't track a resolved per-session
+            // context length yet (unlike Gui/VsCodeHost/Api), so this keeps measuring against the
+            // shared CompactionSettings default rather than guessing.
+            var compacted = await compactor.ForceCompactAsync(transcript, chatProvider, model, contextWindowTokens: null, CancellationToken.None);
             if (!compacted)
             {
                 printLine("Nothing to compact yet.");

@@ -290,11 +290,12 @@ public class LocalChatProviderTests
     }
 
     [Fact]
-    public async Task ListModelsAsync_NoContextLengthInResponse_LeavesContextLengthNull()
+    public async Task ListModelsAsync_NoContextLengthInResponse_FallsBackToConservativeDefault()
     {
         // Unlike OpenRouter's catalog, a local server's /v1/models response typically has no
-        // context_length field at all — must map to null rather than throwing on the missing
-        // property, leaving context-window resolution to the shared fallback chain.
+        // context_length field at all (LM Studio's plain OpenAI-compatible endpoint included).
+        // Leaving this null let the context meter/compaction silently no-op for local sessions —
+        // must map to a conservative non-null fallback instead so both stay functional.
         var (provider, handler) = CreateProvider();
         handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
             {"data":[{"id":"llama-3-8b"}]}
@@ -302,6 +303,39 @@ public class LocalChatProviderTests
 
         var models = await provider.ListModelsAsync(CancellationToken.None);
 
-        Assert.Null(Assert.Single(models).ContextLength);
+        Assert.Equal(16_000, Assert.Single(models).ContextLength);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_ContextLengthInResponse_UsesReportedValue_NotFallback()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            {"data":[{"id":"qwen3","context_length":32000}]}
+            """));
+
+        var models = await provider.ListModelsAsync(CancellationToken.None);
+
+        Assert.Equal(32_000, Assert.Single(models).ContextLength);
+    }
+
+    // ---- stream_options ----
+
+    [Fact]
+    public async Task StreamAsync_Request_IncludesStreamOptionsIncludeUsage()
+    {
+        // Most local OpenAI-compatible servers only emit a `usage` object on stream chunks when
+        // this is explicitly requested — omitting it is what left real token usage at 0/0 for
+        // every local turn (see ContextUsage/Compaction).
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "model");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var body = handler.CapturedRequests[0].Body!;
+        using var json = JsonDocument.Parse(body);
+        var streamOptions = json.RootElement.GetProperty("stream_options");
+        Assert.True(streamOptions.GetProperty("include_usage").GetBoolean());
     }
 }

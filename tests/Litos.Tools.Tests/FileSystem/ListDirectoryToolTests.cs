@@ -59,6 +59,19 @@ public class ListDirectoryToolTests : IDisposable
     }
 
     [Fact]
+    public async Task InvokeAsync_MissingPathProperty_ReturnsError()
+    {
+        // A local model's tool-call JSON omitting a required argument is a real, model-driven
+        // failure mode — must degrade to a clean ToolResult.Error, not throw.
+        var tool = new ListDirectoryTool();
+
+        var result = await tool.InvokeAsync(Args(new { }), CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal("A 'path' argument is required.", result.Text);
+    }
+
+    [Fact]
     public async Task InvokeAsync_EntriesAreJoinedByNewlineOnly_NotEnvironmentNewLine()
     {
         File.WriteAllText(Path.Combine(_tempDir, "a.txt"), "");

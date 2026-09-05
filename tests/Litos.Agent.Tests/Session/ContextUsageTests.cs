@@ -84,6 +84,24 @@ public class ContextUsageTests
     }
 
     [Fact]
+    public void Compute_SmallContextLength_ScalesReserveThreshold_InsteadOfReportingCriticalImmediately()
+    {
+        // Regression test: with the unscaled 16K default reserve, any contextLength below 16K
+        // (a local model's typical fallback/real window) drove reserveThreshold negative, so the
+        // meter reported Critical from the very first token — reproduced live against LM Studio's
+        // liquid/lfm2-1.2b (contextLength 8_000, usedTokens 2_096) before this was fixed to scale
+        // the reserve via CompactionSettings.ForContextWindow, the same way Compactor does.
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(2_000, 96));
+
+        var snapshot = ContextUsage.Compute(transcript, contextLength: 8_000);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(2_096, snapshot!.UsedTokens);
+        Assert.Equal(ContextUsageLevel.Normal, snapshot.Level);
+    }
+
+    [Fact]
     public void Compute_ClampsToZeroFraction_WhenContextLengthIsZeroOrNegative()
     {
         var transcript = Transcript.CreateNew("/repo");

@@ -60,6 +60,7 @@ public sealed class AgentWorker : BackgroundService
     // admin switching providers never disturbs a turn already in flight.
     private string _providerName;
     private string _model;
+    private int? _contextLength;
 
     public AgentWorker(
         IChatProviderFactory providerFactory, AgentLoopFactory loopFactory, ToolRegistryFactory toolRegistryFactory,
@@ -87,6 +88,16 @@ public sealed class AgentWorker : BackgroundService
     public string? Model
     {
         get { lock (_settingsLock) return string.IsNullOrEmpty(_model) ? null : _model; }
+    }
+
+    /// <summary>The current model's context window size, resolved alongside the model itself
+    /// (SwitchProviderAsync, SetModel, EnsureModelResolvedAsync's own fallback) — same "resolved
+    /// once per provider/model switch, not per turn" caching Litos.Gui's MainWindowSession.
+    /// ContextLength and Litos.VsCodeHost's AgentWorker.ContextLength use. Null until a model
+    /// carrying ModelInfo.ContextLength has been resolved at least once.</summary>
+    public int? ContextLength
+    {
+        get { lock (_settingsLock) return _contextLength; }
     }
 
     public DateTimeOffset StartedAt { get; }
@@ -118,21 +129,28 @@ public sealed class AgentWorker : BackgroundService
     public async Task SwitchProviderAsync(string providerName, CancellationToken ct)
     {
         var models = await _providerFactory.Resolve(providerName).ListModelsAsync(ct);
-        var defaultModel = models.FirstOrDefault(m => m.IsDefault)?.Id ?? models.FirstOrDefault()?.Id
+        var defaultModelInfo = models.FirstOrDefault(m => m.IsDefault) ?? models.FirstOrDefault()
             ?? throw new InvalidOperationException($"Provider '{providerName}' returned no models.");
 
         lock (_settingsLock)
         {
             _providerName = providerName;
-            _model = defaultModel;
+            _model = defaultModelInfo.Id;
+            _contextLength = defaultModelInfo.ContextLength;
         }
     }
 
-    /// <summary>Switches the model a *new* turn will use, keeping the current provider.</summary>
-    public void SetModel(string modelId)
+    /// <summary>Switches the model a *new* turn will use, keeping the current provider. Callers
+    /// that already have the new model's ContextLength (e.g. from the same ListModelsAsync call a
+    /// model picker made) should pass it, avoiding a second network round-trip — same contract as
+    /// Litos.VsCodeHost's AgentWorker.SetModel.</summary>
+    public void SetModel(string modelId, int? contextLength)
     {
         lock (_settingsLock)
+        {
             _model = modelId;
+            _contextLength = contextLength;
+        }
     }
 
     /// <summary>
@@ -241,19 +259,22 @@ public sealed class AgentWorker : BackgroundService
     /// </summary>
     private async Task EnsureModelResolvedAsync(CancellationToken ct)
     {
-        if (!string.IsNullOrEmpty(_model))
+        // _contextLength is checked too, not just _model: LitosConfig.DefaultModel can already
+        // populate _model at construction (see ctor) without ever resolving its ContextLength via
+        // ListModelsAsync, which only this method and SwitchProviderAsync/SetModel actually call.
+        if (!string.IsNullOrEmpty(_model) && _contextLength is not null)
             return;
 
         var provider = _providerFactory.Resolve(_providerName);
         var models = await provider.ListModelsAsync(ct);
         if (models.Count == 0)
             throw new InvalidOperationException("No default model configured and the provider returned no models to fall back to.");
-        var resolved = (models.FirstOrDefault(m => m.IsDefault) ?? models[0]).Id;
 
         lock (_settingsLock)
         {
             if (string.IsNullOrEmpty(_model))
-                _model = resolved;
+                _model = (models.FirstOrDefault(m => m.IsDefault) ?? models[0]).Id;
+            _contextLength ??= models.FirstOrDefault(m => m.Id == _model)?.ContextLength;
         }
     }
 
@@ -279,10 +300,12 @@ public sealed class AgentWorker : BackgroundService
         // Snapshot the provider/model this turn will run on — settled at turn start and never
         // revisited, so a Settings change made mid-turn only affects the *next* turn.
         string providerName, model;
+        int? contextLength;
         lock (_settingsLock)
         {
             providerName = _providerName;
             model = _model;
+            contextLength = _contextLength;
         }
 
         // Built fresh here, alongside the provider/model snapshot above — a turn started after
@@ -302,7 +325,7 @@ public sealed class AgentWorker : BackgroundService
             if (transcript.WorkingDirectory is null)
                 transcript = Transcript.CreateNew(Directory.GetCurrentDirectory());
 
-            await foreach (var evt in loop.RunTurnAsync(owner, sessionId, transcript, model, content, turnCts.Token, steering.Reader))
+            await foreach (var evt in loop.RunTurnAsync(owner, sessionId, transcript, model, content, turnCts.Token, steering.Reader, contextLength))
                 await events.WriteAsync(evt, CancellationToken.None);
         }
         catch (OperationCanceledException)

@@ -23,8 +23,8 @@ public sealed class WriteFileTool(IToolApprovalGate approvalGate) : ITool
 
     public async Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
     {
-        var path = arguments.GetProperty("path").GetString();
-        var content = arguments.GetProperty("content").GetString();
+        var path = arguments.GetStringOrNull("path");
+        var content = arguments.GetStringOrNull("content");
         if (string.IsNullOrWhiteSpace(path) || content is null)
             return ToolResult.Error("Both 'path' and 'content' arguments are required.");
 

@@ -2,7 +2,30 @@ using Litos.Agent.Messages;
 
 namespace Litos.Agent.Session;
 
-public sealed record CompactionSettings(bool Enabled = true, int ContextWindowTokens = 200_000, int ReserveTokens = 16_000, int KeepRecentTokens = 20_000);
+public sealed record CompactionSettings(bool Enabled = true, int ContextWindowTokens = 200_000, int ReserveTokens = 16_000, int KeepRecentTokens = 20_000)
+{
+    /// <summary>
+    /// Rescopes this settings record to a specific turn's actual (or best-known-fallback) model
+    /// context window, rather than the app-wide default this record is otherwise DI-registered
+    /// with (see LitosHostBuilder — one CompactionSettings singleton, historically shared
+    /// identically by every provider/model). Without this, a small-context local model's turns
+    /// were measured against the 200K default: ShouldCompact's threshold (ContextWindowTokens -
+    /// ReserveTokens) stayed unreachable until ~184K estimated tokens regardless of the real
+    /// model's window, so compaction effectively never fired for local sessions — by the time it
+    /// would have, the real server had already silently truncated/lost older context.
+    /// ReserveTokens/KeepRecentTokens are capped to a quarter of the new window (not scaled
+    /// proportionally to the 200K defaults) so a small window still leaves both a nonzero
+    /// compact-trigger threshold and cuttable history — reusing the 16K/20K defaults as-is against
+    /// e.g. an 8K window would make ContextWindowTokens - ReserveTokens negative (compact on
+    /// every turn) and KeepRecentTokens exceed the whole window (nothing ever old enough to cut).
+    /// </summary>
+    public CompactionSettings ForContextWindow(int contextWindowTokens) => this with
+    {
+        ContextWindowTokens = contextWindowTokens,
+        ReserveTokens = Math.Min(ReserveTokens, contextWindowTokens / 4),
+        KeepRecentTokens = Math.Min(KeepRecentTokens, contextWindowTokens / 4),
+    };
+}
 
 public sealed record CutPoint(int Index, bool IsSplitTurn, int TurnStartIndex);
 

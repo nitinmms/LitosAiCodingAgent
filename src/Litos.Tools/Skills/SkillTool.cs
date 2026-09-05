@@ -20,7 +20,7 @@ public sealed class SkillTool(ISkillDiscovery discovery) : ITool
 
     public async Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
     {
-        var name = arguments.GetProperty("name").GetString();
+        var name = arguments.GetStringOrNull("name");
         if (string.IsNullOrWhiteSpace(name))
             return ToolResult.Error("A 'name' argument is required.");
 
