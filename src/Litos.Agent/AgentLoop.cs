@@ -26,8 +26,13 @@ public sealed class AgentLoop(
     /// (e.g. extended-thinking modes), so this must stay generous. Guards only "waiting on the
     /// provider" — tool execution (a slow shell command, a big file read) is unbounded by this
     /// and by design (see InvokeToolSafelyAsync), since those are expected to sometimes run long.
+    /// Was 60s; raised to 180s after confirming live that a local model (LM Studio/Ollama/...) on
+    /// memory-constrained hardware can legitimately take well over 60s to produce a first token
+    /// once the transcript's context grows, and hosted-provider users pay effectively nothing for
+    /// the more generous default since those streams start responding in seconds. Still overridable
+    /// via LitosConfig.StreamIdleTimeoutSeconds for anyone who needs to go higher still.
     /// </summary>
-    private static readonly TimeSpan DefaultStreamIdleTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DefaultStreamIdleTimeout = TimeSpan.FromSeconds(180);
 
     private readonly TimeSpan _streamIdleTimeout = streamIdleTimeout ?? DefaultStreamIdleTimeout;
 

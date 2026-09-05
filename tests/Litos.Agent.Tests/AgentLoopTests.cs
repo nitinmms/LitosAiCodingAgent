@@ -409,7 +409,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task RunTurnAsync_DefaultConstructor_UsesSixtySecondIdleTimeout()
+    public async Task RunTurnAsync_DefaultConstructor_UsesOneEightySecondIdleTimeout()
     {
         // Regression guard for the default: if this silently regressed to e.g. 0 or a tiny
         // value, a normal (non-hanging) turn would spuriously fail with a TimeoutException.
