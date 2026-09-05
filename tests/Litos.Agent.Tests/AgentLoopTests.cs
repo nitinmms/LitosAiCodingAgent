@@ -315,18 +315,25 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task RunTurnAsync_ProviderThrows_PropagatesUncaught_UnlikeToolExceptions()
+    public async Task RunTurnAsync_ProviderThrows_YieldsErrorOccurred_InsteadOfPropagating()
     {
-        // Unlike a tool's exceptions (guarded by InvokeToolSafelyAsync, see the
-        // InvokeToolSafelyAsync guard tests below), nothing wraps provider.StreamAsync
-        // itself — a provider-level failure (network error, auth failure) is expected to
-        // fault the whole IAsyncEnumerable rather than becoming a recoverable result.
+        // A provider-level failure (network error, auth failure) thrown out of
+        // provider.StreamAsync's MoveNextAsync is caught by RunTurnAsync's own manual
+        // enumerator drive (see its "manually drive the enumerator" comment) and turned into
+        // an ErrorOccurred event for the face to render — same outcome as a provider that
+        // yields ErrorOccurred itself (see the EndsTurnCleanly test below) — rather than
+        // tearing down the whole turn/process unhandled.
         var transcript = Transcript.CreateNew("/repo");
         var provider = new FakeChatProvider();
         provider.EnqueueThrow(new InvalidOperationException("connection reset"));
         var loop = CreateLoop(provider);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => RunToCompletionAsync(loop, transcript, "hi"));
+        var events = await RunToCompletionAsync(loop, transcript, "hi");
+
+        var error = Assert.Single(events);
+        var errorOccurred = Assert.IsType<ErrorOccurred>(error);
+        Assert.IsType<InvalidOperationException>(errorOccurred.Exception);
+        Assert.Equal("connection reset", errorOccurred.Exception.Message);
     }
 
     [Fact]
