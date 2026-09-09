@@ -160,5 +160,5 @@ public sealed class AgentLoopFactory(
     LitosConfig? config = null)
 {
     public AgentLoop Create(IChatProvider provider, ToolRegistry tools) =>
-        new(provider, tools, store, accountant, systemPromptProvider, compactor, config?.StreamIdleTimeout);
+        new(provider, tools, store, accountant, systemPromptProvider, compactor, config?.StreamIdleTimeout, config?.ToolCallIdleTimeout);
 }

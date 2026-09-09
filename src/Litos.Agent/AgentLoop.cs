@@ -16,7 +16,8 @@ public sealed class AgentLoop(
     ContextAccountant accountant,
     ISystemPromptProvider? systemPromptProvider = null,
     Compactor? compactor = null,
-    TimeSpan? streamIdleTimeout = null)
+    TimeSpan? streamIdleTimeout = null,
+    TimeSpan? toolCallIdleTimeout = null)
 {
     /// <summary>
     /// How long to wait for the NEXT chunk of a provider's response stream before treating the
@@ -26,15 +27,35 @@ public sealed class AgentLoop(
     /// (e.g. extended-thinking modes), so this must stay generous. Guards only "waiting on the
     /// provider" — tool execution (a slow shell command, a big file read) is unbounded by this
     /// and by design (see InvokeToolSafelyAsync), since those are expected to sometimes run long.
-    /// Was 60s; raised to 180s after confirming live that a local model (LM Studio/Ollama/...) on
-    /// memory-constrained hardware can legitimately take well over 60s to produce a first token
-    /// once the transcript's context grows, and hosted-provider users pay effectively nothing for
-    /// the more generous default since those streams start responding in seconds. Still overridable
-    /// via LitosConfig.StreamIdleTimeoutSeconds for anyone who needs to go higher still.
+    /// Was 60s, then 180s, then 300s, now 1800s. Every one of those raises came from the same
+    /// place: a local model (LM Studio/Ollama/...) on memory-constrained hardware can legitimately
+    /// go quiet for far longer than feels reasonable — measured here at roughly 7 tokens/second,
+    /// where even ordinary work leaves long gaps — and cutting a healthy turn off is a much worse
+    /// outcome than noticing a genuinely dead connection late. Hosted-provider users pay
+    /// effectively nothing for the generous default, since those streams start responding in
+    /// seconds and so never approach it. Overridable via LitosConfig.StreamIdleTimeoutSeconds for
+    /// anyone who wants to detect a stall sooner.
     /// </summary>
-    private static readonly TimeSpan DefaultStreamIdleTimeout = TimeSpan.FromSeconds(180);
+    private static readonly TimeSpan DefaultStreamIdleTimeout = TimeSpan.FromSeconds(1800);
 
     private readonly TimeSpan _streamIdleTimeout = streamIdleTimeout ?? DefaultStreamIdleTimeout;
+
+    /// <summary>
+    /// Replaces DefaultStreamIdleTimeout for the stretch between a provider announcing a tool call
+    /// and delivering that call's arguments, because silence there means something different.
+    /// LM Studio doesn't stream tool-call arguments incrementally: it sends the function name at
+    /// once, emits nothing while the model composes the whole argument blob, then delivers it in a
+    /// single chunk — measured against qwen3.8-27b-mlx, 295.8 seconds of complete silence for a
+    /// ~120-line file, and that scales with both the size of what's being written and how slow the
+    /// model is. Treating that as a stalled connection is what killed otherwise-healthy write_file
+    /// turns; the tool-call announcement is itself proof the model is working, so waiting is the
+    /// correct response. Bounded rather than infinite so a genuinely wedged model still ends in an
+    /// error instead of a turn that spins forever. Overridable via
+    /// LitosConfig.ToolCallIdleTimeoutSeconds.
+    /// </summary>
+    private static readonly TimeSpan DefaultToolCallIdleTimeout = TimeSpan.FromMinutes(30);
+
+    private readonly TimeSpan _toolCallIdleTimeout = toolCallIdleTimeout ?? DefaultToolCallIdleTimeout;
 
 
     public IAsyncEnumerable<AgentEvent> RunTurnAsync(
@@ -127,13 +148,21 @@ public sealed class AgentLoop(
             var stream = provider.StreamAsync(request, streamCts.Token).GetAsyncEnumerator(streamCts.Token);
             await using (stream)
             {
+                // Set by ToolCallStarted below and never cleared for the rest of this round: once
+                // a provider has announced a tool call, the arguments are all that's left to come,
+                // and LM Studio delivers those only after composing the entire blob in silence
+                // (see DefaultToolCallIdleTimeout). Scoped per round rather than per turn, so the
+                // ordinary timeout applies again on the next request.
+                var composingToolCall = false;
+
                 while (true)
                 {
                     AgentEvent evt;
                     Exception? streamError = null;
                     try
                     {
-                        if (!await MoveNextWithIdleTimeoutAsync(stream, _streamIdleTimeout, streamCts, ct))
+                        var idleTimeout = composingToolCall ? _toolCallIdleTimeout : _streamIdleTimeout;
+                        if (!await MoveNextWithIdleTimeoutAsync(stream, idleTimeout, streamCts, ct))
                             break;
                         evt = stream.Current;
                     }
@@ -153,6 +182,13 @@ public sealed class AgentLoop(
                         break;
                     }
 
+                    // Proves the connection is alive (see StreamHeartbeat's own doc comment) but
+                    // carries nothing worth persisting or showing — MoveNextWithIdleTimeoutAsync
+                    // above has already done its one job (this call didn't time out, so the idle
+                    // timer is implicitly reset for the next one); just go collect the next event.
+                    if (evt is StreamHeartbeat)
+                        continue;
+
                     // MessageCompleted is appended to transcript BEFORE it's yielded (unlike
                     // ToolCallCompleted below, which only needs pendingToolCalls updated for this
                     // method's own next iteration) — a consumer reacting to the yielded event
@@ -171,6 +207,12 @@ public sealed class AgentLoop(
                     {
                         case ToolCallCompleted t:
                             pendingToolCalls.Add((t.CallId, t.ToolName, t.Arguments));
+                            break;
+                        // The provider has named a tool but not yet delivered its arguments —
+                        // everything after this point in the round is subject to the silence
+                        // described on DefaultToolCallIdleTimeout.
+                        case ToolCallStarted:
+                            composingToolCall = true;
                             break;
                     }
                 }

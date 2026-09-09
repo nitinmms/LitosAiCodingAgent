@@ -6,6 +6,10 @@ describe("parseAgentEvent", () => {
         expect(parseAgentEvent('{"Text":"hello"}')).toEqual({ type: "textDelta", text: "hello" });
     });
 
+    it("classifies the keep-alive payload, rather than falling through to unknown", () => {
+        expect(parseAgentEvent('{"KeepAlive":true}')).toEqual({ type: "keepAlive" });
+    });
+
     it("classifies ToolCallStarted", () => {
         expect(parseAgentEvent('{"CallId":"c1","ToolName":"shell"}')).toEqual({
             type: "toolCallStarted",
@@ -126,6 +130,25 @@ describe("readAgentEvents", () => {
         for await (const evt of readAgentEvents(sseResponse(body))) events.push(evt);
 
         expect(events).toEqual([{ type: "compaction" }]);
+    });
+
+    it("drops keep-alive frames so consumers never see them, without dropping surrounding events", async () => {
+        // TurnsEndpoints.ToSseData emits these whenever a turn goes quiet, purely to keep idle
+        // watchdogs on this connection (undici's 300s body timeout, Kestrel's data-rate limit)
+        // from mistaking a healthy-but-silent turn for a dead connection. They carry nothing,
+        // so they must not surface as events — but must also not swallow real ones around them.
+        const body =
+            'event: agent-event\ndata: {"Text":"before"}\n\n' +
+            'event: agent-event\ndata: {"KeepAlive":true}\n\n' +
+            'event: agent-event\ndata: {"KeepAlive":true}\n\n' +
+            'event: agent-event\ndata: {"Text":"after"}\n\n';
+        const events = [];
+        for await (const evt of readAgentEvents(sseResponse(body))) events.push(evt);
+
+        expect(events).toEqual([
+            { type: "textDelta", text: "before" },
+            { type: "textDelta", text: "after" },
+        ]);
     });
 
     it("flushes a final event with no trailing blank line", async () => {

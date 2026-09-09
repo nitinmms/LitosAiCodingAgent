@@ -19,7 +19,8 @@ public class AgentLoopTests
         FakeTranscriptStore? store = null,
         ISystemPromptProvider? systemPromptProvider = null,
         Compactor? compactor = null,
-        TimeSpan? streamIdleTimeout = null) =>
+        TimeSpan? streamIdleTimeout = null,
+        TimeSpan? toolCallIdleTimeout = null) =>
         new(
             provider,
             new ToolRegistry(tools ?? []),
@@ -27,7 +28,8 @@ public class AgentLoopTests
             new ContextAccountant(),
             systemPromptProvider,
             compactor,
-            streamIdleTimeout);
+            streamIdleTimeout,
+            toolCallIdleTimeout);
 
     private static async Task<List<AgentEvent>> RunToCompletionAsync(AgentLoop loop, Transcript transcript, string userInput)
     {
@@ -385,6 +387,56 @@ public class AgentLoopTests
     }
 
     [Fact]
+    public async Task RunTurnAsync_SilenceAfterAToolCallIsAnnounced_UsesTheToolCallBudget_NotTheOrdinaryOne()
+    {
+        // LM Studio doesn't stream tool-call arguments: it sends the function name, then goes
+        // completely silent while the model composes the whole blob (measured: 295.8s for a
+        // ~120-line file), then delivers it at once. That silence was being read as a stalled
+        // connection and killing healthy write_file turns. Here the ordinary timeout is tiny and
+        // the tool-call budget is generous, so surviving proves the announcement switched budgets:
+        // under the old single-timeout behavior this would have errored almost immediately.
+        var transcript = Transcript.CreateNew("/repo");
+        var provider = new FakeChatProvider();
+        var args = JsonDocument.Parse("{}").RootElement;
+        provider.Enqueue(
+            new ToolCallStarted("call_1", "write_file"),
+            new ToolCallCompleted("call_1", "write_file", args),
+            new MessageCompleted(ChatMessage.Assistant([new ToolUseBlock("call_1", "write_file", args)]), new UsageInfo(1, 1)));
+        provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(1, 1)));
+        var tool = new FixedResultTool("write_file", ToolResult.Ok("written"));
+        var loop = CreateLoop(
+            provider,
+            tools: [tool],
+            streamIdleTimeout: TimeSpan.FromMilliseconds(30),
+            toolCallIdleTimeout: TimeSpan.FromSeconds(30));
+
+        var events = await RunToCompletionAsync(loop, transcript, "write a big file");
+
+        Assert.DoesNotContain(events, e => e is ErrorOccurred);
+        Assert.Contains(events, e => e is ToolCallResult);
+    }
+
+    [Fact]
+    public async Task RunTurnAsync_SilenceBeforeAnyToolCall_StillUsesTheOrdinaryIdleTimeout()
+    {
+        // The counterpart to the test above: the relaxed budget must apply only once a tool call
+        // has actually been announced. A provider that simply goes quiet without saying anything
+        // is still a stalled connection and must still be caught by the ordinary timeout.
+        var transcript = Transcript.CreateNew("/repo");
+        var provider = new FakeChatProvider();
+        provider.EnqueueHang();
+        var loop = CreateLoop(
+            provider,
+            streamIdleTimeout: TimeSpan.FromMilliseconds(50),
+            toolCallIdleTimeout: TimeSpan.FromMinutes(30));
+
+        var events = await RunToCompletionAsync(loop, transcript, "hi");
+
+        var errorEvent = Assert.IsType<ErrorOccurred>(Assert.Single(events));
+        Assert.IsType<TimeoutException>(errorEvent.Exception);
+    }
+
+    [Fact]
     public async Task RunTurnAsync_ProviderStreamHangsMidResponse_YieldsPartialEvents_ThenErrorOccurred()
     {
         // Confirms this is an idle-GAP timeout, not an absolute cap: events that already
@@ -402,6 +454,47 @@ public class AgentLoopTests
     }
 
     [Fact]
+    public async Task RunTurnAsync_StreamHeartbeats_AreNeverForwardedToTheCaller()
+    {
+        // A provider yields StreamHeartbeat for any raw stream activity that isn't real content
+        // (see LocalChatProvider) purely so AgentLoop's idle timer sees it as proof-of-life — it
+        // carries nothing a face needs to know about, so it must not reach the caller's event
+        // stream (extra SSE traffic across the network for VsCodeHost/Api, for literally nothing).
+        var transcript = Transcript.CreateNew("/repo");
+        var provider = new FakeChatProvider();
+        provider.Enqueue(
+            new StreamHeartbeat(),
+            new StreamHeartbeat(),
+            new MessageCompleted(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(1, 1)));
+        var loop = CreateLoop(provider);
+
+        var events = await RunToCompletionAsync(loop, transcript, "hi");
+
+        Assert.DoesNotContain(events, e => e is StreamHeartbeat);
+        Assert.Single(events, e => e is MessageCompleted);
+    }
+
+    [Fact]
+    public async Task RunTurnAsync_StreamHeartbeats_AreNeverPersistedToTheTranscriptStore()
+    {
+        var store = new FakeTranscriptStore();
+        var transcript = Transcript.CreateNew("/repo");
+        var provider = new FakeChatProvider();
+        provider.Enqueue(
+            new StreamHeartbeat(),
+            new StreamHeartbeat(),
+            new MessageCompleted(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(1, 1)));
+        var loop = CreateLoop(provider, store: store);
+
+        await RunToCompletionAsync(loop, transcript, "hi");
+
+        // Exactly the session header, the user message, and the one real assistant reply — no
+        // extra entry from either of the two heartbeats in between.
+        Assert.Equal(3, store.AppendedEntries.Count);
+        Assert.Single(store.AppendedEntries, e => e.Message?.Role == Role.Assistant);
+    }
+
+    [Fact]
     public async Task RunTurnAsync_ProviderRespondsWithinIdleTimeout_DoesNotTimeOut()
     {
         var transcript = Transcript.CreateNew("/repo");
@@ -416,7 +509,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task RunTurnAsync_DefaultConstructor_UsesOneEightySecondIdleTimeout()
+    public async Task RunTurnAsync_DefaultConstructor_UsesThirtyMinuteIdleTimeout()
     {
         // Regression guard for the default: if this silently regressed to e.g. 0 or a tiny
         // value, a normal (non-hanging) turn would spuriously fail with a TimeoutException.

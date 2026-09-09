@@ -187,6 +187,31 @@ public class LocalChatProviderTests
     }
 
     [Fact]
+    public async Task StreamAsync_EveryLine_YieldsAStreamHeartbeat_EvenNonContentOnes()
+    {
+        // AgentLoop's idle-gap timeout only resets on a yielded AgentEvent, not on raw network
+        // activity — a "thinking" local model that goes quiet on real content for a long stretch
+        // (very much alive, just not done reasoning) needs SOME event to prove the connection is
+        // still live, or it looks identical to a genuinely stalled one. A keep-alive comment line
+        // is exactly the kind of activity that must not be silently swallowed with nothing yielded.
+        var (provider, handler) = CreateProvider();
+        var sse = ": keep-alive\n\n" +
+                   "data: {\"choices\":[{\"delta\":{}}]}\n\n" + // a delta with no usable content
+                   "data: [DONE]\n\n";
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(sse));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "model");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        // Not pinning an exact count — every raw line (including SSE blank-line framing and the
+        // [DONE] line itself) yields one, so the exact total is incidental to this test's point:
+        // a keep-alive comment and a content-free delta must not pass through with nothing
+        // yielded at all, which is what left AgentLoop's idle timer blind to real activity.
+        Assert.NotEmpty(events.OfType<StreamHeartbeat>());
+        Assert.Empty(events.OfType<TextDelta>());
+    }
+
+    [Fact]
     public async Task StreamAsync_YieldsMessageCompleted_WithAccumulatedUsage()
     {
         var (provider, handler) = CreateProvider();

@@ -106,10 +106,16 @@ public static class TurnsEndpoints
     // ToSseData's reason for yielding raw JSON strings rather than SseItem<string> — the
     // (IAsyncEnumerable<SseItem<T>>, eventType) overload serializes the wrapper itself instead of
     // writing .Data as the "data:" line.
-    private static async IAsyncEnumerable<string> ToSseData(
+    /// <param name="keepAliveInterval">
+    /// Overridable only so tests don't have to sit through the real KeepAliveInterval to observe
+    /// a keep-alive; production callers leave it null.
+    /// </param>
+    internal static async IAsyncEnumerable<string> ToSseData(
         string sessionId, ChannelReader<AgentEvent> events, PendingApprovalRelay approvalRelay,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct,
+        TimeSpan? keepAliveInterval = null)
     {
+        var idleInterval = keepAliveInterval ?? KeepAliveInterval;
         var merged = Channel.CreateUnbounded<string>();
 
         using var subscription = approvalRelay.Subscribe(
@@ -134,14 +140,82 @@ public static class TurnsEndpoints
 
         try
         {
-            await foreach (var json in merged.Reader.ReadAllAsync(ct))
-                yield return json;
+            // Deliberately NOT `await foreach (... merged.Reader.ReadAllAsync(ct))`: that yields
+            // only when a real event fires, so a quiet gap (a slow tool call, or a local model
+            // still working on its first token) puts ZERO bytes on this response for however long
+            // it lasts. Every idle watchdog between here and the webview then treats a perfectly
+            // healthy turn as a dead connection — Kestrel's own MinResponseDataRate did exactly
+            // that (hence its disabling in Program.cs), and so does the VS Code extension's
+            // Node-side fetch, whose undici default aborts after 300s of no body data (measured
+            // live, and reproduced: a silent stream dies while an otherwise identical one carrying
+            // periodic keep-alives survives well past the same timeout). Rather than disabling
+            // each watchdog in turn as it's discovered, keep the connection legitimately busy:
+            // emit a keep-alive whenever the merged stream goes quiet, which is the ordinary SSE
+            // answer to this and resets every one of those idle timers at once.
+            Task<string>? pendingRead = null;
+            while (true)
+            {
+                pendingRead ??= merged.Reader.ReadAsync(ct).AsTask();
+
+                using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var idle = Task.Delay(idleInterval, idleCts.Token);
+                if (await Task.WhenAny(pendingRead, idle) != pendingRead)
+                {
+                    yield return KeepAlivePayload;
+                    continue;
+                }
+
+                // Stop the losing timer rather than leaving it to fire into nothing — a turn can
+                // run for thousands of events, and each abandoned Delay would hold a live timer
+                // until its interval elapsed.
+                await idleCts.CancelAsync();
+
+                // ReadAsync throws when the channel completes and is drained (unlike
+                // ReadAllAsync, which just ends its enumeration) — that's this loop's exit.
+                // Caught rather than pre-checked: Completion racing a read is exactly the case
+                // TryRead/WaitToRead would leave ambiguous. Assigned out here, not yield-returned
+                // inside the try, since a try WITH a catch can't contain a yield.
+                string? json = null;
+                var drained = false;
+                try
+                {
+                    json = await pendingRead;
+                }
+                catch (ChannelClosedException)
+                {
+                    drained = true;
+                }
+
+                pendingRead = null;
+                if (drained)
+                    break;
+
+                yield return json!;
+            }
         }
         finally
         {
             await pumpAgentEvents.ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// How long the merged stream may stay quiet before a keep-alive is emitted. Comfortably under
+    /// the tightest idle watchdog known to sit on this connection (the extension's Node-side fetch,
+    /// which undici defaults to aborting after 300s without body data), with enough margin that a
+    /// machine briefly too busy to run the timer on schedule still can't drift into one.
+    /// </summary>
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Carried as an ordinary event payload rather than a raw SSE comment line (": keep-alive"),
+    /// which is what an SSE stream would normally use for this: TypedResults.ServerSentEvents
+    /// writes each yielded string as that event's own "data:" line, so a comment can't be emitted
+    /// through it without bypassing the helper entirely. The extension drops these before they
+    /// reach any consumer (see agentEvents.ts's readAgentEvents) — the payload exists purely to
+    /// put bytes on the wire, not to be read.
+    /// </summary>
+    internal const string KeepAlivePayload = """{"KeepAlive":true}""";
 
     // AgentEvent.ErrorOccurred carries the raw .NET Exception a provider/tool threw. Serializing it
     // generically like every other AgentEvent variant throws System.NotSupportedException on

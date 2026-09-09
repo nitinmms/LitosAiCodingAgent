@@ -25,6 +25,7 @@ export type AgentEventParsed =
     | { type: "compaction" }
     | { type: "approvalRequested"; approvalId: string; toolName: string; summary: string; diffOrCommand: string | null }
     | { type: "approvalResolved"; approvalId: string }
+    | { type: "keepAlive" }
     | { type: "unknown"; raw: string };
 
 export function parseAgentEvent(json: string): AgentEventParsed {
@@ -35,6 +36,13 @@ export function parseAgentEvent(json: string): AgentEventParsed {
         return { type: "unknown", raw: json };
     }
 
+    // Checked first, and by a property no real AgentEvent variant carries: these arrive whenever
+    // the turn goes quiet (see TurnsEndpoints.ToSseData's KeepAlivePayload), purely to keep idle
+    // watchdogs on this connection satisfied. readAgentEvents drops them, so nothing downstream
+    // ever has to know they exist.
+    if (obj.KeepAlive === true) {
+        return { type: "keepAlive" };
+    }
     if (typeof obj.Text === "string") {
         return { type: "textDelta", text: obj.Text };
     }
@@ -111,7 +119,9 @@ export async function* readAgentEvents(response: Response): AsyncGenerator<Agent
 
             if (line.length === 0) {
                 const evt = flushEvent();
-                if (evt) yield evt;
+                // Keep-alives exist only to put bytes on the wire during a quiet turn; yielding
+                // them would make every consumer filter out a "message" that never had one.
+                if (evt && evt.type !== "keepAlive") yield evt;
                 continue;
             }
             if (line.startsWith("data:")) {
@@ -133,7 +143,7 @@ export async function* readAgentEvents(response: Response): AsyncGenerator<Agent
             buffer = "";
 
             const finalEvt = flushEvent();
-            if (finalEvt) yield finalEvt;
+            if (finalEvt && finalEvt.type !== "keepAlive") yield finalEvt;
             return;
         }
 

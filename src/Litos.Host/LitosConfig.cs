@@ -14,7 +14,8 @@ public sealed record LitosConfig(
     // IsProviderConfigured) — so this is its own field rather than living in ApiKeys.
     string? LocalBaseUrl = null,
     int? ShellCommandTimeoutSeconds = null,
-    int? StreamIdleTimeoutSeconds = null)
+    int? StreamIdleTimeoutSeconds = null,
+    int? ToolCallIdleTimeoutSeconds = null)
 {
     /// <summary>
     /// Hard wall-clock cap on a single `shell` tool command — see ShellTool's own doc comment
@@ -40,6 +41,24 @@ public sealed record LitosConfig(
     /// </summary>
     public TimeSpan? StreamIdleTimeout =>
         StreamIdleTimeoutSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null;
+
+    /// <summary>
+    /// The same idea as StreamIdleTimeout, but for the stretch after a provider has announced a
+    /// tool call and before it delivers that call's arguments — where silence means something
+    /// completely different. LM Studio does not stream tool-call arguments incrementally the way
+    /// it streams ordinary content: it sends the function name immediately, then emits nothing at
+    /// all while the model composes the entire argument blob, then delivers it in one chunk
+    /// (measured against qwen3.8-27b-mlx: name at 27s, then 295.8 seconds of complete silence, then
+    /// 6,876 characters at once). That gap grows with the size of whatever the model is writing and
+    /// how fast it runs, so a file of any real size can out-wait any sane StreamIdleTimeout — which
+    /// is exactly what kept killing healthy write_file turns. Once a tool call has been announced,
+    /// silence is expected rather than suspicious, so this budget applies instead of the ordinary
+    /// one. Still bounded, not infinite: a genuinely wedged model should eventually surface an error
+    /// rather than leaving the turn spinning forever. Unset means "use AgentLoop's own 30-minute
+    /// default"; same int-seconds-not-TimeSpan reasoning as the two fields above.
+    /// </summary>
+    public TimeSpan? ToolCallIdleTimeout =>
+        ToolCallIdleTimeoutSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null;
 
     private static readonly IReadOnlyDictionary<string, string> EnvVarNames = new Dictionary<string, string>
     {
@@ -110,7 +129,8 @@ public sealed record LitosConfig(
             ApiKeys: apiKeys,
             LocalBaseUrl: GetEnvironmentVariable("LOCAL_BASE_URL") ?? onDisk?.LocalBaseUrl,
             ShellCommandTimeoutSeconds: onDisk?.ShellCommandTimeoutSeconds,
-            StreamIdleTimeoutSeconds: onDisk?.StreamIdleTimeoutSeconds);
+            StreamIdleTimeoutSeconds: onDisk?.StreamIdleTimeoutSeconds,
+            ToolCallIdleTimeoutSeconds: onDisk?.ToolCallIdleTimeoutSeconds);
     }
 
     public string? GetApiKey(string providerName) =>

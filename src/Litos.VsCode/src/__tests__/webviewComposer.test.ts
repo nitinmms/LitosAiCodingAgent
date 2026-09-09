@@ -227,3 +227,42 @@ describe("attachment names shown on send (ReadMe_VsCodeExtension.md §7.12)", ()
         expect(innerScript).toContain("if (!attachmentNames || attachmentNames.length === 0) return entry;");
     });
 });
+
+describe("long-running tool call notice", () => {
+    // A tool row can legitimately sit at "running" for many minutes: some servers (LM Studio,
+    // measured at ~296s for a ~120-line file) send the function name and then nothing until the
+    // whole argument blob is ready. With no elapsed time on screen that healthy turn looks like a
+    // hang — which is exactly how it was reported.
+    it("shows elapsed time once a tool call has run long enough", () => {
+        expect(innerScript).toContain("SLOW_TOOL_NOTICE_AFTER_MS");
+        expect(innerScript).toContain("function formatElapsed");
+    });
+
+    it("distinguishes waiting on the model from the tool actually executing", () => {
+        // toolCallCompleted is the boundary: before it the model is still sending the call, after
+        // it the tool itself is running (a slow build, a big search). Blaming the model for the
+        // second is simply wrong, so the notice has to switch wording at that event.
+        expect(innerScript).toContain("markToolEntryExecuting");
+        expect(innerScript).toMatch(/case 'toolCallCompleted':[\s\S]{0,120}markToolEntryExecuting/);
+        expect(innerScript).toMatch(/waiting for the model to finish sending this tool call/);
+        expect(innerScript).toMatch(/still running \(/);
+    });
+
+    it("stays neutral about provider and model, since both waits happen on hosted providers too", () => {
+        // The first version of this notice asserted "a local model composes the whole tool call
+        // before sending any of it" and showed it for every provider, including hosted ones that
+        // do stream arguments incrementally — a confidently wrong explanation.
+        const notice = innerScript.slice(innerScript.indexOf("SLOW_TOOL_NOTICE_AFTER_MS"));
+        expect(notice).not.toMatch(/a local model composes/);
+        expect(notice).not.toMatch(/there is no output until it finishes/);
+    });
+
+    it("clears the ticker on every exit out of 'running', including a turn that errors out", () => {
+        // A leaked interval would keep ticking against a row that already resolved (or a turn
+        // that died), so each exit path has to stop it.
+        expect(innerScript).toContain("function stopToolEntryTimer");
+        expect(innerScript).toContain("stopAllToolEntryTimers");
+        // updateToolEntry handles succeeded/failed/skipped; the error case sweeps whatever is left.
+        expect(innerScript).toMatch(/case 'error':[\s\S]{0,400}stopAllToolEntryTimers\(\)/);
+    });
+});

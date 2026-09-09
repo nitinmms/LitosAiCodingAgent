@@ -1184,18 +1184,78 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     return entry;
   }
 
+  // A tool row can sit at "running" for minutes without anything being wrong, and with no elapsed
+  // time on screen that is indistinguishable from a hang. Two quite different waits produce it,
+  // and the notice must not confuse them:
+  //   toolCallStarted -> toolCallCompleted : the model is still sending the call itself. Some
+  //     servers (LM Studio, measured at ~296s for a ~120-line file) emit the function name and
+  //     then nothing at all until the whole argument blob is ready, so this stretch can be long
+  //     and completely silent.
+  //   toolCallCompleted -> toolCallResult  : the call has arrived and the tool is executing —
+  //     a slow build, a big search. Nothing to do with the model or the provider.
+  // Wording stays neutral about which provider or model is in play: both waits happen on hosted
+  // providers too, just usually faster, and a notice that asserts otherwise would be wrong there.
+  const SLOW_TOOL_NOTICE_AFTER_MS = 20000;
+
+  function formatElapsed(ms) {
+    const total = Math.floor(ms / 1000);
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return minutes > 0 ? minutes + 'm ' + seconds + 's' : seconds + 's';
+  }
+
   function addToolEntry(callId, toolName) {
     const el = document.createElement('div');
     el.className = 'entry tool';
     el.innerHTML = '<span class="status-running">● running</span> ' + escapeHtml(toolName);
+
+    const note = document.createElement('div');
+    note.style.opacity = '0.7';
+    note.style.marginTop = '4px';
+    note.style.fontStyle = 'italic';
+    note.hidden = true;
+    el.appendChild(note);
+
+    const entry = { el: el, toolName: toolName, timer: null, phase: 'sending' };
+    const startedAt = Date.now();
+    entry.timer = setInterval(function () {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < SLOW_TOOL_NOTICE_AFTER_MS) return;
+      note.hidden = false;
+      note.textContent = entry.phase === 'sending'
+        ? 'waiting for the model to finish sending this tool call (' + formatElapsed(elapsed) + ')'
+        : 'still running (' + formatElapsed(elapsed) + ')';
+    }, 1000);
+
     transcriptEl.appendChild(el);
-    toolEntriesByCallId[callId] = { el, toolName };
+    toolEntriesByCallId[callId] = entry;
     scrollToBottom();
+  }
+
+  // The model has finished sending the call and the tool itself is now executing — a different
+  // wait with a different cause, so the notice above must stop attributing it to the model.
+  function markToolEntryExecuting(callId) {
+    const entry = toolEntriesByCallId[callId];
+    if (entry) entry.phase = 'executing';
+  }
+
+  // Every exit path out of "running" has to come through here or stopToolEntryTimer, or the
+  // interval keeps ticking against a row that has already resolved.
+  function stopToolEntryTimer(entry) {
+    if (entry && entry.timer) {
+      clearInterval(entry.timer);
+      entry.timer = null;
+    }
+  }
+
+  function stopAllToolEntryTimers() {
+    Object.keys(toolEntriesByCallId).forEach(function (id) { stopToolEntryTimer(toolEntriesByCallId[id]); });
   }
 
   function updateToolEntry(callId, status, detail) {
     const entry = toolEntriesByCallId[callId];
     if (!entry) return;
+    stopToolEntryTimer(entry);
     const icon = status === 'succeeded' ? '✓' : status === 'failed' ? '✗' : '○';
     // linkify (not escapeHtml) for detail specifically — share_file's own tool-result text is a
     // bare http://127.0.0.1:PORT/files/{token} URL (Files/ShareFileTool.cs), and this is the row
@@ -1395,6 +1455,9 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
         finalizeAssistantBubble();
         addToolEntry(evt.callId, evt.toolName);
         break;
+      case 'toolCallCompleted':
+        markToolEntryExecuting(evt.callId);
+        break;
       case 'toolCallResult':
         updateToolEntry(evt.callId, evt.success ? 'succeeded' : 'failed', truncate(evt.resultText));
         break;
@@ -1403,6 +1466,9 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
         break;
       case 'error':
         finalizeAssistantBubble();
+        // A turn that errors out never delivers results for tools left mid-flight, so their
+        // elapsed-time tickers would otherwise run forever against rows that are already dead.
+        stopAllToolEntryTimers();
         addEntry('system', 'Error: ' + evt.message);
         break;
       case 'compaction':

@@ -100,6 +100,16 @@ public sealed class LocalChatProvider(HttpClient httpClient) : IChatProvider
 
         while (await reader.ReadLineAsync(ct) is { } line)
         {
+            // Any line at all — including one this loop is about to skip below (SSE framing,
+            // keep-alive comments, a chunk with no usable delta) — proves the connection is alive
+            // and the server is actively producing output, even if none of it is real content yet.
+            // AgentLoop's idle-gap timeout only resets on a yielded AgentEvent, not on raw network
+            // activity, so without this, a "thinking" local model that goes quiet on real content
+            // for a long stretch (very much alive, just not done reasoning) looks identical to a
+            // genuinely stalled connection from AgentLoop's perspective. See StreamHeartbeat's own
+            // doc comment for the full story.
+            yield return new StreamHeartbeat();
+
             if (!line.StartsWith("data:", StringComparison.Ordinal))
                 continue;
 
