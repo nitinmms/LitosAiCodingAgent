@@ -303,6 +303,38 @@ public class AgentWorkerTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureModelResolvedAsync_BeforeAnyTurn_ResolvesContextLengthWithoutRunningATurn()
+    {
+        // Public specifically so ContextEndpoints' GET /sessions/{id}/context/usage can resolve
+        // on demand — without this, the status row read "Context usage unavailable" until the
+        // first turn ran, even on a freshly opened panel where nothing had started yet.
+        var (worker, provider) = CreateWorker();
+        provider.ModelsToReturn = [new Litos.Agent.Providers.ModelInfo("fake-model", "Fake Model", IsDefault: true, ContextLength: 64_000)];
+
+        Assert.Null(worker.ContextLength);
+
+        await worker.EnsureModelResolvedAsync(CancellationToken.None);
+
+        Assert.Equal(64_000, worker.ContextLength);
+    }
+
+    [Fact]
+    public async Task EnsureModelResolvedAsync_AlreadyResolved_DoesNotReResolve()
+    {
+        // Proven via a second, different ModelsToReturn: if EnsureModelResolvedAsync queried
+        // ListModelsAsync again instead of short-circuiting on its own already-resolved cache,
+        // ContextLength would change to 999_000 here — it must not.
+        var (worker, provider) = CreateWorker();
+        provider.ModelsToReturn = [new Litos.Agent.Providers.ModelInfo("fake-model", "Fake Model", IsDefault: true, ContextLength: 64_000)];
+        await worker.EnsureModelResolvedAsync(CancellationToken.None);
+        provider.ModelsToReturn = [new Litos.Agent.Providers.ModelInfo("fake-model", "Fake Model", IsDefault: true, ContextLength: 999_000)];
+
+        await worker.EnsureModelResolvedAsync(CancellationToken.None);
+
+        Assert.Equal(64_000, worker.ContextLength);
+    }
+
+    [Fact]
     public async Task SwitchProviderAsync_MidTurn_DoesNotAffectTheAlreadyRunningTurn()
     {
         var (worker, provider) = CreateWorker();

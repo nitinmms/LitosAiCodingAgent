@@ -10,11 +10,16 @@ namespace Litos.Providers.Tests.Fakes;
 /// </summary>
 public sealed class FakeHttpMessageHandler : HttpMessageHandler
 {
-    private readonly Queue<HttpResponseMessage> _responses = new();
+    // Null entries model a connection-level failure (server down, network error) for that turn,
+    // as distinct from a clean HTTP error response — SendAsync throws HttpRequestException for
+    // these instead of returning them, exercising callers' handling of an unreachable server.
+    private readonly Queue<HttpResponseMessage?> _responses = new();
 
     public List<CapturedRequest> CapturedRequests { get; } = [];
 
     public void Enqueue(HttpResponseMessage response) => _responses.Enqueue(response);
+
+    public void EnqueueConnectionFailure() => _responses.Enqueue(null);
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
@@ -24,7 +29,7 @@ public sealed class FakeHttpMessageHandler : HttpMessageHandler
         if (_responses.Count == 0)
             throw new InvalidOperationException("FakeHttpMessageHandler received a request but has no queued response.");
 
-        return _responses.Dequeue();
+        return _responses.Dequeue() ?? throw new HttpRequestException("Simulated connection failure.");
     }
 
     public static HttpResponseMessage JsonResponse(string json) => new(System.Net.HttpStatusCode.OK)

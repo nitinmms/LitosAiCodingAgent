@@ -21,33 +21,76 @@ namespace Litos.Providers.Local;
 /// </summary>
 public sealed class LocalChatProvider(HttpClient httpClient) : IChatProvider
 {
-    /// <summary>
-    /// Used when a local server's /models response omits context_length (the common case — LM
-    /// Studio's plain OpenAI-compatible endpoint doesn't include it; that only appears on its
-    /// separate, vendor-specific /api/v0/models). Deliberately conservative rather than reusing
-    /// ModelContextWindows.FallbackContextLength (128K, calibrated for hosted models): guessing
-    /// too high here silently defeats the context meter and compaction for exactly the small
-    /// local models most likely to hit this fallback, which is the failure mode this exists to
-    /// prevent.
-    /// 8_000 (the original guess here) turned out to cut the margin between the compaction
-    /// threshold and the assumed ceiling too thin: CompactionSettings.ForContextWindow caps
-    /// ReserveTokens/KeepRecentTokens at contextWindowTokens/4, so an 8_000 window left only a
-    /// 2_000-token gap between "compaction just fired" and "assumed full" — observed live to be
-    /// smaller than a single large tool result (e.g. a real file read), so the very next
-    /// tool-calling round after a compaction could still blow straight past the assumed window
-    /// before compaction got another chance to run. 16_000 doubles that gap to 4_000, giving one
-    /// more large tool result room to land before the next compaction check. Still far below
-    /// ModelContextWindows.FallbackContextLength for the same reason as above — this is a floor
-    /// to keep compaction functional, not an attempt to guess a specific model's real window.
-    /// </summary>
-    private const int FallbackContextLength = 16_000;
-
     public string ProviderName => "local";
 
     public async Task<IReadOnlyList<ModelInfo>> ListModelsAsync(CancellationToken ct)
     {
         var response = await httpClient.GetFromJsonAsync<LocalModelListResponse>("models", ct);
-        return [.. (response?.Data ?? []).Select(m => new ModelInfo(m.Id, m.Name ?? m.Id, IsDefault: false, ContextLength: m.ContextLength ?? FallbackContextLength))];
+        var vendorContextLengths = await TryGetLmStudioContextLengthsAsync(ct);
+        return [.. (response?.Data ?? []).Select(m => new ModelInfo(
+            m.Id,
+            m.Name ?? m.Id,
+            IsDefault: false,
+            ContextLength: m.ContextLength ?? (vendorContextLengths.TryGetValue(m.Id, out var vendorContextLength) ? (int?)vendorContextLength : null) ?? ModelContextWindows.LocalFallbackContextLength))];
+    }
+
+    /// <summary>
+    /// Bounds how long the best-effort LM Studio vendor-catalog lookup below may take before
+    /// ListModelsAsync gives up on it and falls through to the static fallback. Deliberately short
+    /// relative to the app's general HTTP timeouts: this is a nice-to-have enrichment layered on
+    /// top of the real, required /models call, not something a non-LM-Studio server (vLLM,
+    /// llama.cpp, Ollama, LocalAI, ...) should ever be able to make ListModelsAsync hang on — a
+    /// server that accepts the connection but never responds (rather than cleanly 404ing) would
+    /// otherwise stall model listing for as long as HttpClient's own default timeout allows.
+    /// </summary>
+    private static readonly TimeSpan LmStudioVendorLookupTimeout = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// Best-effort lookup against LM Studio's native /api/v1/models endpoint, which (unlike the
+    /// plain OpenAI-compatible /models this provider otherwise talks to exclusively) reports each
+    /// model's real context length — so a fallback guess only kicks in for servers that aren't LM
+    /// Studio (Ollama, vLLM, LocalAI, ...), where this 404s/fails/times out and is ignored.
+    /// Queried as a sibling of the configured base URL (.../v1/) rather than a relative path under
+    /// it, since LM Studio serves this endpoint off the server root, not under the OpenAI-
+    /// compatible /v1/ this provider otherwise talks to.
+    /// Prefers the currently loaded instance's context_length over the model's max_context_length:
+    /// LM Studio lets a model be loaded with a smaller context than its architectural max (to fit
+    /// available memory), and using the max here would reintroduce the exact silent-overflow risk
+    /// LocalFallbackContextLength exists to avoid — the loaded value is what the server will
+    /// actually accept right now, not what the model could theoretically support. A model with no
+    /// loaded_instances entry (not currently loaded) falls back to its max_context_length instead,
+    /// since there's no "currently accepted" value to prefer yet.
+    /// </summary>
+    private async Task<Dictionary<string, int>> TryGetLmStudioContextLengthsAsync(CancellationToken ct)
+    {
+        using var timeoutCts = new CancellationTokenSource(LmStudioVendorLookupTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        try
+        {
+            var vendorUri = new Uri(httpClient.BaseAddress!, "../api/v1/models");
+            using var response = await httpClient.GetAsync(vendorUri, linkedCts.Token);
+            if (!response.IsSuccessStatusCode)
+                return [];
+
+            var payload = await response.Content.ReadFromJsonAsync<LmStudioModelListResponse>(cancellationToken: linkedCts.Token);
+            var result = new Dictionary<string, int>();
+            foreach (var m in payload?.Models ?? [])
+            {
+                var loadedContextLength = m.LoadedInstances?.FirstOrDefault()?.Config?.ContextLength;
+                if ((loadedContextLength ?? m.MaxContextLength) is { } contextLength)
+                    result[m.Key] = contextLength;
+            }
+            return result;
+        }
+        catch (Exception) when (ct.IsCancellationRequested is false)
+        {
+            // Not an LM Studio server, it's unreachable/malformed-JSON, or it hit
+            // LmStudioVendorLookupTimeout above — ListModelsAsync's own ?? fallback chain handles
+            // the missing values from here. The `when` guard re-throws if the caller's own token
+            // (not our internal timeout) was the one that fired, so a genuine
+            // caller-requested cancellation still propagates instead of being swallowed.
+            return [];
+        }
     }
 
     public async IAsyncEnumerable<AgentEvent> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken ct)
@@ -288,6 +331,19 @@ internal sealed record LocalFunctionSchema(string Name, string Description, Json
 internal sealed record LocalModelListResponse(List<LocalModel> Data);
 
 internal sealed record LocalModel(string Id, string? Name, [property: JsonPropertyName("context_length")] int? ContextLength);
+
+// LM Studio's native /api/v1/models shape — distinct from, and not nested under, the OpenAI-
+// compatible LocalModelListResponse/LocalModel above. Keyed by "key" rather than "id".
+internal sealed record LmStudioModelListResponse(List<LmStudioModel>? Models);
+
+internal sealed record LmStudioModel(
+    string Key,
+    [property: JsonPropertyName("max_context_length")] int? MaxContextLength,
+    [property: JsonPropertyName("loaded_instances")] List<LmStudioLoadedInstance>? LoadedInstances);
+
+internal sealed record LmStudioLoadedInstance(LmStudioLoadedInstanceConfig? Config);
+
+internal sealed record LmStudioLoadedInstanceConfig([property: JsonPropertyName("context_length")] int? ContextLength);
 
 internal sealed record LocalStreamChunk(List<LocalStreamChoice>? Choices, LocalUsage? Usage);
 

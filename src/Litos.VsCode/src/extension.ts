@@ -3,7 +3,8 @@ import * as crypto from "crypto";
 import * as path from "path";
 import * as fs from "fs";
 import { LitosHostProcess } from "./hostProcess";
-import { LitosClient, AttachedContent } from "./agentEvents";
+import { LitosClient, AttachedContent, ContextUsage, AgentEventParsed } from "./agentEvents";
+import { estimateTokens, computeLiveUsage } from "./liveContextUsage";
 import { getWebviewHtml } from "./webviewContent";
 import { getMcpPanelHtml } from "./mcpPanelContent";
 import { getContextPanelHtml } from "./contextPanelContent";
@@ -41,8 +42,17 @@ interface ChatSurface {
 }
 
 /** Per-panel session state — sessionId is mutable (unlike the earlier const) since /new and
- * /resume and /branch all change which session a panel is pointed at without closing the panel. */
-type PanelState = { panel: ChatSurface; sessionId: string; pendingAttachments: AttachedContent[]; contextPanel?: vscode.WebviewPanel };
+ * /resume and /branch all change which session a panel is pointed at without closing the panel.
+ * liveUsage is refreshContextUsage's last real reading, incremented client-side between fetches
+ * (see updateLiveUsageForEvent) so the status row moves during a turn instead of freezing until
+ * it ends — undefined until the first real fetch ever completes for this panel. */
+type PanelState = {
+    panel: ChatSurface;
+    sessionId: string;
+    pendingAttachments: AttachedContent[];
+    contextPanel?: vscode.WebviewPanel;
+    liveUsage?: ContextUsage;
+};
 const openPanels = new Map<ChatSurface, PanelState>();
 
 let mcpPanel: vscode.WebviewPanel | undefined;
@@ -125,11 +135,42 @@ async function refreshContextUsage(state: PanelState): Promise<void> {
 
     try {
         const usage = await sharedHost.client.getContextUsage(state.sessionId);
+        state.liveUsage = usage ?? undefined;
         state.panel.webview.postMessage({ type: "contextUsage", usage });
     } catch {
         // Host not ready yet (e.g. still starting) or transient error — leave the row as it was
         // rather than flashing an error state for something the user didn't take action on.
     }
+}
+
+/**
+ * Updates state.liveUsage in place from one just-received stream event and pushes it to the
+ * webview immediately, so the status row moves during a turn instead of only refreshing at
+ * turn-end (see handlePanelMessage's "send" case) — no network round-trip, unlike
+ * refreshContextUsage, which this still runs once more when the turn finishes to correct any
+ * drift between this running estimate and the server's real ContextUsage.Compute. A no-op until
+ * the first refreshContextUsage call has ever populated state.liveUsage (e.g. a brand new
+ * session's very first turn, before panel-open's own refresh has resolved) — there's no baseline
+ * contextLength to estimate against yet, and that first real fetch is already in flight.
+ */
+function updateLiveUsageForEvent(state: PanelState, event: AgentEventParsed): void {
+    if (!state.liveUsage) return;
+
+    let usedTokens = state.liveUsage.usedTokens;
+    if (event.type === "toolCallResult") {
+        usedTokens += estimateTokens(event.resultText);
+    } else if (event.type === "messageCompleted") {
+        // Real, authoritative usage just arrived — replaces the running estimate for the
+        // "already-sent conversation" term entirely, the same way CompactionPlanner.
+        // EstimatedTokensUsed rebases on transcript.LastUsage rather than continuing to add
+        // estimated deltas on top of a stale real number.
+        usedTokens = event.usage.inputTokens + event.usage.outputTokens;
+    } else {
+        return;
+    }
+
+    state.liveUsage = computeLiveUsage(usedTokens, state.liveUsage.contextLength, state.liveUsage.isStale);
+    state.panel.webview.postMessage({ type: "contextUsage", usage: state.liveUsage });
 }
 
 /** Refreshes the working-directory row for state.sessionId specifically — not sharedHost.cwd,
@@ -335,14 +376,19 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
             // webviewContent.ts's handleAgentEvent switch renders each kind appropriately.
             for await (const evt of outcome.events) {
                 panel.webview.postMessage({ type: "agentEvent", event: evt });
+                // Moves the status row during the turn instead of only at its end — a cheap,
+                // no-network client-side estimate (see updateLiveUsageForEvent), not the
+                // authoritative number refreshContextUsage below fetches once the turn settles.
+                updateLiveUsageForEvent(state, evt);
             }
             panel.webview.postMessage({ type: "turnEnded" });
 
-            // Turn finished — refresh this panel's own context-usage row (mirrors Litos.Gui's
-            // RefreshContextUsage being called after every completed turn). A cheap re-fetch
-            // rather than reading tokens off the stream's own messageCompleted events, since
-            // ContextUsage.Compute needs the whole transcript, not just the latest turn's usage
-            // number.
+            // Turn finished — reconcile this panel's context-usage row against the server's real
+            // ContextUsage.Compute (mirrors Litos.Gui's RefreshContextUsage being called after
+            // every completed turn). The estimate updateLiveUsageForEvent built up during the
+            // loop above only approximates ContextUsage.Compute's chars/4-over-the-whole-
+            // transcript formula (e.g. it never accounts for a mid-turn CompactionOccurred
+            // shrinking the transcript) — this fetch is what keeps it from silently drifting.
             void refreshContextUsage(state);
         } catch (err: any) {
             panel.webview.postMessage({ type: "turnEnded" });

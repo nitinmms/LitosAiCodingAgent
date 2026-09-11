@@ -213,7 +213,38 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
+          # The Marketplace gallery API (_apis/gallery) occasionally times out on a
+          # cold/slow backend even though the publish itself would have succeeded.
+          # Retry a few times with backoff, and treat "already published" as success
+          # so a retry after a request that actually landed doesn't fail the job.
+          publish_with_retry() {
+            local file="$1"
+            local attempt=1
+            local max_attempts=5
+            local delay=15
+            while [ "$attempt" -le "$max_attempts" ]; do
+              echo "Publishing $file (attempt $attempt/$max_attempts)..."
+              output=$(npx @vscode/vsce publish --packagePath "$file" -p "$VSCE_PAT" 2>&1)
+              status=$?
+              echo "$output"
+              if [ $status -eq 0 ]; then
+                return 0
+              fi
+              if echo "$output" | grep -qi "already exists\|already been published"; then
+                echo "Version already published for $file, treating as success."
+                return 0
+              fi
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "Failed to publish $file after $max_attempts attempts."
+                return 1
+              fi
+              echo "Publish failed, retrying in ${delay}s..."
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
           for f in artifacts/*.vsix; do
-            echo "Publishing $f..."
-            npx @vscode/vsce publish --packagePath "$f" -p "$VSCE_PAT"
+            publish_with_retry "$f" || exit 1
           done

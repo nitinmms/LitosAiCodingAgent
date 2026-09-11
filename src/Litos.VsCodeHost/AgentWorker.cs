@@ -190,7 +190,14 @@ public sealed class AgentWorker : BackgroundService
         await Task.Delay(Timeout.Infinite, stoppingToken).ContinueWith(_ => { }, TaskScheduler.Default);
     }
 
-    private async Task EnsureModelResolvedAsync(CancellationToken ct)
+    /// <summary>
+    /// Public so ContextEndpoints' GET /sessions/{id}/context/usage can resolve ContextLength
+    /// on demand rather than only reporting whatever RunTurnCoreAsync happened to have already
+    /// resolved — without this, the status row read "Context usage unavailable" until the first
+    /// turn ran, even though ListModelsAsync (and, for "local", the LM Studio vendor-catalog
+    /// lookup) already had everything needed to answer as soon as the panel opened.
+    /// </summary>
+    public async Task EnsureModelResolvedAsync(CancellationToken ct)
     {
         // _contextLength is checked too, not just _model: LitosConfig.DefaultModel can already
         // populate _model at construction (see ctor) without ever resolving its ContextLength via

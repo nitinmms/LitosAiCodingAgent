@@ -1257,9 +1257,15 @@ public sealed partial class MainWindow : Window
             // No ListModelsAsync round-trip for this path (matches the original fast/direct
             // behavior below) — ContextLength is resolved from the static table only, which
             // may be less accurate than the OpenRouter-catalog-backed value ListModelsAsync
-            // would return, but avoids a network call just to switch models by id.
+            // would return, but avoids a network call just to switch models by id. "local" is
+            // special-cased to its own conservative fallback rather than the hosted-provider
+            // table: a local server's context window bears no relation to ModelContextWindows'
+            // hardcoded prefixes, and guessing 128K there would silently defeat the context
+            // meter/compaction the same way LocalChatProvider's own fallback exists to prevent.
             _session.Model = argument;
-            _session.ContextLength = ModelContextWindows.Resolve(argument);
+            _session.ContextLength = _session.ProviderName == "local"
+                ? ModelContextWindows.LocalFallbackContextLength
+                : ModelContextWindows.Resolve(argument);
             UpdateProviderModelText();
             RefreshContextUsage();
             SaveLastUsedProviderAndModel();

@@ -200,6 +200,22 @@ else
     }
 }
 
+// Tracks the active model's context window across /provider and /model switches (mirrors
+// Litos.Gui's MainWindowSession.ContextLength) so /context always reflects the model actually
+// in use instead of re-deriving it from the static hosted-provider table, which would ignore
+// e.g. LocalChatProvider's conservative fallback or a locally-reported context_length.
+var contextLength = ModelContextWindows.Resolve(model);
+try
+{
+    var currentModels = await chatProvider.ListModelsAsync(CancellationToken.None);
+    contextLength = currentModels.FirstOrDefault(m => m.Id == model)?.ContextLength ?? contextLength;
+}
+catch (Exception)
+{
+    // Keep the static-table guess above — /context still needs a usable value even if the
+    // provider is briefly unreachable at startup.
+}
+
 if (!canPrompt)
     return await RunNonInteractiveAsync();
 
@@ -706,6 +722,7 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
             // resets to that provider's own default rather than carrying the old id over.
             var newProviderModels = await chatProvider.ListModelsAsync(CancellationToken.None);
             model = newProviderModels.FirstOrDefault(m => m.IsDefault)?.Id ?? newProviderModels.FirstOrDefault()?.Id ?? model;
+            contextLength = newProviderModels.FirstOrDefault(m => m.Id == model)?.ContextLength ?? ModelContextWindows.Resolve(model);
             printLine($"Switched to provider '{activeProviderName}', model '{model}'.");
             return true;
         }
@@ -715,6 +732,15 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
             if (argument is not null)
             {
                 model = argument;
+                // No ListModelsAsync round-trip for this path — resolved from the static table
+                // only, except "local" always uses its own conservative fallback rather than the
+                // hosted-provider table: a local server's context window bears no relation to
+                // ModelContextWindows' hardcoded prefixes, and guessing 128K there would silently
+                // defeat the context meter/compaction the same way LocalChatProvider's own
+                // fallback exists to prevent.
+                contextLength = activeProviderName == "local"
+                    ? ModelContextWindows.LocalFallbackContextLength
+                    : ModelContextWindows.Resolve(argument);
                 printLine($"Switched to model '{model}'.");
                 return true;
             }
@@ -732,7 +758,9 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
                 return true;
             }
 
-            model = ModelPickerDialog.PickModel(interactiveApp, models).Id;
+            var pickedModel = ModelPickerDialog.PickModel(interactiveApp, models);
+            model = pickedModel.Id;
+            contextLength = pickedModel.ContextLength ?? ModelContextWindows.Resolve(model);
             printLine($"Switched to model '{model}'.");
             return true;
         }
@@ -860,7 +888,6 @@ async Task<bool> TryHandleSlashCommandAsync(string commandLine, Action<string> p
                 return true;
             }
 
-            var contextLength = ModelContextWindows.Resolve(model);
             var contextToolRegistry = toolRegistryFactory.Create();
             await ContextBreakdownDialog.ShowAsync(interactiveApp, systemPromptProvider, transcript, contextToolRegistry, contextLength);
             return true;

@@ -315,20 +315,25 @@ public class LocalChatProviderTests
     }
 
     [Fact]
-    public async Task ListModelsAsync_NoContextLengthInResponse_FallsBackToConservativeDefault()
+    public async Task ListModelsAsync_NoContextLengthInResponse_NonLmStudioServer_FallsBackToConservativeDefault()
     {
         // Unlike OpenRouter's catalog, a local server's /v1/models response typically has no
         // context_length field at all (LM Studio's plain OpenAI-compatible endpoint included).
         // Leaving this null let the context meter/compaction silently no-op for local sessions —
         // must map to a conservative non-null fallback instead so both stay functional.
+        // The second enqueued response is the LM Studio vendor-catalog probe 404ing, exactly as
+        // vLLM/llama.cpp/Ollama/LocalAI (none of which expose /api/v1/models) would respond —
+        // proving the fallback still applies for real non-LM-Studio servers, not just because
+        // nothing was enqueued for that request.
         var (provider, handler) = CreateProvider();
         handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
             {"data":[{"id":"llama-3-8b"}]}
             """));
+        handler.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
 
         var models = await provider.ListModelsAsync(CancellationToken.None);
 
-        Assert.Equal(16_000, Assert.Single(models).ContextLength);
+        Assert.Equal(ModelContextWindows.LocalFallbackContextLength, Assert.Single(models).ContextLength);
     }
 
     [Fact]
@@ -336,12 +341,85 @@ public class LocalChatProviderTests
     {
         var (provider, handler) = CreateProvider();
         handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
-            {"data":[{"id":"qwen3","context_length":32000}]}
+            {"data":[{"id":"qwen3","context_length":64000}]}
+            """));
+        handler.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+
+        var models = await provider.ListModelsAsync(CancellationToken.None);
+
+        Assert.Equal(64_000, Assert.Single(models).ContextLength);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_LmStudioVendorCatalogReportsLoadedContextLength_UsesLoadedValue()
+    {
+        // LM Studio's plain OpenAI-compatible /models omits context_length (as in the test above),
+        // but its native /api/v1/models does report it — this proves that value gets used instead
+        // of falling all the way through to the static conservative guess.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            {"data":[{"id":"google/gemma-4-26b-a4b-qat"}]}
+            """));
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            {"models":[{"key":"google/gemma-4-26b-a4b-qat","max_context_length":262144,"loaded_instances":[{"config":{"context_length":22016}}]}]}
             """));
 
         var models = await provider.ListModelsAsync(CancellationToken.None);
 
-        Assert.Equal(32_000, Assert.Single(models).ContextLength);
+        Assert.Equal(22_016, Assert.Single(models).ContextLength);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_LmStudioVendorCatalogModelNotLoaded_FallsBackToMaxContextLength()
+    {
+        // A model reported by /api/v1/models with no loaded_instances entry (not currently
+        // loaded) has no "currently accepted" context length yet, so max_context_length is the
+        // best available signal rather than the static conservative guess.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            {"data":[{"id":"qwen3.8-27b-mlx-textonly"}]}
+            """));
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            {"models":[{"key":"qwen3.8-27b-mlx-textonly","max_context_length":262144,"loaded_instances":[]}]}
+            """));
+
+        var models = await provider.ListModelsAsync(CancellationToken.None);
+
+        Assert.Equal(262_144, Assert.Single(models).ContextLength);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_LmStudioVendorCatalogUnreachable_FallsBackToConservativeDefault()
+    {
+        // Simulates a connection failure (server down, network error) rather than a clean 404 —
+        // TryGetLmStudioContextLengthsAsync's catch block must swallow this too, same as the
+        // 404 case, so a flaky/unreachable local server never breaks model listing outright.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            {"data":[{"id":"llama-3-8b"}]}
+            """));
+        handler.EnqueueConnectionFailure();
+
+        var models = await provider.ListModelsAsync(CancellationToken.None);
+
+        Assert.Equal(ModelContextWindows.LocalFallbackContextLength, Assert.Single(models).ContextLength);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_QueriesLmStudioVendorCatalog_AsSiblingOfBaseAddress()
+    {
+        // The vendor endpoint lives off the server root (.../api/v1/models), not nested under the
+        // OpenAI-compatible /v1/ this provider otherwise talks to exclusively — this pins that
+        // URI resolution so a future BaseAddress/relative-path change can't silently point it
+        // somewhere that happens to still compile but never reaches a real LM Studio server.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""{"data":[]}"""));
+        handler.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+
+        await provider.ListModelsAsync(CancellationToken.None);
+
+        Assert.Equal(2, handler.CapturedRequests.Count);
+        Assert.Equal(new Uri("http://localhost:1234/api/v1/models"), handler.CapturedRequests[1].Uri);
     }
 
     // ---- stream_options ----

@@ -392,11 +392,19 @@ export class LitosClient {
 
     private async getJson<T>(path: string): Promise<T> {
         const response = await fetch(`${this.baseUrl}${path}`);
+        const body = await response.text();
         if (!response.ok) {
-            const body = await response.text();
             throw new Error(`Litos host returned ${response.status}${body ? `: ${body}` : ""}`);
         }
-        return response.json();
+        // A 200 with a genuinely empty body — observed from Results.Ok(null) endpoints like
+        // GET /sessions/{id}/context/usage for a session with no turns yet (ContextUsage.Compute
+        // returns null, and ASP.NET Minimal APIs can write zero bytes for that rather than the
+        // JSON literal "null", depending on content negotiation) — response.json() throws
+        // "Unexpected end of JSON input" on this, which callers like getContextUsage's
+        // Promise<ContextUsage | null> return type never expects to have to guard against
+        // themselves. Every other getJson caller always gets real content, so this only changes
+        // behavior for the empty-body case.
+        return body === "" ? (null as T) : JSON.parse(body);
     }
 
     private async postJson<T>(path: string, body: unknown): Promise<T> {

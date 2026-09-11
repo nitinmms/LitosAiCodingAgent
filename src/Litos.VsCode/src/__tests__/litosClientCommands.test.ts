@@ -220,6 +220,21 @@ describe("LitosClient — /sessions/{id}/context", () => {
         expect(result).toBeNull();
     });
 
+    it("getContextUsage returns null for a genuinely empty 200 body, not just the literal \"null\"", async () => {
+        // The real failure mode observed live: GET /sessions/{id}/context/usage for a brand-new
+        // session (no turns run yet) returns HTTP 200 with zero bytes in the body — Results.Ok(null)
+        // in ASP.NET Minimal APIs can serialize that way rather than writing the 4-byte "null"
+        // token, depending on content negotiation. response.json() on an empty body throws
+        // "Unexpected end of JSON input", which the old getJson never guarded against — silently
+        // leaving the status row stuck on "Context usage unavailable" forever for any session
+        // whose very first context/usage fetch (on panel open) landed here before the first turn ran.
+        mockFetch(() => new Response("", { status: 200 }));
+
+        const result = await client.getContextUsage("session-1");
+
+        expect(result).toBeNull();
+    });
+
     it("getContextBreakdown issues a GET to the session-scoped breakdown path", async () => {
         const breakdown = { totalEstimatedTokens: 500, lastRealUsageTokens: null, contextLength: 1000, entries: [] };
         mockFetch(() => new Response(JSON.stringify(breakdown), { status: 200 }));
