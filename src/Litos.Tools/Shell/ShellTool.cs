@@ -5,8 +5,27 @@ using Litos.Agent.Tools;
 
 namespace Litos.Tools.Shell;
 
-public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTimeout = null) : ITool
+public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTimeout = null, int? maxOutputBytes = null) : ITool
 {
+    private readonly int _maxOutputBytes = maxOutputBytes ?? OutputTruncation.DefaultMaxBytes;
+
+    /// <summary>
+    /// Tail-retained, unlike ReadFileTool's head: command output puts the payload at the bottom
+    /// (compiler errors, test summaries, stack traces) behind whatever progress noise came first.
+    /// Keeping the head of a failed build would preserve "Determining projects to restore..." and
+    /// discard the error the command was run to find — which reads as success to a model that takes
+    /// truncated output at face value.
+    /// </summary>
+    private string Truncate(string output)
+    {
+        var truncation = OutputTruncation.Truncate(output, RetainEnd.Tail, _maxOutputBytes);
+        if (!truncation.Truncated)
+            return output;
+
+        var reason = truncation.TruncatedByBytes ? $"{_maxOutputBytes / 1024}KB limit" : $"{OutputTruncation.DefaultMaxLines} line limit";
+        return $"[Truncated: showing last {truncation.OutputLines} of {truncation.TotalLines} lines ({reason}). Earlier output omitted.]\n{truncation.Text}";
+    }
+
     /// <summary>
     /// Hard wall-clock cap on a single command, independent of the caller's CancellationToken.
     /// AgentLoop's idle-stream timeout only guards "waiting on the provider" — tool execution is
@@ -97,7 +116,7 @@ public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTime
             // Hit HardTimeout, not the caller's own cancellation. Kill the whole tree — cmd.exe
             // spawning e.g. npx/node means the immediate child exiting isn't enough to stop work.
             TryKillProcessTree(process);
-            var partial = output.ToString();
+            var partial = Truncate(output.ToString());
             return ToolResult.Error(
                 $"Command timed out after {_hardTimeout.TotalMinutes:0}m and was killed. " +
                 $"It may be waiting on interactive input (this tool does not support that) — " +
@@ -111,7 +130,7 @@ public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTime
             throw;
         }
 
-        var result = output.ToString();
+        var result = Truncate(output.ToString());
         return process.ExitCode == 0
             ? ToolResult.Ok($"[exit {process.ExitCode}]\n{result}")
             : ToolResult.Error($"Command exited with code {process.ExitCode}.\n{result}");

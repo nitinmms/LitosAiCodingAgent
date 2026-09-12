@@ -44,10 +44,7 @@ public sealed class EditFileTool(IToolApprovalGate approvalGate) : ITool
         {
             var normalizedMatch = TryFindNormalizedMatch(original, oldText);
             if (normalizedMatch is null)
-                return ToolResult.Error(
-                    "'old_text' was not found in the file. Re-read the file and copy the anchor text " +
-                    "exactly, including indentation; a mismatch is often due to a paraphrased anchor " +
-                    "or a whitespace/line-ending difference that isn't visible in the read output.");
+                return ToolResult.Error(DescribeAnchorMismatch(original, oldText, path));
 
             (firstIndex, matchLength) = normalizedMatch.Value;
             usedNormalizedMatch = true;
@@ -71,6 +68,69 @@ public sealed class EditFileTool(IToolApprovalGate approvalGate) : ITool
         await File.WriteAllTextAsync(path, updated, ct);
         var (added, removed) = LineDelta.Count(oldText, newText);
         return ToolResult.Ok($"Edited {path}. [+{added} -{removed}]");
+    }
+
+    /// <summary>
+    /// Builds the not-found error, quoting the file text that most resembles the anchor the model
+    /// supplied. The bare "re-read the file and copy the anchor exactly" message this replaced was
+    /// observed to not work: in a real local-model session (Gemma 4 27B) the same anchor was
+    /// submitted three times and rejected three times, with a full re-read of the file between each
+    /// attempt — re-reading doesn't help when the text being guessed at isn't in the file at all,
+    /// because nothing in the message tells the model how its guess differs from what's there.
+    /// Showing the closest real lines turns "try again" into "here is what that region looks like",
+    /// which is actionable without another read round-trip.
+    /// </summary>
+    private static string DescribeAnchorMismatch(string original, string oldText, string path)
+    {
+        const string guidance =
+            "'old_text' was not found in the file. Copy the anchor exactly as it appears in the file, " +
+            "including indentation — do not retype it from memory.";
+
+        var anchorFirstLine = FirstNonBlankLine(oldText);
+        if (anchorFirstLine is null)
+            return guidance;
+
+        var originalLines = original.Replace("\r\n", "\n").Split('\n');
+        var best = -1;
+        var bestScore = 0.0;
+        for (var i = 0; i < originalLines.Length; i++)
+        {
+            var score = SimilarityScore(anchorFirstLine, originalLines[i]);
+            if (score > bestScore)
+                (best, bestScore) = (i, score);
+        }
+
+        // Below this the "closest" line is noise (a stray brace, a blank-ish line) and quoting it
+        // would mislead more than help — fall back to the plain guidance.
+        if (best < 0 || bestScore < 0.4)
+            return guidance;
+
+        var from = Math.Max(0, best - 2);
+        var to = Math.Min(originalLines.Length - 1, best + 6);
+        var excerpt = string.Join('\n', Enumerable.Range(from, to - from + 1)
+            .Select(i => $"{i + 1}\t{originalLines[i]}"));
+
+        return $"{guidance}\n\nThe closest text in {path} is at line {best + 1}:\n\n{excerpt}";
+    }
+
+    private static string? FirstNonBlankLine(string text) =>
+        text.Replace("\r\n", "\n").Split('\n').FirstOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim();
+
+    /// <summary>
+    /// Cheap token-overlap ratio (Jaccard over whitespace-split tokens), deliberately not an edit
+    /// distance: the aim is only to locate roughly the right region to quote back, and a paraphrased
+    /// anchor typically shares most of its identifiers with the real line while differing in
+    /// punctuation and spacing — which token overlap handles well and character distance does not.
+    /// </summary>
+    private static double SimilarityScore(string a, string b)
+    {
+        var tokensA = a.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        var tokensB = b.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        if (tokensA.Count == 0 || tokensB.Count == 0)
+            return 0;
+
+        var intersection = tokensA.Intersect(tokensB, StringComparer.Ordinal).Count();
+        return (double)intersection / Math.Max(tokensA.Count, tokensB.Count);
     }
 
     /// <summary>

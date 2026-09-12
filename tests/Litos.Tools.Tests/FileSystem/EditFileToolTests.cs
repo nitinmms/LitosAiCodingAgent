@@ -210,4 +210,61 @@ public class EditFileToolTests : IDisposable
         Assert.True(result.IsError);
         Assert.Contains("'old_text' was not found in the file.", result.Text);
     }
+
+    [Fact]
+    public async Task InvokeAsync_AnchorNotFound_QuotesClosestActualText_WithLineNumbers()
+    {
+        // Replays the failure shape from a real local-model session: the model paraphrases an
+        // anchor that never existed, and re-reading doesn't help because nothing tells it how its
+        // guess differs from the file. The error must show the nearest real text so the next
+        // attempt can copy it verbatim instead of guessing again.
+        var path = Path.Combine(_tempDir, "pacman.py");
+        await File.WriteAllTextAsync(path, string.Join('\n',
+        [
+            "    def eat(self, pr, pc):",
+            "        tile = get_tile(self.maze_grid, pr, pc)",
+            "        if tile == 'DOT':",
+            "            self.maze_grid[pr][pc] = None",
+            "            self.score += DOT_SCORE",
+            "        return tile",
+        ]));
+        var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };
+        var tool = new EditFileTool(gate);
+
+        var result = await tool.InvokeAsync(
+            Args(new
+            {
+                path,
+                // "elif" where the file says "if" — the exact class of near-miss observed.
+                old_text = "        elif tile == 'DOT':\n            self.maze_grid[pr][pc] = None",
+                new_text = "x",
+            }),
+            CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Contains("The closest text in", result.Text);
+        Assert.Contains("if tile == 'DOT':", result.Text);
+        // Line-numbered like read_file, so the model can locate the region directly.
+        Assert.Contains("3\t", result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_AnchorNotFound_NoSimilarText_FallsBackToPlainGuidance()
+    {
+        // Quoting the "closest" line when nothing actually resembles the anchor would mislead more
+        // than it helps, so below the similarity floor the message stays plain.
+        var path = Path.Combine(_tempDir, "file.cs");
+        await File.WriteAllTextAsync(path, "alpha\nbeta\ngamma");
+        var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };
+        var tool = new EditFileTool(gate);
+
+        var result = await tool.InvokeAsync(
+            Args(new { path, old_text = "zzzz qqqq wwww", new_text = "x" }),
+            CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Contains("'old_text' was not found in the file.", result.Text);
+        Assert.DoesNotContain("The closest text in", result.Text);
+    }
+
 }

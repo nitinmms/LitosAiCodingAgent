@@ -15,7 +15,9 @@ public sealed record LitosConfig(
     string? LocalBaseUrl = null,
     int? ShellCommandTimeoutSeconds = null,
     int? StreamIdleTimeoutSeconds = null,
-    int? ToolCallIdleTimeoutSeconds = null)
+    int? ToolCallIdleTimeoutSeconds = null,
+    int? ReadFileMaxBytes = null,
+    int? ShellMaxOutputBytes = null)
 {
     /// <summary>
     /// Hard wall-clock cap on a single `shell` tool command — see ShellTool's own doc comment
@@ -130,7 +132,9 @@ public sealed record LitosConfig(
             LocalBaseUrl: GetEnvironmentVariable("LOCAL_BASE_URL") ?? onDisk?.LocalBaseUrl,
             ShellCommandTimeoutSeconds: onDisk?.ShellCommandTimeoutSeconds,
             StreamIdleTimeoutSeconds: onDisk?.StreamIdleTimeoutSeconds,
-            ToolCallIdleTimeoutSeconds: onDisk?.ToolCallIdleTimeoutSeconds);
+            ToolCallIdleTimeoutSeconds: onDisk?.ToolCallIdleTimeoutSeconds,
+            ReadFileMaxBytes: onDisk?.ReadFileMaxBytes,
+            ShellMaxOutputBytes: onDisk?.ShellMaxOutputBytes);
     }
 
     public string? GetApiKey(string providerName) =>

@@ -4,16 +4,18 @@ using Litos.Agent.Tools;
 
 namespace Litos.Tools.FileSystem;
 
-public sealed class ReadFileTool : ITool
+public sealed class ReadFileTool(int? maxOutputBytes = null) : ITool
 {
     private const int DefaultMaxLines = 2000;
     private const int MaxLineLength = 2000;
+
+    private readonly int _maxOutputBytes = maxOutputBytes ?? OutputTruncation.DefaultMaxBytes;
 
     public string Name => "read_file";
 
     public string Description =>
         "Read the contents of a text file at the given path, formatted with line numbers " +
-        "(like 'cat -n'). Reads up to 2000 lines by default, starting at the top of the file. " +
+        "(like 'cat -n'). Output is truncated at 2000 lines or 50KB, whichever comes first. " +
         "For larger files, use 'offset' and 'limit' to page through the rest.";
 
     public JsonElement ParameterSchema { get; } = JsonSerializer.SerializeToElement(new
@@ -61,10 +63,24 @@ public sealed class ReadFileTool : ITool
             output.Append(i + 1).Append('\t').Append(line).Append('\n');
         }
 
-        if (endLine < lines.Length)
-            output.Append($"\n[Showing lines {startLine + 1}-{endLine} of {lines.Length}. Use offset={endLine + 1} to continue.]");
+        // Byte-capped after line numbering so the limit binds against what actually reaches the
+        // transcript. The line limit is already enforced above via `limit`/endLine, so only the
+        // byte limit can bind here — hence maxLines: int.MaxValue rather than DefaultMaxLines,
+        // which would otherwise re-cut an already-correct window and misreport the cause.
+        var truncation = OutputTruncation.Truncate(
+            output.ToString(), RetainEnd.Head, _maxOutputBytes, maxLines: int.MaxValue);
 
-        return ToolResult.Ok(output.ToString().TrimEnd('\n'));
+        // Where paging resumes: the byte cap can stop short of the line window the caller asked
+        // for, so continue from what was actually kept, not from endLine.
+        var lastLineShown = startLine + truncation.OutputLines;
+        var body = truncation.Text;
+
+        if (truncation.Truncated)
+            body += $"\n\n[Truncated: showing lines {startLine + 1}-{lastLineShown} of {lines.Length} ({_maxOutputBytes / 1024}KB limit). Use offset={lastLineShown + 1} to continue.]";
+        else if (endLine < lines.Length)
+            body += $"\n\n[Showing lines {startLine + 1}-{endLine} of {lines.Length}. Use offset={endLine + 1} to continue.]";
+
+        return ToolResult.Ok(body.TrimEnd('\n'));
     }
 
     private static bool TryGetPositiveInt(JsonElement arguments, string propertyName, int defaultValue, out int value, out string error)

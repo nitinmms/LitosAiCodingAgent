@@ -127,6 +127,36 @@ public class ShellToolTests
     }
 
     [Fact]
+    public async Task InvokeAsync_OutputExceedingLimit_IsTailRetained_KeepingTheEnd()
+    {
+        // Tail-retained rather than head-retained because command output puts the payload at the
+        // bottom: a failed build's errors come after all the restore/compile progress noise, so
+        // keeping the head would preserve the noise and discard the reason the command was run.
+        var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };
+        var tool = new ShellTool(gate, maxOutputBytes: 512);
+
+        var result = await tool.InvokeAsync(
+            Args(new { command = "for /L %i in (1,1,400) do @echo line%i" }), CancellationToken.None);
+
+        Assert.Contains("[Truncated:", result.Text);
+        // The end survives, the beginning does not.
+        Assert.Contains("line400", result.Text);
+        Assert.DoesNotContain("line1\n", result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_OutputWithinLimit_IsNotTruncated()
+    {
+        var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };
+        var tool = new ShellTool(gate, maxOutputBytes: 8 * 1024);
+
+        var result = await tool.InvokeAsync(Args(new { command = "echo hello" }), CancellationToken.None);
+
+        Assert.DoesNotContain("[Truncated:", result.Text);
+        Assert.Contains("hello", result.Text);
+    }
+
+    [Fact]
     public async Task InvokeAsync_UserCancelsBeforeHardTimeout_PropagatesCancellation()
     {
         var gate = new FakeApprovalGate { Decision = ApprovalDecision.Approve };

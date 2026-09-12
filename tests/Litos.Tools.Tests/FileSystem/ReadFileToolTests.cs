@@ -146,6 +146,57 @@ public class ReadFileToolTests : IDisposable
     }
 
     [Fact]
+    public async Task InvokeAsync_FileExceedingByteLimit_IsTruncated_WithOffsetToContinue()
+    {
+        // The gap a line-only cap misses: comfortably under the 2000-line limit, but far past any
+        // sane byte budget. Measured in this repo, src/Litos.Gui/MainWindow.axaml.cs is 102KB in
+        // well under 2000 lines — a single read of it exceeds a small local model's entire context
+        // window, which the provider then rejects outright.
+        var path = Path.Combine(_tempDir, "big.txt");
+        await File.WriteAllLinesAsync(path, Enumerable.Range(1, 200).Select(_ => new string('x', 1000)));
+        var tool = new ReadFileTool(maxOutputBytes: 8 * 1024);
+
+        var result = await tool.InvokeAsync(Args(new { path }), CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Contains("[Truncated:", result.Text);
+        Assert.Contains("8KB limit", result.Text);
+        Assert.Contains("Use offset=", result.Text);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(result.Text) < 10 * 1024);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_TruncatedRead_OffsetHintResumesAtFirstOmittedLine()
+    {
+        // The continuation offset must come from what was actually kept, not from the line window
+        // originally requested — otherwise a byte-capped read silently skips the lines between
+        // where the bytes ran out and where the line limit would have stopped.
+        var path = Path.Combine(_tempDir, "big.txt");
+        await File.WriteAllLinesAsync(path, Enumerable.Range(1, 500).Select(i => $"line{i}"));
+        var tool = new ReadFileTool(maxOutputBytes: 1024);
+
+        var result = await tool.InvokeAsync(Args(new { path }), CancellationToken.None);
+
+        var lastKept = result.Text.Split('\n').Last(l => l.Contains('\t'));
+        var lastKeptNumber = int.Parse(lastKept.Split('\t')[0]);
+        Assert.Contains($"Use offset={lastKeptNumber + 1} to continue.", result.Text);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_FileWithinByteLimit_IsNotTruncated()
+    {
+        var path = Path.Combine(_tempDir, "small.txt");
+        await File.WriteAllLinesAsync(path, new[] { "alpha", "beta", "gamma" });
+        var tool = new ReadFileTool(maxOutputBytes: 8 * 1024);
+
+        var result = await tool.InvokeAsync(Args(new { path }), CancellationToken.None);
+
+        Assert.DoesNotContain("[Truncated:", result.Text);
+        Assert.Contains("1\talpha", result.Text);
+        Assert.Contains("3\tgamma", result.Text);
+    }
+
+    [Fact]
     public async Task InvokeAsync_InvalidOffset_ReturnsError()
     {
         var path = Path.Combine(_tempDir, "file.txt");

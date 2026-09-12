@@ -241,12 +241,34 @@ public sealed class LocalChatProvider(HttpClient httpClient) : IChatProvider
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    /// <summary>
+    /// Falls back to an empty object on genuinely malformed JSON (truncated/broken argument
+    /// blobs), the same as the empty/whitespace case below, rather than letting JsonException
+    /// escape into StreamAsync's async-iterator body. Uncaught there, it used to propagate all
+    /// the way up through AgentLoop's stream-consumption loop as a generic streamError, ending
+    /// the whole turn (ErrorOccurred, which is UI-only and never persisted to the transcript)
+    /// instead of the tool call simply failing. Local models are more prone to malformed
+    /// tool-call arguments than hosted ones (see JsonElementToolArgumentExtensions), so this
+    /// path is hit in practice, not just in theory. An empty object lets the call still reach
+    /// InvokeToolSafelyAsync, where each tool's required-argument check (via GetStringOrNull)
+    /// produces a normal, model-visible ToolResult.Error instead of crashing the stream — the
+    /// same "error becomes a tool result, model decides what to do next" recovery path used
+    /// everywhere else in the harness.
+    /// </summary>
     private static JsonElement ParseToolArguments(StringBuilder json)
     {
         var text = json.ToString();
-        return string.IsNullOrWhiteSpace(text)
-            ? JsonDocument.Parse("{}").RootElement
-            : JsonDocument.Parse(text).RootElement;
+        if (string.IsNullOrWhiteSpace(text))
+            return JsonDocument.Parse("{}").RootElement;
+
+        try
+        {
+            return JsonDocument.Parse(text).RootElement;
+        }
+        catch (JsonException)
+        {
+            return JsonDocument.Parse("{}").RootElement;
+        }
     }
 
     private static LocalMessage ToLocalMessage(LM.ChatMessage message)

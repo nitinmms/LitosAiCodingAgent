@@ -41,7 +41,7 @@ public static class LitosHostBuilder
         services.AddSingleton<Compactor>();
         services.AddSingleton<Reflector>();
 
-        services.AddSingleton<ITool, ReadFileTool>();
+        services.AddSingleton<ITool>(_ => new ReadFileTool(maxOutputBytes: config.ReadFileMaxBytes));
         services.AddSingleton<ITool, WriteFileTool>();
         services.AddSingleton<ITool, EditFileTool>();
         services.AddSingleton<ITool, ListDirectoryTool>();
@@ -53,7 +53,8 @@ public static class LitosHostBuilder
         // building the container.
         services.AddSingleton<ITool>(sp => new ShellTool(
             sp.GetRequiredService<IToolApprovalGate>(),
-            hardTimeout: config.ShellCommandTimeout));
+            hardTimeout: config.ShellCommandTimeout,
+            maxOutputBytes: config.ShellMaxOutputBytes));
         // Registered unconditionally (like Anthropic's key below) even without a Tavily key so
         // the tool still appears in the model's tool list; InvokeAsync reports the missing-key
         // error itself rather than the tool silently disappearing when unconfigured.

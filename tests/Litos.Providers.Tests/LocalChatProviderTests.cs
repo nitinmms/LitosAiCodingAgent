@@ -252,6 +252,33 @@ public class LocalChatProviderTests
     }
 
     [Fact]
+    public async Task StreamAsync_MalformedToolCallArgumentsJson_FallsBackToEmptyObject_WithoutThrowing()
+    {
+        // A local model can emit truncated/broken argument JSON (e.g. cut off mid-stream by a
+        // context-length limit, or just a weaker model producing invalid JSON). Before this fix,
+        // JsonDocument.Parse threw uncaught here, which propagated out of the async-iterator body,
+        // was caught generically by AgentLoop as a streamError, and ended the whole turn instead
+        // of the tool call simply failing like any other bad tool call does.
+        var (provider, handler) = CreateProvider();
+        var sse = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\"}}]}}]}\n\n" +
+                  "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\": \\\"foo.cs\\\"\"}}]}}]}\n\n" +
+                  "data: [DONE]\n\n";
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(sse));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "model");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var toolCallCompleted = Assert.Single(events.OfType<ToolCallCompleted>());
+        Assert.Equal(JsonValueKind.Object, toolCallCompleted.Arguments.ValueKind);
+        Assert.False(toolCallCompleted.Arguments.EnumerateObject().Any());
+
+        var completed = Assert.Single(events.OfType<MessageCompleted>());
+        var toolUse = Assert.IsType<ToolUseBlock>(Assert.Single(completed.Message.Content));
+        Assert.Equal(JsonValueKind.Object, toolUse.Arguments.ValueKind);
+        Assert.False(toolUse.Arguments.EnumerateObject().Any());
+    }
+
+    [Fact]
     public async Task StreamAsync_NoUsageInChunk_DefaultsToZero()
     {
         // Many local servers (LM Studio, older Ollama builds) don't emit an OpenAI-style
