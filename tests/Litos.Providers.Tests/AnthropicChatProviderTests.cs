@@ -297,4 +297,76 @@ public class AnthropicChatProviderTests
         Assert.Equal(["Claude 3.5 Sonnet", "Claude 3 Opus"], models.Select(m => m.DisplayName));
         Assert.All(models, m => Assert.False(m.IsDefault));
     }
+
+    // ---- prompt caching ----
+
+    [Fact]
+    public async Task StreamAsync_MarksSystemPromptWithCacheControl()
+    {
+        // The tools+system prefix is byte-identical on every request of every turn and is untouched
+        // by compaction (Transcript.ApplyCompaction rewrites only messages), so it is the one part
+        // of the payload that is always worth caching. Anthropic caching is opt-in: without the
+        // marker every round silently re-paid full input price for an identical prefix.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalTextSse));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "model", SystemPrompt: "you are a helpful agent");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        var system = json.RootElement.GetProperty("system")[0];
+        Assert.Equal("ephemeral", system.GetProperty("cache_control").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task StreamAsync_MarksLastToolWithCacheControl()
+    {
+        // Anthropic caches tools as a single prefix up to and including whichever tool carries the
+        // marker, so it belongs on the last one — marking an earlier tool would leave the rest of
+        // the array uncached.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalTextSse));
+        var schema = JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement;
+        var tools = new[]
+        {
+            new ToolSchema("first", "first tool", schema),
+            new ToolSchema("last", "last tool", schema),
+        };
+        var request = new ChatRequest([ChatMessage.User("hi")], tools, "model");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        var toolArray = json.RootElement.GetProperty("tools");
+        Assert.False(toolArray[0].TryGetProperty("cache_control", out _));
+        Assert.Equal("ephemeral", toolArray[toolArray.GetArrayLength() - 1].GetProperty("cache_control").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task StreamAsync_ReportsCacheTokensSeparatelyFromInputTokens()
+    {
+        // input_tokens, cache_creation_input_tokens and cache_read_input_tokens are mutually
+        // exclusive: input_tokens counts only what follows the last cache breakpoint. Dropping the
+        // cached counts (as this provider did before caching was enabled) makes a long cached
+        // session look nearly empty to context accounting.
+        var (provider, handler) = CreateProvider();
+        // Usage is asserted from the message_delta chunk: that is where the real API reports the
+        // final counts, and it is the chunk the SDK's stream parser surfaces as chunk.Usage.
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            MinimalTextSse +
+            "event: message_delta\n" +
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"input_tokens\":50,\"output_tokens\":7,\"cache_creation_input_tokens\":2000,\"cache_read_input_tokens\":98000}}\n\n" +
+            "event: message_stop\n" +
+            "data: {\"type\":\"message_stop\"}\n\n"));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "model");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var usage = events.OfType<MessageCompleted>().Single().Usage;
+        Assert.Equal(50, usage.InputTokens);
+        Assert.Equal(2_000, usage.CacheCreationInputTokens);
+        Assert.Equal(98_000, usage.CacheReadInputTokens);
+        // 50 billed-as-new input tokens, but 100_050 tokens of context window actually occupied.
+        Assert.Equal(100_050, usage.TotalInputTokens);
+    }
 }

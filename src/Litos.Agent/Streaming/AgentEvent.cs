@@ -45,4 +45,26 @@ public sealed record ToolCallSkipped(string CallId, string Reason) : AgentEvent;
 /// </summary>
 public sealed record StreamHeartbeat : AgentEvent;
 
-public sealed record UsageInfo(int InputTokens, int OutputTokens);
+/// <summary>
+/// Token accounting for one assistant response. InputTokens/OutputTokens are the billed
+/// non-cached counts.
+///
+/// CacheCreationInputTokens/CacheReadInputTokens are the prompt-caching split, reported by
+/// providers that support it (Anthropic explicitly; OpenAI and Gemini cache automatically but
+/// surface the split differently, and currently leave these zero here). They are *not* added into
+/// InputTokens: Anthropic already reports InputTokens as the non-cached remainder, so summing
+/// them would double-count what the provider already separated. The three counts are mutually
+/// exclusive: InputTokens covers only what follows the last cache breakpoint, so once caching is
+/// active it is *not* a measure of how full the context window is. Anything reasoning about window
+/// occupancy (CompactionPlanner.EstimatedTokensUsed, ContextBreakdown) must use TotalInputTokens;
+/// InputTokens alone remains the right figure for billed, non-cached cost.
+/// </summary>
+public sealed record UsageInfo(int InputTokens, int OutputTokens, int CacheCreationInputTokens = 0, int CacheReadInputTokens = 0)
+{
+    /// <summary>
+    /// Every input token that occupied the context window this turn, cached or not — the figure
+    /// context-window accounting needs, as opposed to the billed-token figure InputTokens alone
+    /// represents once caching is active.
+    /// </summary>
+    public int TotalInputTokens => InputTokens + CacheCreationInputTokens + CacheReadInputTokens;
+}

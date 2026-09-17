@@ -16,18 +16,40 @@ export function estimateTokens(text: string): number {
 }
 
 /**
+ * Mirrors Litos.Agent.Session.CompactionSettings.ForContextWindow's TriggerAtTokens (see
+ * Compaction.cs) — the point at which the server actually fires compaction, which is what the
+ * meter's Critical band means. Kept in lockstep with those constants: 0.65 of the window, capped
+ * at 250_000 absolute, and never above the window's own capacity.
+ *
+ * Windows at or below SMALL_WINDOW_THRESHOLD keep the capacity-only trigger (75% of the window via
+ * the window/4 reserve cap) rather than the proportional bound, because compacting a small local
+ * model early costs more than it saves — see ForContextWindow's own remarks.
+ */
+const TRIGGER_FRACTION_OF_WINDOW = 0.65;
+const MAX_TRIGGER_TOKENS = 250_000;
+const SMALL_WINDOW_THRESHOLD_TOKENS = 64_000;
+
+function triggerAtTokens(contextLength: number): number {
+    const reserveTokens = Math.min(16_000, Math.floor(contextLength / 4));
+    const capacityBound = contextLength - reserveTokens;
+    if (contextLength <= SMALL_WINDOW_THRESHOLD_TOKENS) return capacityBound;
+    const proportionalBound = Math.min(Math.floor(contextLength * TRIGGER_FRACTION_OF_WINDOW), MAX_TRIGGER_TOKENS);
+    return Math.min(capacityBound, proportionalBound);
+}
+
+/**
  * Mirrors Litos.Agent.Session.ContextUsage.Compute's fraction/level formula (see ContextUsage.cs)
  * so extension.ts's client-side running estimate renders with the same Warning/Critical banding
- * the real server computation would — reserveTokens uses the same contextWindowTokens/4 cap
- * CompactionSettings.ForContextWindow applies, not the raw 16_000 default, for the same reason:
- * a small local-model window must not push reserveThreshold negative and report Critical from the
- * very first token.
+ * the real server computation would. Bands are measured against the compaction trigger, not the
+ * window's capacity: since the trigger became proportional, Critical means "compaction is about to
+ * fire", which on a large window is well below full (250_000 of a 1M window) — the meter tracks
+ * the decision, not the cliff. Keeping the old capacity-based threshold here would have shown
+ * Normal all the way to 984_000 on a 1M model while the server compacted at 250_000.
  */
 export function computeLiveUsage(usedTokens: number, contextLength: number, isStale: boolean): ContextUsage {
-    const reserveTokens = Math.min(16_000, Math.floor(contextLength / 4));
-    const reserveThreshold = contextLength - reserveTokens;
+    const triggerThreshold = triggerAtTokens(contextLength);
     const level: ContextUsage["level"] =
-        usedTokens >= reserveThreshold ? "Critical" : usedTokens >= reserveThreshold * 0.6 ? "Warning" : "Normal";
+        usedTokens >= triggerThreshold ? "Critical" : usedTokens >= triggerThreshold * 0.6 ? "Warning" : "Normal";
     const fraction = contextLength <= 0 ? 0 : Math.min(1, Math.max(0, usedTokens / contextLength));
     return { usedTokens, contextLength, fraction, level, isStale };
 }

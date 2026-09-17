@@ -164,7 +164,19 @@ function updateLiveUsageForEvent(state: PanelState, event: AgentEventParsed): vo
         // "already-sent conversation" term entirely, the same way CompactionPlanner.
         // EstimatedTokensUsed rebases on transcript.LastUsage rather than continuing to add
         // estimated deltas on top of a stale real number.
-        usedTokens = event.usage.inputTokens + event.usage.outputTokens;
+        //
+        // The cache counts must be included: inputTokens, cacheCreationInputTokens and
+        // cacheReadInputTokens are mutually exclusive, with inputTokens covering only what follows
+        // the last cache breakpoint. Summing only inputTokens + outputTokens made this row collapse
+        // to a few hundred tokens mid-turn on a cached session (the uncached tail) while the
+        // breakdown panel — which computes server-side from UsageInfo.TotalInputTokens — kept
+        // showing the true total, then the two converged at turn end when refreshContextUsage
+        // overwrote the bad estimate with the server's figure. Mirrors UsageInfo.TotalInputTokens.
+        usedTokens =
+            event.usage.inputTokens +
+            event.usage.cacheCreationInputTokens +
+            event.usage.cacheReadInputTokens +
+            event.usage.outputTokens;
     } else {
         return;
     }

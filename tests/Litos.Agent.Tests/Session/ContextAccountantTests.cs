@@ -44,4 +44,31 @@ public class ContextAccountantTests
 
         Assert.Null(request.SystemPrompt);
     }
+
+    [Fact]
+    public void BuildRequest_PassesSessionIdThrough()
+    {
+        // AgentLoop supplies the turn's sessionId here so providers with a per-conversation routing
+        // key (OpenRouter's session_id) can pin sticky routing and keep a written prompt cache
+        // reachable on later rounds. Dropping the argument would compile and silently disable that.
+        var accountant = new ContextAccountant();
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.User("hi"));
+
+        var request = accountant.BuildRequest(transcript, [], "model", null, "sess-42");
+
+        Assert.Equal("sess-42", request.SessionId);
+    }
+
+    [Fact]
+    public void BuildRequest_SessionIdIsNull_WhenNotSupplied()
+    {
+        var accountant = new ContextAccountant();
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.User("hi"));
+
+        var request = accountant.BuildRequest(transcript, [], "model", null);
+
+        Assert.Null(request.SessionId);
+    }
 }

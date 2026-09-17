@@ -9,4 +9,5 @@ public sealed record ChatRequest(
     string Model,
     string? SystemPrompt = null,
     double? Temperature = null,
-    int? MaxOutputTokens = null);
+    int? MaxOutputTokens = null,
+    string? SessionId = null);

@@ -103,7 +103,7 @@ public static class ContextBreakdown
         var lastUsage = transcript.LastUsage;
         var scaled = Scale(entries, rawTotal, lastUsage);
 
-        return new ContextBreakdownSnapshot(scaled, scaled.Sum(e => e.EstimatedTokens), lastUsage is null ? null : lastUsage.InputTokens + lastUsage.OutputTokens);
+        return new ContextBreakdownSnapshot(scaled, scaled.Sum(e => e.EstimatedTokens), lastUsage is null ? null : lastUsage.TotalInputTokens + lastUsage.OutputTokens);
     }
 
     /// <summary>
@@ -136,7 +136,9 @@ public static class ContextBreakdown
         if (lastUsage is null || rawTotal == 0)
             return entries;
 
-        var target = lastUsage.InputTokens + lastUsage.OutputTokens;
+        // TotalInputTokens so a cached prefix still counts toward window occupancy — see
+        // CompactionPlanner.EstimatedTokensUsed.
+        var target = lastUsage.TotalInputTokens + lastUsage.OutputTokens;
         var factor = (double)target / rawTotal;
 
         return entries

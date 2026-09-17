@@ -129,7 +129,7 @@ public sealed class AgentLoop(
                 await store.AppendAsync(owner, sessionId, TranscriptEntry.FromMessage(transcript.Messages[0]), ct);
             }
 
-            var request = accountant.BuildRequest(transcript, tools.Schemas, model, systemPrompt);
+            var request = accountant.BuildRequest(transcript, tools.Schemas, model, systemPrompt, sessionId);
             var pendingToolCalls = new List<(string CallId, string Name, JsonElement Args)>();
 
             // Manually drive the enumerator instead of `await foreach` so a provider-thrown

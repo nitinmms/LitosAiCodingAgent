@@ -33,7 +33,19 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
             Stream: true,
             Temperature: request.Temperature,
             MaxTokens: request.MaxOutputTokens,
-            Tools: request.Tools.Count == 0 ? null : [.. request.Tools.Select(ToOpenRouterTool)]);
+            Tools: request.Tools.Count == 0 ? null : [.. request.Tools.Select(ToOpenRouterTool)],
+            // See OpenRouterCacheControl. Anthropic models routed through OpenRouter cache nothing
+            // without this — the native Anthropic path sets PromptCaching on MessageParameters, but
+            // that is SDK-specific and does not apply to OpenRouter's OpenAI-compatible wire format.
+            CacheControl: new OpenRouterCacheControl("ephemeral"),
+            // Pins sticky routing to one upstream provider from the very first request. Without it
+            // OpenRouter only starts pinning *after* it observes a cache hit, so the round that
+            // wrote the cache can be answered by a different upstream than the round that would
+            // have read it — the write is then paid for and never reused. Also groups the whole
+            // conversation in OpenRouter's Logs Sessions view. Capped at 256 chars per their API;
+            // session ids here are short (GUID-like), but truncate rather than risk a 400 on a
+            // caller that uses something longer.
+            SessionId: request.SessionId is { Length: > 256 } id ? id[..256] : request.SessionId);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "chat/completions")
         {
@@ -65,6 +77,8 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
         var toolCallOrder = new List<int>();
         var inputTokens = 0;
         var outputTokens = 0;
+        var cacheReadTokens = 0;
+        var cacheWriteTokens = 0;
 
         while (await reader.ReadLineAsync(ct) is { } line)
         {
@@ -92,7 +106,21 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
 
             if (chunk.Usage is { } usage)
             {
-                inputTokens = usage.PromptTokens;
+                // OpenRouter normalizes most providers so PromptTokens *includes* the cached
+                // counts (its own docs show prompt_tokens=10_339 with cached_tokens=10_318), but
+                // that normalization is not reliable across every upstream — Anthropic routes in
+                // particular have been observed reporting the cached counts as additional
+                // categories *not* folded into prompt_tokens, understating it. UsageInfo's three
+                // fields must be mutually exclusive so TotalInputTokens is a plain sum, so rather
+                // than trusting either convention, detect which one this response used:
+                // PromptTokens larger than the cached counts means inclusive (subtract them out),
+                // otherwise it is already the non-cached remainder (pass through untouched).
+                // Guessing wrong in the exclusive direction would zero inputTokens and make a
+                // fully-cached session look empty, which is what silently disables compaction.
+                cacheReadTokens = usage.PromptTokensDetails?.CachedTokens ?? 0;
+                cacheWriteTokens = usage.PromptTokensDetails?.CacheWriteTokens ?? 0;
+                var cachedTotal = cacheReadTokens + cacheWriteTokens;
+                inputTokens = usage.PromptTokens > cachedTotal ? usage.PromptTokens - cachedTotal : usage.PromptTokens;
                 outputTokens = usage.CompletionTokens;
             }
 
@@ -136,7 +164,7 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
         foreach (var index in toolCallOrder)
             contentBlocks.Add(new LM.ToolUseBlock(toolCallIds[index], toolCallNames[index], ParseToolArguments(toolCallJson[index])));
 
-        yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), new UsageInfo(inputTokens, outputTokens));
+        yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), new UsageInfo(inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens));
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -203,7 +231,19 @@ internal sealed record OpenRouterChatRequest(
     bool Stream,
     double? Temperature,
     int? MaxTokens,
-    List<OpenRouterTool>? Tools);
+    List<OpenRouterTool>? Tools,
+    OpenRouterCacheControl? CacheControl,
+    [property: JsonPropertyName("session_id")] string? SessionId);
+
+/// <summary>
+/// Top-level cache_control, OpenRouter's "automatic" caching mode: it places the breakpoint on
+/// the last cacheable block and advances it forward as the conversation grows, which is what an
+/// agent loop wants — explicit per-block breakpoints are capped at four and would have to be
+/// re-placed by hand every round. Only providers that require explicit breakpoints act on this
+/// (Anthropic, Qwen); the ones that cache automatically (OpenAI, Gemini 2.5, Grok, DeepSeek,
+/// Groq, Moonshot, Z.AI) ignore it, so sending it unconditionally is safe and costs nothing.
+/// </summary>
+internal sealed record OpenRouterCacheControl(string Type);
 
 // Content is either a plain string (text-only message) or a List<OpenRouterContentPart>
 // (a message that includes an image) — OpenRouter's OpenAI-compatible wire format accepts
@@ -253,4 +293,18 @@ internal sealed record OpenRouterToolCallDelta(int Index, string? Id, OpenRouter
 
 internal sealed record OpenRouterFunctionCallDelta(string? Name, string? Arguments);
 
-internal sealed record OpenRouterUsage(int PromptTokens, int CompletionTokens);
+/// <summary>
+/// PromptTokens is *inclusive* of any cached tokens — OpenRouter reports a 10_339-token prompt
+/// with 10_318 of those served from cache as prompt_tokens=10_339, cached_tokens=10_318. This is
+/// the opposite of Anthropic's native API, where input_tokens counts only the post-breakpoint
+/// remainder and the cached counts must be added to get the true total (see UsageInfo). So the
+/// cache split is carried here for visibility only and must NOT be added to PromptTokens.
+/// </summary>
+internal sealed record OpenRouterUsage(
+    int PromptTokens,
+    int CompletionTokens,
+    [property: JsonPropertyName("prompt_tokens_details")] OpenRouterPromptTokensDetails? PromptTokensDetails);
+
+internal sealed record OpenRouterPromptTokensDetails(
+    [property: JsonPropertyName("cached_tokens")] int? CachedTokens,
+    [property: JsonPropertyName("cache_write_tokens")] int? CacheWriteTokens);

@@ -61,7 +61,27 @@ describe("parseAgentEvent", () => {
     it("classifies MessageCompleted, carrying the Usage payload", () => {
         expect(
             parseAgentEvent('{"Message":{"Role":1,"Content":[]},"Usage":{"InputTokens":1,"OutputTokens":2}}'),
-        ).toEqual({ type: "messageCompleted", usage: { inputTokens: 1, outputTokens: 2 } });
+        ).toEqual({
+            type: "messageCompleted",
+            usage: { inputTokens: 1, outputTokens: 2, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+        });
+    });
+
+    it("carries the prompt-cache token split when the host reports one", () => {
+        // Regression test for the context row collapsing mid-turn on a cached session. InputTokens,
+        // CacheCreationInputTokens and CacheReadInputTokens are mutually exclusive — InputTokens
+        // counts only what follows the last cache breakpoint — so dropping the cache fields here
+        // made extension.ts's running estimate report just the uncached tail (a few hundred tokens)
+        // while the breakdown panel, computed server-side from UsageInfo.TotalInputTokens, showed
+        // the real total.
+        expect(
+            parseAgentEvent(
+                '{"Message":{"Role":1,"Content":[]},"Usage":{"InputTokens":3,"OutputTokens":4,"CacheCreationInputTokens":2000,"CacheReadInputTokens":22000}}',
+            ),
+        ).toEqual({
+            type: "messageCompleted",
+            usage: { inputTokens: 3, outputTokens: 4, cacheCreationInputTokens: 2000, cacheReadInputTokens: 22000 },
+        });
     });
 
     it("classifies ErrorOccurred", () => {

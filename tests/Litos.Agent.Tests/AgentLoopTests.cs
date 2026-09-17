@@ -947,6 +947,44 @@ public class AgentLoopTests
         Assert.True(resultBlock.IsError);
         Assert.Equal("File not found: missing.txt", resultBlock.Text);
     }
+    // ---- session id ----
+
+    [Fact]
+    public async Task RunTurnAsync_PutsTheTurnsSessionId_OnEveryProviderRequest()
+    {
+        // The plumbing test that actually matters: ContextAccountant forwarding sessionId proves
+        // nothing if AgentLoop never passes it. Dropping the argument at the BuildRequest call site
+        // compiles cleanly (it is an optional parameter) and silently disables OpenRouter sticky
+        // routing — a prompt cache written on one round then becomes unreachable on the next,
+        // because without a session key a different upstream may answer it.
+        var provider = new FakeChatProvider();
+        provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("ok")]), new UsageInfo(1, 1)));
+        var loop = CreateLoop(provider);
+
+        await RunToCompletionAsync(loop, Transcript.CreateNew("/repo"), "hi");
+
+        Assert.Equal(SessionId, Assert.Single(provider.ReceivedRequests).SessionId);
+    }
+
+    [Fact]
+    public async Task RunTurnAsync_KeepsTheSameSessionId_AcrossEveryToolRoundOfOneTurn()
+    {
+        // Sticky routing only helps if the key is stable for the whole turn: a turn can span many
+        // tool-calling rounds and each round is its own provider request, so a per-request id would
+        // defeat the point entirely.
+        var args = JsonDocument.Parse("{}").RootElement;
+        var provider = new FakeChatProvider();
+        provider.Enqueue(
+            new ToolCallCompleted("call-1", "fake_tool", args),
+            new MessageCompleted(ChatMessage.Assistant([new ToolUseBlock("call-1", "fake_tool", args)]), new UsageInfo(1, 1)));
+        provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(1, 1)));
+        var loop = CreateLoop(provider, tools: [new FakeTool()]);
+
+        await RunToCompletionAsync(loop, Transcript.CreateNew("/repo"), "hi");
+
+        Assert.True(provider.ReceivedRequests.Count > 1, "expected more than one tool round");
+        Assert.All(provider.ReceivedRequests, r => Assert.Equal(SessionId, r.SessionId));
+    }
 }
 
 /// <summary>

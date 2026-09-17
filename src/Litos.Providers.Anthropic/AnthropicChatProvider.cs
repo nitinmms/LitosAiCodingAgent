@@ -39,6 +39,18 @@ public sealed class AnthropicChatProvider(AnthropicClient client, OpenRouterMode
             Stream = true,
             Tools = request.Tools.Count == 0 ? null : [.. request.Tools.Select(ToAnthropicTool)],
             System = request.SystemPrompt is null ? null : [new SystemMessage(request.SystemPrompt)],
+            // Caches the tools + system-prompt prefix, which is byte-identical on every request of
+            // every turn in a session (AgentLoop builds the system prompt once per turn and passes
+            // the same tool schemas each round) and — importantly — is untouched by compaction:
+            // Transcript.ApplyCompaction only rewrites messages, so a cut invalidates the message
+            // suffix but never this prefix. Anthropic caching is opt-in; without this, every round
+            // of every turn re-paid full input price for an identical prefix. OpenAI and Gemini
+            // cache equivalent prefixes automatically, so this brings the Anthropic path in line
+            // with what those providers were already doing for free.
+            //
+            // Prefixes below the model-specific minimum (512-4096 tokens) are silently not cached
+            // rather than erroring, which is harmless: usage then simply reports no cache activity.
+            PromptCaching = PromptCacheType.AutomaticToolsAndSystem,
         };
 
         var textBuilder = new StringBuilder();
@@ -89,7 +101,15 @@ public sealed class AnthropicChatProvider(AnthropicClient client, OpenRouterMode
         foreach (var callId in toolCallOrder)
             contentBlocks.Add(new LM.ToolUseBlock(callId, toolCallNames[callId], ParseToolArguments(toolCallJson[callId])));
 
-        var usage = new UsageInfo(lastUsage?.InputTokens ?? 0, lastUsage?.OutputTokens ?? 0);
+        // input_tokens, cache_creation_input_tokens and cache_read_input_tokens are mutually
+        // exclusive counts (input_tokens covers only what follows the last cache breakpoint), so
+        // the cached portions must be carried separately rather than dropped — see UsageInfo, and
+        // ContextAccountant/CompactionPlanner which need the total to measure window occupancy.
+        var usage = new UsageInfo(
+            lastUsage?.InputTokens ?? 0,
+            lastUsage?.OutputTokens ?? 0,
+            lastUsage?.CacheCreationInputTokens ?? 0,
+            lastUsage?.CacheReadInputTokens ?? 0);
         yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), usage);
     }
 

@@ -12,13 +12,13 @@ public sealed record ContextUsageSnapshot(int UsedTokens, int ContextLength, dou
 
 /// <summary>
 /// Turns Transcript's real+estimated usage (CompactionPlanner.EstimatedTokensUsed) into a
-/// percentage and urgency level for display, using the same reserve-threshold concept
+/// percentage and urgency level for display, banded against the same compaction trigger
 /// CompactionPlanner already applies when deciding whether to fire compaction.
 /// </summary>
 public static class ContextUsage
 {
-    /// <summary>Fraction (of ContextWindowTokens - ReserveTokens) above which usage is shown as Warning rather than Normal.</summary>
-    public const double WarningFractionOfReserveThreshold = 0.6;
+    /// <summary>Fraction (of the compaction trigger threshold) above which usage is shown as Warning rather than Normal.</summary>
+    public const double WarningFractionOfTriggerThreshold = 0.6;
 
     /// <summary>
     /// MessagesSinceLastUsage beyond which the char/4 trailing estimate (CompactionPlanner.
@@ -37,13 +37,20 @@ public static class ContextUsage
     private static readonly CompactionSettings DefaultCompactionSettings = new();
 
     /// <summary>
-    /// reserveTokens defaults to CompactionSettings.ForContextWindow(contextLength).ReserveTokens
-    /// (the same reserve Compactor itself uses to decide when to fire, scaled to this specific
-    /// contextLength — not the raw 16K default) rather than restating its own constant, so the
-    /// meter's Warning/Critical banding can't silently drift from when compaction actually kicks
-    /// in. Using the unscaled 16K default here directly would push reserveThreshold negative for
-    /// any contextLength below it — e.g. a local model's typical 8K-16K window — making the meter
-    /// report Critical from the very first token even at, say, 5% real usage.
+    /// Bands are measured against the same TriggerAtTokens the Compactor itself uses to decide
+    /// when to fire (scaled to this specific contextLength via CompactionSettings.ForContextWindow,
+    /// not a raw default) rather than restating a constant here, so the meter's Warning/Critical
+    /// banding can't silently drift from when compaction actually kicks in. Critical therefore
+    /// means "compaction is about to fire", which since the trigger became proportional is well
+    /// below the model's actual capacity on large windows (250K of a 1M window) — that is the
+    /// point: the meter tracks the decision, not the cliff.
+    ///
+    /// reserveTokens, when supplied, still overrides the derived trigger with contextLength -
+    /// reserveTokens, preserving the pre-existing meaning of this parameter for callers that pass
+    /// an explicit reserve. Passing an unscaled 16K reserve against a contextLength below it —
+    /// e.g. a local model's typical 8K-16K window — would push the threshold negative and make the
+    /// meter report Critical from the very first token, which is why the default path derives
+    /// everything from ForContextWindow instead.
     /// </summary>
     public static ContextUsageSnapshot? Compute(Transcript transcript, int contextLength, int? reserveTokens = null)
     {
@@ -53,10 +60,12 @@ public static class ContextUsage
 
         var rawFraction = contextLength <= 0 ? 0 : (double)usedTokens.Value / contextLength;
         var fraction = Math.Clamp(rawFraction, 0, 1);
-        var reserveThreshold = contextLength - (reserveTokens ?? DefaultCompactionSettings.ForContextWindow(contextLength).ReserveTokens);
-        var level = usedTokens >= reserveThreshold
+        var triggerThreshold = reserveTokens is { } reserve
+            ? contextLength - reserve
+            : DefaultCompactionSettings.ForContextWindow(contextLength).TriggerAtTokens;
+        var level = usedTokens >= triggerThreshold
             ? ContextUsageLevel.Critical
-            : usedTokens >= reserveThreshold * WarningFractionOfReserveThreshold
+            : usedTokens >= triggerThreshold * WarningFractionOfTriggerThreshold
                 ? ContextUsageLevel.Warning
                 : ContextUsageLevel.Normal;
         var isStale = transcript.MessagesSinceLastUsage > StaleAfterMessagesSinceLastUsage;

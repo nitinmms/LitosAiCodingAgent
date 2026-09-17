@@ -20,7 +20,7 @@ export type AgentEventParsed =
     | { type: "toolCallCompleted"; callId: string; toolName: string }
     | { type: "toolCallResult"; callId: string; toolName: string; success: boolean; resultText: string }
     | { type: "toolCallSkipped"; callId: string; reason: string }
-    | { type: "messageCompleted"; usage: { inputTokens: number; outputTokens: number } }
+    | { type: "messageCompleted"; usage: { inputTokens: number; outputTokens: number; cacheCreationInputTokens: number; cacheReadInputTokens: number } }
     | { type: "error"; message: string }
     | { type: "compaction" }
     | { type: "approvalRequested"; approvalId: string; toolName: string; summary: string; diffOrCommand: string | null }
@@ -81,7 +81,17 @@ export function parseAgentEvent(json: string): AgentEventParsed {
         return { type: "toolCallStarted", callId: obj.CallId, toolName: obj.ToolName };
     }
     if (obj.Message !== undefined && obj.Usage !== undefined) {
-        return { type: "messageCompleted", usage: { inputTokens: obj.Usage.InputTokens, outputTokens: obj.Usage.OutputTokens } };
+        // Cache counts default to 0 for providers that report none, and for a host binary
+        // predating their addition to UsageInfo — so an older host still parses cleanly.
+        return {
+            type: "messageCompleted",
+            usage: {
+                inputTokens: obj.Usage.InputTokens,
+                outputTokens: obj.Usage.OutputTokens,
+                cacheCreationInputTokens: obj.Usage.CacheCreationInputTokens ?? 0,
+                cacheReadInputTokens: obj.Usage.CacheReadInputTokens ?? 0,
+            },
+        };
     }
     if (obj.Exception !== undefined) {
         return { type: "error", message: obj.Exception?.Message || "An error occurred." };

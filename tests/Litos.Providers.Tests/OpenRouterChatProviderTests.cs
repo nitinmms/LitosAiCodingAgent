@@ -299,4 +299,152 @@ public class OpenRouterChatProviderTests
         Assert.Equal("model-b", models[1].DisplayName);
         Assert.All(models, m => Assert.False(m.IsDefault));
     }
+
+    // ---- prompt caching ----
+
+    [Fact]
+    public async Task StreamAsync_SendsTopLevelCacheControl()
+    {
+        // Anthropic (and Qwen) models routed through OpenRouter cache nothing without an explicit
+        // breakpoint — the native Anthropic path's PromptCaching flag is SDK-specific and does not
+        // apply to OpenRouter's OpenAI-compatible wire format. Top-level cache_control is
+        // OpenRouter's "automatic" mode: it places the breakpoint on the last cacheable block and
+        // advances it as the conversation grows, so an agent loop does not have to re-place it.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "anthropic/claude-sonnet-5");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        Assert.Equal("ephemeral", json.RootElement.GetProperty("cache_control").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task StreamAsync_InclusivePromptTokens_SubtractsCachedCounts_SoTotalDoesNotDoubleCount()
+    {
+        // OpenRouter's documented shape: prompt_tokens (10_339) already includes cached_tokens
+        // (10_318). UsageInfo's fields must be mutually exclusive so TotalInputTokens is a plain
+        // sum, so the cached portion is subtracted back out here — passing prompt_tokens through
+        // whole alongside the cache fields would count those tokens twice and inflate every
+        // compaction decision.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":10339,\"completion_tokens\":60,\"prompt_tokens_details\":{\"cached_tokens\":10318,\"cache_write_tokens\":0}}}\n\ndata: [DONE]\n\n"));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "anthropic/claude-sonnet-5");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var usage = events.OfType<MessageCompleted>().Single().Usage;
+        Assert.Equal(21, usage.InputTokens); // 10_339 - 10_318
+        Assert.Equal(10_318, usage.CacheReadInputTokens);
+        // The figure context accounting actually needs: the full prompt really did occupy 10_339.
+        Assert.Equal(10_339, usage.TotalInputTokens);
+    }
+
+    [Fact]
+    public async Task StreamAsync_ExclusivePromptTokens_PassesThroughWithoutSubtracting()
+    {
+        // Anthropic routes have been observed reporting the cached counts as additional categories
+        // *not* folded into prompt_tokens (its native API works that way). Subtracting there would
+        // drive inputTokens to zero and make a fully-cached session look empty to context
+        // accounting — silently disabling compaction, the exact failure this guards against. The
+        // provider detects the convention from the numbers rather than assuming one.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":21,\"completion_tokens\":60,\"prompt_tokens_details\":{\"cached_tokens\":10318,\"cache_write_tokens\":0}}}\n\ndata: [DONE]\n\n"));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "anthropic/claude-sonnet-5");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var usage = events.OfType<MessageCompleted>().Single().Usage;
+        Assert.Equal(21, usage.InputTokens);
+        Assert.Equal(10_318, usage.CacheReadInputTokens);
+        Assert.Equal(10_339, usage.TotalInputTokens);
+    }
+
+    [Fact]
+    public async Task StreamAsync_CountsCacheWriteTokens_OnFirstCachedRequest()
+    {
+        // The first request of a session writes the cache rather than reading it; those tokens are
+        // billed at a premium but occupy the window exactly the same, so they must reach
+        // TotalInputTokens too.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":5000,\"completion_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":4900}}}\n\ndata: [DONE]\n\n"));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "anthropic/claude-sonnet-5");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var usage = events.OfType<MessageCompleted>().Single().Usage;
+        Assert.Equal(100, usage.InputTokens);
+        Assert.Equal(4_900, usage.CacheCreationInputTokens);
+        Assert.Equal(5_000, usage.TotalInputTokens);
+    }
+
+    [Fact]
+    public async Task StreamAsync_NoCacheDetails_LeavesCacheFieldsZero()
+    {
+        // Providers that cache automatically (OpenAI, Gemini 2.5, Grok, DeepSeek) may omit
+        // prompt_tokens_details entirely; prompt_tokens must then pass through untouched.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":1234,\"completion_tokens\":56}}\n\ndata: [DONE]\n\n"));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "openai/gpt-5");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var usage = events.OfType<MessageCompleted>().Single().Usage;
+        Assert.Equal(1_234, usage.InputTokens);
+        Assert.Equal(0, usage.CacheCreationInputTokens);
+        Assert.Equal(0, usage.CacheReadInputTokens);
+        Assert.Equal(1_234, usage.TotalInputTokens);
+    }
+
+    [Fact]
+    public async Task StreamAsync_SendsSessionId_WhenSupplied()
+    {
+        // session_id pins sticky routing to one upstream from the first request. Without it
+        // OpenRouter only starts pinning after it observes a cache hit, so the round that writes
+        // the cache can land on a different upstream than the round that would read it — the write
+        // is paid for and never reused.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "anthropic/claude-haiku-4.5", SessionId: "sess-abc-123");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        Assert.Equal("sess-abc-123", json.RootElement.GetProperty("session_id").GetString());
+    }
+
+    [Fact]
+    public async Task StreamAsync_OmitsSessionId_WhenNotSupplied()
+    {
+        // JsonIgnoreCondition.WhenWritingNull keeps the field off the wire entirely rather than
+        // sending session_id: null, which OpenRouter would have to interpret.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "some-model");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        Assert.False(json.RootElement.TryGetProperty("session_id", out _));
+    }
+
+    [Fact]
+    public async Task StreamAsync_TruncatesSessionId_ToOpenRouterMaximum()
+    {
+        // OpenRouter caps session_id at 256 characters; an over-long id would be a 400 rather than
+        // a silently-ignored field, taking the whole turn down with it.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "some-model", SessionId: new string('s', 300));
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        Assert.Equal(256, json.RootElement.GetProperty("session_id").GetString()!.Length);
+    }
 }
