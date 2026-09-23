@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Litos.Agent.Tools;
 using Litos.Tools.Mcp;
+using Litos.Tools.Shell; // ToolPermission — see DenyMcpToolReason.
 
 namespace Litos.Kernel;
 
@@ -343,12 +344,51 @@ public sealed class KernelSession : IAsyncDisposable
             {
                 var serverName = rest[..separatorIndex];
                 var mcpToolName = rest[(separatorIndex + 2)..];
+
+                if (DenyMcpToolReason(serverName, toolName) is { } denial)
+                    return ToolResult.Error(denial);
+
                 return await _mcpToolProvider.InvokeDirectAsync(serverName, mcpToolName, arguments, CancellationToken.None);
             }
         }
 
         var tool = _bridgedToolsSource().Resolve(toolName);
         return await tool.InvokeAsync(arguments, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Kernel-mode's MCP permission rule: honor Deny, treat Ask as approved, allow Full. Returns
+    /// the refusal text for a denied call, or null to proceed.
+    ///
+    /// Built-in tools stay ungated inside the kernel (§5.1) — that is the consent the user gives by
+    /// enabling the toggle at all, and gating them would be theater, since a script that can call
+    /// read_file can equally open a FileStream. MCP is the case where that argument does NOT carry:
+    /// an MCP server is frequently REMOTE and holds credentials the kernel has no other route to,
+    /// so a user's explicit Deny on a production database or a paid API is not made redundant by
+    /// local code execution. Honoring Deny keeps the one permission that expresses a hard "no"
+    /// meaningful whether or not the toggle is on.
+    ///
+    /// Ask is deliberately NOT prompted here. An approval prompt mid-eval would block the script
+    /// against KernelSession's hard timeout (5 minutes by default) waiting on a panel the user is
+    /// very likely not watching — an eval that appears hung for reasons the model cannot see or
+    /// report. Ask therefore proceeds, and the toggle's own UI is what must say so plainly.
+    ///
+    /// A server missing from config resolves to Deny via PermissionFor's own safe-by-default
+    /// fallback, matching McpAwareApprovalGate.
+    /// </summary>
+    private string? DenyMcpToolReason(string serverName, string fullToolName)
+    {
+        var configStore = _mcpToolProvider?.ConfigStore;
+        if (configStore is null)
+            return null;
+
+        var server = configStore.Current.Servers.FirstOrDefault(s => s.Name == serverName);
+        var permission = server?.PermissionFor(fullToolName) ?? ToolPermission.Deny;
+
+        return permission == ToolPermission.Deny
+            ? $"MCP tool '{fullToolName}' is denied by this server's configured permission and was not called. "
+                + "Kernel mode does not override an explicit Deny — change the server's permission in /mcp if this was unintended."
+            : null;
     }
 
     private async Task ServiceToolCallAsync(Process process, ToolCallRequest request)

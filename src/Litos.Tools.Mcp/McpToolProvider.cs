@@ -28,6 +28,16 @@ public sealed class McpToolProvider(McpConfigStore configStore, ILoggerFactory l
     public IReadOnlyList<ITool> Tools { get; private set; } = [];
 
     /// <summary>
+    /// The live permission config backing this provider's servers. Exposed so callers that invoke
+    /// MCP tools OUTSIDE the ITool/IToolApprovalGate path — specifically InvokeDirectAsync's
+    /// callers, which bypass McpToolProxy and therefore bypass McpAwareApprovalGate with it — can
+    /// still consult the user's configured Deny/Ask/Full for themselves rather than silently
+    /// ignoring it. Read fresh on each access (McpConfigStore.Current), so a permission changed via
+    /// /mcp applies to the very next call with no refresh step.
+    /// </summary>
+    public McpConfigStore ConfigStore => configStore;
+
+    /// <summary>
     /// Every connected server's prompts, aggregated the same way Tools is — rebuilt in the same
     /// RebuildToolsSnapshot pass so the two can never drift out of sync with each other or with
     /// Connections' live state (no separate refresh call/timer of its own).
