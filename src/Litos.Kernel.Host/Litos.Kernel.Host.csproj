@@ -1,7 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\Litos.Kernel\Litos.Kernel.csproj" />
+    <!-- Wire protocol only, NOT Litos.Kernel: referencing the parent-side assembly here would drag
+         in Litos.Agent + Litos.Tools.Mcp (and transitively all of Litos.Tools — SkiaSharp, pdfium,
+         OpenXml, BouncyCastle, PdfPig, AWS SDK, MimeKit) that no code path in this subprocess can
+         reach, since the real tools are invoked on the PARENT side of the bridge. See
+         Litos.Kernel.Wire.csproj's own comment. -->
+    <ProjectReference Include="..\Litos.Kernel.Wire\Litos.Kernel.Wire.csproj" />
   </ItemGroup>
 
   <ItemGroup>

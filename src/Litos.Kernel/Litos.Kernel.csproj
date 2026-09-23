@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Litos.Agent\Litos.Agent.csproj" />
     <ProjectReference Include="..\Litos.Tools.Mcp\Litos.Tools.Mcp.csproj" />
+    <ProjectReference Include="..\Litos.Kernel.Wire\Litos.Kernel.Wire.csproj" />
   </ItemGroup>
 
   <ItemGroup>

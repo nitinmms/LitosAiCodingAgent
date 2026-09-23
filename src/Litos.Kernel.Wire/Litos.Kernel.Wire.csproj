@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The kernel's stdio wire protocol and nothing else: the message records (KernelProtocol), their
+    source-generated JSON context, the one-JSON-object-per-line framing (WireIo), and the shared
+    size ceilings (KernelLimits).
+
+    Deliberately has NO ProjectReference of its own. Both halves of the protocol depend on this,
+    but only the parent half (Litos.Kernel) needs Litos.Agent/Litos.Tools.Mcp to resolve and invoke
+    real tools; the subprocess half (Litos.Kernel.Host) needs none of that — it only speaks the
+    protocol and evaluates C# via Roslyn. Before this project existed, Litos.Kernel.Host referenced
+    Litos.Kernel and so transitively dragged in all of Litos.Tools: SkiaSharp, pdfium,
+    DocumentFormat.OpenXml, BouncyCastle, PdfPig, the AWS SDK and MimeKit — roughly 21 MB of
+    published payload that no code path in the subprocess can reach, since the tool implementations
+    live on the PARENT side of the bridge by design (ToolBridge round-trips to them over stdio).
+
+    Keeping this assembly dependency-free is what holds that separation in place: adding a
+    ProjectReference here would silently re-couple the subprocess to the tool stack.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.Kernel" />
+    <InternalsVisibleTo Include="Litos.Kernel.Host" />
+    <InternalsVisibleTo Include="Litos.Kernel.Tests" />
+  </ItemGroup>
+
+</Project>

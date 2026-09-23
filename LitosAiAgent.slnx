@@ -7,6 +7,7 @@
     <Project Path="src/Litos.Host/Litos.Host.csproj" />
     <Project Path="src/Litos.Kernel/Litos.Kernel.csproj" />
     <Project Path="src/Litos.Kernel.Host/Litos.Kernel.Host.csproj" />
+    <Project Path="src/Litos.Kernel.Wire/Litos.Kernel.Wire.csproj" />
     <Project Path="src/Litos.Persistence/Litos.Persistence.csproj" />
     <Project Path="src/Litos.Providers.Anthropic/Litos.Providers.Anthropic.csproj" />
     <Project Path="src/Litos.Providers.Gemini/Litos.Providers.Gemini.csproj" />
