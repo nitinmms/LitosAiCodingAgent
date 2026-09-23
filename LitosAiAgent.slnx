@@ -5,6 +5,8 @@
     <Project Path="src/Litos.Console/Litos.Console.csproj" />
     <Project Path="src/Litos.Gui/Litos.Gui.csproj" />
     <Project Path="src/Litos.Host/Litos.Host.csproj" />
+    <Project Path="src/Litos.Kernel/Litos.Kernel.csproj" />
+    <Project Path="src/Litos.Kernel.Host/Litos.Kernel.Host.csproj" />
     <Project Path="src/Litos.Persistence/Litos.Persistence.csproj" />
     <Project Path="src/Litos.Providers.Anthropic/Litos.Providers.Anthropic.csproj" />
     <Project Path="src/Litos.Providers.Gemini/Litos.Providers.Gemini.csproj" />
@@ -21,6 +23,7 @@
     <Project Path="tests/Litos.Console.Tests/Litos.Console.Tests.csproj" />
     <Project Path="tests/Litos.Gui.Tests/Litos.Gui.Tests.csproj" />
     <Project Path="tests/Litos.Host.Tests/Litos.Host.Tests.csproj" />
+    <Project Path="tests/Litos.Kernel.Tests/Litos.Kernel.Tests.csproj" />
     <Project Path="tests/Litos.Persistence.Tests/Litos.Persistence.Tests.csproj" />
     <Project Path="tests/Litos.Providers.Tests/Litos.Providers.Tests.csproj" />
     <Project Path="tests/Litos.Tools.Tests/Litos.Tools.Tests.csproj" />

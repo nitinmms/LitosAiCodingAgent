@@ -19,6 +19,16 @@ public sealed class Transcript
     /// </summary>
     public string? WorkingDirectory { get; private set; }
 
+    /// <summary>
+    /// Per-session, persisted kernel-mode toggle state (ReadMe_PTCPersistentKernel.md §5.3) —
+    /// defaults OFF for a brand-new session (Transcript.CreateNew), replayed from the latest
+    /// "kernel_toggle" entry on /resume (LoadAsync). Not a global app preference: a second,
+    /// unrelated chat session does not inherit this session's choice.
+    /// </summary>
+    public bool KernelModeEnabled { get; private set; }
+
+    public void SetKernelModeEnabled(bool enabled) => KernelModeEnabled = enabled;
+
     public void Append(ChatMessage message, UsageInfo? usage = null)
     {
         _messages.Add(message);
@@ -103,6 +113,8 @@ public sealed class Transcript
         {
             if (entry.Kind == "session" && entry.WorkingDirectory is not null)
                 transcript.WorkingDirectory = entry.WorkingDirectory;
+            else if (entry.Kind == "kernel_toggle" && entry.KernelModeEnabled is { } enabled)
+                transcript.KernelModeEnabled = enabled; // Latest flip wins — replayed in append order, so a later entry naturally overwrites an earlier one.
             else if (entry.Message is not null && entry.Message.Content.OfType<CompactionSummaryBlock>().Any())
                 transcript.RestartFromCheckpoint(entry.Message);
             else if (entry.Message is not null)

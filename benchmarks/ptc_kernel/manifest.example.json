@@ -1,0 +1,30 @@
+{
+  "_comment": "Copy to manifest.json and fill in as you hand-drive each instance through Litos.Gui. shape must be one of: single_file, multi_file_conditional, fan_out (ReadMe_PTCPersistentKernel.md §1.1's task-shape categories). session_dir is the {sessionId}/ folder Litos wrote under ~/.litos/sessions/{owner}/{sessionId}/ -- find it via /resume's session list or the transcript store directly. patch_path is a file you save yourself via `git diff > patch.txt` in the checkout, right after each run.",
+
+  "instances": [
+    {
+      "instance_id": "django__django-11099",
+      "shape": "single_file",
+      "off_run": {
+        "session_dir": "C:/Users/you/.litos/sessions/local/2026-08-27-abc123",
+        "patch_path": "./patches/django-11099-off.patch"
+      },
+      "on_run": {
+        "session_dir": "C:/Users/you/.litos/sessions/local/2026-08-27-def456",
+        "patch_path": "./patches/django-11099-on.patch"
+      }
+    },
+    {
+      "instance_id": "sympy__sympy-20590",
+      "shape": "multi_file_conditional",
+      "off_run": {
+        "session_dir": "C:/Users/you/.litos/sessions/local/2026-08-27-ghi789",
+        "patch_path": "./patches/sympy-20590-off.patch"
+      },
+      "on_run": {
+        "session_dir": "C:/Users/you/.litos/sessions/local/2026-08-27-jkl012",
+        "patch_path": "./patches/sympy-20590-on.patch"
+      }
+    }
+  ]
+}

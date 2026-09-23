@@ -3,6 +3,7 @@ using Litos.Agent.Providers;
 using Litos.Agent.Session;
 using Litos.Agent.Tools;
 using Litos.Host;
+using Litos.Kernel;
 using Litos.Tools.Attachments;
 using Litos.Tools.Mcp;
 using Litos.Tools.Shell;
@@ -77,9 +78,13 @@ internal static class Program
         _ = InitializeMcpAsync(mcpToolProvider);
 
         var providerFactory = provider.GetRequiredService<IChatProviderFactory>();
-        var activeProviderName = config.DefaultProvider;
-        if (!config.IsProviderConfigured(activeProviderName))
-            activeProviderName = config.AvailableChatProviders[0];
+        var activeProviderName = ResolveStartupProvider(config);
+        // A saved DefaultModel is only meaningful for the provider it was saved alongside — if the
+        // resolved provider differs from config.DefaultProvider (ResolveStartupProvider fell back),
+        // the saved model almost certainly doesn't belong to it. Discarding it here is what makes
+        // the "pick this provider's own default model" branch below actually run instead of handing
+        // a wrong-provider model id to ListModelsAsync/ModelContextWindows.Resolve.
+        var savedModel = activeProviderName == config.DefaultProvider ? config.DefaultModel : null;
         var chatProvider = providerFactory.Resolve(activeProviderName);
 
         // Only strictly required when no default model is configured yet (to pick one), but
@@ -91,25 +96,30 @@ internal static class Program
         {
             models = chatProvider.ListModelsAsync(CancellationToken.None).GetAwaiter().GetResult();
         }
-        catch when (config.DefaultModel is not null)
+        catch when (savedModel is not null)
         {
             models = [];
         }
 
-        var model = config.DefaultModel;
-        if (model is null)
-        {
-            model = models.FirstOrDefault(m => m.IsDefault)?.Id
-                ?? models.FirstOrDefault()?.Id
-                ?? throw new InvalidOperationException(
-                    $"No models available for provider '{activeProviderName}' and no default model configured.");
-        }
+        var model = ResolveStartupModel(savedModel, models)
+            ?? throw new InvalidOperationException(
+                $"No models available for provider '{activeProviderName}' and no default model configured.");
         var contextLength = models.FirstOrDefault(m => m.Id == model)?.ContextLength ?? ModelContextWindows.Resolve(model);
 
         var loopFactory = provider.GetRequiredService<AgentLoopFactory>();
         var toolRegistryFactory = provider.GetRequiredService<ToolRegistryFactory>();
         var toolRegistry = toolRegistryFactory.Create();
         var loop = loopFactory.Create(chatProvider, toolRegistry);
+
+        // The bridge's tool source is always the FULL (OFF-equivalent) registry, regardless of the
+        // model-facing toggle state — "hidden from the model" (ON's tools.Schemas = [run_kernel_code]
+        // only, per §6/§8.2) and "unavailable to the bridge" must not be conflated into the same
+        // registry instance. The sessionId parameter is unused today (one registry for the whole
+        // process) but keeps KernelSessionManager's factory shape session-scoped per §4.4, in case a
+        // future revision ever needs per-session tool visibility.
+        var kernelSessionManager = new KernelSessionManager(
+            _ => toolRegistryFactory.Create(),
+            mcpToolProvider);
 
         var workingDirectory = resume is not null && Directory.Exists(resume.WorkingDirectory)
             ? resume.WorkingDirectory
@@ -140,7 +150,8 @@ internal static class Program
             contextLength,
             mcpConfigStore,
             mcpToolProvider,
-            provider.GetRequiredService<ISystemPromptProvider>());
+            provider.GetRequiredService<ISystemPromptProvider>(),
+            kernelSessionManager);
 
         // Fire-and-forget, same shape as InitializeMcpAsync above: must not block the window from
         // appearing. MainWindow reads session.UpdateCheckTask once constructed and reflects the
@@ -184,4 +195,36 @@ internal static class Program
         lastWorkingDirectory is { } dir && directoryExists(dir)
             ? dir
             : getCurrentDirectory();
+
+    /// <summary>
+    /// The saved DefaultProvider if it's still configured (has an API key / base URL, per
+    /// LitosConfig.IsProviderConfigured), otherwise the first available configured provider — the
+    /// same fallback the inline code always had, just extracted so it's unit-testable and so
+    /// callers (Main) can tell whether a fallback happened, which is what determines whether the
+    /// saved DefaultModel is still trustworthy (see ResolveStartupModel's caller in Main).
+    /// </summary>
+    internal static string ResolveStartupProvider(LitosConfig config) =>
+        config.IsProviderConfigured(config.DefaultProvider)
+            ? config.DefaultProvider
+            : config.AvailableChatProviders[0];
+
+    /// <summary>
+    /// Picks the model to start with: the saved model id, but only if it's still real —
+    /// validated against the resolved provider's own current model list, not trusted verbatim.
+    /// A saved id that doesn't appear in that list (stale after the provider's catalog changed, or
+    /// carried over from a provider ResolveStartupProvider fell away from) falls through to the
+    /// provider's own reported default, then its first model. An empty <paramref name="models"/>
+    /// (offline/rate-limited ListModelsAsync — Main already treats that as non-fatal when a saved
+    /// model exists) means there's nothing to validate against, so the saved model is trusted as
+    /// given rather than treated as invalid by omission. Returns null only when there is truly no
+    /// model to start with at all (no saved model, and the provider's own list is empty too) —
+    /// Main turns that into a startup-halting exception, since Litos cannot function without one.
+    /// </summary>
+    internal static string? ResolveStartupModel(string? savedModel, IReadOnlyList<ModelInfo> models)
+    {
+        if (models.Count == 0 || (savedModel is not null && models.Any(m => m.Id == savedModel)))
+            return savedModel;
+
+        return models.FirstOrDefault(m => m.IsDefault)?.Id ?? models.FirstOrDefault()?.Id;
+    }
 }

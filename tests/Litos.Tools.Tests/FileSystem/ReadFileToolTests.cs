@@ -12,6 +12,21 @@ public class ReadFileToolTests : IDisposable
     private static JsonElement Args(object obj) => JsonSerializer.SerializeToElement(obj);
 
     [Fact]
+    public void Description_WarnsAgainstRoundTrippingNumberedOutputIntoWriteFile()
+    {
+        // A real failure observed end-to-end in kernel mode (ReadMe_PTCPersistentKernel.md): a
+        // script read a file via read_file, string-replaced parts of it, and wrote it back via
+        // write_file without stripping the "123\t" line-number prefixes read_file adds for display
+        // — corrupting the file with literal line-number text and breaking compilation. The direct/
+        // sequential path can hit the same mistake (a model manually chaining read -> transform ->
+        // write), just less often since edit_file's targeted diff is the more natural tool there.
+        var tool = new ReadFileTool();
+
+        Assert.Contains("write_file", tool.Description);
+        Assert.Contains("corrupt", tool.Description);
+    }
+
+    [Fact]
     public async Task InvokeAsync_ReadsExistingFile()
     {
         var path = Path.Combine(_tempDir, "file.txt");

@@ -20,7 +20,8 @@ public class AgentLoopTests
         ISystemPromptProvider? systemPromptProvider = null,
         Compactor? compactor = null,
         TimeSpan? streamIdleTimeout = null,
-        TimeSpan? toolCallIdleTimeout = null) =>
+        TimeSpan? toolCallIdleTimeout = null,
+        Func<string, CancellationToken, Task<ToolResult>>? kernelRunner = null) =>
         new(
             provider,
             new ToolRegistry(tools ?? []),
@@ -29,7 +30,8 @@ public class AgentLoopTests
             systemPromptProvider,
             compactor,
             streamIdleTimeout,
-            toolCallIdleTimeout);
+            toolCallIdleTimeout,
+            kernelRunner);
 
     private static async Task<List<AgentEvent>> RunToCompletionAsync(AgentLoop loop, Transcript transcript, string userInput)
     {
@@ -984,6 +986,96 @@ public class AgentLoopTests
 
         Assert.True(provider.ReceivedRequests.Count > 1, "expected more than one tool round");
         Assert.All(provider.ReceivedRequests, r => Assert.Equal(SessionId, r.SessionId));
+    }
+
+    // ---- Kernel routing (ReadMe_PTCPersistentKernel.md §8.3, §8.6 Milestone 2) ----
+
+    [Fact]
+    public async Task RunTurnAsync_RunKernelCodeCall_RoutesToKernelRunner_NotToolRegistryResolve()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        var provider = new FakeChatProvider();
+        var toolArgs = JsonDocument.Parse("""{"code":"1+1"}""").RootElement;
+        provider.Enqueue(new ToolCallCompleted("call_1", ReservedToolNames.KernelCode, toolArgs));
+        provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(1, 1)));
+
+        var kernelCalls = new List<string>();
+        // A canary tool registered under the SAME reserved name would prove routing bypassed
+        // ToolRegistry.Resolve entirely if it were ever invoked — it never should be.
+        var canaryTool = new FakeTool(ReservedToolNames.KernelCode)
+        {
+            Handler = (_, _) => throw new InvalidOperationException("ToolRegistry.Resolve must never be reached for the reserved kernel tool name."),
+        };
+        var loop = CreateLoop(provider, tools: [canaryTool], kernelRunner: (code, _) =>
+        {
+            kernelCalls.Add(code);
+            return Task.FromResult(ToolResult.Ok("2"));
+        });
+
+        var events = await RunToCompletionAsync(loop, transcript, "compute 1+1");
+
+        Assert.Single(kernelCalls);
+        Assert.Equal("1+1", kernelCalls[0]);
+        var resultEvent = Assert.IsType<ToolCallResult>(events.Single(e => e is ToolCallResult));
+        Assert.Equal("call_1", resultEvent.CallId);
+        Assert.False(resultEvent.Result.IsError);
+        Assert.Equal("2", resultEvent.Result.Text);
+    }
+
+    [Fact]
+    public async Task RunTurnAsync_RunKernelCodeCall_WithNullKernelRunner_ProducesCleanError_NotAnException()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        var provider = new FakeChatProvider();
+        var toolArgs = JsonDocument.Parse("""{"code":"1+1"}""").RootElement;
+        provider.Enqueue(new ToolCallCompleted("call_1", ReservedToolNames.KernelCode, toolArgs));
+        provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(1, 1)));
+
+        var loop = CreateLoop(provider, kernelRunner: null);
+
+        var events = await RunToCompletionAsync(loop, transcript, "compute 1+1");
+
+        var resultEvent = Assert.IsType<ToolCallResult>(events.Single(e => e is ToolCallResult));
+        Assert.True(resultEvent.Result.IsError);
+        Assert.Contains("Kernel mode is not available", resultEvent.Result.Text);
+    }
+
+    [Fact]
+    public async Task RunTurnAsync_RunKernelCodeCall_MissingCodeArgument_ProducesCleanError_WithoutCallingKernelRunner()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        var provider = new FakeChatProvider();
+        var toolArgs = JsonDocument.Parse("{}").RootElement; // no "code" property
+        provider.Enqueue(new ToolCallCompleted("call_1", ReservedToolNames.KernelCode, toolArgs));
+        provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(1, 1)));
+
+        var kernelCalled = false;
+        var loop = CreateLoop(provider, kernelRunner: (_, _) => { kernelCalled = true; return Task.FromResult(ToolResult.Ok("")); });
+
+        var events = await RunToCompletionAsync(loop, transcript, "compute 1+1");
+
+        Assert.False(kernelCalled);
+        var resultEvent = Assert.IsType<ToolCallResult>(events.Single(e => e is ToolCallResult));
+        Assert.True(resultEvent.Result.IsError);
+        Assert.Contains("Malformed", resultEvent.Result.Text);
+    }
+
+    [Fact]
+    public async Task RunTurnAsync_RunKernelCodeCall_KernelRunnerThrows_BecomesToolResultError_NotAnUnhandledException()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        var provider = new FakeChatProvider();
+        var toolArgs = JsonDocument.Parse("""{"code":"throw"}""").RootElement;
+        provider.Enqueue(new ToolCallCompleted("call_1", ReservedToolNames.KernelCode, toolArgs));
+        provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(1, 1)));
+
+        var loop = CreateLoop(provider, kernelRunner: (_, _) => throw new InvalidOperationException("kernel subprocess crashed"));
+
+        var events = await RunToCompletionAsync(loop, transcript, "compute 1+1");
+
+        var resultEvent = Assert.IsType<ToolCallResult>(events.Single(e => e is ToolCallResult));
+        Assert.True(resultEvent.Result.IsError);
+        Assert.Contains("kernel subprocess crashed", resultEvent.Result.Text);
     }
 }
 

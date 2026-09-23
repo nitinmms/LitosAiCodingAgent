@@ -31,12 +31,27 @@ public sealed class McpToolProxy(
         if (decision == ApprovalDecision.Deny)
             return ToolResult.Error($"User denied this MCP tool call ({Name}).");
 
+        return await InvokeDirectAsync(serverName, clientTool.Name, connection, arguments, ct);
+    }
+
+    /// <summary>
+    /// The actual MCP call, with no IToolApprovalGate check — extracted so a kernel-mode script's
+    /// tool bridge (KernelSession.ServiceToolCallAsync) can reach it without going through
+    /// InvokeAsync's gate, per ReadMe_PTCPersistentKernel.md §7/§8.2's flagged bug: routing a kernel
+    /// script's MCP call through McpToolProxy.InvokeAsync unmodified would silently re-gate MCP
+    /// tools from inside a supposedly ungated kernel. One invocation path, two callers — gated for
+    /// the direct/sequential path (InvokeAsync above), ungated for KernelSession — no duplicated
+    /// protocol-translation logic between them.
+    /// </summary>
+    public static async Task<ToolResult> InvokeDirectAsync(
+        string serverName, string toolName, McpServerConnection connection, JsonElement arguments, CancellationToken ct)
+    {
         var argumentsDict = ToArgumentsDictionary(arguments);
 
         CallToolResult result;
         try
         {
-            result = await connection.CallToolAsync(clientTool.Name, argumentsDict, ct);
+            result = await connection.CallToolAsync(toolName, argumentsDict, ct);
         }
         catch (OperationCanceledException)
         {
@@ -44,7 +59,7 @@ public sealed class McpToolProxy(
         }
         catch (Exception ex)
         {
-            return ToolResult.Error($"MCP server '{serverName}' failed to handle '{clientTool.Name}': {ex.Message}");
+            return ToolResult.Error($"MCP server '{serverName}' failed to handle '{toolName}': {ex.Message}");
         }
 
         var text = string.Join(

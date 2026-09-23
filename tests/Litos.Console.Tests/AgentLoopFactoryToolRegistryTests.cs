@@ -42,6 +42,9 @@ public class AgentLoopFactoryToolRegistryTests
 
         public Task<string> BranchAsync(SessionOwner owner, string sourceSessionId, int uptoEntryIndex, CancellationToken ct) =>
             Task.FromResult(Guid.NewGuid().ToString("n"));
+
+        public string GetScratchDirectory(SessionOwner owner, string sessionId) =>
+            $"/fake-scratch/{owner.Value}/{sessionId}";
     }
 
     private sealed class FakeChatProvider : IChatProvider

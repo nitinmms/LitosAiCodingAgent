@@ -1,5 +1,6 @@
 using Litos.Agent.Tools;
 using Litos.Host.Tests.Fakes;
+// ReservedToolNames.KernelCode — the fixed name the toggle-conditional Guidelines below key off of.
 using Litos.Tools.ProjectInstructions;
 using Litos.Tools.Skills;
 
@@ -113,6 +114,60 @@ public class LitosSystemPromptProviderTests
 
         Assert.Contains("Instructions from C:/repo/AGENTS.md:", prompt);
         Assert.Contains("Use tabs, not spaces.", prompt);
+    }
+
+    // ---- Kernel-mode-conditional Guidelines (ReadMe_PTCPersistentKernel.md §6, §8.8) ----
+
+    [Fact]
+    public async Task BuildAsync_OrdinaryToolList_UsesTheOffStateGuidelines()
+    {
+        var (provider, tools) = CreateProvider([new FakeTool("shell"), new FakeTool("search_code")]);
+
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
+
+        Assert.Contains("search_code", prompt);
+        Assert.DoesNotContain("run_kernel_code", prompt);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ToolRegistryIsExactlyRunKernelCode_SwitchesToKernelModeGuidelines()
+    {
+        var (provider, tools) = CreateProvider([new FakeTool(ReservedToolNames.KernelCode, "Run a persistent C# kernel script.")]);
+
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
+
+        Assert.Contains("run_kernel_code is your only tool this session", prompt);
+        // The OFF-state search_code steering is specific to having an ordinary tool list — must not
+        // leak into the ON-state Guidelines, which has nothing but run_kernel_code to steer toward.
+        Assert.DoesNotContain("ALWAYS use search_code", prompt);
+    }
+
+    [Fact]
+    public async Task BuildAsync_KernelModeGuidelines_MentionsStatePersistenceAndShortOutputAdvice()
+    {
+        var (provider, tools) = CreateProvider([new FakeTool(ReservedToolNames.KernelCode, "Run a persistent C# kernel script.")]);
+
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
+
+        Assert.Contains("persist", prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("KernelState.List", prompt);
+    }
+
+    [Fact]
+    public async Task BuildAsync_RunKernelCodePlusAnotherTool_IsNotTreatedAsKernelModeOn()
+    {
+        // Kernel-only means tools.Schemas has EXACTLY one entry (§1/§6) — a registry that somehow
+        // contains run_kernel_code alongside anything else is not the toggle's ON shape and should
+        // fall back to the ordinary Guidelines rather than silently claiming exclusivity that isn't
+        // actually true.
+        var (provider, tools) = CreateProvider([
+            new FakeTool(ReservedToolNames.KernelCode, "Run a persistent C# kernel script."),
+            new FakeTool("shell"),
+        ]);
+
+        var prompt = (await provider.BuildAsync(tools, workingDirectory: null, CancellationToken.None))?.Render();
+
+        Assert.DoesNotContain("run_kernel_code is your only tool this session", prompt);
     }
 
     [Fact]

@@ -27,4 +27,7 @@ public sealed class FakeTranscriptStore : ITranscriptStore
 
     public Task<string> BranchAsync(SessionOwner owner, string sourceSessionId, int uptoEntryIndex, CancellationToken ct) =>
         Task.FromResult(Guid.NewGuid().ToString("n"));
+
+    public string GetScratchDirectory(SessionOwner owner, string sessionId) =>
+        $"/fake-scratch/{owner.Value}/{sessionId}";
 }

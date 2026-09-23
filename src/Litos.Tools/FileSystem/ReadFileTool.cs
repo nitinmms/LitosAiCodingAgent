@@ -16,7 +16,11 @@ public sealed class ReadFileTool(int? maxOutputBytes = null) : ITool
     public string Description =>
         "Read the contents of a text file at the given path, formatted with line numbers " +
         "(like 'cat -n'). Output is truncated at 2000 lines or 50KB, whichever comes first. " +
-        "For larger files, use 'offset' and 'limit' to page through the rest.";
+        "For larger files, use 'offset' and 'limit' to page through the rest. " +
+        "The line-number prefixes are for display only — do NOT pass this output back into " +
+        "write_file or otherwise write it to disk verbatim, since the prefixes ('123\\t') are not " +
+        "part of the file's real content and will corrupt it. Use edit_file for targeted changes, " +
+        "or re-read the file's raw bytes yourself if you need an unprefixed copy.";
 
     public JsonElement ParameterSchema { get; } = JsonSerializer.SerializeToElement(new
     {

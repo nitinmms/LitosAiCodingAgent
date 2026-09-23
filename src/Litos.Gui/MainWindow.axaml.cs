@@ -17,6 +17,7 @@ using Litos.Agent.Providers;
 using Litos.Agent.Session;
 using Litos.Agent.Streaming;
 using Litos.Agent.Tools;
+using Litos.Kernel;
 using Litos.Tools.Attachments;
 using Litos.Tools.Mcp;
 using Litos.Tools.Skills;
@@ -45,9 +46,15 @@ public sealed partial class MainWindow : Window
     private static readonly IBrush ToolErrorBrush = new SolidColorBrush(Color.Parse("#F48771"));
     private static readonly IBrush ErrorBubbleBrush = new SolidColorBrush(Color.Parse("#5A1F1F"));
     private static readonly IBrush DimTextBrush = new SolidColorBrush(Color.Parse("#9A9A9A"));
+    private static readonly IBrush KernelOnBrush = new SolidColorBrush(Color.Parse("#D7BA7D"));
 
     private readonly MainWindowSession _session;
     private Transcript _transcript;
+    // Deliberately process-lifetime, not per-session: the consent dialog's purpose is making sure
+    // the user has SEEN what enabling kernel mode means at least once, not re-litigating it every
+    // time a session's toggle flips ON again within the same run — the toggle's own persisted
+    // per-session state (KernelModeEnabled, §5.3) already gates whether the capability is active.
+    private bool _kernelModeConsentShownThisProcess;
     private string _sessionId = Guid.NewGuid().ToString("n");
     // Populated once ObserveUpdateCheckAsync's startup check completes with a real update; null
     // means either "still checking", "up to date", or "check failed" — HandleUpdateAsync re-checks
@@ -149,6 +156,7 @@ public sealed partial class MainWindow : Window
         ChangeDirectoryButton.Click += async (_, _) => await ChangeWorkingDirectoryAsync();
         ProviderButton.Click += async (_, _) => await HandleProviderAsync(argument: null);
         ModelButton.Click += async (_, _) => await HandleModelAsync(argument: null);
+        KernelToggleButton.Click += async (_, _) => await ToggleKernelModeAsync();
         UpdateButton.Click += async (_, _) => await HandleUpdateAsync();
         ContextUsagePanel.DoubleTapped += async (_, _) => await ShowContextBreakdownAsync();
         CommandMenuButton.Click += (_, _) => OpenCommandMenu(openedByTyping: false);
@@ -210,8 +218,14 @@ public sealed partial class MainWindow : Window
     // Called alongside UpdateProviderModelText() (provider/model switch, startup) and after
     // /new, /resume, and each completed turn — anywhere _transcript or _session.ContextLength
     // can change — so the meter never shows a stale percentage from the previous model/session.
+    // RefreshKernelToggleButton is piggybacked here rather than added to all ten call sites
+    // separately: every one of them already means "resync UI state to the current _transcript,"
+    // which is exactly when the toggle display (backed by _transcript.KernelModeEnabled, §5.3)
+    // can also have changed — same reasoning, same call sites.
     private void RefreshContextUsage()
     {
+        RefreshKernelToggleButton();
+
         var snapshot = ContextUsage.Compute(_transcript, _session.ContextLength);
         if (snapshot is null)
         {
@@ -232,6 +246,62 @@ public sealed partial class MainWindow : Window
         ContextUsageText.Foreground = brush;
         ContextUsageBar.Foreground = brush;
         ToolTip.SetTip(ContextUsagePanel, $"Context used: {snapshot.UsedTokens:N0} / {snapshot.ContextLength:N0} tokens — double-click for details");
+    }
+
+    private void RefreshKernelToggleButton()
+    {
+        KernelToggleText.Text = _transcript.KernelModeEnabled ? "Kernel: On" : "Kernel: Off";
+        KernelToggleText.Foreground = _transcript.KernelModeEnabled ? KernelOnBrush : DimTextBrush;
+    }
+
+    /// <summary>
+    /// Flipping the toggle ON is the explicit, visible consent moment for kernel mode's ungated
+    /// local-code-execution capability (ReadMe_PTCPersistentKernel.md §5.1/§5.3) — a one-time
+    /// confirmation dialog the first time a session turns it on, per §5.3's "either is consistent
+    /// with this decision" note. Persisted per-chat-session via a "kernel_toggle" TranscriptEntry
+    /// (§5.3), not a global app preference — a second, unrelated session does not inherit this
+    /// choice, and /new starts a new session back at the OFF default (§5.3).
+    /// </summary>
+    private async Task ToggleKernelModeAsync()
+    {
+        var next = !_transcript.KernelModeEnabled;
+
+        if (next && !_kernelModeConsentShownThisProcess)
+        {
+            var confirmed = await ConfirmationDialog.ShowAsync(
+                this,
+                "Enable kernel mode?",
+                "When ON, the model's only tool is a persistent C# code kernel. Code the model writes " +
+                "runs with your full local user permissions — file, network, and subprocess access are " +
+                "NOT gated by an approval prompt (see ReadMe_PTCPersistentKernel.md §5). Only enable " +
+                "this if you trust the model to run local code unsupervised for this session.");
+            if (!confirmed)
+                return;
+            _kernelModeConsentShownThisProcess = true;
+        }
+
+        _transcript.SetKernelModeEnabled(next);
+        await _session.TranscriptStore.AppendAsync(SessionOwner.Local, _sessionId, TranscriptEntry.KernelToggle(next), CancellationToken.None);
+        RefreshKernelToggleButton();
+        AddToolLine(next ? "Kernel mode enabled for this session." : "Kernel mode disabled for this session.");
+    }
+
+    /// <summary>
+    /// Backs /kernel-reset (ReadMe_PTCPersistentKernel.md §4.4's table) — a deliberate escape hatch
+    /// for "the interpreter is in a bad state," independent of both session lifecycle and
+    /// compaction. Available only when the toggle is ON; a no-op message otherwise, since there is
+    /// no kernel session to reset when the toggle is OFF (§8.6 Milestone 2).
+    /// </summary>
+    private async Task HandleKernelResetAsync()
+    {
+        if (!_transcript.KernelModeEnabled)
+        {
+            AddToolLine("Kernel mode is not on for this session — nothing to reset.");
+            return;
+        }
+
+        await _session.KernelSessionManager.ResetAsync(_sessionId, CancellationToken.None);
+        AddToolLine("Kernel session reset — the next kernel call will start a fresh interpreter.");
     }
 
     /// <summary>
@@ -369,8 +439,22 @@ public sealed partial class MainWindow : Window
         // in HandleProviderAsync) so a server added/enabled/disabled/removed via /mcp is reflected
         // starting with the very next turn, with no restart — a turn already in flight keeps
         // whatever AgentLoop/ToolRegistry it captured here, since only one turn ever runs at a time.
-        _session.ToolRegistry = _session.ToolRegistryFactory.Create();
-        _session.Loop = _session.LoopFactory.Create(_session.ChatProvider, _session.ToolRegistry);
+        // Toggle-gated per ReadMe_PTCPersistentKernel.md §1/§6/§8.2: OFF builds today's full
+        // registry with no kernel awareness at all; ON builds a registry containing ONLY
+        // KernelCodeTool, so tools.Schemas genuinely has one entry, not one entry plus everything
+        // else filtered client-side — "hidden from the model" happens here, at registry
+        // construction, not by the model choosing to ignore other tools.
+        if (_transcript.KernelModeEnabled)
+        {
+            var bridgedTools = _session.ToolRegistryFactory.Create();
+            _session.ToolRegistry = new ToolRegistry([new KernelCodeTool(bridgedTools.Schemas)]);
+            _session.Loop = _session.LoopFactory.Create(_session.ChatProvider, _session.ToolRegistry, BuildKernelRunner());
+        }
+        else
+        {
+            _session.ToolRegistry = _session.ToolRegistryFactory.Create();
+            _session.Loop = _session.LoopFactory.Create(_session.ChatProvider, _session.ToolRegistry);
+        }
 
         try
         {
@@ -449,6 +533,26 @@ public sealed partial class MainWindow : Window
             _turnCts = null;
             _toolRows.Clear();
         }
+    }
+
+    /// <summary>
+    /// Closure AgentLoop calls when the model emits run_kernel_code (ReadMe_PTCPersistentKernel.md
+    /// §8.3) — resolves (lazily creating, if needed) this chat session's KernelSession via
+    /// KernelSessionManager.GetOrCreate and delegates to KernelSession.RunAsync. The scratch
+    /// directory comes from ITranscriptStore.GetScratchDirectory (§4.5, §8.5) so it lives under the
+    /// session's own storage root, never inside the user's project.
+    /// </summary>
+    private Func<string, CancellationToken, Task<ToolResult>> BuildKernelRunner()
+    {
+        var workingDirectory = _transcript.WorkingDirectory ?? Environment.CurrentDirectory;
+        return (code, ct) =>
+        {
+            var kernelSession = _session.KernelSessionManager.GetOrCreate(
+                _sessionId,
+                workingDirectory,
+                sid => _session.TranscriptStore.GetScratchDirectory(SessionOwner.Local, sid));
+            return kernelSession.RunAsync(code, ct);
+        };
     }
 
     // Mirrors Litos.Console's Composer.Steered/FollowedUp — writes into the in-flight turn's
@@ -667,6 +771,12 @@ public sealed partial class MainWindow : Window
         switch (command)
         {
             case "/new":
+                // Kill (not merely forget) the old session's KernelSession before replacing
+                // _sessionId — matches WorkingDirectory's own "/new means a new session, a stale
+                // kernel pointed at the old state would be actively wrong" precedent (§4.4's
+                // reset-trigger table). The NEW session's toggle starts at the stated OFF default
+                // (Transcript.CreateNew below), not inherited from whatever this one had (§5.3).
+                await _session.KernelSessionManager.DestroyAsync(_sessionId);
                 _sessionId = Guid.NewGuid().ToString("n");
                 // Environment.CurrentDirectory, not _transcript.WorkingDirectory: the old
                 // transcript's WorkingDirectory can be null (an older /resume-d session
@@ -735,6 +845,10 @@ public sealed partial class MainWindow : Window
 
             case "/update":
                 await HandleUpdateAsync();
+                return;
+
+            case "/kernel-reset":
+                await HandleKernelResetAsync();
                 return;
 
             default:
@@ -880,6 +994,9 @@ public sealed partial class MainWindow : Window
     /// that threshold check since the user asked for this regardless of current usage, but still
     /// safely no-ops if there isn't yet enough history old enough to cut (e.g. a fresh session).
     /// </summary>
+    // Deliberately does not touch _session.KernelSessionManager — /compact rewrites the
+    // model-visible message transcript only and has no relationship to kernel state
+    // (ReadMe_PTCPersistentKernel.md §4.4's reset-trigger table). Not an oversight.
     private async Task HandleCompactAsync()
     {
         StatusBarWorkingIndicator.IsVisible = true;

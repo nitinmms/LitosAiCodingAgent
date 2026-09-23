@@ -162,4 +162,16 @@ public sealed class AgentLoopFactory(
 {
     public AgentLoop Create(IChatProvider provider, ToolRegistry tools) =>
         new(provider, tools, store, accountant, systemPromptProvider, compactor, config?.StreamIdleTimeout, config?.ToolCallIdleTimeout);
+
+    /// <summary>
+    /// kernelRunner routes AgentLoop's reserved run_kernel_code tool name to a kernel-mode session
+    /// instead of ToolRegistry.Resolve (ReadMe_PTCPersistentKernel.md §8.3) — an optional extra
+    /// parameter here rather than a new overload's own positional slot, since most callers (every
+    /// face without kernel mode) never pass one and AgentLoop already treats a null kernelRunner as
+    /// "kernel mode unavailable this turn." The configured stream/tool-call idle timeouts are
+    /// passed through identically to the overload above — a kernel-mode turn is still an ordinary
+    /// turn as far as provider streaming is concerned, so it must not silently lose them.
+    /// </summary>
+    public AgentLoop Create(IChatProvider provider, ToolRegistry tools, Func<string, CancellationToken, Task<ToolResult>>? kernelRunner) =>
+        new(provider, tools, store, accountant, systemPromptProvider, compactor, config?.StreamIdleTimeout, config?.ToolCallIdleTimeout, kernelRunner);
 }

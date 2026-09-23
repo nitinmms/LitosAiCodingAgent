@@ -3,6 +3,7 @@ using Litos.Agent.Providers;
 using Litos.Agent.Session;
 using Litos.Agent.Tools;
 using Litos.Host;
+using Litos.Kernel;
 using Litos.Tools.Mcp;
 
 namespace Litos.Gui;
@@ -35,8 +36,15 @@ public sealed class MainWindowSession(
     int contextLength,
     McpConfigStore mcpConfigStore,
     McpToolProvider mcpToolProvider,
-    ISystemPromptProvider systemPromptProvider)
+    ISystemPromptProvider systemPromptProvider,
+    KernelSessionManager kernelSessionManager)
 {
+    /// <summary>
+    /// Owns this window's chatSessionId -> KernelSession map (ReadMe_PTCPersistentKernel.md §4.4,
+    /// §8.2). GetOrCreate is called lazily, only on a kernel-mode round (§4.4 "born lazily on first
+    /// kernel-mode round") — see MainWindow's kernelRunner closure passed to AgentLoopFactory.Create.
+    /// </summary>
+    public KernelSessionManager KernelSessionManager { get; } = kernelSessionManager;
     public AgentLoopFactory LoopFactory { get; } = loopFactory;
 
     /// <summary>

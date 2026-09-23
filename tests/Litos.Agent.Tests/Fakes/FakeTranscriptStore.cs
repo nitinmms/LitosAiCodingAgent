@@ -49,4 +49,7 @@ public sealed class FakeTranscriptStore : ITranscriptStore
         _entries[(owner, newSessionId)] = [.. source.Take(safeUpto)];
         return Task.FromResult(newSessionId);
     }
+
+    public string GetScratchDirectory(SessionOwner owner, string sessionId) =>
+        $"/fake-scratch/{owner.Value}/{sessionId}";
 }

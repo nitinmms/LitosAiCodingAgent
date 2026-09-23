@@ -32,6 +32,18 @@ public sealed class JsonlTranscriptStoreTests : IDisposable
     private static TranscriptEntry EntryFor(ChatMessage message) =>
         TranscriptEntry.FromMessage(message);
 
+    /// <summary>
+    /// Reflection-based JsonSerializer.Serialize defaults to PascalCase property names, but
+    /// JsonlTranscriptStore always reads back through TranscriptJsonContext (camelCase, §8.1's
+    /// JsonSourceGenerationOptions) — tests that hand-write a "legacy" JSONL line to simulate a
+    /// pre-migration file need this same naming policy or the store's read path silently sees an
+    /// entry with no Message.
+    /// </summary>
+    private static readonly System.Text.Json.JsonSerializerOptions LegacyJsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+    };
+
     [Fact]
     public async Task AppendAsync_ThenReadAsync_RoundTripsEntriesInOrder()
     {
@@ -137,7 +149,7 @@ public sealed class JsonlTranscriptStoreTests : IDisposable
         Assert.Equal("first", ((TextBlock)branched[0].Message!.Content[0]).Text);
     }
 
-    private string SessionFilePath(string sessionId) => Path.Combine(_root, "local", sessionId + ".jsonl");
+    private string SessionFilePath(string sessionId) => Path.Combine(_root, "local", sessionId, "transcript.jsonl");
 
     [Fact]
     public async Task AppendAsync_OfACompactionSummary_IsJustOneMoreAppendedLine_SourceLinesUntouched()
@@ -224,6 +236,65 @@ public sealed class JsonlTranscriptStoreTests : IDisposable
     {
         await Assert.ThrowsAsync<FileNotFoundException>(() =>
             _store.BranchAsync(SessionOwner.Local, "does-not-exist", uptoEntryIndex: 1, CancellationToken.None));
+    }
+
+    // --- Folder-per-session migration + legacy fallback (ReadMe_PTCPersistentKernel.md §4.5/§8.5) ---
+
+    [Fact]
+    public async Task ReadAsync_FallsBackToLegacyFlatFile_WhenNoFolderFormExists()
+    {
+        var legacyPath = Path.Combine(_root, "local", "legacy1.jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
+        var json = System.Text.Json.JsonSerializer.Serialize(EntryFor(ChatMessage.User("old-style session")), LegacyJsonOptions);
+        await File.WriteAllTextAsync(legacyPath, json + Environment.NewLine);
+
+        var entries = await ReadAllAsync("legacy1");
+
+        Assert.Single(entries);
+        Assert.Equal("old-style session", ((TextBlock)entries[0].Message!.Content[0]).Text);
+    }
+
+    [Fact]
+    public async Task AppendAsync_ToALegacySession_MigratesItToFolderForm_PreservingPriorContent()
+    {
+        var legacyPath = Path.Combine(_root, "local", "legacy2.jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
+        var json = System.Text.Json.JsonSerializer.Serialize(EntryFor(ChatMessage.User("first, pre-migration")), LegacyJsonOptions);
+        await File.WriteAllTextAsync(legacyPath, json + Environment.NewLine);
+
+        await _store.AppendAsync(SessionOwner.Local, "legacy2", EntryFor(ChatMessage.User("second, post-migration")), CancellationToken.None);
+
+        Assert.False(File.Exists(legacyPath)); // moved, not copied
+        Assert.True(File.Exists(SessionFilePath("legacy2")));
+        var entries = await ReadAllAsync("legacy2");
+        Assert.Equal(2, entries.Count);
+        Assert.Equal("first, pre-migration", ((TextBlock)entries[0].Message!.Content[0]).Text);
+        Assert.Equal("second, post-migration", ((TextBlock)entries[1].Message!.Content[0]).Text);
+    }
+
+    [Fact]
+    public async Task ListSessionsAsync_DeduplicatesAcrossLegacyAndFolderForms()
+    {
+        await _store.AppendAsync(SessionOwner.Local, "new-style", EntryFor(ChatMessage.User("hi")), CancellationToken.None);
+
+        var legacyPath = Path.Combine(_root, "local", "old-style.jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
+        var json = System.Text.Json.JsonSerializer.Serialize(EntryFor(ChatMessage.User("hey")), LegacyJsonOptions);
+        await File.WriteAllTextAsync(legacyPath, json + Environment.NewLine);
+
+        var summaries = await _store.ListSessionsAsync(SessionOwner.Local, CancellationToken.None);
+
+        Assert.Equal(2, summaries.Count);
+        Assert.Contains(summaries, s => s.SessionId == "new-style");
+        Assert.Contains(summaries, s => s.SessionId == "old-style");
+    }
+
+    [Fact]
+    public void GetScratchDirectory_IsUnderTheSessionsFolder_SiblingOfTranscriptFile()
+    {
+        var scratch = _store.GetScratchDirectory(SessionOwner.Local, "sess1");
+
+        Assert.Equal(Path.Combine(_root, "local", "sess1", "scratch"), scratch);
     }
 
     [Theory]
