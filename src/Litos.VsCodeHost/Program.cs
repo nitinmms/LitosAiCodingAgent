@@ -112,8 +112,38 @@ if (isConfigured)
         sp.GetRequiredService<AgentLoopFactory>(),
         sp.GetRequiredService<ToolRegistryFactory>(),
         sp.GetRequiredService<Litos.Agent.Session.ITranscriptStore>(),
-        config));
+        config,
+        BuildKernelSessionManager(sp)));
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorker>());
+}
+
+// Kernel mode / PTC (ReadMe_PTCPersistentKernel.md). Returns null — meaning "PTC unavailable in
+// this process" — when Litos.Kernel.Host cannot be located, rather than throwing: a packaging
+// mistake that omits the subprocess binary should degrade to a toggle the UI reports as
+// unavailable, not a host that fails every turn. KernelHostLocator.Resolve() is the same probe
+// KernelSession would run on first use, so doing it once here surfaces the problem at startup
+// instead of on whatever turn first tries to evaluate code.
+//
+// The bridge's tool source is always the FULL (OFF-equivalent) registry regardless of the
+// model-facing toggle state: "hidden from the model" (ON's tools.Schemas = [run_kernel_code] only)
+// and "unavailable to the bridge" must not be conflated. The sessionId parameter is unused today
+// (one registry for the whole process) but keeps the factory shape session-scoped per §4.4.
+static Litos.Kernel.KernelSessionManager? BuildKernelSessionManager(IServiceProvider sp)
+{
+    try
+    {
+        Litos.Kernel.KernelHostLocator.Resolve();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[litos] Kernel mode (PTC) unavailable: {ex.Message}");
+        return null;
+    }
+
+    var toolRegistryFactory = sp.GetRequiredService<ToolRegistryFactory>();
+    return new Litos.Kernel.KernelSessionManager(
+        _ => toolRegistryFactory.Create(),
+        sp.GetRequiredService<McpToolProvider>());
 }
 
 var app = builder.Build();
@@ -129,6 +159,7 @@ if (isConfigured)
     app.MapSessionActionsEndpoints();
     app.MapReflectEndpoints();
     app.MapContextEndpoints();
+    app.MapKernelEndpoints();
 }
 
 // Started (not Run) so the OS-assigned port is known before this process blocks — app.Urls is

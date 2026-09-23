@@ -6,6 +6,7 @@ using Litos.Agent.Session;
 using Litos.Agent.Streaming;
 using Litos.Agent.Tools;
 using Litos.Host;
+using Litos.Kernel;
 
 namespace Litos.VsCodeHost;
 
@@ -29,6 +30,13 @@ public sealed class AgentWorker : BackgroundService
     private readonly AgentLoopFactory _loopFactory;
     private readonly ToolRegistryFactory _toolRegistryFactory;
     private readonly ITranscriptStore _transcriptStore;
+
+    /// <summary>
+    /// Owns this host's chatSessionId -> KernelSession map. Null when kernel mode is unavailable
+    /// (Litos.Kernel.Host could not be located) — RunTurnCoreAsync then always takes the OFF path,
+    /// so a missing subprocess degrades to "PTC does nothing" rather than failing turns.
+    /// </summary>
+    private readonly KernelSessionManager? _kernelSessionManager;
     private readonly CancellationTokenSource _stopping = new();
 
     private readonly Lock _settingsLock = new();
@@ -39,12 +47,13 @@ public sealed class AgentWorker : BackgroundService
 
     public AgentWorker(
         IChatProviderFactory providerFactory, AgentLoopFactory loopFactory, ToolRegistryFactory toolRegistryFactory,
-        ITranscriptStore transcriptStore, LitosConfig config)
+        ITranscriptStore transcriptStore, LitosConfig config, KernelSessionManager? kernelSessionManager = null)
     {
         _providerFactory = providerFactory;
         _loopFactory = loopFactory;
         _toolRegistryFactory = toolRegistryFactory;
         _transcriptStore = transcriptStore;
+        _kernelSessionManager = kernelSessionManager;
         _config = config;
 
         _providerName = config.IsProviderConfigured(config.DefaultProvider)
@@ -249,18 +258,40 @@ public sealed class AgentWorker : BackgroundService
                 contextLength = _contextLength;
             }
 
-            var toolRegistry = _toolRegistryFactory.Create();
-            var loop = _loopFactory.Create(_providerFactory.Resolve(providerName), toolRegistry);
-
             // explicitCancel (CancelTurn/the Stop button) is linked in alongside requestAborted (the
             // SSE connection dying) and _stopping (host shutdown) — any of the three ends the turn.
             // This is what actually lets a stuck tool call be aborted from the UI instead of only
             // ever timing out on its own (or, before this existed, never being recoverable at all).
             using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token, requestAborted, explicitCancel.Token);
 
+            // Loaded before the registry is built, not after: the kernel-mode toggle is persisted
+            // per-session in the transcript (Transcript.KernelModeEnabled, §5.3), so it has to be
+            // read before deciding which registry this turn gets.
             var transcript = await Transcript.LoadAsync(_transcriptStore, owner, sessionId, turnCts.Token);
             if (transcript.WorkingDirectory is null)
                 transcript = Transcript.CreateNew(Directory.GetCurrentDirectory());
+
+            // Toggle-gated exactly as Litos.Gui does it (§1/§6/§8.2): OFF builds today's full
+            // registry with no kernel awareness at all; ON builds a registry containing ONLY
+            // KernelCodeTool, so tools.Schemas genuinely has one entry rather than one entry plus
+            // everything else filtered model-side. "Hidden from the model" happens here, at
+            // registry construction.
+            ToolRegistry toolRegistry;
+            AgentLoop loop;
+            if (_kernelSessionManager is not null && transcript.KernelModeEnabled)
+            {
+                var bridgedTools = _toolRegistryFactory.Create();
+                toolRegistry = new ToolRegistry([new KernelCodeTool(bridgedTools.Schemas)]);
+                loop = _loopFactory.Create(
+                    _providerFactory.Resolve(providerName),
+                    toolRegistry,
+                    BuildKernelRunner(owner, sessionId, transcript.WorkingDirectory));
+            }
+            else
+            {
+                toolRegistry = _toolRegistryFactory.Create();
+                loop = _loopFactory.Create(_providerFactory.Resolve(providerName), toolRegistry);
+            }
 
             await foreach (var evt in loop.RunTurnAsync(owner, sessionId, transcript, model, content, turnCts.Token, steering.Reader, contextLength))
                 await events.WriteAsync(evt, CancellationToken.None);
@@ -283,6 +314,62 @@ public sealed class AgentWorker : BackgroundService
                 explicitCancel.Dispose();
             }
         }
+    }
+
+    /// <summary>
+    /// Closure AgentLoop calls when the model emits run_kernel_code (§8.3) — resolves (lazily
+    /// creating, if needed) this chat session's KernelSession and delegates to RunAsync. The
+    /// scratch directory comes from ITranscriptStore.GetScratchDirectory (§4.5, §8.5) so it lives
+    /// under the session's own storage root, never inside the user's project.
+    /// </summary>
+    private Func<string, CancellationToken, Task<ToolResult>> BuildKernelRunner(
+        SessionOwner owner, string sessionId, string? workingDirectory)
+    {
+        var resolvedWorkingDirectory = workingDirectory ?? Directory.GetCurrentDirectory();
+        return (code, ct) =>
+        {
+            var kernelSession = _kernelSessionManager!.GetOrCreate(
+                sessionId,
+                resolvedWorkingDirectory,
+                sid => _transcriptStore.GetScratchDirectory(owner, sid));
+            return kernelSession.RunAsync(code, ct);
+        };
+    }
+
+    /// <summary>
+    /// Whether kernel mode (PTC) is available in this process at all — false when
+    /// Litos.Kernel.Host could not be located, in which case the toggle must not be presented as
+    /// switchable in the UI.
+    /// </summary>
+    public bool IsKernelModeAvailable => _kernelSessionManager is not null;
+
+    /// <summary>Reads the session's persisted kernel-mode toggle (§5.3). A session with no toggle entry yet reads false — the stated OFF default.</summary>
+    public async Task<bool> GetKernelModeEnabledAsync(SessionOwner owner, string sessionId, CancellationToken ct)
+    {
+        var transcript = await Transcript.LoadAsync(_transcriptStore, owner, sessionId, ct);
+        return transcript.KernelModeEnabled;
+    }
+
+    /// <summary>
+    /// Flips the session's persisted kernel-mode toggle by appending a "kernel_toggle" entry
+    /// (§5.3) — per-chat-session and durable across resume, not a global app preference.
+    /// Turning it OFF also destroys any live kernel for the session: leaving an interpreter running
+    /// for a session that can no longer reach it would hold a subprocess (and its memory) for the
+    /// rest of the host's life with nothing able to use or reset it.
+    /// </summary>
+    public async Task SetKernelModeEnabledAsync(SessionOwner owner, string sessionId, bool enabled, CancellationToken ct)
+    {
+        await _transcriptStore.AppendAsync(owner, sessionId, TranscriptEntry.KernelToggle(enabled), ct);
+
+        if (!enabled && _kernelSessionManager is not null)
+            await _kernelSessionManager.DestroyAsync(sessionId);
+    }
+
+    /// <summary>Backs /kernel-reset — a deliberate escape hatch for "the interpreter is in a bad state", independent of session lifecycle and compaction (§4.4).</summary>
+    public async Task ResetKernelAsync(string sessionId, CancellationToken ct)
+    {
+        if (_kernelSessionManager is not null)
+            await _kernelSessionManager.ResetAsync(sessionId, ct);
     }
 
     private sealed record ActiveTurn(Channel<SteeringMessage> Steering, CancellationTokenSource Cancel, Task Run);

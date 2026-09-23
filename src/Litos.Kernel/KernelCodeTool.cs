@@ -2,12 +2,18 @@ using System.Text;
 using System.Text.Json;
 using Litos.Agent.Tools;
 
-namespace Litos.Gui;
+namespace Litos.Kernel;
 
 /// <summary>
 /// Schema-only ITool for the reserved run_kernel_code name (ReadMe_PTCPersistentKernel.md §8.2) —
-/// registered only when the session's kernel toggle is ON (ToolRegistryFactory.Create in
-/// MainWindow), never in the shared LitosHostBuilder, since kernel mode is Litos.Gui-scoped (§2).
+/// registered only when the session's kernel toggle is ON, never in the shared LitosHostBuilder,
+/// since a face with no kernel wiring must never advertise this tool to the model.
+///
+/// Lives here in Litos.Kernel rather than in any one face: it was originally Litos.Gui-scoped (§2),
+/// when Gui was the only face with kernel mode, but Litos.VsCodeHost now builds the identical
+/// ON-state registry. Both construct it from their own live bridged-tool list, so sharing the type
+/// costs nothing and keeps one definition of what the model is told run_kernel_code can do.
+///
 /// InvokeAsync is unreachable in practice: AgentLoop intercepts ReservedToolNames.KernelCode by
 /// name before ToolRegistry.Resolve is ever reached (AgentLoop.InvokeKernelSafelyAsync) — this
 /// body exists purely as a canary a test can assert never fires.

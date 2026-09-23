@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Litos.Host\Litos.Host.csproj" />
     <ProjectReference Include="..\Litos.Tools.Mcp\Litos.Tools.Mcp.csproj" />
+    <ProjectReference Include="..\Litos.Kernel\Litos.Kernel.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

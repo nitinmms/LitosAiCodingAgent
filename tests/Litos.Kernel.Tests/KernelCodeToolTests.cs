@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Litos.Agent.Tools;
 
-namespace Litos.Gui.Tests;
+namespace Litos.Kernel.Tests;
 
 /// <summary>
 /// KernelCodeTool is the schema-only ITool exposed while the kernel toggle is ON
