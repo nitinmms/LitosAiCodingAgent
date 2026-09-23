@@ -87,6 +87,16 @@ public sealed class KernelSession : IAsyncDisposable
                 ? ToolResult.Error(Combine(result))
                 : ToolResult.Ok(Combine(result));
         }
+        catch (KernelProcessDiedException ex)
+        {
+            // The interpreter died under this eval (see FailPendingEvalsOnProcessDeathAsync).
+            // Reported as a normal tool error, not rethrown: the model can read this, understand
+            // that its own script killed the kernel, and try something else on the next round.
+            // KillAndResetAsync clears the dead Process handle so the next RunAsync respawns.
+            AppendAudit(new { evt = "eval_kernel_died", requestId });
+            await KillAndResetAsync();
+            return ToolResult.Error(ex.Message);
+        }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             AppendAudit(new { evt = "eval_timeout", requestId });
@@ -218,13 +228,14 @@ public sealed class KernelSession : IAsyncDisposable
 
     private async Task ReadLoopAsync(Process process)
     {
+        Exception? readFailure = null;
         try
         {
             while (true)
             {
                 var message = await WireIo.ReadAsync(process.StandardOutput, CancellationToken.None);
                 if (message is null)
-                    return; // Subprocess closed its stdout — it exited or crashed.
+                    break; // Subprocess closed its stdout — it exited or crashed.
 
                 switch (message.Kind)
                 {
@@ -241,13 +252,78 @@ public sealed class KernelSession : IAsyncDisposable
                 }
             }
         }
+        catch (Exception ex)
+        {
+            readFailure = ex;
+        }
+
+        await FailPendingEvalsOnProcessDeathAsync(process, readFailure);
+    }
+
+    /// <summary>
+    /// The reader loop has ended, which can only mean the subprocess's stdout reached EOF or the
+    /// read itself threw — both of which mean no further EvalResult can ever arrive. Anything still
+    /// pending is therefore unanswerable and is failed here, immediately.
+    ///
+    /// This deliberately replaces the earlier "leave them to RunAsync's hard timeout" behavior. That
+    /// was survivable in Litos.Gui, where the timeout is long and a human can reach for
+    /// /kernel-reset, but it means an uncatchable script failure (a StackOverflowException from
+    /// runaway recursion, or a bare Environment.Exit) stalls the caller for the FULL hard timeout
+    /// before reporting anything — measured at ~21s against a 20s timeout, and it would be a
+    /// five-minute hang at the 5m default. The model gets no error it could react to in the
+    /// meantime; the user just watches a spinner.
+    ///
+    /// The race the previous comment worried about ("process just exited" vs. "result already in
+    /// flight") does not actually arise on the EOF path: stdout reaching EOF means every byte the
+    /// subprocess ever wrote has already been read and dispatched by the loop above, so a result
+    /// still pending at this point was genuinely never sent. Awaiting exit before failing also lets
+    /// the error name the exit code, and gives a process killed by KillAndResetAsync time to be
+    /// reaped so this reports the real cause rather than racing the kill.
+    /// </summary>
+    private async Task FailPendingEvalsOnProcessDeathAsync(Process process, Exception? readFailure)
+    {
+        try
+        {
+            await process.WaitForExitAsync();
+        }
         catch
         {
-            // Reader loop ended abnormally (process died mid-read) — pending evals are left to
-            // time out via RunAsync's own hard timeout rather than being force-failed here, since
-            // a race between "process just exited" and "result already in flight" is otherwise
-            // hard to adjudicate safely.
+            // Already reaped, or never started cleanly — the exit code below is best-effort only.
         }
+
+        string reason;
+        try
+        {
+            reason = process.HasExited
+                ? $"Kernel process exited unexpectedly with code {process.ExitCode}."
+                : "Kernel process connection was lost.";
+        }
+        catch
+        {
+            reason = "Kernel process exited unexpectedly.";
+        }
+
+        if (readFailure is not null)
+            reason += $" ({readFailure.Message})";
+
+        reason += " This usually means the script crashed the interpreter — for example unbounded"
+            + " recursion causing a StackOverflowException, or a direct call to Environment.Exit."
+            + " The kernel will restart on the next call; variables and functions from earlier"
+            + " rounds are gone.";
+
+        List<TaskCompletionSource<EvalResult>> orphaned;
+        lock (_pendingLock)
+        {
+            orphaned = [.. _pendingEvals.Values];
+            _pendingEvals.Clear();
+        }
+
+        if (orphaned.Count == 0)
+            return;
+
+        AppendAudit(new { evt = "kernel_died", orphanedEvals = orphaned.Count, reason });
+        foreach (var tcs in orphaned)
+            tcs.TrySetException(new KernelProcessDiedException(reason));
     }
 
     /// <summary>
