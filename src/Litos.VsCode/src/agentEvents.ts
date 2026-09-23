@@ -324,6 +324,24 @@ export class LitosClient {
         return this.getJson(`/sessions/${encodeURIComponent(sessionId)}/working-directory`);
     }
 
+    // --- /ptc (Programmatic Tool Calling — kernel mode) ---
+    // Per-session, not a global setting: the toggle is persisted in the transcript, so a resumed
+    // session restores its own choice and a new session starts at the OFF default.
+
+    // `available` is false when the host could not locate the kernel subprocess binary (a
+    // packaging problem), which the UI must show differently from a simple "off".
+    async getPtc(sessionId: string): Promise<PtcState> {
+        return this.getJson(`/sessions/${encodeURIComponent(sessionId)}/ptc`);
+    }
+
+    async setPtc(sessionId: string, enabled: boolean): Promise<PtcState> {
+        return this.postJson(`/sessions/${encodeURIComponent(sessionId)}/ptc`, { Enabled: enabled });
+    }
+
+    async resetPtcKernel(sessionId: string): Promise<{ reset: boolean }> {
+        return this.postJson(`/sessions/${encodeURIComponent(sessionId)}/ptc/reset`, {});
+    }
+
     // --- /reflect ---
 
     async reflect(sessionId: string, existingAgentsMd: string | null): Promise<{ proposed: string }> {
@@ -444,6 +462,14 @@ export type ContextUsage = {
     fraction: number;
     level: "Normal" | "Warning" | "Critical";
     isStale: boolean;
+};
+
+// `available: false` means the host has no kernel subprocess to run (the binary was not bundled),
+// so PTC cannot be switched on at all — distinct from `enabled: false`, which is the ordinary
+// off state. The UI must not present an unavailable toggle as merely off.
+export type PtcState = {
+    enabled: boolean;
+    available: boolean;
 };
 
 export type ContextBreakdownSubItem = { label: string; estimatedTokens: number };

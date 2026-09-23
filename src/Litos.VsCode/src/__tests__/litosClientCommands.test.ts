@@ -98,6 +98,46 @@ describe("LitosClient — /branch, /compact, /reflect", () => {
     });
 });
 
+describe("LitosClient — /ptc", () => {
+    it("getPtc issues a GET to the session-scoped path", async () => {
+        mockFetch(() => new Response(JSON.stringify({ enabled: false, available: true }), { status: 200 }));
+
+        const state = await client.getPtc("session-1");
+
+        expect(capturedRequests[0].url).toBe("http://127.0.0.1:12345/sessions/session-1/ptc");
+        expect(state).toEqual({ enabled: false, available: true });
+    });
+
+    it("setPtc POSTs the PascalCase Enabled field", async () => {
+        mockFetch(() => new Response(JSON.stringify({ enabled: true, available: true }), { status: 200 }));
+
+        const state = await client.setPtc("session-1", true);
+
+        const body = JSON.parse(capturedRequests[0].init!.body as string);
+        expect(body).toEqual({ Enabled: true });
+        expect(state.enabled).toBe(true);
+    });
+
+    // `available: false` is a distinct state from `enabled: false` — it means the kernel binary is
+    // missing, so the toggle cannot be switched on at all and the UI must say so.
+    it("surfaces available:false rather than collapsing it into enabled:false", async () => {
+        mockFetch(() => new Response(JSON.stringify({ enabled: false, available: false }), { status: 200 }));
+
+        const state = await client.getPtc("session-1");
+
+        expect(state.available).toBe(false);
+    });
+
+    it("resetPtcKernel POSTs to the reset path with an empty body", async () => {
+        mockFetch(() => new Response(JSON.stringify({ reset: true }), { status: 200 }));
+
+        const result = await client.resetPtcKernel("session-1");
+
+        expect(capturedRequests[0].url).toBe("http://127.0.0.1:12345/sessions/session-1/ptc/reset");
+        expect(result.reset).toBe(true);
+    });
+});
+
 describe("LitosClient — /skills", () => {
     it("listSkills passes cwd as a query parameter", async () => {
         mockFetch(() => new Response(JSON.stringify([]), { status: 200 }));

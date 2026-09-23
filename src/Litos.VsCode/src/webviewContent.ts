@@ -572,6 +572,102 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     z-index: 99;
   }
   #defaultModelHintOverlay.visible { display: block; }
+
+  /* /ptc toggle popup — same overlay/card language as #keysPopup and #defaultModelHint above. */
+  #ptcPopup {
+    display: none;
+    position: fixed;
+    top: 12%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(460px, 90vw);
+    background: var(--vscode-dropdown-background, var(--vscode-editor-background));
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    z-index: 100;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+  #ptcPopup.visible { display: block; }
+  #ptcPopup h2 { margin-top: 0; margin-bottom: 4px; font-size: 1.1em; }
+  #ptcPopup p { color: var(--vscode-descriptionForeground); font-size: 0.9em; line-height: 1.5; }
+  #ptcToggleRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--vscode-widget-border, #444);
+    border-bottom: 1px solid var(--vscode-widget-border, #444);
+    margin: 12px 0;
+  }
+  #ptcToggleLabel { font-weight: 600; }
+  /* Switch built from a checkbox rather than a button so it stays keyboard-operable and
+     screen-reader-announced as a checked/unchecked control for free. */
+  #ptcSwitch { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
+  #ptcSwitch input { opacity: 0; width: 0; height: 0; }
+  #ptcSwitchTrack {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--vscode-input-background, #3c3c3c);
+    border: 1px solid var(--vscode-widget-border, #666);
+    border-radius: 22px;
+    transition: background 0.15s ease;
+  }
+  #ptcSwitchTrack::before {
+    content: "";
+    position: absolute;
+    height: 16px;
+    width: 16px;
+    left: 2px;
+    bottom: 2px;
+    background: var(--vscode-foreground);
+    border-radius: 50%;
+    transition: transform 0.15s ease;
+  }
+  #ptcSwitch input:checked + #ptcSwitchTrack { background: var(--vscode-button-background, #0e639c); }
+  #ptcSwitch input:checked + #ptcSwitchTrack::before { transform: translateX(18px); }
+  #ptcSwitch input:disabled + #ptcSwitchTrack { opacity: 0.5; cursor: not-allowed; }
+  #ptcSwitch input:focus-visible + #ptcSwitchTrack { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+  #ptcWarning { color: var(--vscode-descriptionForeground); font-size: 0.85em; }
+  #ptcUnavailable { display: none; color: var(--vscode-errorForeground); font-size: 0.85em; }
+  #ptcUnavailable.visible { display: block; }
+  #ptcPopupActions { display: flex; justify-content: flex-end; margin-top: 12px; }
+  #ptcPopupClose {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    cursor: pointer;
+  }
+  #ptcPopupOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 99;
+  }
+  #ptcPopupOverlay.visible { display: block; }
+
+  /* PTC indicator, pinned to the far right of the model/provider row. margin-left:auto is what
+     puts it there — #modelInfo is a flex row, so without it this would sit immediately after the
+     model text rather than at the trailing edge. Hidden via visibility (not display:none) so the
+     row's height never changes as PTC is toggled on and off. */
+  #ptcIndicator {
+    margin-left: auto;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    visibility: hidden;
+    color: var(--vscode-charts-yellow, #d29922);
+    cursor: pointer;
+  }
+  #ptcIndicator.visible { visibility: visible; }
+
   #chatArea { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 </style>
 </head>
@@ -592,7 +688,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <div id="contextUsageBar"><div id="contextUsageFill" style="width:0%"></div></div>
   <span id="contextUsageText">Context usage unavailable</span>
 </div>
-<div id="modelInfo"><span class="statusIcon" id="modelInfoIcon"></span><span id="modelInfoText">Model: (loading...)</span></div>
+<div id="modelInfo"><span class="statusIcon" id="modelInfoIcon"></span><span id="modelInfoText">Model: (loading...)</span><span id="ptcIndicator" title="Programmatic Tool Calling is ON — click to change"><span class="statusIcon" id="ptcIndicatorIcon"></span><span>PTC</span></span></div>
 <div id="workingDir"><span class="statusIcon" id="workingDirIcon"></span><span id="workingDirText">Working directory: (loading...)</span></div>
 </div>
 <div id="pickerOverlay"></div>
@@ -621,6 +717,23 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <div id="keysPopupActions">
     <button id="keysPopupCancel">Close</button>
     <button id="keysPopupSave">Save</button>
+  </div>
+</div>
+<div id="ptcPopupOverlay"></div>
+<div id="ptcPopup">
+  <h2>Programmatic Tool Calling</h2>
+  <p>When on, the model's only tool is a persistent C# code kernel. It writes scripts that call your tools directly, so multi-step work collapses into one round instead of several.</p>
+  <div id="ptcToggleRow">
+    <span id="ptcToggleLabel">Programmatic Tool Calling</span>
+    <label id="ptcSwitch">
+      <input type="checkbox" id="ptcSwitchInput" aria-label="Programmatic Tool Calling">
+      <span id="ptcSwitchTrack"></span>
+    </label>
+  </div>
+  <p id="ptcWarning">Code the model writes runs with your full local permissions — file, network, and subprocess access are not gated by an approval prompt. MCP tools are not prompted for approval either: servers set to <strong>Ask</strong> are called without asking. Servers set to <strong>Deny</strong> stay blocked. Turn this on only if you are comfortable letting the model run local code unsupervised in this session.</p>
+  <p id="ptcUnavailable">Programmatic Tool Calling is unavailable in this build — the kernel host binary is missing.</p>
+  <div id="ptcPopupActions">
+    <button id="ptcPopupClose">Close</button>
   </div>
 </div>
 <div id="defaultModelHintOverlay"></div>
@@ -662,6 +775,13 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const workingDirTextEl = document.getElementById('workingDirText');
   const workingDirIconEl = document.getElementById('workingDirIcon');
   const workingIndicatorEl = document.getElementById('workingIndicator');
+  const ptcIndicatorEl = document.getElementById('ptcIndicator');
+  const ptcIndicatorIconEl = document.getElementById('ptcIndicatorIcon');
+  const ptcPopupEl = document.getElementById('ptcPopup');
+  const ptcPopupOverlayEl = document.getElementById('ptcPopupOverlay');
+  const ptcSwitchInputEl = document.getElementById('ptcSwitchInput');
+  const ptcUnavailableEl = document.getElementById('ptcUnavailable');
+  const ptcPopupCloseEl = document.getElementById('ptcPopupClose');
 
   // Tracks whether sendButton currently means "Cancel" — mirrors Litos.Gui's own SendButton
   // relabeling (MainWindow.axaml.cs's RunTurnFromTextAsync sets SendButton.Content = "Cancel"),
@@ -691,8 +811,56 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     '<path d="M14.5 4H8.71l-.85-.85L7.51 3H1.5l-.5.5v9l.5.5h13l.5-.5v-8L14.5 4zM14 13H2V4h5.29l.85.85.36.15H14v8z"/>' +
     '</svg>';
 
+  // Codicon-shaped "terminal"/chevron glyph — the kernel runs code, and this reads as such at 16px.
+  ptcIndicatorIconEl.innerHTML = '<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M1.5 2h13l.5.5v11l-.5.5h-13l-.5-.5v-11l.5-.5zM2 13h12V3H2v10zm2.44-7.94l2.5 2.5v.88l-2.5 2.5-.7-.7L5.79 8 3.74 5.76l.7-.7zM8 10h4v1H8v-1z"/>' +
+    '</svg>';
+
   contextUsageEl.addEventListener('click', () => {
     vscode.postMessage({ type: 'showContextBreakdown' });
+  });
+
+  // --- /ptc (Programmatic Tool Calling) ---
+  // The webview never decides PTC state on its own: every flip round-trips to the host, which
+  // persists it in the transcript, and the reply is what updates this UI. That keeps the indicator
+  // honest if a write fails — it shows what the host actually stored, not what was clicked.
+  let ptcAvailable = true;
+
+  function renderPtc(state) {
+    const enabled = !!(state && state.enabled);
+    ptcAvailable = !state || state.available !== false;
+
+    ptcSwitchInputEl.checked = enabled;
+    ptcSwitchInputEl.disabled = !ptcAvailable;
+    ptcUnavailableEl.classList.toggle('visible', !ptcAvailable);
+    ptcIndicatorEl.classList.toggle('visible', enabled);
+  }
+
+  function openPtcPopup() {
+    ptcPopupEl.classList.add('visible');
+    ptcPopupOverlayEl.classList.add('visible');
+    // Re-read on open rather than trusting cached state: the session can have changed underneath
+    // this popup via /new, /resume or /branch since it was last shown.
+    vscode.postMessage({ type: 'getPtc' });
+  }
+
+  function closePtcPopup() {
+    ptcPopupEl.classList.remove('visible');
+    ptcPopupOverlayEl.classList.remove('visible');
+  }
+
+  ptcSwitchInputEl.addEventListener('change', () => {
+    if (!ptcAvailable) {
+      ptcSwitchInputEl.checked = false;
+      return;
+    }
+    vscode.postMessage({ type: 'setPtc', enabled: ptcSwitchInputEl.checked });
+  });
+  ptcIndicatorEl.addEventListener('click', openPtcPopup);
+  ptcPopupCloseEl.addEventListener('click', closePtcPopup);
+  ptcPopupOverlayEl.addEventListener('click', closePtcPopup);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && ptcPopupEl.classList.contains('visible')) closePtcPopup();
   });
 
   function renderWorkingDir(cwd) {
@@ -970,6 +1138,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     { name: 'compact', desc: 'Compact the conversation now' },
     { name: 'reflect', desc: 'Distill this session into AGENTS.md' },
     { name: 'mcp', desc: 'Manage MCP servers' },
+    { name: 'ptc', desc: 'Programmatic Tool Calling' },
     { name: 'keys', desc: 'Add or update API keys' },
   ];
 
@@ -1740,6 +1909,12 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
       addEntry('system', message.text);
     } else if (message.type === 'openKeysPopup') {
       openKeysPopup(!!message.isFirstRun, message.keyStatus);
+    } else if (message.type === 'openPtcPopup') {
+      openPtcPopup();
+    } else if (message.type === 'ptcState') {
+      // Sent both in reply to getPtc/setPtc and unprompted after a session change (/new,
+      // /resume, /branch), so the indicator follows the session it belongs to.
+      renderPtc(message.state);
     } else if (message.type === 'openDefaultModelHint') {
       openDefaultModelHint();
     } else if (message.type === 'saveKeysSuccess') {

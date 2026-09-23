@@ -202,6 +202,23 @@ async function refreshWorkingDirectory(state: PanelState): Promise<void> {
 }
 
 /**
+ * Pushes the session's PTC (Programmatic Tool Calling) state to the webview. Called wherever the
+ * ACTIVE SESSION can change — /new, /resume, /branch — and not only on popup open, because the
+ * toggle is persisted per-session: resuming a session that had PTC on must light the indicator
+ * even though nothing was clicked, and /new must clear it back to the OFF default.
+ */
+async function refreshPtc(state: PanelState): Promise<void> {
+    if (!sharedHost) return;
+
+    try {
+        const ptc = await sharedHost.client.getPtc(state.sessionId);
+        state.panel.webview.postMessage({ type: "ptcState", state: ptc });
+    } catch {
+        // Host not ready yet or transient error — leave the indicator as it was.
+    }
+}
+
+/**
  * Resolves every "@path" mention in the just-submitted text (the mention dropdown only ever
  * inserts text into the composer — see webviewContent.ts's acceptMention — nothing is attached
  * until send time) into AttachedContent, appended to the same array sendTurn's own attachments
@@ -322,6 +339,7 @@ async function initializeChatSurface(context: vscode.ExtensionContext, surface: 
     void refreshContextUsage(state);
     void refreshWorkingDirectory(state);
     void refreshModelSettings(state);
+    void refreshPtc(state);
 
     surface.webview.onDidReceiveMessage((message) => handlePanelMessage(context, state, message));
 
@@ -501,6 +519,7 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
         void refreshContextUsage(state);
         void refreshWorkingDirectory(state);
         void refreshModelSettings(state);
+        void refreshPtc(state);
         return;
     }
 
@@ -514,8 +533,34 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
             void refreshContextUsage(state);
             void refreshWorkingDirectory(state);
             void refreshModelSettings(state);
+            void refreshPtc(state);
         } catch (err: any) {
             panel.webview.postMessage({ type: "system", text: `Error: ${err.message}` });
+        }
+        return;
+    }
+
+    if (message.type === "getPtc") {
+        void refreshPtc(state);
+        return;
+    }
+
+    if (message.type === "setPtc") {
+        try {
+            const ptc = await sharedHost!.client.setPtc(state.sessionId, !!message.enabled);
+            panel.webview.postMessage({ type: "ptcState", state: ptc });
+            panel.webview.postMessage({
+                type: "system",
+                text: ptc.enabled
+                    ? "Programmatic Tool Calling enabled for this session."
+                    : "Programmatic Tool Calling disabled for this session.",
+            });
+        } catch (err: any) {
+            // Re-read rather than assuming the flip failed cleanly: the host is the only authority
+            // on what was actually persisted, so the switch must end up showing its state, not the
+            // one the click optimistically implied.
+            panel.webview.postMessage({ type: "system", text: `Error: ${err.message}` });
+            void refreshPtc(state);
         }
         return;
     }
@@ -683,6 +728,13 @@ async function runSlashCommand(context: vscode.ExtensionContext, state: PanelSta
 
             case "mcp": {
                 openMcpPanel(context);
+                break;
+            }
+
+            case "ptc": {
+                // Always opens the popup — the toggle lives there, so there is one place the
+                // consent wording is shown and one place the state can change.
+                panel.webview.postMessage({ type: "openPtcPopup" });
                 break;
             }
 
