@@ -80,11 +80,20 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
                 "yourself (e.g. System.IO.File.ReadAllText) rather than reusing read_file's formatted output.");
             sb.AppendLine();
             sb.AppendLine(
-                "Avoid nesting a raw string literal (\"\"\"...\"\"\") around text that itself contains " +
-                "an interpolated string (e.g. an escaped $\"...\") — the two quoting rules stack and " +
-                "commonly fail to compile (CS8997/CS1002). Prefer a plain verbatim string (@\"...\", " +
-                "doubling any \"\" inside it) for old_text/new_text snippets and other embedded C#-like " +
-                "text; it has no such nesting trap.");
+                "Embedding a multi-line block of text (a whole source file, a docstring, a template) " +
+                "is best done with a raw string literal, but C# requires its content to START ON THE " +
+                "LINE AFTER the opening quotes and the closing quotes to sit on their own line:");
+            sb.AppendLine("  var code = \"\"\"");
+            sb.AppendLine("  import math");
+            sb.AppendLine("  print(\"hi\")");
+            sb.AppendLine("  \"\"\";");
+            sb.AppendLine(
+                "Opening it inline instead — var code = \"\"\"import math — is the single most common " +
+                "way these scripts fail to compile (CS8997 \"Unterminated raw string literal\"). The " +
+                "payload may contain quotes, backslashes and even \"\"\" freely; if it contains a run " +
+                "of three or more quotes, fence it with MORE quotes than the longest run (\"\"\"\" ... " +
+                "\"\"\"\"). No escaping is needed inside, and no interpolation happens unless you " +
+                "prefix with $.");
 
             return sb.ToString();
         }

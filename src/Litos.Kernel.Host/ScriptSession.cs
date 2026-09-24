@@ -101,6 +101,10 @@ public sealed class ScriptSession
         {
             isError = true;
             errorText = string.Join(Environment.NewLine, ex.Diagnostics);
+
+            var hint = CompileErrorHints.For(errorText, code);
+            if (hint is not null)
+                errorText += Environment.NewLine + Environment.NewLine + hint;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
