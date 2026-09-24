@@ -48,7 +48,7 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
             sb.AppendLine("- KernelState.List() -> IReadOnlyList<string>: lists every variable/function declared so far, with type/size info.");
             sb.AppendLine("- KernelState.Describe(name) -> string: detail on one variable or function by name.");
             foreach (var schema in bridgedToolSchemas)
-                sb.AppendLine($"- {schema.Name}(string argsJson) -> Task<string>: {OneLine(schema.Description)}");
+                sb.AppendLine($"- {schema.Name}(params name, value pairs) -> Task<string>: {OneLine(schema.Description)}");
             sb.AppendLine();
             sb.AppendLine(
                 "Keep your script's own printed output and return value SHORT — a summary like " +
@@ -60,7 +60,16 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
                 "KernelState.List() just to check what you just declared, only to re-orient on " +
                 "everything built earlier in a long session.");
             sb.AppendLine();
-            sb.AppendLine("Example: var text = await read_file(\"{\\\"path\\\":\\\"a.txt\\\"}\"); text.Contains(\"import X\")");
+            sb.AppendLine(
+                "Call a tool by passing its arguments as name, value pairs — the values are " +
+                "JSON-encoded for you, so never hand-write a JSON string:");
+            sb.AppendLine("  var text = await read_file(\"path\", @\"c:\\dir\\a.txt\");");
+            sb.AppendLine("  if (text.Contains(\"import X\")) await write_file(\"path\", p, \"content\", body);");
+            sb.AppendLine(
+                "Use a verbatim string (@\"c:\\dir\\a.txt\") for Windows paths. Writing the JSON " +
+                "yourself instead — read_file(\"{\\\"path\\\":\\\"c:\\\\dir\\\\a.txt\\\"}\") — stacks C# " +
+                "escaping on top of JSON escaping and commonly fails with \"invalid escapable " +
+                "character within a JSON string\".");
             sb.AppendLine();
             sb.AppendLine(
                 "read_file's output has line-number prefixes for display (like 'cat -n') — never pass " +

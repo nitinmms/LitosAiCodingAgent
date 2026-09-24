@@ -20,10 +20,19 @@ internal static class ToolWrapperCodeGen
         foreach (var tool in tools)
         {
             var identifier = Sanitize(tool.Name);
-            sb.AppendLine($"/// <summary>{EscapeForDocComment(tool.Description)}</summary>");
+            var literalName = EscapeForStringLiteral(tool.Name);
+            var doc = EscapeForDocComment(tool.Description);
+
+            sb.AppendLine($"/// <summary>{doc}</summary>");
             sb.AppendLine(
                 $"async global::System.Threading.Tasks.Task<string> {identifier}(string argsJson = \"{{}}\") " +
-                $"=> await global::Litos.Kernel.Host.ScriptSession.BridgeField!.CallAsync(\"{EscapeForStringLiteral(tool.Name)}\", argsJson);");
+                $"=> await global::Litos.Kernel.Host.ScriptSession.BridgeField!.CallAsync(\"{literalName}\", argsJson);");
+
+            // Params overload — the one a script should normally reach for. See KernelArgs.Json.
+            sb.AppendLine($"/// <summary>{doc} (Pass arguments as name, value pairs — e.g. {identifier}(\"path\", @\"c:\\dir\\f.txt\") — so values are JSON-encoded for you.)</summary>");
+            sb.AppendLine(
+                $"async global::System.Threading.Tasks.Task<string> {identifier}(params object?[] nameValuePairs) " +
+                $"=> await global::Litos.Kernel.Host.ScriptSession.BridgeField!.CallAsync(\"{literalName}\", global::Litos.Kernel.Host.KernelArgs.Json(nameValuePairs));");
         }
         return sb.ToString();
     }

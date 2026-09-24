@@ -52,6 +52,13 @@ public sealed class InProcessKernelHostFixture : IAsyncDisposable
     }
 
     /// <param name="toolResponse">If set, answers every ToolCallRequest this eval triggers with this canned (text, isError) response instead of the default auto-reject.</param>
+    /// <summary>
+    /// Every ToolCallRequest the host emitted, in order — lets a test assert what arguments a
+    /// script's tool call actually produced, not merely that one happened. The name/value-pair
+    /// wrappers exist precisely to control this JSON, so it has to be observable.
+    /// </summary>
+    public List<ToolCallRequest> ObservedToolCalls { get; } = [];
+
     public async Task<EvalResult> EvalAsync(string code, (string Text, bool IsError)? toolResponse = null)
     {
         var requestId = Guid.NewGuid().ToString("n");
@@ -68,6 +75,7 @@ public sealed class InProcessKernelHostFixture : IAsyncDisposable
 
             if (message.Kind == KernelWireMessage.KindToolCallRequest && message.ToolCallRequest is { } toolCall)
             {
+                ObservedToolCalls.Add(toolCall);
                 var (text, isError) = toolResponse ?? ("no bridged tool configured in this test", true);
                 await WireIo.WriteAsync(_hostInputWriter, KernelWireMessage.Of(new ToolCallResponse(toolCall.RequestId, text, isError)), CancellationToken.None);
             }
