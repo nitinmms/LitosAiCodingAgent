@@ -20,6 +20,19 @@ public sealed class Transcript
     public string? WorkingDirectory { get; private set; }
 
     /// <summary>
+    /// Fills in a working directory for a session that has none yet, WITHOUT discarding everything
+    /// else already replayed into this transcript.
+    ///
+    /// Exists because the obvious alternative — replacing the loaded transcript with
+    /// Transcript.CreateNew(cwd) — silently drops any other replayed state. That is exactly how
+    /// kernel mode came to be ignored in Litos.VsCodeHost: a session whose only entry so far was
+    /// the "kernel_toggle" (toggled on before the first message ever ran) had no WorkingDirectory
+    /// yet, so the whole transcript was thrown away and rebuilt with KernelModeEnabled back at its
+    /// false default — the toggle read as OFF on the very turn it was meant to apply to.
+    /// </summary>
+    public void SetWorkingDirectory(string workingDirectory) => WorkingDirectory = workingDirectory;
+
+    /// <summary>
     /// Per-session, persisted kernel-mode toggle state (ReadMe_PTCPersistentKernel.md §5.3) —
     /// defaults OFF for a brand-new session (Transcript.CreateNew), replayed from the latest
     /// "kernel_toggle" entry on /resume (LoadAsync). Not a global app preference: a second,

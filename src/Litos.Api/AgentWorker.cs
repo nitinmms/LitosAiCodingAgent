@@ -323,7 +323,12 @@ public sealed class AgentWorker : BackgroundService
         {
             var transcript = await Transcript.LoadAsync(_transcriptStore, owner, sessionId, turnCts.Token);
             if (transcript.WorkingDirectory is null)
-                transcript = Transcript.CreateNew(Directory.GetCurrentDirectory());
+                // Fills in the missing directory in place rather than replacing the transcript:
+                // CreateNew silently discards everything else LoadAsync replayed. Litos.VsCodeHost
+                // had the identical line and it made kernel mode read as OFF on the first turn of a
+                // session whose toggle was the only entry written so far. No such per-session state
+                // exists on this face today, but the trap is the same one.
+                transcript.SetWorkingDirectory(Directory.GetCurrentDirectory());
 
             await foreach (var evt in loop.RunTurnAsync(owner, sessionId, transcript, model, content, turnCts.Token, steering.Reader, contextLength))
                 await events.WriteAsync(evt, CancellationToken.None);

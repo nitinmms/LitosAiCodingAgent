@@ -269,7 +269,7 @@ public sealed class AgentWorker : BackgroundService
             // read before deciding which registry this turn gets.
             var transcript = await Transcript.LoadAsync(_transcriptStore, owner, sessionId, turnCts.Token);
             if (transcript.WorkingDirectory is null)
-                transcript = Transcript.CreateNew(Directory.GetCurrentDirectory());
+                transcript.SetWorkingDirectory(Directory.GetCurrentDirectory());
 
             // Toggle-gated exactly as Litos.Gui does it (§1/§6/§8.2): OFF builds today's full
             // registry with no kernel awareness at all; ON builds a registry containing ONLY
