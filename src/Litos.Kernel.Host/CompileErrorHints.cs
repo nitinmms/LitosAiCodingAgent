@@ -14,32 +14,57 @@ namespace Litos.Kernel.Host;
 /// </summary>
 internal static partial class CompileErrorHints
 {
+    /// <summary>
+    /// All three raw-string diagnostics are answered with ONE combined correction rather than a
+    /// per-code message. Observed in a real session: hinting only CS8997's half of the rule ("open
+    /// on the next line") produced a script that opened correctly and still closed inline, failing
+    /// the very next eval with CS9000. The rules are a single construct and are cheaper to state
+    /// together than to learn one diagnostic at a time.
+    /// </summary>
+    private const string RawStringHint =
+        "Hint: a multi-line raw string literal has three rules, and breaking any one of them "
+        + "produces the error above:\n"
+        + "  1. Content starts on the line AFTER the opening quotes (CS8997 if not).\n"
+        + "  2. The closing quotes sit on their OWN line (CS9000 if not).\n"
+        + "  3. Every content line is indented at least as much as that closing line (CS8999 if not).\n"
+        + "Write it as:\n"
+        + "  var s = \"\"\"\n"
+        + "  first line\n"
+        + "  second line\n"
+        + "  \"\"\";\n"
+        + "Putting the closing \"\"\" at column 0 makes rule 3 automatic.\n"
+        + "IMPORTANT: the fence must be LONGER than the longest run of double quotes anywhere in "
+        + "the text. If the text contains \"\"\" (common in many languages and formats), a \"\"\" "
+        + "fence closes early and the rest of the script is parsed as code. Count the longest run "
+        + "inside, then use at least one more:\n"
+        + "  var text = \"\"\"\"\n"
+        + "  a line containing \"\"\" three quotes\n"
+        + "  \"\"\"\";\n"
+        + "The content is never escaped or interpolated (unless you prefix with $), so do not "
+        + "backslash-escape quotes inside it — \\\" is not an escape there and the backslash is "
+        + "written out literally.";
+
     public static string? For(string diagnostics, string code)
     {
-        if (diagnostics.Contains("CS8997", StringComparison.Ordinal) && InlineOpenedRawString().IsMatch(code))
-        {
-            return
-                "Hint: a multi-line raw string literal must begin on the line AFTER its opening quotes, "
-                + "and its closing quotes must be on their own line. This script opens one inline "
-                + "(e.g. var s = \"\"\"first line), which is what CS8997 is reporting.\n"
-                + "Write it as:\n"
-                + "  var s = \"\"\"\n"
-                + "  first line\n"
-                + "  second line\n"
-                + "  \"\"\";\n"
-                + "The content needs no escaping. If it contains a run of three or more double quotes, "
-                + "fence it with more quotes than the longest run (\"\"\"\" ... \"\"\"\").";
-        }
+        var isRawStringError =
+            diagnostics.Contains("CS8997", StringComparison.Ordinal)  // unterminated
+            || diagnostics.Contains("CS8999", StringComparison.Ordinal)  // content line under-indented vs. closing line
+            || diagnostics.Contains("CS9000", StringComparison.Ordinal); // delimiter not on its own line
+
+        // CS8997 also fires for an ordinary unterminated "..." string, so it alone is not proof a
+        // raw string is involved; requiring a 3+ quote run in the source keeps the hint off
+        // unrelated failures. CS8999/CS9000 are raw-string-specific and need no such check.
+        if (isRawStringError && ContainsRawStringDelimiter().IsMatch(code))
+            return RawStringHint;
 
         return null;
     }
 
     /// <summary>
-    /// Matches a raw-string opener (three or more double quotes) followed on the SAME line by
-    /// anything other than whitespace — the malformed multi-line form. A single-line raw string
-    /// ("""text""") is legal and closes on the same line, so the match deliberately requires no
-    /// closing run before end-of-line.
+    /// Any run of three or more double quotes, i.e. the script is plausibly using a raw string at
+    /// all. Deliberately broad: CS8999/CS9000 are already raw-string-specific, and this only has to
+    /// keep the hint off a CS8997 raised by an ordinary unterminated "..." string.
     /// </summary>
-    [GeneratedRegex("\"{3,}[^\"\\r\\n]*[^\\s\"][^\"\\r\\n]*(\\r?\\n)", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex InlineOpenedRawString();
+    [GeneratedRegex("\"{3,}", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex ContainsRawStringDelimiter();
 }

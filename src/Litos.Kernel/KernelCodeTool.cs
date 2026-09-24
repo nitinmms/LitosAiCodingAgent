@@ -80,7 +80,8 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
                 "yourself (e.g. System.IO.File.ReadAllText) rather than reusing read_file's formatted output.");
             sb.AppendLine();
             sb.AppendLine(
-                "Embedding a multi-line block of text (a whole source file, a docstring, a template) " +
+                "Embedding a multi-line block of text (a whole source file in any language, a " +
+                "config file, a template, a patch) " +
                 "is best done with a raw string literal, but C# requires its content to START ON THE " +
                 "LINE AFTER the opening quotes and the closing quotes to sit on their own line:");
             sb.AppendLine("  var code = \"\"\"");
@@ -88,12 +89,21 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
             sb.AppendLine("  print(\"hi\")");
             sb.AppendLine("  \"\"\";");
             sb.AppendLine(
-                "Opening it inline instead — var code = \"\"\"import math — is the single most common " +
-                "way these scripts fail to compile (CS8997 \"Unterminated raw string literal\"). The " +
-                "payload may contain quotes, backslashes and even \"\"\" freely; if it contains a run " +
-                "of three or more quotes, fence it with MORE quotes than the longest run (\"\"\"\" ... " +
-                "\"\"\"\"). No escaping is needed inside, and no interpolation happens unless you " +
-                "prefix with $.");
+                "Opening it inline (var code = \"\"\"import math) gives CS8997; leaving the closing " +
+                "quotes on a content line gives CS9000; indenting a content line less than the " +
+                "closing line gives CS8999. Putting the closing \"\"\" at column 0 avoids the last one.");
+            sb.AppendLine(
+                "The fence must be LONGER than the longest run of double quotes anywhere in the " +
+                "text. If the text contains \"\"\" itself, a \"\"\" fence closes early and the rest " +
+                "of the script is parsed as code — count the longest run inside, then use at least " +
+                "one more:");
+            sb.AppendLine("  var text = \"\"\"\"");
+            sb.AppendLine("  a line containing \"\"\" three quotes");
+            sb.AppendLine("  \"\"\"\";");
+            sb.AppendLine(
+                "Content is never escaped or interpolated inside a raw string unless you prefix it " +
+                "with $. Do not backslash-escape quotes in there — \\\" is not an escape in a C# " +
+                "raw string, so the backslash is written out literally into whatever you produce.");
 
             return sb.ToString();
         }
