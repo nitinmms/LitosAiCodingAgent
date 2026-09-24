@@ -13,7 +13,9 @@ tsconfig.json
 .vscodeignore
 .vscodeignore.*.generated
 
-# Litos.VsCodeHost publish-directory noise that isn't the binary itself.
+# Publish-directory noise that isn't a shipped binary. Covers both bundled executables —
+# Litos.VsCodeHost and the Programmatic Tool Calling kernel, Litos.Kernel.Host — since each RID
+# folder holds the two side by side (that adjacency is how the host locates the kernel).
 bin/**/*.pdb
 bin/**/web.config
 bin/**/*.staticwebassets.endpoints.json

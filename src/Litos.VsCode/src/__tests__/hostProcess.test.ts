@@ -158,4 +158,39 @@ describe("LitosHostProcess.start", () => {
             fs.rmSync(extensionPath, { recursive: true, force: true });
         }
     });
+
+    // The PTC kernel is spawned by Litos.VsCodeHost, never by this extension, so nothing else here
+    // would ever notice it was left non-executable by .vsix extraction — PTC would just appear
+    // broken, far from the cause. Windows has no executable bit, so this is a POSIX-only concern.
+    it.skipIf(process.platform === "win32")(
+        "makes the PTC kernel binary executable too, not just the host",
+        async () => {
+            const fake = makeFakeExtension(`console.log(JSON.stringify({ port: 54321 }));\nsetTimeout(() => {}, 10000);\n`);
+            const kernelPath = path.join(fake.extensionPath, "bin", ridForThisPlatform(), "Litos.Kernel.Host");
+            try {
+                fs.copyFileSync(process.execPath, kernelPath);
+                fs.chmodSync(kernelPath, 0o644); // as an extracted .vsix can leave it
+
+                host = new LitosHostProcess();
+                await host.start(fake.extensionPath, process.cwd());
+
+                expect(fs.statSync(kernelPath).mode & 0o111).not.toBe(0);
+            } finally {
+                fake.cleanup();
+            }
+        },
+    );
+
+    // A build that bundles no kernel is valid — PTC then reports itself unavailable — so a missing
+    // kernel must not stop the host from starting.
+    it("starts normally when no kernel binary is bundled", async () => {
+        const fake = makeFakeExtension(`console.log(JSON.stringify({ port: 54321 }));\nsetTimeout(() => {}, 10000);\n`);
+        try {
+            host = new LitosHostProcess();
+            const result = await host.start(fake.extensionPath, process.cwd());
+            expect(result.port).toBe(54321);
+        } finally {
+            fake.cleanup();
+        }
+    });
 });

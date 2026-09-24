@@ -35,40 +35,75 @@ set -euo pipefail
 
 RUNTIME="${1:-osx-arm64}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT="$REPO_ROOT/src/Litos.VsCodeHost/Litos.VsCodeHost.csproj"
-BIN_NAME="Litos.VsCodeHost"
 VERSION="${LITOS_VERSION:-1.0.0}"
 
 PUBLISH_DIR="$REPO_ROOT/deploy/out/vscodehost/macos/$RUNTIME/publish"
 
-dotnet publish "$PROJECT" \
-    -c Release \
-    -r "$RUNTIME" \
-    -o "$PUBLISH_DIR" \
-    --self-contained true \
-    -p:PublishSingleFile=true \
-    -p:Version="$VERSION" \
-    -p:InformationalVersion="$VERSION"
+# TWO binaries ship together, both self-contained single-file, both into the SAME publish dir:
+#
+#   Litos.VsCodeHost   the agent host the extension spawns
+#   Litos.Kernel.Host  the Programmatic Tool Calling (/ptc) kernel, which Litos.VsCodeHost spawns
+#                      in turn to run model-written code out-of-process
+#
+# Same directory is load-bearing, not tidiness: KernelHostLocator finds the kernel by looking
+# beside the launched executable (see its CandidateSiblingDirectories). They are published in one
+# pass so neither can be signed, notarized and shipped without the other.
+#
+# Both need the SAME signing and entitlements treatment. This script originally handled only the
+# host, and a kernel binary left unsigned here would reproduce the exact failure documented in this
+# file's header — a signed, notarized, broken build — except later and more confusingly: the kernel
+# is spawned lazily, only once a user enables /ptc and the model writes its first script, so
+# Gatekeeper would kill it far from any obvious cause and PTC would simply look broken.
+BIN_NAMES=("Litos.VsCodeHost" "Litos.Kernel.Host")
+PROJECTS=(
+    "$REPO_ROOT/src/Litos.VsCodeHost/Litos.VsCodeHost.csproj"
+    "$REPO_ROOT/src/Litos.Kernel.Host/Litos.Kernel.Host.csproj"
+)
 
-chmod +x "$PUBLISH_DIR/$BIN_NAME"
+for i in "${!PROJECTS[@]}"; do
+    echo "Publishing ${BIN_NAMES[$i]} ($RUNTIME)..."
+    dotnet publish "${PROJECTS[$i]}" \
+        -c Release \
+        -r "$RUNTIME" \
+        -o "$PUBLISH_DIR" \
+        --self-contained true \
+        -p:PublishSingleFile=true \
+        -p:Version="$VERSION" \
+        -p:InformationalVersion="$VERSION"
+    chmod +x "$PUBLISH_DIR/${BIN_NAMES[$i]}"
+done
 
 if [ -z "${APPLE_SIGN_IDENTITY:-}" ]; then
     echo ""
-    echo "Published (UNSIGNED): $PUBLISH_DIR/$BIN_NAME"
-    echo "WARNING: unsigned — Gatekeeper will block this binary when the extension spawns it,"
+    for BIN_NAME in "${BIN_NAMES[@]}"; do
+        echo "Published (UNSIGNED): $PUBLISH_DIR/$BIN_NAME"
+    done
+    echo "WARNING: unsigned — Gatekeeper will block these binaries when the extension spawns them,"
     echo "with no in-app way for the user to bypass it (see this script's own header comment)."
     echo "Do not ship this build. Set APPLE_SIGN_IDENTITY (+ APPLE_ID/APPLE_TEAM_ID/APPLE_APP_PASSWORD"
     echo "to also notarize) before publishing a real release."
 else
     echo "Signing with identity: $APPLE_SIGN_IDENTITY"
-    codesign --force --options runtime \
-        --entitlements "$REPO_ROOT/deploy/entitlements.plist" \
-        --sign "$APPLE_SIGN_IDENTITY" "$PUBLISH_DIR/$BIN_NAME"
+    for BIN_NAME in "${BIN_NAMES[@]}"; do
+        codesign --force --options runtime \
+            --entitlements "$REPO_ROOT/deploy/entitlements.plist" \
+            --sign "$APPLE_SIGN_IDENTITY" "$PUBLISH_DIR/$BIN_NAME"
+    done
 fi
 
+# One archive carrying both binaries: notarytool accepts a zip of several executables and issues a
+# ticket covering each, so this is one submission (and one multi-minute wait) instead of two.
+#
+# No --keepParent here, unlike the single-binary scripts beside this one: --keepParent would nest
+# everything under a "publish/" folder inside the zip. Archiving the directory's CONTENTS puts both
+# executables at the archive root, which is what the release asset and the install path expect.
+# Notarization itself is indifferent — it walks the archive for Mach-O binaries either way.
 ZIP_PATH="$REPO_ROOT/deploy/out/vscodehost/macos/$RUNTIME/Litos.VsCodeHost-$RUNTIME.zip"
-rm -f "$ZIP_PATH"
-ditto -c -k --keepParent "$PUBLISH_DIR/$BIN_NAME" "$ZIP_PATH"
+rezip() {
+    rm -f "$ZIP_PATH"
+    ditto -c -k "$PUBLISH_DIR" "$ZIP_PATH"
+}
+rezip
 
 if [ -n "${APPLE_SIGN_IDENTITY:-}" ] && [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ]; then
     echo "Submitting for notarization..."
@@ -78,16 +113,19 @@ if [ -n "${APPLE_SIGN_IDENTITY:-}" ] && [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_
         --password "$APPLE_APP_PASSWORD" \
         --wait
 
-    # Stapling requires the original signed binary, not the zip — staple, then re-zip.
-    xcrun stapler staple "$PUBLISH_DIR/$BIN_NAME" || echo "Note: stapling a plain executable (not a bundle) is not always supported; notarization ticket is still valid online."
-    rm -f "$ZIP_PATH"
-    ditto -c -k --keepParent "$PUBLISH_DIR/$BIN_NAME" "$ZIP_PATH"
+    # Stapling requires the original signed binaries, not the zip — staple each, then re-zip.
+    for BIN_NAME in "${BIN_NAMES[@]}"; do
+        xcrun stapler staple "$PUBLISH_DIR/$BIN_NAME" || echo "Note: stapling a plain executable (not a bundle) is not always supported; notarization ticket for $BIN_NAME is still valid online."
+    done
+    rezip
 elif [ -n "${APPLE_SIGN_IDENTITY:-}" ]; then
     echo "Note: APPLE_ID/APPLE_TEAM_ID/APPLE_APP_PASSWORD not set, skipping notarization (signed but not notarized)."
 fi
 
 echo ""
-echo "Published to: $PUBLISH_DIR/$BIN_NAME"
+for BIN_NAME in "${BIN_NAMES[@]}"; do
+    echo "Published to: $PUBLISH_DIR/$BIN_NAME"
+done
 echo "Release archive: $ZIP_PATH"
 echo "Copy into the extension bundle with:"
-echo "  cp \"$PUBLISH_DIR/$BIN_NAME\" \"src/Litos.VsCode/bin/$RUNTIME/\""
+echo "  cp \"$PUBLISH_DIR\"/{Litos.VsCodeHost,Litos.Kernel.Host} \"src/Litos.VsCode/bin/$RUNTIME/\""

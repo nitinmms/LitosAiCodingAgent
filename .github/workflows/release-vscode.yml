@@ -10,10 +10,21 @@ name: Release Litos.VsCode
 # an unrelated Gui/macOS release under the wrong tag. Confirmed the hard way: pushing
 # "vscode-v0.1.0" fired all three workflows. "litos-vscode-v*" starts with "l", can't collide.
 #
-# Builds the win-x64 and osx-{arm64,x64} Litos.VsCodeHost binaries, bundles each into
+# Builds the win-x64 and osx-{arm64,x64} binaries, bundles each into
 # src/Litos.VsCode/bin/<rid>/, then packages one .vsix per platform target, attaches them to a
 # GitHub Release, and publishes each to the VS Code Marketplace via `vsce publish` using the
 # VSCE_PAT repo secret.
+#
+# TWO executables ship per RID, side by side in the same bin/<rid>/ folder:
+#   Litos.VsCodeHost   the agent host the extension spawns
+#   Litos.Kernel.Host  the Programmatic Tool Calling (/ptc) kernel, which the host spawns in turn
+#                      to run model-written code out-of-process
+# Their adjacency is load-bearing: KernelHostLocator finds the kernel by probing the launched
+# executable's own directory. A .vsix built without the kernel still works — PTC just reports
+# itself unavailable and its toggle is disabled — so a staging mistake degrades rather than
+# breaking the extension, but it does silently remove the feature.
+#
+# This roughly doubles each .vsix (~66 MB -> ~106 MB measured on win32-x64).
 #
 # litos-vscode-v0.1.3 was published manually first (all three vsce publish --packagePath commands
 # run by hand) to verify the packaging pipeline end to end before trusting CI to auto-publish
@@ -48,16 +59,34 @@ jobs:
             --self-contained true -p:PublishSingleFile=true `
             -p:Version=$version -p:InformationalVersion=$version
 
-      - name: Stage binary into extension bundle
+      # Programmatic Tool Calling (/ptc) runs model-written code in a SEPARATE process, so a second
+      # executable has to ship beside the host. KernelHostLocator probes the launched executable's
+      # own directory, which is why both land in the same bin/<rid>/ folder below — see its
+      # CandidateSiblingDirectories for why AppContext.BaseDirectory alone is wrong for a
+      # single-file publish. Without this binary the extension still works; PTC just reports itself
+      # unavailable and the toggle is disabled.
+      - name: Publish Litos.Kernel.Host (win-x64)
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^litos-vscode-v', ''
+          dotnet publish src/Litos.Kernel.Host/Litos.Kernel.Host.csproj `
+            -c Release -r win-x64 -o deploy/out/kernelhost/win-x64 `
+            --self-contained true -p:PublishSingleFile=true `
+            -p:Version=$version -p:InformationalVersion=$version
+
+      - name: Stage binaries into extension bundle
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path src/Litos.VsCode/bin/win-x64 | Out-Null
           Copy-Item deploy/out/vscodehost/windows/win-x64/Litos.VsCodeHost.exe src/Litos.VsCode/bin/win-x64/ -Force
+          Copy-Item deploy/out/kernelhost/win-x64/Litos.Kernel.Host.exe src/Litos.VsCode/bin/win-x64/ -Force
 
       - uses: actions/upload-artifact@v4
         with:
           name: vscodehost-win-x64
-          path: src/Litos.VsCode/bin/win-x64/Litos.VsCodeHost.exe
+          path: |
+            src/Litos.VsCode/bin/win-x64/Litos.VsCodeHost.exe
+            src/Litos.VsCode/bin/win-x64/Litos.Kernel.Host.exe
 
   build-macos:
     runs-on: macos-latest
@@ -106,16 +135,23 @@ jobs:
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
-      - name: Stage binary into extension bundle
+      # Both binaries: publish-vscodehost-macos.sh signs and notarizes the kernel alongside the
+      # host (see its own comments for why an unsigned kernel would be a silently broken build).
+      - name: Stage binaries into extension bundle
         run: |
           mkdir -p "src/Litos.VsCode/bin/${{ matrix.runtime }}"
-          cp "deploy/out/vscodehost/macos/${{ matrix.runtime }}/publish/Litos.VsCodeHost" "src/Litos.VsCode/bin/${{ matrix.runtime }}/"
-          chmod +x "src/Litos.VsCode/bin/${{ matrix.runtime }}/Litos.VsCodeHost"
+          for bin in Litos.VsCodeHost Litos.Kernel.Host; do
+            cp "deploy/out/vscodehost/macos/${{ matrix.runtime }}/publish/$bin" "src/Litos.VsCode/bin/${{ matrix.runtime }}/"
+            chmod +x "src/Litos.VsCode/bin/${{ matrix.runtime }}/$bin"
+          done
 
+      # upload-artifact does not preserve the executable bit; the package job re-applies it.
       - uses: actions/upload-artifact@v4
         with:
           name: vscodehost-${{ matrix.runtime }}
-          path: src/Litos.VsCode/bin/${{ matrix.runtime }}/Litos.VsCodeHost
+          path: |
+            src/Litos.VsCode/bin/${{ matrix.runtime }}/Litos.VsCodeHost
+            src/Litos.VsCode/bin/${{ matrix.runtime }}/Litos.Kernel.Host
 
   package:
     needs: [build-windows, build-macos]

@@ -26,11 +26,18 @@ export class LitosHostProcess {
         // packaging step alone. Defensively re-assert it on every start rather than relying on
         // that being preserved end-to-end; a no-op if it's already set. Windows has no such bit.
         if (process.platform !== "win32") {
-            try {
-                fs.chmodSync(binaryPath, 0o755);
-            } catch {
-                // Fall through to spawn — if this genuinely can't be made executable, the spawn
-                // below fails with a clearer, OS-native error than swallowing it here would give.
+            // The Programmatic Tool Calling kernel ships in the same folder and needs the same
+            // treatment. Nothing in this extension spawns it — Litos.VsCodeHost does, lazily, the
+            // first time a model writes a script with /ptc on — so it would otherwise keep whatever
+            // (non-)permissions .vsix extraction left it with, and fail far from here with PTC
+            // simply appearing broken.
+            for (const binary of [binaryPath, kernelBinaryPathBeside(binaryPath)]) {
+                try {
+                    if (fs.existsSync(binary)) fs.chmodSync(binary, 0o755);
+                } catch {
+                    // Fall through to spawn — if this genuinely can't be made executable, the spawn
+                    // below fails with a clearer, OS-native error than swallowing it here would give.
+                }
             }
         }
 
@@ -95,6 +102,18 @@ function resolveBinaryPath(extensionPath: string): string {
     const rid = resolveRid();
     const exeName = process.platform === "win32" ? "Litos.VsCodeHost.exe" : "Litos.VsCodeHost";
     return path.join(extensionPath, "bin", rid, exeName);
+}
+
+/**
+ * The Programmatic Tool Calling kernel, which ships beside the host binary — that adjacency is how
+ * the host locates it (KernelHostLocator probes the launched executable's own directory), so
+ * deriving the path from the host's rather than resolving the RID again keeps the two definitions
+ * of "beside" from drifting apart. Returns a path that may not exist: a build without PTC bundled
+ * is valid, and the host reports the capability as unavailable in that case.
+ */
+function kernelBinaryPathBeside(hostBinaryPath: string): string {
+    const exeName = process.platform === "win32" ? "Litos.Kernel.Host.exe" : "Litos.Kernel.Host";
+    return path.join(path.dirname(hostBinaryPath), exeName);
 }
 
 function resolveRid(): string {
