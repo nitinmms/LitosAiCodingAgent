@@ -6,11 +6,14 @@ public sealed record KernelHostPath(string FileName, IReadOnlyList<string> Argum
 
 /// <summary>
 /// Resolves how to launch Litos.Kernel.Host. A ProjectReference alone won't bundle a second
-/// executable into Litos.Gui's self-contained single-file publish output (§8.6 Milestone 3) — the
-/// published layout expects a sibling executable next to Litos.Gui's own, named per-platform
-/// (Litos.Kernel.Host.exe on Windows, Litos.Kernel.Host with no extension on macOS/Linux, per the
-/// Hard requirements' cross-platform publish note). For local dev (no such sibling exists next to
-/// whatever's running the Gui process out of a build/debug directory), builds the project once
+/// executable into a self-contained single-file publish output (§8.6 Milestone 3) — the published
+/// layout expects a sibling executable next to the host's own (Litos.Gui's, or Litos.VsCodeHost's
+/// inside the extension's bin/&lt;rid&gt;/), named per-platform (Litos.Kernel.Host.exe on Windows,
+/// Litos.Kernel.Host with no extension on macOS/Linux, per the Hard requirements' cross-platform
+/// publish note). See CandidateSiblingDirectories for why "next to the host" is not the same thing
+/// as AppContext.BaseDirectory once single-file publishing is involved.
+/// For local dev (no such sibling exists next to
+/// whatever's running the process out of a build/debug directory), builds the project once
 /// (output discarded, not inherited by the eventual subprocess) and launches the resulting DLL via
 /// `dotnet exec` — deliberately NOT `dotnet run`: `dotnet run` prints MSBuild restore/build banner
 /// lines ("C:\...\dotnet.exe...", "Restore complete...") to its own stdout ahead of the program's
@@ -26,9 +29,12 @@ public static class KernelHostLocator
 
     public static KernelHostPath Resolve()
     {
-        var published = Path.Combine(AppContext.BaseDirectory, PlatformExeName());
-        if (File.Exists(published))
-            return new KernelHostPath(published, []);
+        foreach (var directory in CandidateSiblingDirectories())
+        {
+            var published = Path.Combine(directory, PlatformExeName());
+            if (File.Exists(published))
+                return new KernelHostPath(published, []);
+        }
 
         var devProjectPath = FindDevProjectPath();
         if (devProjectPath is not null)
@@ -38,9 +44,37 @@ public static class KernelHostLocator
         }
 
         throw new FileNotFoundException(
-            $"Could not locate {ExeName}: no published sibling executable at '{published}' and no " +
+            $"Could not locate {ExeName}: no published sibling executable in any of " +
+            $"[{string.Join(", ", CandidateSiblingDirectories().Select(d => $"'{d}'"))}] and no " +
             $"'{ExeName}.csproj' found by walking up from '{AppContext.BaseDirectory}'. " +
-            "Publish Litos.Kernel.Host alongside Litos.Gui, or run from within the repo.");
+            "Publish Litos.Kernel.Host alongside the host executable, or run from within the repo.");
+    }
+
+    /// <summary>
+    /// Where a published sibling kernel executable might live, most-reliable first.
+    ///
+    /// AppContext.BaseDirectory alone is WRONG for a single-file publish, which is how both
+    /// Litos.VsCodeHost and Litos.Gui actually ship: a compressed single-file bundle extracts its
+    /// contents to a temp directory at startup and BaseDirectory points THERE, not at the folder
+    /// holding the .exe the user launched. The kernel binary is deployed next to that .exe, so the
+    /// probe never found it and kernel mode silently reported itself unavailable in every packaged
+    /// build — confirmed by running a staged Litos.VsCodeHost.exe, which looked for the kernel at
+    /// '%TEMP%\.net\Litos.VsCodeHost\&lt;hash&gt;\' instead of its own bin directory.
+    ///
+    /// Environment.ProcessPath is the launched executable's real path and is therefore the one that
+    /// matters for a packaged build; BaseDirectory is kept as a fallback because it IS correct for a
+    /// non-single-file layout (plain `dotnet build` output, and the test host), where ProcessPath
+    /// points at dotnet.exe itself rather than at anything next to the kernel.
+    /// </summary>
+    private static IEnumerable<string> CandidateSiblingDirectories()
+    {
+        var processDirectory = Path.GetDirectoryName(Environment.ProcessPath);
+        if (!string.IsNullOrEmpty(processDirectory))
+            yield return processDirectory;
+
+        var baseDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!string.IsNullOrEmpty(baseDirectory) && !string.Equals(baseDirectory, processDirectory, StringComparison.OrdinalIgnoreCase))
+            yield return baseDirectory;
     }
 
     private static string PlatformExeName() => OperatingSystem.IsWindows() ? ExeName + ".exe" : ExeName;

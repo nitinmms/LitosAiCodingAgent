@@ -47,4 +47,45 @@ public sealed class KernelHostLocatorTests
 
         Assert.True(isPublishedSibling || isDotnetExec, $"Unexpected resolved launch shape: {resolved.FileName} {string.Join(' ', resolved.Arguments)}");
     }
+
+    /// <summary>
+    /// Regression coverage for a second real bug, also found running the app end to end: the probe
+    /// used AppContext.BaseDirectory alone, which for a SINGLE-FILE publish is the bundle's
+    /// extraction temp directory, not the folder holding the launched .exe. Since the kernel binary
+    /// is deployed next to that .exe, the probe never found it and kernel mode reported itself
+    /// unavailable in every packaged build. Observed by running a staged Litos.VsCodeHost.exe:
+    /// "[litos] Kernel mode (PTC) unavailable: ... no published sibling executable at
+    /// 'C:\Users\...\AppData\Local\Temp\.net\Litos.VsCodeHost\&lt;hash&gt;\Litos.Kernel.Host.exe'".
+    ///
+    /// This asserts the probe consults Environment.ProcessPath's directory, which is the launched
+    /// executable's real location and the only one correct for a single-file build. It cannot
+    /// reproduce single-file extraction from inside the test host (where the two directories are
+    /// not meaningfully different), so it pins the behavior that fixes it rather than the symptom.
+    /// </summary>
+    [Fact]
+    public void Resolve_ProbesTheLaunchedExecutablesOwnDirectory_NotJustAppContextBaseDirectory()
+    {
+        var processDirectory = Path.GetDirectoryName(Environment.ProcessPath);
+        Assert.False(string.IsNullOrEmpty(processDirectory), "Environment.ProcessPath should be available on this platform.");
+
+        // Planting the sentinel where the launched process actually lives must be enough for
+        // Resolve() to find it. Before the fix this failed whenever that directory differed from
+        // AppContext.BaseDirectory — exactly the single-file case.
+        var exeName = OperatingSystem.IsWindows() ? "Litos.Kernel.Host.exe" : "Litos.Kernel.Host";
+        var planted = Path.Combine(processDirectory!, exeName);
+        if (File.Exists(planted))
+            return; // Already present (the project reference copies it here) — the probe is satisfied by the real binary.
+
+        File.WriteAllText(planted, "sentinel");
+        try
+        {
+            var resolved = KernelHostLocator.Resolve();
+            Assert.Empty(resolved.Arguments);
+            Assert.Equal(planted, resolved.FileName);
+        }
+        finally
+        {
+            File.Delete(planted);
+        }
+    }
 }
