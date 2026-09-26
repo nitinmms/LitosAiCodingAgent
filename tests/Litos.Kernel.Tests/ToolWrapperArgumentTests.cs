@@ -24,6 +24,16 @@ public sealed class ToolWrapperArgumentTests
         "Writes a file.",
         JsonSerializer.SerializeToElement(new { type = "object", properties = new { path = new { type = "string" }, content = new { type = "string" } } }));
 
+    private static readonly BridgedToolSchema Shell = new(
+        "shell",
+        "Runs a shell command.",
+        JsonSerializer.SerializeToElement(new
+        {
+            type = "object",
+            properties = new { command = new { type = "string" } },
+            required = new[] { "command" },
+        }));
+
     private static string Arg(ToolCallRequest call, string property) =>
         call.Arguments.GetProperty(property).GetString()!;
 
@@ -135,5 +145,60 @@ public sealed class ToolWrapperArgumentTests
         Assert.True(result.IsError);
         Assert.Contains("name, value pairs", result.ReturnValueText ?? "");
         Assert.Empty(fixture.ObservedToolCalls);
+    }
+
+    /// <summary>
+    /// The other live failure: shell("pwd &amp;&amp; ls"), a positional value where the tool expects
+    /// named arguments. A lone string binds to the RAW-JSON overload (the `string` parameter is
+    /// applicable without params expansion, so it beats `params object?[]`), which is why the pair-count
+    /// check never saw it — 1 is odd, and would have produced good guidance had it got that far.
+    /// Instead the value reached ToolBridge's JsonSerializer as "pwd &amp;&amp; ls" and the model was
+    /// told only "'p' is an invalid start of a value. Path: $ | LineNumber: 0 | BytePositionInLine: 0."
+    ///
+    /// Asserted end-to-end rather than on KernelArgs alone because the argument name in the suggestion
+    /// is baked into the generated wrapper from the tool's schema — a unit test could not catch that
+    /// codegen passing the wrong name, or none at all.
+    /// </summary>
+    [Fact]
+    public async Task PositionalSingleValue_FailsTheEvalWithGuidanceNamingTheArgument_WithoutCallingTheTool()
+    {
+        await using var fixture = new InProcessKernelHostFixture([Shell]);
+        await fixture.InitializeAsync();
+
+        var result = await fixture.EvalAsync("""await shell("pwd && ls")""");
+
+        Assert.True(result.IsError);
+        Assert.Contains("name, value pairs", result.ReturnValueText ?? "");
+        Assert.Contains("""shell("command", "pwd && ls")""", result.ReturnValueText ?? "");
+        Assert.Empty(fixture.ObservedToolCalls);
+    }
+
+    /// <summary>
+    /// Task.WhenAll over several bridged calls is the batching Programmatic Tool Calling exists to
+    /// enable, and it failed live with "CS0103: The name 'Task' does not exist in the current context"
+    /// — System.Threading.Tasks was absent from ScriptSession's imports. Nothing else noticed, because
+    /// `await` on a wrapper compiles without that import (the awaited type comes from the generated
+    /// signature's own fully-qualified return type); only NAMING Task breaks. The model was reading
+    /// three files concurrently and was pushed back to three sequential awaits.
+    /// </summary>
+    [Fact]
+    public async Task TaskWhenAll_OverSeveralBridgedCalls_CompilesAndIssuesEveryCall()
+    {
+        await using var fixture = new InProcessKernelHostFixture([ReadFile]);
+        await fixture.InitializeAsync();
+
+        var result = await fixture.EvalAsync(
+            """
+            var texts = await Task.WhenAll(new[] { "a.txt", "b.txt", "c.txt" }.Select(f => read_file("path", f)));
+            Console.WriteLine(texts.Length);
+            """,
+            toolResponse: ("file contents", false));
+
+        Assert.False(result.IsError, result.ReturnValueText);
+        Assert.Equal(3, fixture.ObservedToolCalls.Count);
+        Assert.Equal(
+            ["a.txt", "b.txt", "c.txt"],
+            fixture.ObservedToolCalls.Select(call => Arg(call, "path")).OrderBy(path => path, StringComparer.Ordinal).ToArray());
+        Assert.Contains("3", result.Output ?? "");
     }
 }

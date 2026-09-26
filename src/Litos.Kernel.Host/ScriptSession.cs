@@ -12,8 +12,15 @@ namespace Litos.Kernel.Host;
 /// </summary>
 public sealed class ScriptSession
 {
+    // System.Threading.Tasks is here for a reason that is easy to undo by accident: `await` on a
+    // bridged tool compiles WITHOUT it, because the awaited type comes from the generated wrapper's
+    // own fully-qualified signature — so the gap only appears when a script NAMES the type, and it
+    // appeared in a live session as "CS0103: The name 'Task' does not exist in the current context"
+    // for Task.WhenAll. That is the worst possible place to lose: the model was batching three
+    // read_file calls concurrently, which is precisely the work Programmatic Tool Calling exists to
+    // enable, and the error pushed it back to sequential awaits.
     private static readonly string[] Imports =
-        ["System", "System.IO", "System.Linq", "System.Text.Json", "System.Net.Http", "System.Collections.Generic"];
+        ["System", "System.IO", "System.Linq", "System.Text.Json", "System.Net.Http", "System.Collections.Generic", "System.Threading.Tasks"];
 
     private readonly KernelGlobals _globals;
     private readonly KernelStateReflector _stateReflector;

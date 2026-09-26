@@ -83,6 +83,77 @@ public sealed class KernelArgsTests
         Assert.Contains("write_file", ex.Message);
     }
 
+    /// <summary>
+    /// The params overload applies the same "is it actually JSON?" rule as RawJson, so which overload
+    /// happened to bind cannot change whether the same mistake is reported.
+    /// </summary>
+    [Fact]
+    public void Json_SingleStringThatIsNotJson_ThrowsRatherThanPassingItThrough()
+    {
+        var ex = Assert.Throws<ArgumentException>(() => KernelArgs.Json("pwd && ls"));
+
+        Assert.Contains("name, value pairs", ex.Message);
+        Assert.Contains("pwd && ls", ex.Message);
+    }
+
+    // ---- RawJson: the raw-arguments-JSON overload's guard ----
+
+    /// <summary>
+    /// The shape that failed in a live session: shell("pwd &amp;&amp; ls"). A lone string binds to the
+    /// raw-JSON wrapper rather than the params one, so before this guard the value was forwarded as
+    /// arguments JSON and the model's only feedback was ToolBridge's parser complaining "'p' is an
+    /// invalid start of a value".
+    /// </summary>
+    [Fact]
+    public void RawJson_PositionalValue_ThrowsNamingTheToolAndItsFirstArgument()
+    {
+        var ex = Assert.Throws<ArgumentException>(() => KernelArgs.RawJson("shell", "command", "pwd && ls"));
+
+        Assert.Contains("name, value pairs", ex.Message);
+        Assert.Contains("""shell("command", "pwd && ls")""", ex.Message);
+    }
+
+    [Fact]
+    public void RawJson_ActualJsonObject_PassesThrough()
+    {
+        const string raw = """{"path":"a.txt"}""";
+
+        Assert.Equal(raw, KernelArgs.RawJson("read_file", "path", raw));
+    }
+
+    [Fact]
+    public void RawJson_LeadingWhitespaceBeforeTheBrace_StillPassesThrough()
+    {
+        const string raw = """   {"path":"a.txt"}""";
+
+        Assert.Equal(raw, KernelArgs.RawJson("read_file", "path", raw));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void RawJson_NothingProvided_IsAnEmptyObject(string? argsJson)
+    {
+        Assert.Equal("{}", KernelArgs.RawJson("read_file", "path", argsJson));
+    }
+
+    /// <summary>
+    /// A script that positionally passed a whole file's contents must not have them echoed back into
+    /// the model's context by the error message.
+    /// </summary>
+    [Fact]
+    public void RawJson_LongValue_IsClippedInTheMessage()
+    {
+        var huge = new string('x', 5000);
+
+        var ex = Assert.Throws<ArgumentException>(() => KernelArgs.RawJson("write_file", "content", huge));
+
+        Assert.DoesNotContain(huge, ex.Message);
+        Assert.Contains("…", ex.Message);
+        Assert.True(ex.Message.Length < 500, $"error message grew to {ex.Message.Length} chars");
+    }
+
     [Fact]
     public void Json_NonStringName_ThrowsNamingThePosition()
     {
