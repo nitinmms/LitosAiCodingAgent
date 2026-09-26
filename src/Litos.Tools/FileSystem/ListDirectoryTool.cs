@@ -7,6 +7,17 @@ public sealed class ListDirectoryTool : ITool
 {
     public string Name => "list_directory";
 
+    /// <summary>
+    /// Returned instead of an empty string when the directory holds nothing. An empty result was
+    /// indistinguishable from a silently failed call, and that ambiguity cost real round trips in a
+    /// Programmatic Tool Calling session: having listed an empty directory, the model re-printed the
+    /// variable to check it wasn't null, then fell back to shell("pwd; ls -la") purely to establish
+    /// that the directory really was empty — two model turns to learn what this sentence says
+    /// outright. Sibling tools already state the nothing-found case explicitly (GrepTool's
+    /// "No matches found.", WebSearchTool's "No results found.").
+    /// </summary>
+    public const string EmptyDirectoryMessage = "Directory is empty.";
+
     public string Description => "List files and subdirectories at the given directory path.";
 
     public JsonElement ParameterSchema { get; } = JsonSerializer.SerializeToElement(new
@@ -29,6 +40,7 @@ public sealed class ListDirectoryTool : ITool
             .Select(entry => Directory.Exists(entry) ? $"{Path.GetFileName(entry)}/" : Path.GetFileName(entry))
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase);
 
-        return Task.FromResult(ToolResult.Ok(string.Join('\n', entries)));
+        var listing = string.Join('\n', entries);
+        return Task.FromResult(ToolResult.Ok(listing.Length == 0 ? EmptyDirectoryMessage : listing));
     }
 }

@@ -116,6 +116,14 @@ public class ToolCallSummaryTests
     public void DescribeResult_ListDirectory_EmptyDirectory_ZeroEntries() =>
         Assert.Equal("0 entries", ToolCallSummary.DescribeResult("list_directory", ToolResult.Ok("")));
 
+    // ListDirectoryTool.EmptyDirectoryMessage is a sentence, so it is one non-empty line and a plain
+    // line count would summarize an empty directory as "1 entries". Spelled as a literal because this
+    // assembly only references Litos.Agent, not Litos.Tools — the same reason the production code
+    // matches on the text rather than the constant.
+    [Fact]
+    public void DescribeResult_ListDirectory_EmptyDirectoryMessage_IsZeroEntries_NotOne() =>
+        Assert.Equal("0 entries", ToolCallSummary.DescribeResult("list_directory", ToolResult.Ok("Directory is empty.")));
+
     [Fact]
     public void DescribeResult_Shell_ParsesExitCodeMarker() =>
         Assert.Equal("exit 0", ToolCallSummary.DescribeResult("shell", ToolResult.Ok("[exit 0]\nsome output")));

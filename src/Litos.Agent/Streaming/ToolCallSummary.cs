@@ -36,7 +36,7 @@ public static partial class ToolCallSummary
         {
             "read_file" => DescribeReadFileResult(result.Text),
             "write_file" or "edit_file" => DiffStatSuffix().Match(result.Text) is { Success: true } m ? m.Groups[1].Value : "done",
-            "list_directory" => $"{CountNonEmptyLines(result.Text)} entries",
+            "list_directory" => $"{CountDirectoryEntries(result.Text)} entries",
             "search_code" => DescribeMatchCount(result.Text),
             "shell" => ExitCodeSuffix().Match(result.Text) is { Success: true } m ? $"exit {m.Groups[1].Value}" : "done",
             "skill" => "loaded",
@@ -121,6 +121,14 @@ public static partial class ToolCallSummary
 
     private static int CountLines(string text) =>
         text.Length == 0 ? 0 : text.Split('\n').Length;
+
+    // ListDirectoryTool returns a sentence rather than a listing for an empty directory (its
+    // EmptyDirectoryMessage), so a plain line count would report the empty case as "1 entries".
+    // Matched on the text because the dependency runs Litos.Tools -> Litos.Agent, so this assembly
+    // cannot reference that constant — the same shape as shell's exit-code and write_file's diffstat
+    // matching above, which read other tools' output formats the same way.
+    private static int CountDirectoryEntries(string text) =>
+        text == "Directory is empty." ? 0 : CountNonEmptyLines(text);
 
     private static int CountNonEmptyLines(string text) =>
         text.Length == 0 ? 0 : text.Split('\n').Count(line => line.Trim().Length > 0);

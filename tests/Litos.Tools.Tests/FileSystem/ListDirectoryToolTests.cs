@@ -36,15 +36,18 @@ public class ListDirectoryToolTests : IDisposable
         Assert.Contains("Directory not found", result.Text);
     }
 
+    // Deliberately NOT an empty string: that was indistinguishable from a silently failed call and
+    // cost two extra model round trips in a real PTC session (see EmptyDirectoryMessage's own remarks).
     [Fact]
-    public async Task InvokeAsync_EmptyDirectory_ReturnsEmptyOkResult()
+    public async Task InvokeAsync_EmptyDirectory_SaysSoExplicitly_RatherThanReturningEmptyText()
     {
         var tool = new ListDirectoryTool();
 
         var result = await tool.InvokeAsync(Args(new { path = _tempDir }), CancellationToken.None);
 
         Assert.False(result.IsError);
-        Assert.Equal("", result.Text);
+        Assert.Equal(ListDirectoryTool.EmptyDirectoryMessage, result.Text);
+        Assert.NotEqual("", result.Text);
     }
 
     [Fact]
