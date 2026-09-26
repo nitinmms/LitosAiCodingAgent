@@ -66,7 +66,11 @@ public static class KernelHostLocator
     /// non-single-file layout (plain `dotnet build` output, and the test host), where ProcessPath
     /// points at dotnet.exe itself rather than at anything next to the kernel.
     /// </summary>
-    private static IEnumerable<string> CandidateSiblingDirectories()
+    /// <remarks>internal, not private, so KernelHostLocatorTests can assert the probe ORDER directly.
+    /// The alternative — planting a sentinel file in Environment.ProcessPath's real directory — is not
+    /// portable: under `dotnet test` on macOS/Linux that directory is the shared dotnet install root
+    /// (e.g. /usr/local/share/dotnet), which is not writable.</remarks>
+    internal static IEnumerable<string> CandidateSiblingDirectories()
     {
         var processDirectory = Path.GetDirectoryName(Environment.ProcessPath);
         if (!string.IsNullOrEmpty(processDirectory))

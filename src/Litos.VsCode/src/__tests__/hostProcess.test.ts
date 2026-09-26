@@ -11,13 +11,24 @@ import { LitosHostProcess } from "../hostProcess";
 // (the "scan every line, not just line 1" behavior) more faithfully than unit-testing
 // tryParsePort in isolation would.
 //
-// The stand-in "binary" is a *copy* of the running Node executable itself, not a batch/shell
-// wrapper: cp.spawn (as hostProcess.ts calls it, no `shell: true`) needs a real, directly
-// executable file — Windows in particular refuses to spawn a .cmd/.bat script merely renamed to
-// .exe (confirmed: throws "spawn UNKNOWN", since Windows resolves executability from the PE
-// header, not the extension). A copied node.exe run with zero CLI args would normally drop into
-// the REPL, so NODE_OPTIONS="--require <script>" is used to run the fake host's script before
-// that happens — this works identically on every platform and needs no shebang/chmod handling.
+// The stand-in "binary" is built differently per platform, because cp.spawn (as hostProcess.ts
+// calls it, no `shell: true`) needs a real, directly executable file:
+//
+// Windows: a *copy* of the running Node executable itself, not a batch/shell wrapper — Windows
+// refuses to spawn a .cmd/.bat script merely renamed to .exe (confirmed: throws "spawn UNKNOWN",
+// since Windows resolves executability from the PE header, not the extension). A copied node.exe
+// run with zero CLI args would drop into the REPL, so NODE_OPTIONS="--require <script>" runs the
+// fake host's script before that happens.
+//
+// POSIX: a shebang script pointing at process.execPath, chmod +x. Copying the node binary does
+// NOT work here, and an earlier version of this file that did so failed on any Node built against
+// a shared libnode — Homebrew's node, and most distro packages, are a small launcher linked to
+// @rpath/libnode.<ver>.dylib (or libnode.so) resolved relative to the executable via ../lib. Copied
+// out of its install tree the copy dies in the dynamic loader ("Library not loaded: @rpath/
+// libnode.147.dylib") before printing anything, so no handshake line ever arrives and start()
+// rejects with the misleading "exited early (code null)" — code null because it was signal-killed.
+// CI did not catch it: actions/setup-node ships a statically linked node, where the copy works.
+// A shebang needs no NODE_OPTIONS and runs node from its real install location, dylib intact.
 function ridForThisPlatform(): string {
     if (process.platform === "win32") return "win-x64";
     if (process.platform === "darwin") return process.arch === "arm64" ? "osx-arm64" : "osx-x64";
@@ -30,24 +41,38 @@ function makeFakeExtension(script: string): { extensionPath: string; cleanup: ()
     const binDir = path.join(extensionPath, "bin", rid);
     fs.mkdirSync(binDir, { recursive: true });
 
-    const scriptPath = path.join(binDir, "fake-host.js");
-    fs.writeFileSync(scriptPath, script);
-
-    const exeName = process.platform === "win32" ? "Litos.VsCodeHost.exe" : "Litos.VsCodeHost";
+    const isWindows = process.platform === "win32";
+    const exeName = isWindows ? "Litos.VsCodeHost.exe" : "Litos.VsCodeHost";
     const exePath = path.join(binDir, exeName);
-    fs.copyFileSync(process.execPath, exePath);
-    if (process.platform !== "win32") fs.chmodSync(exePath, 0o755);
 
-    // cp.spawn in hostProcess.ts passes no explicit `env`, so the child inherits this test
-    // process's environment (Node's default) — setting NODE_OPTIONS here is what makes the copied
-    // node.exe run fake-host.js instead of dropping into a REPL when spawned with zero CLI args.
-    const previousNodeOptions = process.env.NODE_OPTIONS;
-    process.env.NODE_OPTIONS = `--require ${JSON.stringify(scriptPath)}`;
+    // Only Windows needs the separate script file + NODE_OPTIONS indirection; on POSIX the shebang
+    // script IS the executable, so there is nothing to --require.
+    let restoreNodeOptions = () => {};
+    if (isWindows) {
+        const scriptPath = path.join(binDir, "fake-host.js");
+        fs.writeFileSync(scriptPath, script);
+        fs.copyFileSync(process.execPath, exePath);
+
+        // cp.spawn in hostProcess.ts passes no explicit `env`, so the child inherits this test
+        // process's environment (Node's default) — setting NODE_OPTIONS here is what makes the
+        // copied node.exe run fake-host.js instead of dropping into a REPL when spawned with zero
+        // CLI args.
+        const previousNodeOptions = process.env.NODE_OPTIONS;
+        process.env.NODE_OPTIONS = `--require ${JSON.stringify(scriptPath)}`;
+        restoreNodeOptions = () => {
+            process.env.NODE_OPTIONS = previousNodeOptions;
+        };
+    } else {
+        // process.execPath, not `/usr/bin/env node`: this must be the very node running the tests,
+        // not whatever PATH resolves to in the spawned child.
+        fs.writeFileSync(exePath, `#!${process.execPath}\n${script}`);
+        fs.chmodSync(exePath, 0o755);
+    }
 
     return {
         extensionPath,
         cleanup: () => {
-            process.env.NODE_OPTIONS = previousNodeOptions;
+            restoreNodeOptions();
             // maxRetries/retryDelay: on Windows, child.kill() (called by the test's own
             // host.stop() in afterEach, just before this runs) returns before the OS has
             // necessarily released its handle on the copied .exe — an immediate unlink can throw

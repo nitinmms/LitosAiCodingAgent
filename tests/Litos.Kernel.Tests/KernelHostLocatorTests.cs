@@ -57,35 +57,34 @@ public sealed class KernelHostLocatorTests
     /// "[litos] Kernel mode (PTC) unavailable: ... no published sibling executable at
     /// 'C:\Users\...\AppData\Local\Temp\.net\Litos.VsCodeHost\&lt;hash&gt;\Litos.Kernel.Host.exe'".
     ///
-    /// This asserts the probe consults Environment.ProcessPath's directory, which is the launched
-    /// executable's real location and the only one correct for a single-file build. It cannot
-    /// reproduce single-file extraction from inside the test host (where the two directories are
-    /// not meaningfully different), so it pins the behavior that fixes it rather than the symptom.
+    /// This asserts the probe consults Environment.ProcessPath's directory FIRST — the launched
+    /// executable's real location, and the only one correct for a single-file build — while keeping
+    /// AppContext.BaseDirectory as a fallback.
+    ///
+    /// It checks the candidate ORDER rather than planting a sentinel file in the process directory
+    /// and calling Resolve(), which an earlier version of this test did. That was unportable in both
+    /// directions: on macOS/Linux `dotnet test` runs through the shared dotnet muxer, so the process
+    /// directory is the install root (e.g. /usr/local/share/dotnet) and the write threw
+    /// UnauthorizedAccessException — while on Windows, where that directory IS the test output
+    /// directory, the real Litos.Kernel.Host.exe copied there by the ProjectReference tripped an
+    /// early "already present" bail-out and the assertion never ran at all. Checking the order needs
+    /// no filesystem writes and behaves identically on every platform.
     /// </summary>
     [Fact]
-    public void Resolve_ProbesTheLaunchedExecutablesOwnDirectory_NotJustAppContextBaseDirectory()
+    public void CandidateSiblingDirectories_LeadWithTheLaunchedExecutablesOwnDirectory_NotJustAppContextBaseDirectory()
     {
         var processDirectory = Path.GetDirectoryName(Environment.ProcessPath);
         Assert.False(string.IsNullOrEmpty(processDirectory), "Environment.ProcessPath should be available on this platform.");
 
-        // Planting the sentinel where the launched process actually lives must be enough for
-        // Resolve() to find it. Before the fix this failed whenever that directory differed from
-        // AppContext.BaseDirectory — exactly the single-file case.
-        var exeName = OperatingSystem.IsWindows() ? "Litos.Kernel.Host.exe" : "Litos.Kernel.Host";
-        var planted = Path.Combine(processDirectory!, exeName);
-        if (File.Exists(planted))
-            return; // Already present (the project reference copies it here) — the probe is satisfied by the real binary.
+        var candidates = KernelHostLocator.CandidateSiblingDirectories().ToList();
 
-        File.WriteAllText(planted, "sentinel");
-        try
-        {
-            var resolved = KernelHostLocator.Resolve();
-            Assert.Empty(resolved.Arguments);
-            Assert.Equal(planted, resolved.FileName);
-        }
-        finally
-        {
-            File.Delete(planted);
-        }
+        Assert.NotEmpty(candidates);
+        Assert.Equal(processDirectory, candidates[0]);
+
+        // BaseDirectory stays in the list as the fallback that is correct for a non-single-file
+        // layout. It is yielded only when it differs from the process directory, so where the two
+        // coincide (the usual Windows test-host case) candidates[0] already satisfies this.
+        var baseDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        Assert.Contains(candidates, d => string.Equals(d, baseDirectory, StringComparison.OrdinalIgnoreCase));
     }
 }
