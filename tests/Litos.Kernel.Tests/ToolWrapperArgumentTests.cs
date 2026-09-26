@@ -131,6 +131,28 @@ public sealed class ToolWrapperArgumentTests
     }
 
     /// <summary>
+    /// A zero-argument tool ("properties": {} and an empty "required") shipped in 0.1.26 and failed
+    /// every kernel start with "Operation is not valid due to the current state of the object" —
+    /// generating its positional-call hint read .Name off a default JsonProperty. Init must succeed
+    /// with such a tool bridged, and calling it must still work.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"type":"object","properties":{}}""")]
+    [InlineData("""{"type":"object","properties":{},"required":[]}""")]
+    [InlineData("""{"type":"object"}""")]
+    public async Task ZeroArgumentTool_DoesNotBreakInit_AndIsCallable(string schemaJson)
+    {
+        var noArgs = new BridgedToolSchema("list_sessions", "Lists sessions.", JsonDocument.Parse(schemaJson).RootElement.Clone());
+        await using var fixture = new InProcessKernelHostFixture([noArgs, ReadFile]);
+        await fixture.InitializeAsync();
+
+        var result = await fixture.EvalAsync("await list_sessions()", toolResponse: ("ok", false));
+
+        Assert.False(result.IsError, result.ReturnValueText);
+        Assert.Equal("list_sessions", Assert.Single(fixture.ObservedToolCalls).ToolName);
+    }
+
+    /// <summary>
     /// A mistake in pair count must surface as a readable script-level error the model can correct,
     /// not a malformed call reaching the tool.
     /// </summary>

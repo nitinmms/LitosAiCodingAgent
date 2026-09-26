@@ -57,16 +57,29 @@ internal static class ToolWrapperCodeGen
         if (schema.ValueKind != JsonValueKind.Object)
             return "name";
 
-        if (schema.TryGetProperty("required", out var required)
-            && required.ValueKind == JsonValueKind.Array
-            && required.EnumerateArray().FirstOrDefault() is { ValueKind: JsonValueKind.String } first
-            && first.GetString() is { Length: > 0 } requiredName)
-            return requiredName;
+        // Explicit loops, not FirstOrDefault(): on an empty array/object that returns a default
+        // JsonElement/JsonProperty, and touching .Name on a default JsonProperty throws a bare
+        // InvalidOperationException. That escaped as "Operation is not valid due to the current state
+        // of the object" from kernel init — any zero-argument tool ("properties": {}) took down /ptc.
+        if (schema.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in required.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String && item.GetString() is { Length: > 0 } requiredName)
+                    return requiredName;
+                break;
+            }
+        }
 
-        if (schema.TryGetProperty("properties", out var properties)
-            && properties.ValueKind == JsonValueKind.Object
-            && properties.EnumerateObject().FirstOrDefault() is { Name.Length: > 0 } declared)
-            return declared.Name;
+        if (schema.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var declared in properties.EnumerateObject())
+            {
+                if (declared.Name.Length > 0)
+                    return declared.Name;
+                break;
+            }
+        }
 
         return "name";
     }
