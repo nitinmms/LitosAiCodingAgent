@@ -48,7 +48,30 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
             sb.AppendLine("- KernelState.List() -> IReadOnlyList<string>: lists every variable/function declared so far, with type/size info.");
             sb.AppendLine("- KernelState.Describe(name) -> string: detail on one variable or function by name.");
             foreach (var schema in bridgedToolSchemas)
-                sb.AppendLine($"- {schema.Name}(params name, value pairs) -> Task<string>: {OneLine(schema.Description)}");
+                sb.AppendLine($"- {Signature(schema)} -> Task<string>: {OneLine(schema.Description)}");
+            sb.AppendLine();
+            // Placed immediately under the signatures, not several paragraphs below, so the rule and
+            // the concrete templates it governs are read together: the rule alone was never the
+            // missing piece — the argument names were.
+            sb.AppendLine(
+                "Call a tool exactly as its signature above shows — arguments as name, value pairs. " +
+                "The values are JSON-encoded for you, so never hand-write a JSON string:");
+            sb.AppendLine("  var text = await read_file(\"path\", @\"c:\\dir\\a.txt\");");
+            sb.AppendLine("  if (text.Contains(\"import X\")) await write_file(\"path\", p, \"content\", body);");
+            // The fact that makes a positional call visibly wrong rather than merely plausible.
+            sb.AppendLine(
+                "Passing ONE string is not a positional call — that overload takes the entire " +
+                "arguments JSON document, so read_file(\"a.txt\") sends \"a.txt\" where a JSON object " +
+                "belongs and fails. Name the argument: read_file(\"path\", \"a.txt\").");
+            sb.AppendLine(
+                "Use a verbatim string (@\"c:\\dir\\a.txt\") for Windows paths. Writing the JSON " +
+                "yourself instead — read_file(\"{\\\"path\\\":\\\"c:\\\\dir\\\\a.txt\\\"}\") — stacks C# " +
+                "escaping on top of JSON escaping and commonly fails with \"invalid escapable " +
+                "character within a JSON string\".");
+            sb.AppendLine(
+                "Independent tool calls within one script can run CONCURRENTLY — await Task.WhenAll " +
+                "over them instead of awaiting each in turn:");
+            sb.AppendLine("  var texts = await Task.WhenAll(paths.Select(p => read_file(\"path\", p)));");
             sb.AppendLine();
             sb.AppendLine(
                 "Keep your script's own printed output and return value SHORT — a summary like " +
@@ -61,17 +84,6 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
                 "everything built earlier in a long session.");
             sb.AppendLine();
             sb.AppendLine(
-                "Call a tool by passing its arguments as name, value pairs — the values are " +
-                "JSON-encoded for you, so never hand-write a JSON string:");
-            sb.AppendLine("  var text = await read_file(\"path\", @\"c:\\dir\\a.txt\");");
-            sb.AppendLine("  if (text.Contains(\"import X\")) await write_file(\"path\", p, \"content\", body);");
-            sb.AppendLine(
-                "Use a verbatim string (@\"c:\\dir\\a.txt\") for Windows paths. Writing the JSON " +
-                "yourself instead — read_file(\"{\\\"path\\\":\\\"c:\\\\dir\\\\a.txt\\\"}\") — stacks C# " +
-                "escaping on top of JSON escaping and commonly fails with \"invalid escapable " +
-                "character within a JSON string\".");
-            sb.AppendLine();
-            sb.AppendLine(
                 "read_file's output has line-number prefixes for display (like 'cat -n') — never pass " +
                 "it straight into write_file or otherwise persist it verbatim, the prefixes are not " +
                 "part of the real file content and will corrupt it. For editing an existing file, " +
@@ -79,6 +91,15 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
                 "write_file round trip; if you do need the file's raw, unprefixed bytes, read them " +
                 "yourself (e.g. System.IO.File.ReadAllText) rather than reusing read_file's formatted output.");
             sb.AppendLine();
+            // Stated before the "embedding a file" framing below, and in terms of ANY multi-line
+            // string, because the live failure was neither: the model was mid-script writing a
+            // multi-line JavaScript function, knew "..." cannot span lines, and reached for
+            // JavaScript's own multi-line syntax — `...` — which C# has no concept of.
+            sb.AppendLine(
+                "EVERY multi-line string in C# is a raw string literal (\"\"\" ... \"\"\"). C# has no " +
+                "backtick string: var s = `text` is CS1056 'Unexpected character', and the rest of " +
+                "the script is then parsed as code. This holds even when the text you are writing " +
+                "is itself JavaScript that uses backticks.");
             sb.AppendLine(
                 "Embedding a multi-line block of text (a whole source file in any language, a " +
                 "config file, a template, a patch) " +
@@ -120,4 +141,93 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
         Task.FromResult(ToolResult.Error("internal routing error: run_kernel_code should have been intercepted by AgentLoop before reaching ToolRegistry.Resolve"));
 
     private static string OneLine(string text) => text.Replace("\r", "").Replace("\n", " ").Trim();
+
+    /// <summary>
+    /// Renders one bridged tool as a call template with its REAL argument names, e.g.
+    /// read_file("path", &lt;string&gt;[, "offset", &lt;int&gt;][, "limit", &lt;int&gt;]).
+    ///
+    /// Previously this line read `read_file(params name, value pairs)` — which states the convention
+    /// but never the names, leaving the model to infer that list_directory's argument is "path" and
+    /// shell's is "command". Every calling-convention error observed in live sessions came from that
+    /// gap, and the shortest plausible guess when the name is unknown is a positional call:
+    /// list_directory("."). The names were always in hand here (each ToolSchema carries its
+    /// ParameterSchema), just never shown. Evidence that showing them works: when KernelArgs' error
+    /// message began quoting the corrected call, the model reproduced it character-for-character on
+    /// its next attempt rather than guessing again.
+    ///
+    /// DETERMINISM IS LOAD-BEARING, not tidiness. This whole Description is rebuilt every turn and
+    /// sits at the front of the provider's cached prompt prefix, so a single byte of turn-to-turn
+    /// variation here would miss the ENTIRE cache on every turn — costing far more than the failed
+    /// evals it exists to prevent. Everything below walks JsonElement in document order and uses a
+    /// List for required-name lookups; no dictionary or set enumeration, whose order is not
+    /// guaranteed across instances. KernelCodeToolTests pins byte-stability directly.
+    /// </summary>
+    private static string Signature(ToolSchema schema)
+    {
+        var parameters = schema.ParameterSchema;
+        if (parameters.ValueKind != JsonValueKind.Object
+            || !parameters.TryGetProperty("properties", out var properties)
+            || properties.ValueKind != JsonValueKind.Object)
+            return $"{schema.Name}(params name, value pairs)";
+
+        // A List, deliberately, not a HashSet: document order in, document order out, and no hash
+        // ordering anywhere near a string that has to be byte-identical next turn.
+        var required = new List<string>();
+        if (parameters.TryGetProperty("required", out var requiredElement) && requiredElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in requiredElement.EnumerateArray())
+                if (entry.ValueKind == JsonValueKind.String && entry.GetString() is { Length: > 0 } name)
+                    required.Add(name);
+        }
+
+        var sb = new StringBuilder(schema.Name).Append('(');
+        var wroteAny = false;
+
+        // Required first, in the order `required` declares them — that is the order a caller should
+        // write them in, and it is the tool author's stated intent rather than schema layout.
+        foreach (var name in required)
+        {
+            if (!properties.TryGetProperty(name, out var declared))
+                continue; // `required` naming an undeclared property: the schema's problem, not something to render.
+            if (wroteAny)
+                sb.Append(", ");
+            sb.Append('"').Append(name).Append("\", ").Append(TypeMarker(declared));
+            wroteAny = true;
+        }
+
+        // Then the optional ones, bracketed so the model can see they may be omitted.
+        foreach (var declared in properties.EnumerateObject())
+        {
+            if (required.Contains(declared.Name))
+                continue;
+            sb.Append(wroteAny ? "[, " : "[").Append('"').Append(declared.Name).Append("\", ").Append(TypeMarker(declared.Value)).Append(']');
+            wroteAny = true;
+        }
+
+        if (!wroteAny)
+            return $"{schema.Name}(params name, value pairs)";
+
+        return sb.Append(')').ToString();
+    }
+
+    /// <summary>A placeholder for the value's JSON type, so the template shows shape as well as name.</summary>
+    private static string TypeMarker(JsonElement declared)
+    {
+        var type = declared.ValueKind == JsonValueKind.Object
+            && declared.TryGetProperty("type", out var typeElement)
+            && typeElement.ValueKind == JsonValueKind.String
+                ? typeElement.GetString()
+                : null;
+
+        return type switch
+        {
+            "string" => "<string>",
+            "integer" => "<int>",
+            "number" => "<number>",
+            "boolean" => "<bool>",
+            "array" => "<array>",
+            "object" => "<object>",
+            _ => "<value>",
+        };
+    }
 }
