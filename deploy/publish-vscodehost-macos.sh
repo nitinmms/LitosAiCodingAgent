@@ -73,6 +73,18 @@ for i in "${!PROJECTS[@]}"; do
     chmod +x "$PUBLISH_DIR/${BIN_NAMES[$i]}"
 done
 
+# CI sets LITOS_REQUIRE_NOTARIZATION=1 so a missing or empty secret fails the release instead of
+# falling through to the unsigned/un-notarized branches below, which only warn — and a warning in a
+# CI log is how an unsigned kernel would otherwise reach the Marketplace.
+if [ "${LITOS_REQUIRE_NOTARIZATION:-0}" = "1" ]; then
+    for var in APPLE_SIGN_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+        if [ -z "${!var:-}" ]; then
+            echo "ERROR: LITOS_REQUIRE_NOTARIZATION=1 but $var is not set." >&2
+            exit 1
+        fi
+    done
+fi
+
 if [ -z "${APPLE_SIGN_IDENTITY:-}" ]; then
     echo ""
     for BIN_NAME in "${BIN_NAMES[@]}"; do
@@ -107,11 +119,25 @@ rezip
 
 if [ -n "${APPLE_SIGN_IDENTITY:-}" ] && [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ]; then
     echo "Submitting for notarization..."
-    xcrun notarytool submit "$ZIP_PATH" \
+    # notarytool's exit code is not a reliable verdict: a submission Apple rejects ("Invalid") can
+    # still exit 0 after --wait. Read the final status from its JSON and fail on anything but
+    # Accepted, printing Apple's log so the rejected binary (host or kernel) is named in CI output.
+    NOTARY_JSON="$(xcrun notarytool submit "$ZIP_PATH" \
         --apple-id "$APPLE_ID" \
         --team-id "$APPLE_TEAM_ID" \
         --password "$APPLE_APP_PASSWORD" \
-        --wait
+        --wait --output-format json)"
+    echo "$NOTARY_JSON"
+    NOTARY_STATUS="$(printf '%s' "$NOTARY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
+    if [ "$NOTARY_STATUS" != "Accepted" ]; then
+        NOTARY_ID="$(printf '%s' "$NOTARY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+        echo "ERROR: notarization status is '$NOTARY_STATUS', not 'Accepted'." >&2
+        if [ -n "$NOTARY_ID" ]; then
+            xcrun notarytool log "$NOTARY_ID" \
+                --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" || true
+        fi
+        exit 1
+    fi
 
     # Stapling requires the original signed binaries, not the zip — staple each, then re-zip.
     for BIN_NAME in "${BIN_NAMES[@]}"; do

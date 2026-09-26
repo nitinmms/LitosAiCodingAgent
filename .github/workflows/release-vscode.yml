@@ -127,9 +127,26 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           LITOS_VERSION: ${{ github.ref_name }}
+          # Turns the script's "unsigned"/"not notarized" warnings into hard failures.
+          LITOS_REQUIRE_NOTARIZATION: "1"
         run: |
           VERSION="${LITOS_VERSION#litos-vscode-v}"
           LITOS_VERSION="$VERSION" ./deploy/publish-vscodehost-macos.sh ${{ matrix.runtime }}
+
+      # Independent check that BOTH binaries came out Developer-ID-signed with the hardened runtime.
+      # The kernel is spawned lazily (only once /ptc runs a script), so a bad kernel signature would
+      # otherwise surface on a user's Mac rather than here.
+      - name: Verify host and kernel signatures
+        run: |
+          for bin in Litos.VsCodeHost Litos.Kernel.Host; do
+            path="deploy/out/vscodehost/macos/${{ matrix.runtime }}/publish/$bin"
+            echo "== $bin"
+            codesign --verify --strict --verbose=2 "$path"
+            info="$(codesign -dvvv "$path" 2>&1)"
+            echo "$info"
+            echo "$info" | grep -q "Authority=Developer ID Application" || { echo "ERROR: $bin is not signed with a Developer ID"; exit 1; }
+            echo "$info" | grep -Eq 'flags=0x[0-9a-f]+\(runtime\)' || { echo "ERROR: $bin lacks the hardened runtime"; exit 1; }
+          done
 
       - name: Clean up keychain
         if: always()
@@ -182,6 +199,12 @@ jobs:
             $destDir = "src/Litos.VsCode/bin/$rid"
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
             Copy-Item "staged-binaries/$artifact/*" $destDir -Force
+            # A .vsix missing the kernel still installs and runs — PTC just goes unavailable — so
+            # nothing downstream would notice. Fail here instead.
+            foreach ($bin in @("Litos.VsCodeHost", "Litos.Kernel.Host")) {
+              $found = Get-ChildItem $destDir -File | Where-Object { $_.BaseName -eq $bin }
+              if (-not $found) { throw "$bin missing from $destDir (artifact $artifact)" }
+            }
           }
 
       - name: Install dependencies and compile
