@@ -941,7 +941,7 @@ V1 is delivered in four milestones. **M1 exists to measure the riskiest assumpti
    - thread list and thread view (conversation, events, decision card, handoff card, budget panel);
    - `@factory` only, with no chat before delegation.
 
-**Evaluation** (the M1 exit gate):
+**Evaluation** (the M1 exit gate). The fixed task set, with requests, acceptance criteria and scripted decision answers, is in [docs/software-factory/evaluation/m1-task-set.md](docs/software-factory/evaluation/m1-task-set.md): 8 tasks on `filedb-sharp` and 4 on `insta-story-generator`.
 
 - **Task set.** About 12 real, small, previously completed changes with known good outcomes:
   - 8 from this repository (.NET);
