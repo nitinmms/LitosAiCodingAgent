@@ -922,6 +922,8 @@ V1 is delivered in four milestones. **M1 exists to measure the riskiest assumpti
 
 ### M1: thin slice and evaluation
 
+The implementation architecture (projects, contracts, ports, schema and build order) is in [docs/software-factory/m1-architecture.md](docs/software-factory/m1-architecture.md).
+
 **In scope:**
 
 1. **Hosting library.** Extract `Litos.Hosting`; move VsCodeHost onto it with no behavior change. This is a separate PR, verified by `Litos.VsCodeHost.Tests` and a manual VS Code smoke test.
