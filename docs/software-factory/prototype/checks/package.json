@@ -1,0 +1,13 @@
+{
+  "name": "litos-factory-prototype-checks",
+  "private": true,
+  "description": "Headless checks for the Litos Software Factory UX prototype.",
+  "scripts": {
+    "check": "node check.js"
+  },
+  "devDependencies": {
+    "htm": "3.1.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

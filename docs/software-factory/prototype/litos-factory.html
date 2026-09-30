@@ -1,0 +1,1433 @@
+<!doctype html>
+<!-- Standalone copy of the published prototype (see README.md). The published artifact serves the same content without these wrapper lines. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Litos Software Factory</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..800&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a factory floor console. Top bar + three-pane thread view (line list / work order / gauges), a board of stations, and a walkthrough dock. */
+:root{
+  --bg:#E9ECEF; --surface:#FFFFFF; --surface-2:#F4F6F8; --ink:#16202A; --muted:#566371; --line:#D2D8DF;
+  --petrol:#1D5C73; --petrol-soft:#DCEBF0; --amber:#B7700F; --amber-soft:#FBEBCF; --ok:#2B7A4B; --ok-soft:#DDF0E3;
+  --bad:#B3261E; --bad-soft:#F8DEDC; --focus:#1D5C73;
+  --f-display:"Archivo","Arial Narrow",system-ui,sans-serif; --f-body:"Public Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-code:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  --r-sm:4px; --r-md:8px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#11161B; --surface:#192027; --surface-2:#1F2830; --ink:#E4E9EE; --muted:#97A3AF; --line:#2D3842;
+  --petrol:#58A9C4; --petrol-soft:#1B3540; --amber:#E7AE4B; --amber-soft:#3A2D14; --ok:#63B884; --ok-soft:#18321F;
+  --bad:#E46A60; --bad-soft:#3A1B19; --focus:#58A9C4; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#11161B; --surface:#192027; --surface-2:#1F2830; --ink:#E4E9EE; --muted:#97A3AF; --line:#2D3842;
+  --petrol:#58A9C4; --petrol-soft:#1B3540; --amber:#E7AE4B; --amber-soft:#3A2D14; --ok:#63B884; --ok-soft:#18321F;
+  --bad:#E46A60; --bad-soft:#3A1B19; --focus:#58A9C4; color-scheme:dark }
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.5}
+*{box-sizing:border-box}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+code,.mono{font-family:var(--f-code);font-size:.86em}
+code{background:var(--surface-2);border:1px solid var(--line);border-radius:3px;padding:0 4px;overflow-wrap:anywhere}
+h1,h2,h3{font-family:var(--f-display);font-stretch:112%;text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:1.6rem;font-weight:750}
+h2{font-size:1.15rem;font-weight:700}
+h3{font-size:.95rem;font-weight:700}
+p{margin:0}
+.muted{color:var(--muted)}
+.small{font-size:.82rem}
+.num{font-variant-numeric:tabular-nums}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:6px 12px;cursor:pointer;font-weight:600;font-size:.86rem;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--petrol);border-color:var(--petrol);color:var(--surface)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.attn{background:var(--amber);border-color:var(--amber);color:var(--surface)}
+.btn.ghost{background:transparent;border-color:transparent}
+.btn.ghost:hover{background:var(--surface-2)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-row{display:flex;flex-wrap:wrap;gap:8px}
+
+/* pills */
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:1px 9px;font-size:.76rem;font-weight:600;border:1px solid transparent;white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.you{background:var(--amber-soft);color:var(--amber)}
+.pill.agent{background:var(--petrol-soft);color:var(--petrol)}
+.pill.waiting{background:var(--surface-2);color:var(--muted);border-color:var(--line)}
+.pill.done{background:var(--ok-soft);color:var(--ok)}
+.pill.neutral{background:var(--surface-2);color:var(--muted)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:3px;padding:0 6px;font-size:.74rem;color:var(--muted);font-weight:600}
+
+/* top bar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;padding-block:8px;padding-inline:16px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--f-display);font-stretch:118%;font-weight:800;font-size:1.02rem;letter-spacing:.01em}
+.brand svg{flex:none}
+.nav{display:flex;gap:2px;flex-wrap:wrap}
+.nav button{border:0;background:transparent;padding:6px 10px;border-radius:var(--r-sm);cursor:pointer;font-weight:600;color:var(--muted)}
+.nav button[aria-current="page"]{color:var(--ink);background:var(--surface-2);box-shadow:inset 0 -2px 0 var(--petrol)}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:.72rem;font-weight:700;background:var(--petrol-soft);color:var(--petrol);flex:none}
+.userbox{display:flex;align-items:center;gap:8px}
+.userbox select{border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:4px 6px;max-width:190px}
+
+/* page */
+.page{padding-block:20px 140px;padding-inline:16px;max-width:1500px;margin:0 auto}
+
+/* login */
+.login{min-height:100%;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);}
+.login-art{background:var(--ink);color:var(--bg);padding:48px 40px;display:flex;flex-direction:column;justify-content:space-between;gap:32px}
+.login-art h1{font-size:clamp(2rem,4.5vw,3.4rem);font-stretch:125%;font-weight:800;line-height:1.02;max-width:12ch}
+.login-art p{max-width:46ch;opacity:.8}
+.login-line{display:flex;gap:0;align-items:center;flex-wrap:wrap}
+.login-line span{font-family:var(--f-display);font-stretch:118%;font-weight:700;font-size:.85rem;padding:6px 12px;border:1px solid color-mix(in srgb,var(--bg) 35%,transparent);margin-right:-1px}
+.login-line span.on{background:var(--amber);border-color:var(--amber);color:var(--ink)}
+.login-form{display:grid;place-items:center;padding:40px 16px}
+.login-form form{width:min(360px,100%);display:grid;gap:14px}
+.field{display:grid;gap:4px}
+.field label{font-weight:600;font-size:.86rem}
+.field input,.field select,.field textarea{border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:8px 10px;width:100%}
+.field .hint{font-size:.78rem;color:var(--muted)}
+
+/* board */
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-block:14px 18px}
+.metric{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;display:grid;gap:2px}
+.metric b{font-family:var(--f-display);font-stretch:112%;font-size:1.5rem;font-weight:750;font-variant-numeric:tabular-nums}
+.metric span{color:var(--muted);font-size:.8rem}
+.metric.attn{border-color:var(--amber);box-shadow:inset 3px 0 0 var(--amber)}
+.flow{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:14px;margin-bottom:18px;display:grid;gap:8px}
+.flow-row{display:grid;grid-template-columns:110px minmax(0,1fr) 70px;gap:10px;align-items:center;font-size:.84rem}
+.flow-bar{height:10px;background:var(--surface-2);border-radius:2px;position:relative;overflow:hidden}
+.flow-bar i{position:absolute;inset:0 auto 0 0;background:var(--petrol);border-radius:2px}
+.flow-bar i.human{background:var(--amber)}
+.board-head{display:flex;flex-wrap:wrap;gap:12px;align-items:end;justify-content:space-between}
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.filters select{border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:5px 8px}
+.board-scroll{overflow-x:auto;padding-bottom:8px}
+.board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(232px,1fr);gap:10px;min-width:min-content}
+.col{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-md);padding:10px;display:flex;flex-direction:column;gap:8px;min-height:220px}
+.col-head{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--f-display);font-stretch:112%;font-weight:700}
+.col-head small{font-family:var(--f-body);color:var(--muted);font-weight:500}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px;display:grid;gap:7px;cursor:pointer;text-align:left}
+.card:hover{border-color:var(--muted)}
+.card.you{box-shadow:inset 3px 0 0 var(--amber)}
+.card-title{font-weight:600;line-height:1.3}
+.card-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:.78rem;color:var(--muted)}
+.minibar{height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden}
+.minibar i{display:block;height:100%;background:var(--petrol)}
+.empty-col{font-size:.8rem;color:var(--muted);padding:6px 2px}
+
+/* thread view */
+.tv{display:grid;grid-template-columns:250px minmax(0,1fr) 330px;gap:16px;align-items:start}
+.list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:10px;display:grid;gap:10px;position:sticky;top:64px}
+.list-proj{display:grid;gap:4px}
+.list-proj h3{font-size:.8rem;color:var(--muted);padding:2px 4px}
+.list-item{display:grid;gap:3px;border:0;background:transparent;text-align:left;padding:7px 8px;border-radius:var(--r-sm);cursor:pointer}
+.list-item:hover{background:var(--surface-2)}
+.list-item[aria-current="true"]{background:var(--petrol-soft)}
+.list-item span:first-child{font-weight:600;line-height:1.3}
+.center{min-width:0;display:grid;gap:12px}
+.th-head{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:14px 16px;display:grid;gap:12px}
+.th-title{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.th-sub{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.82rem;color:var(--muted);align-items:center}
+
+/* the line: stage rail */
+.rail{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));position:relative;padding-top:4px}
+.rail::before{content:"";position:absolute;left:7%;right:7%;top:15px;height:4px;background:repeating-linear-gradient(90deg,var(--line) 0 10px,transparent 10px 14px)}
+.st{display:grid;justify-items:center;gap:6px;position:relative;z-index:1;font-size:.74rem;color:var(--muted);text-align:center}
+.st i{width:26px;height:26px;border-radius:5px;border:2px solid var(--line);background:var(--surface);display:grid;place-items:center;font-style:normal;font-family:var(--f-display);font-weight:800;font-size:.72rem}
+.st.done i{background:var(--petrol);border-color:var(--petrol);color:var(--surface)}
+.st.done{color:var(--ink)}
+.st.now i{border-color:var(--petrol);color:var(--petrol);background:var(--petrol-soft)}
+.st.now{color:var(--ink);font-weight:700}
+.st.now.you i{border-color:var(--amber);color:var(--amber);background:var(--amber-soft)}
+.st.skip i{border-style:dashed}
+.st.now.moving i{animation:carrier 1.2s ease-in-out infinite}
+@keyframes carrier{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@media (prefers-reduced-motion:reduce){.st.now.moving i{animation:none}}
+
+/* conversation */
+.convo{display:grid;gap:10px}
+.m{display:grid;gap:4px;max-width:760px}
+.m-who{font-size:.78rem;color:var(--muted);display:flex;gap:6px;align-items:center}
+.m-who b{color:var(--ink)}
+.bubble{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px;overflow-wrap:anywhere}
+.m.user .bubble{background:var(--petrol-soft);border-color:transparent}
+.mention{font-weight:700;color:var(--petrol)}
+.ev{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:8px;align-items:start;font-size:.86rem;padding:2px 4px;color:var(--ink)}
+.ev::before{content:"";width:8px;height:8px;margin-top:7px;border-radius:2px;background:var(--petrol);justify-self:center}
+.ev.ok::before{background:var(--ok)} .ev.bad::before{background:var(--bad)} .ev.sys::before{background:var(--muted)}
+.ev .tok{font-size:.74rem;color:var(--muted);white-space:nowrap}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:14px 16px;display:grid;gap:10px;max-width:760px}
+.panel.you{border-color:var(--amber);box-shadow:inset 4px 0 0 var(--amber)}
+.panel.okp{border-color:var(--ok);box-shadow:inset 4px 0 0 var(--ok)}
+.panel-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.panel ol,.panel ul{margin:0;padding-left:20px;display:grid;gap:4px}
+.kv{display:grid;grid-template-columns:minmax(120px,max-content) minmax(0,1fr);gap:4px 14px;font-size:.86rem}
+.kv dt{color:var(--muted)} .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.table-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.84rem}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;color:var(--muted)}
+.check{display:flex;gap:8px;align-items:flex-start}
+.check input{margin-top:4px;accent-color:var(--petrol)}
+.diff{font-family:var(--f-code);font-size:.78rem;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px;overflow-x:auto;white-space:pre;margin:0}
+.diff .a{color:var(--ok)} .diff .d{color:var(--bad)}
+.opts{display:grid;gap:8px}
+.opt{border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;background:var(--surface);text-align:left;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.opt:hover{border-color:var(--petrol)}
+.opt.chosen{border-color:var(--petrol);background:var(--petrol-soft)}
+
+/* composer */
+.composer{position:sticky;bottom:env(safe-area-inset-bottom,0px);background:var(--bg);padding-block:8px;display:grid;gap:6px;z-index:5}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.compose-box{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:end;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:8px}
+.compose-box textarea{border:0;background:transparent;resize:none;min-height:40px;max-height:160px;padding:6px 4px;outline:none;width:100%}
+.compose-box:focus-within{border-color:var(--petrol)}
+.compose-hint{font-size:.76rem;color:var(--muted)}
+
+/* details */
+.details{display:grid;gap:12px;position:sticky;top:64px}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;display:grid;gap:8px}
+.box h3{font-size:.86rem}
+.gauge{height:12px;border-radius:2px;background:var(--surface-2);overflow:hidden;display:flex;border:1px solid var(--line)}
+.gauge i{display:block;height:100%}
+.gauge .u{background:var(--petrol)} .gauge .d{background:color-mix(in srgb,var(--petrol) 35%,transparent)}
+.ledger{display:grid;gap:3px;font-size:.76rem}
+.ledger div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.ledger span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vrow{display:flex;justify-content:space-between;gap:8px;font-size:.84rem;align-items:center}
+.files{display:grid;gap:3px;font-size:.78rem}
+.files div{display:flex;justify-content:space-between;gap:8px}
+.files .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.plus{color:var(--ok)} .minus{color:var(--bad)}
+
+/* admin + lessons */
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;align-items:start}
+.section{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:16px;display:grid;gap:12px}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:10px}
+.toggle{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.toggle:last-child{border-bottom:0}
+.switch{position:relative;width:38px;height:22px;flex:none}
+.switch input{opacity:0;width:100%;height:100%;margin:0;cursor:pointer;position:absolute;inset:0;z-index:1}
+.switch span{position:absolute;inset:0;background:var(--line);border-radius:999px;transition:background .15s}
+.switch span::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--surface);transition:transform .15s}
+.switch input:checked+span{background:var(--petrol)}
+.switch input:checked+span::after{transform:translateX(16px)}
+.switch input:focus-visible+span{outline:2px solid var(--focus);outline-offset:2px}
+.lesson{border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;display:grid;gap:6px}
+.subnav{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);padding-bottom:6px}
+.subnav button{border:1px solid transparent;background:transparent;padding:6px 10px;border-radius:var(--r-sm);cursor:pointer;font-weight:600;color:var(--muted)}
+.subnav button:hover{background:var(--surface-2)}
+.subnav button[aria-current="page"]{color:var(--ink);border-color:var(--line);background:var(--surface)}
+.inline-input{border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:5px 8px;min-width:0;width:100%;max-width:340px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.btn.small{padding:2px 8px;font-size:.78rem}
+.warn{color:var(--amber);font-weight:600}
+table.models td{vertical-align:middle}
+.row-actions{text-align:right;white-space:nowrap}
+.modal.wide{width:min(860px,100%)}
+.picker-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.vt{border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
+.vt-row{display:grid;grid-template-columns:32px minmax(0,1fr) 80px 56px 150px;gap:8px;align-items:center;padding:0 10px;font-size:.84rem;border-bottom:1px solid var(--line);cursor:pointer;background:var(--surface)}
+.vt-row.sel{background:var(--petrol-soft)}
+.vt-head{background:var(--surface-2);font-weight:600;color:var(--muted);height:34px;cursor:default}
+.vt-body{overflow-y:auto;position:relative}
+.ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sort{border:0;background:transparent;padding:0;font:inherit;color:inherit;cursor:pointer;font-weight:600}
+.combo{position:relative}
+.combo-btn{width:100%;display:flex;justify-content:space-between;gap:8px;align-items:center;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:8px 10px;cursor:pointer;text-align:left}
+.combo-pop{position:absolute;z-index:70;left:0;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--muted);border-radius:var(--r-sm);padding:8px;display:grid;gap:6px;box-shadow:0 8px 24px color-mix(in srgb,var(--ink) 18%,transparent)}
+.combo-list{max-height:260px;overflow:auto;display:grid}
+.combo-group{font-size:.76rem;font-weight:700;color:var(--muted);padding:6px 6px 2px}
+.combo-opt{border:0;background:transparent;text-align:left;padding:6px 8px;border-radius:3px;cursor:pointer;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.combo-opt:hover,.combo-opt.on{background:var(--petrol-soft)}
+@media (max-width:760px){.vt-row{grid-template-columns:28px minmax(0,1fr) 56px 44px}.vt-row .price{display:none}}
+
+/* walkthrough dock */
+.tour{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));width:min(360px,calc(100% - 32px));background:var(--surface);border:1px solid var(--ink);border-radius:var(--r-md);box-shadow:0 10px 30px color-mix(in srgb,var(--ink) 22%,transparent);z-index:40;display:grid}
+.tour-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;background:var(--ink);color:var(--bg);border-radius:7px 7px 0 0;cursor:pointer;border:0;width:100%;text-align:left}
+.tour-head b{font-family:var(--f-display);font-stretch:115%}
+.tour-body{padding:12px;display:grid;gap:10px;max-height:min(62vh,520px);overflow:auto}
+.tour-step h3{font-size:1rem}
+.tour-list{display:grid;gap:2px;font-size:.8rem;list-style:none;margin:0;padding:0}
+.tour-list li{display:grid;grid-template-columns:20px minmax(0,1fr);gap:6px;color:var(--muted)}
+.tour-list li.done{color:var(--ink)}
+.tour-list li.cur{color:var(--ink);font-weight:700}
+.tour-list li i{font-style:normal;font-variant-numeric:tabular-nums}
+.tour-foot{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:8px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:var(--r-sm);z-index:50;max-width:min(560px,calc(100% - 32px));font-size:.86rem}
+.modal-bg{position:fixed;inset:0;background:color-mix(in srgb,var(--ink) 45%,transparent);display:grid;place-items:center;z-index:60;padding:16px}
+.modal{background:var(--surface);border-radius:var(--r-md);padding:18px;width:min(480px,100%);display:grid;gap:12px;max-height:90vh;overflow:auto}
+.note{font-size:.78rem;color:var(--muted);text-align:center;padding-top:24px}
+.mobile-only{display:none}
+
+@media (max-width:1180px){
+  .tv{grid-template-columns:230px minmax(0,1fr)}
+  .details{grid-column:2;position:static}
+}
+@media (max-width:760px){
+  .login{grid-template-columns:1fr}
+  .login-art{padding:32px 16px}
+  .tv{grid-template-columns:minmax(0,1fr)}
+  .details{grid-column:1}
+  .list{position:static}
+  .list.collapsed .list-proj{display:none}
+  .mobile-only{display:inline-flex}
+  .rail .st span{display:none}
+  .rail .st.now span{display:block;position:absolute;top:32px;white-space:nowrap}
+  .rail{padding-bottom:18px}
+  .flow-row{grid-template-columns:80px minmax(0,1fr) 56px}
+  .top-right{margin-left:0;width:100%;justify-content:space-between}
+}
+</style>
+
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<script>
+(function(){
+const {useState,useEffect,useReducer,useRef} = React;
+const html = htm.bind(React.createElement);
+const fmt = n => Math.round(n).toLocaleString('en-US');
+
+/* ---------- reference data ---------- */
+const USERS = {
+  priya:{id:'priya',name:'Priya Nair',role:'Admin',initials:'PN'},
+  sam:{id:'sam',name:'Sam Okafor',role:'Member',initials:'SO'},
+  lena:{id:'lena',name:'Lena Brandt',role:'Member',initials:'LB'}
+};
+const PROVIDERS = {
+  anthropic:{name:'Anthropic',model:'claude-sonnet-5-5',models:['claude-opus-5-5','claude-sonnet-5-5','claude-haiku-4-5'],precision:'Strict',note:'Output cap and cache usage reported'},
+  openai:{name:'OpenAI',model:'gpt-5',models:['gpt-5','gpt-5-mini'],precision:'Strict',note:'Output cap honored; no cache breakdown'},
+  openrouter:{name:'OpenRouter',model:'anthropic/claude-sonnet-5-5',models:['anthropic/claude-sonnet-5-5','qwen/qwen3-coder'],precision:'Strict',note:'Detects inclusive or separate cache reporting'},
+  gemini:{name:'Gemini',model:'gemini-2.5-pro',models:['gemini-2.5-pro','gemini-2.5-flash'],precision:'Estimated',note:'Output cap not enforced yet'},
+  local:{name:'Local',model:'qwen3-coder-30b',models:['qwen3-coder-30b'],precision:'Estimated',note:'Usage only when the server reports it'},
+  meshapi:{name:'MeshApi',model:'mesh-default',models:['mesh-default'],precision:'Estimated',note:'Usage only when the server reports it'}
+};
+function rng(seed){let x=(seed>>>0)||1;return ()=>{x^=x<<13;x>>>=0;x^=x>>>17;x^=x<<5;x>>>=0;return x/4294967296;};}
+const CATALOG_SEEDS={
+  anthropic:['claude-opus-5-5','claude-sonnet-5-5','claude-haiku-4-5','claude-sonnet-4-5','claude-opus-4-1'],
+  openai:['gpt-5','gpt-5-mini','gpt-5-nano','gpt-4.1','gpt-4.1-mini','o4-mini','gpt-4o'],
+  gemini:['gemini-2.5-pro','gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.0-flash'],
+  local:['qwen3-coder-30b','llama-3.3-70b-instruct','devstral-small'],
+  meshapi:['mesh-default','mesh-fast'],
+  openrouter:['anthropic/claude-opus-5-5','anthropic/claude-sonnet-5-5','anthropic/claude-haiku-4-5','qwen/qwen3-coder','mistralai/codestral-2501','openai/gpt-5','google/gemini-2.5-pro','deepseek/deepseek-v3']
+};
+function genCatalog(k){
+  const r=rng(k.length*7919+k.charCodeAt(0)*131);const pick=a=>a[Math.floor(r()*a.length)];
+  const ctxs=[8192,32768,65536,131072,200000,262144,1048576];
+  const mk=(id,tools)=>{const pin=+(0.05+r()*r()*14).toFixed(2);return {id,ctx:pick(ctxs),tools:tools===undefined?r()<0.68:tools,pin,pout:+(pin*(3+r()*3)).toFixed(2)};};
+  const out=CATALOG_SEEDS[k].map(id=>mk(id,true));
+  if(k==='openrouter'){
+    const fams=['anthropic','openai','google','meta-llama','qwen','mistralai','deepseek','cohere','microsoft','nvidia','amazon','ai21','perplexity','nousresearch','thudm','moonshotai','z-ai','minimax','bytedance','ibm-granite'];
+    const stems=['chat','coder','instruct','vision','reasoner','lite','pro','flash','mini','large','small','turbo','air','max','nano'];
+    const sizes=['3b','7b','8b','14b','24b','32b','70b','120b','235b','405b'];
+    const seen=new Set(out.map(m=>m.id));
+    while(out.length<312){const f=pick(fams);const id=f+'/'+f.split('-')[0]+'-'+pick(stems)+'-'+pick(sizes)+(r()<0.3?'-'+pick(['preview','exp','0925','free']):'');if(!seen.has(id)){seen.add(id);out.push(mk(id));}}
+  }
+  return out;
+}
+function allowedModels(S,k){const c=S.settings.providers[k];return c.allowAll?c.catalog.filter(m=>m.tools).map(m=>m.id):c.allowed.filter(id=>c.catalog.some(m=>m.id===id));}
+function usable(S,k){const c=S.settings.providers[k];return c.enabled&&(k==='local'?!!c.baseUrl:c.key)&&allowedModels(S,k).length>0&&(!S.settings.strictOnly||PROVIDERS[k].precision==='Strict');}
+function fixDefault(s){const st=s.settings;if(usable(s,st.defaultProvider)&&allowedModels(s,st.defaultProvider).includes(st.defaultModel))return;
+  const p=usable(s,st.defaultProvider)?st.defaultProvider:usableProviders(s)[0];if(p){st.defaultProvider=p;st.defaultModel=allowedModels(s,p)[0];}}
+function usableProviders(S){return Object.keys(PROVIDERS).filter(k=>usable(S,k));}
+function modelOf(t){return t.model||PROVIDERS[t.provider].model;}
+function runCapabilities(S,t){
+  const st=S.settings;
+  const repo=st.repoSkillPolicy==='ignore'?[]:st.repoSkills.filter(r=>r.projectId===t.projectId&&(st.repoSkillPolicy==='trust'||r.status==='Approved')).map(r=>r.name+' (repository)');
+  return {mcp:S.mcp.filter(m=>m.on).map(m=>m.name),skills:st.skills.filter(k=>k.on).map(k=>k.name).concat(repo),
+    skipped:st.repoSkillPolicy==='approve'?st.repoSkills.filter(r=>r.projectId===t.projectId&&r.status!=='Approved').map(r=>r.name):[],
+    ptc:t.ptc!==false&&st.tools.ptc,web:st.tools.web&&st.tools.searchKey};
+}
+function initialSettings(){
+  const providers={};
+  for(const [k,v] of Object.entries(PROVIDERS)) providers[k]={enabled:!['local','meshapi'].includes(k),key:['anthropic','openai','openrouter'].includes(k),allowed:k==='openrouter'?['anthropic/claude-sonnet-5-5','qwen/qwen3-coder','mistralai/codestral-2501']:v.models.slice(),baseUrl:'',allowAll:false,catalog:genCatalog(k),fetched:'today at 09:12'};
+  return {providers,defaultProvider:'anthropic',defaultModel:'claude-sonnet-5-5',strictOnly:false,
+    skills:[{name:'dotnet-conventions',desc:'House style for C# services and tests',on:true},{name:'react-testing',desc:'How we write component tests with Testing Library',on:true},
+      {name:'sql-migrations',desc:'Write migration scripts, never run them',on:true},{name:'release-notes',desc:'Draft release notes from a diff',on:false}],
+    repoSkillPolicy:'approve',repoSkills:[{projectId:'fieldportal',name:'field-portal-offline',status:'Approved'}],
+    tools:{web:true,searchKey:true,ptc:true,ptcMemberOff:true,shellTimeout:300},
+    limits:{defaultCap:120000,maxCap:400000,dailyQuota:2000000,monthlyQuota:30000000,repairCycles:2},
+    presets:structuredClone(PRESETS)};
+}
+const PRESETS = {
+  'dotnet':{name:'.NET',build:'dotnet build -nodeReuse:false',test:'dotnet test --logger trx',report:'TRX + Cobertura'},
+  'node':{name:'Node / React',build:'npm run build',test:'npx vitest run --reporter=junit --coverage',report:'JUnit XML + LCOV'},
+  'python':{name:'Python',build:'(none)',test:'pytest --junitxml=artifacts/tests.xml --cov --cov-report=xml',report:'JUnit XML + Cobertura'},
+  'java':{name:'Java (Maven)',build:'mvn -B compile',test:'mvn -B test',report:'JUnit XML (Surefire) + Cobertura'},
+  'go':{name:'Go',build:'go build ./...',test:'go test ./... (via go-junit-report)',report:'JUnit XML + Cobertura'},
+  'custom':{name:'Custom commands',build:'',test:'',report:'JUnit XML or TRX + Cobertura or LCOV'}
+};
+const STAGES = ['Discuss','Spec','Implement','Verify','Review','Handoff','Done'];
+const STATE_NAMES = {Draft:'Not delegated',Queued:'Queued',Running:'Working',AwaitingDecision:'Decision needed',PausedBudget:'Budget paused',PausedUser:'Paused',AwaitingHumanTesting:'Ready for testing',Accepted:'Accepted',Cancelled:'Cancelled'};
+
+const CSV_SOURCE_FILES = [
+  {path:'src/SalesApp.Api/Controllers/OrdersController.cs',add:38,del:2},
+  {path:'src/SalesApp.Api/Export/CsvWriter.cs',add:64,del:0},
+  {path:'src/SalesApp.Api/Auth/AuthorizationPolicies.cs',add:3,del:1},
+  {path:'web/src/pages/OrdersPage.tsx',add:27,del:4},
+  {path:'web/src/api/orders.ts',add:12,del:0}
+];
+const CSV_TEST_FILES = [
+  {path:'tests/SalesApp.UnitTests/Export/CsvWriterTests.cs',add:88,del:0},
+  {path:'tests/SalesApp.UnitTests/Orders/OrdersExportTests.cs',add:61,del:0},
+  {path:'web/src/pages/OrdersPage.test.tsx',add:54,del:0}
+];
+const CSV_SPEC = {
+  rev:1,
+  summary:'Administrators can download the Orders grid as a CSV file that respects the active filters.',
+  criteria:[
+    'An Export CSV button appears on the Orders page for administrators only.',
+    'Non-administrators get 403 from the export endpoint, even when calling it directly.',
+    'The file contains the rows matching the current filters, with the grid\u2019s column headers.',
+    'An empty result downloads a file with the header row only.',
+    'Numbers and dates use culture-invariant formats.'
+  ],
+  tests:['AC1: component test (Vitest)','AC2: controller unit test (xUnit)','AC3\u2013AC5: CsvWriter unit tests (xUnit)','Manual: open the file in a spreadsheet app'],
+  open:['Should the export include all filtered rows or only the current page? I will ask when implementation reaches it unless you decide now.']
+};
+
+/* ---------- helpers ---------- */
+function slug(s){return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').split('-').slice(0,4).join('-');}
+function hexOf(n,len){return ((n*2654435761)>>>0).toString(16).padStart(8,'0').slice(0,len);}
+function proj(s,id){return s.projects.find(p=>p.id===id);}
+function msg(s,t,m){s.seq++; t.messages.push(Object.assign({id:s.seq},m));}
+function turnLabel(t){
+  if(t.state==='Running') return {text:'Agent working',cls:'agent'};
+  if(t.state==='Queued') return {text:'Awaiting agent',cls:'waiting'};
+  if(t.state==='PausedUser') return {text:'Paused',cls:'neutral'};
+  if(t.state==='Accepted'||t.state==='Cancelled') return {text:'Done',cls:'done'};
+  if(t.state==='Draft') return {text:'Not delegated',cls:'neutral'};
+  return {text:'Awaiting you',cls:'you'};
+}
+function stateName(t){ if(t.state==='AwaitingDecision' && t.specPending) return 'Spec to review'; return STATE_NAMES[t.state]; }
+function mkThread(o){
+  return Object.assign({id:'',key:null,hex:'0000',projectId:'',title:'',type:'Feature',owner:'sam',stage:'Discuss',state:'Draft',cap:null,used:0,discussion:0,
+    provider:'anthropic',branch:null,pr:null,commit:null,messages:[],pending:[],runKind:null,holdsLock:false,queuedAt:0,waitingFor:null,files:[],
+    verif:{build:'Not run',tests:'Not run',coverage:'Not measured',review:'Not run',human:'Not started'},checklist:[],ledger:[],handoffs:0,iteration:1,
+    spec:null,specApproved:false,specPending:false,decision:null,decisionAnswered:false,capRaised:false,chatPending:[],lessonsIncluded:[],reworks:0,script:'generic'},o);
+}
+function mergeFiles(a,b){const out=a.map(f=>Object.assign({},f));for(const f of b){const e=out.find(x=>x.path===f.path);if(e){e.add+=f.add;e.del+=f.del;}else out.push(Object.assign({},f));}return out;}
+
+/* ---------- scripted work ---------- */
+function specSteps(t){
+  if(t.script==='csv') return [
+    {k:'ev',stage:'Spec',text:'Read `OrdersController.cs`, `OrderQuery.cs` and `OrdersPage.tsx` with read-only tools to draft the spec.',call:[7400,800],what:'Draft spec'},
+    {k:'specCard',spec:CSV_SPEC}];
+  return [
+    {k:'ev',stage:'Spec',text:'Read the relevant code with read-only tools to draft the spec.',call:[6800,700],what:'Draft spec'},
+    {k:'specCard',spec:{rev:1,summary:t.title+'.',criteria:['The requested behavior works for the main case.','Existing behavior is unchanged for other users.','Edge cases named in the discussion are handled.'],tests:['AC1\u2013AC3: unit tests','Manual: check the main flow in the app'],open:[]}}];
+}
+function implSteps(t){
+  if(t.script==='csv') return [
+    {k:'ev',kind:'plan',stage:'Implement',text:'Plan: add an admin-only `GET /api/orders/export` endpoint using the existing `AdminOnly` policy, a `CsvWriter` helper, and an Export CSV button on `OrdersPage.tsx`. Each acceptance criterion gets a unit test.',call:[14000,800],what:'Plan'},
+    {k:'ev',text:'Ran a PTC script with 7 tool calls. Read `OrdersController.cs`, `AuthorizationPolicies.cs`, `OrderQuery.cs`, `OrdersPage.tsx` and 3 test files.',call:[17500,1900],what:'Inspect code'},
+    {k:'decision',d:{q:'Should the export include all filtered rows, or only the current page?',why:'The Orders grid shows 50 rows per page and the spec leaves this open. The answer changes the endpoint\u2019s query and the button\u2019s tooltip.',options:['All filtered rows','Current page only'],rec:0,impact:['OrdersController.Export','OrdersPage export button']}},
+    {k:'ev',text:'Implemented the export endpoint, `CsvWriter` and the admin-only button in 5 source files.',call:[19000,4200],files:CSV_SOURCE_FILES,what:'Implement'},
+    {k:'ev',text:'Added 3 test files: 5 xUnit tests and 3 Vitest component tests.',call:[16000,3100],files:CSV_TEST_FILES,what:'Write tests'},
+    {k:'ev',stage:'Verify',tone:'ok',text:'Build passed. `dotnet build` took 38 s and `npm run build` took 21 s.',verif:{build:'Passed'}},
+    {k:'ev',tone:'bad',text:'Unit tests: 41 passed, 1 failed (`CsvWriterTests.Writes_display_names_in_header`). Starting repair cycle 1 of 2.',verif:{tests:'1 failed'}},
+    {k:'ev',text:'Repair: the header row used property names instead of the grid\u2019s display names. Fixed `CsvWriter`.',call:[9000,1100],what:'Repair cycle 1'},
+    {k:'ev',tone:'ok',text:'Unit tests: 42 passed, 0 failed (8 new). Changed-line coverage is 91% against a threshold of 80%.',verif:{tests:'42 passed',coverage:'91%'}},
+    {k:'ev',stage:'Review',text:'Agent review found 1 blocking issue: the Export button renders while the admin check is still loading. Fixed it and added a component test.',call:[7600,900],verif:{review:'1 finding fixed'},what:'Agent review'},
+    {k:'ev',tone:'ok',text:'Unit tests: 43 passed. Changed-line coverage is 92%.',verif:{tests:'43 passed',coverage:'92%'}},
+    {k:'handoff'}];
+  if(t.script==='empty') return [
+    {k:'ev',kind:'plan',stage:'Implement',text:'Plan: add an `EmptyState` component and use it on the Orders and Customers pages, with component tests.',call:[9800,700],what:'Plan'},
+    {k:'ev',text:'Added `EmptyState.tsx` and used it in 2 pages.',call:[12400,2600],files:[{path:'web/src/components/EmptyState.tsx',add:41,del:0},{path:'web/src/pages/OrdersPage.tsx',add:6,del:3},{path:'web/src/pages/CustomersPage.tsx',add:6,del:3},{path:'web/src/components/EmptyState.test.tsx',add:37,del:0}],what:'Implement'},
+    {k:'ev',stage:'Verify',tone:'ok',text:'Build passed. Unit tests: 38 passed (4 new). Changed-line coverage is 88%.',verif:{build:'Passed',tests:'38 passed',coverage:'88%'}},
+    {k:'ev',stage:'Review',text:'Agent review: no findings.',call:[5200,400],verif:{review:'Clean'},what:'Agent review'},
+    {k:'handoff'}];
+  if(t.script==='dates') return [
+    {k:'ev',text:'Reproduced it: `ToDate` is compared with `<`, so orders on the last day are dropped.',call:[11000,900],what:'Diagnose'},
+    {k:'ev',text:'Applied the project lesson: converted the inclusive end day to an exclusive upper bound in `StockMovementRepository`.',call:[13800,2200],files:[{path:'src/Inventory.Data/StockMovementRepository.cs',add:9,del:4},{path:'tests/Inventory.UnitTests/StockMovementRepositoryTests.cs',add:46,del:0}],what:'Implement'},
+    {k:'ev',text:'Added 3 regression tests for month-end and daylight-saving boundaries.',call:[9400,1800],what:'Write tests'},
+    {k:'ev',stage:'Verify',tone:'ok',text:'Build passed. Unit tests: 212 passed (3 new). Changed-line coverage is 100%.',verif:{build:'Passed',tests:'212 passed',coverage:'100%'}},
+    {k:'ev',stage:'Review',text:'Agent review: no findings.',call:[6100,500],verif:{review:'Clean'},what:'Agent review'},
+    {k:'handoff'}];
+  return [
+    {k:'ev',kind:'plan',stage:'Implement',text:'Plan: make the change in the smallest set of files and cover each acceptance criterion with a unit test.',call:[11000,800],what:'Plan'},
+    {k:'ev',text:'Implemented the change in 3 files.',call:[15000,3000],files:[{path:'src/Feature/Service.cs',add:31,del:6},{path:'web/src/pages/FeaturePage.tsx',add:18,del:2},{path:'tests/Feature/ServiceTests.cs',add:52,del:0}],what:'Implement'},
+    {k:'ev',stage:'Verify',tone:'ok',text:'Build passed. Unit tests: 64 passed (4 new). Changed-line coverage is 88%.',verif:{build:'Passed',tests:'64 passed',coverage:'88%'}},
+    {k:'ev',stage:'Review',text:'Agent review: no findings.',call:[6000,500],verif:{review:'Clean'},what:'Agent review'},
+    {k:'handoff'}];
+}
+function reworkSteps(t){
+  if(t.script==='csv') return [
+    {k:'ev',stage:'Implement',text:'Reproduced it: values were joined with commas without quoting.',call:[21000,1600],what:'Diagnose rework'},
+    {k:'ev',text:'`CsvWriter` now quotes fields that contain commas, quotes or line breaks, following RFC 4180. Added 3 unit tests.',call:[15500,2400],files:[{path:'src/SalesApp.Api/Export/CsvWriter.cs',add:19,del:6},{path:'tests/SalesApp.UnitTests/Export/CsvWriterTests.cs',add:42,del:0}],what:'Fix quoting'},
+    {k:'ev',stage:'Verify',tone:'ok',text:'Build passed. Unit tests: 46 passed (3 new). Changed-line coverage is 94%.',verif:{build:'Passed',tests:'46 passed',coverage:'94%'}},
+    {k:'ev',stage:'Review',text:'Agent review: no findings.',call:[7000,700],verif:{review:'Clean'},what:'Agent review'},
+    {k:'handoff'}];
+  return [
+    {k:'ev',stage:'Implement',text:'Applied the requested change.',call:[12000,1800],files:[{path:'src/Feature/Service.cs',add:8,del:3}],what:'Rework'},
+    {k:'ev',stage:'Verify',tone:'ok',text:'Build passed. Unit tests: 66 passed (2 new). Changed-line coverage is 90%.',verif:{build:'Passed',tests:'66 passed',coverage:'90%'}},
+    {k:'ev',stage:'Review',text:'Agent review: no findings.',call:[5000,400],verif:{review:'Clean'},what:'Agent review'},
+    {k:'handoff'}];
+}
+function handoffContent(t){
+  if(t.script==='csv'){
+    const criteria=[
+      ['AC1 Admin-only button','OrdersPage.test.tsx: shows Export CSV only for admins'],
+      ['AC2 403 for non-admins','OrdersExportTests.NonAdmin_gets_403'],
+      ['AC3 Filtered rows, display headers','CsvWriterTests.Writes_filtered_rows_with_display_headers, and manual check'],
+      ['AC4 Empty result','CsvWriterTests.Empty_result_writes_header_only'],
+      ['AC5 Invariant formats','CsvWriterTests.Uses_invariant_culture']];
+    const manual=['Sign in as an administrator, filter Orders and export. The file matches the filtered grid.',
+      'Sign in as a non-administrator. The Export button is absent and /api/orders/export returns 403.',
+      'Export a filter with no results. The file has only the header row.'];
+    if(t.handoffs>=2){criteria.push(['Rework: commas in values','CsvWriterTests.Quotes_fields_with_commas_quotes_and_newlines']);manual.push('Export an order whose customer name contains a comma. It stays in one column.');}
+    return {summary:t.handoffs>=2?'Fields containing commas, quotes or line breaks are now quoted. Everything from the first handoff is unchanged.':'Administrators can export the filtered Orders grid as CSV. Other users cannot see the button or call the endpoint.',criteria,manual,newTests:t.handoffs>=2?3:8,limits:['The export has not been tried with very large result sets (over 100,000 rows).']};
+  }
+  return {summary:'The requested change is implemented and covered by unit tests.',criteria:[['AC1\u2013AC3','Unit tests listed in the run log']],manual:['Check the main flow in the application.','Check that nothing changed for other users.'],newTests:4,limits:[]};
+}
+
+/* ---------- state ---------- */
+function seedThreads(){
+  const t2=mkThread({id:'t-inv-dates',hex:'c21d',projectId:'inventory',title:'Fix date filter dropping the last day',type:'Bug',owner:'lena',stage:'Implement',state:'Running',
+    provider:'gemini',cap:null,used:14200,branch:'factory/c21d-fix-date-filter-dropping',holdsLock:true,runKind:'impl',script:'dates',lessonsIncluded:['l-inv-1'],
+    ledger:[{n:1,what:'Plan',inp:12600,out:1600,reserved:18260}]});
+  t2.messages=[
+    {id:1,kind:'user',author:'lena',text:'Stock movement reports drop everything on the last day of the range.'},
+    {id:2,kind:'litos',text:'The filter compares `MovedAt < ToDate`, so anything after midnight on the end day is excluded. There is an approved project lesson about exactly this.'},
+    {id:3,kind:'user',author:'lena',text:'@factory Fix it so the end day is included.'},
+    {id:4,kind:'event',text:'Assigned. Included 1 approved project lesson in this run.'},
+    {id:5,kind:'event',text:'Repository acquired. Created branch `factory/c21d-fix-date-filter-dropping` from `main`.'},
+    {id:6,kind:'plan',text:'Plan: fix the end-of-range comparison in the repository layer and add regression tests at month and DST boundaries.',tokens:14200}];
+  t2.pending=implSteps(t2);
+  const t4=mkThread({id:'t-fp-rate',hex:'9e04',projectId:'fieldportal',title:'Rate-limit the sign-in form',type:'Feature',owner:'sam',stage:'Handoff',state:'AwaitingHumanTesting',
+    provider:'openrouter',cap:80000,used:61400,branch:'factory/9e04-rate-limit-the-sign',pr:57,commit:'b7d19a2',handoffs:1,runKind:'impl',
+    verif:{build:'Passed',tests:'129 passed',coverage:'86%',review:'Clean',human:'Not started'},
+    files:[{path:'src/components/SignInForm.tsx',add:34,del:5},{path:'src/lib/rateLimit.ts',add:48,del:0},{path:'src/lib/rateLimit.test.ts',add:71,del:0}],
+    ledger:[{n:1,what:'Plan',inp:11200,out:900,reserved:16720},{n:2,what:'Implement',inp:16100,out:3900,reserved:22110},{n:3,what:'Write tests',inp:15300,out:3200,reserved:21230},{n:4,what:'Agent review',inp:9800,out:1000,reserved:15180}]});
+  t4.messages=[
+    {id:1,kind:'user',author:'sam',text:'@factory Lock the sign-in form for 60 seconds after 5 failed attempts, and show a countdown.'},
+    {id:2,kind:'event',text:'Repository acquired. Created branch `factory/9e04-rate-limit-the-sign` from `main`.'},
+    {id:3,kind:'event',tone:'ok',text:'Build passed. Unit tests: 129 passed (9 new). Changed-line coverage is 86%.'},
+    {id:4,kind:'handoff',data:{n:1,commit:'b7d19a2',branch:'factory/9e04-rate-limit-the-sign',pr:57,repo:'harbor-tools/field-portal',summary:'The sign-in form locks for 60 seconds after 5 failed attempts and shows a countdown.',
+      criteria:[['AC1 Lock after 5 failures','rateLimit.test.ts: locks after five failures'],['AC2 Countdown','SignInForm.test.tsx: shows remaining seconds']],manual:['Fail sign-in 5 times. The form locks and counts down from 60.','Wait for the countdown. The form unlocks.'],newTests:9,limits:[],
+      verif:{build:'Passed',tests:'129 passed',coverage:'86%',review:'Clean'},used:61400,cap:80000,files:[]}}];
+  t4.checklist=[false,false];
+  const t5=mkThread({id:'t-inv-audit',hex:'4b7e',projectId:'inventory',title:'Paginate the audit log',type:'Refactor',owner:'lena',stage:'Done',state:'Accepted',provider:'anthropic',cap:90000,used:58300,
+    branch:'factory/4b7e-paginate-the-audit-log',pr:131,commit:'e3a90c1',handoffs:1,verif:{build:'Passed',tests:'209 passed',coverage:'93%',review:'Clean',human:'Passed'}});
+  t5.messages=[{id:1,kind:'user',author:'lena',text:'@factory Page the audit log 100 entries at a time.'},{id:2,kind:'system',text:'Accepted by Lena Brandt after human testing. Nothing was merged or deployed.'}];
+  const t6=mkThread({id:'t-fp-offline',hex:'51aa',projectId:'fieldportal',title:'Show a banner when the device is offline',type:'Feature',owner:'sam',stage:'Spec',state:'AwaitingDecision',specPending:true,provider:'anthropic',cap:60000,used:7300,
+    spec:{rev:1,summary:'Field users see a banner while offline, and queued submissions are listed.',criteria:['A banner appears within 2 seconds of losing connectivity.','The banner lists submissions waiting to sync.','The banner disappears after connectivity returns and the queue is empty.'],tests:['AC1\u2013AC3: component tests with a mocked online status'],open:[]},
+    ledger:[{n:1,what:'Draft spec',inp:6600,out:700,reserved:11660}]});
+  t6.messages=[{id:1,kind:'user',author:'sam',text:'@factory spec Offline banner for field users.'},{id:2,kind:'event',text:'Read `useSync.ts` and `AppShell.tsx` with read-only tools to draft the spec.',tokens:7300},{id:3,kind:'spec',data:t6.spec}];
+  return [t2,t4,t6,t5];
+}
+function initialState(){
+  return {screen:'login',user:'priya',view:'board',selected:'t-fp-rate',seq:100,nextPr:212,speed:'normal',slots:3,toast:null,tourOpen:true,sawBoard:false,
+    adminTab:'projects',seenSettings:false,settings:initialSettings(),recent:{sam:['openrouter|qwen/qwen3-coder'],lena:[],priya:[]},
+    projects:[
+      {id:'inventory',name:'Inventory API',repo:'harbor-tools/inventory-api',branch:'main',stack:'.NET',coverage:80,pr:true,members:['priya','lena','sam']},
+      {id:'fieldportal',name:'Field Portal',repo:'harbor-tools/field-portal',branch:'main',stack:'Node / React',coverage:80,pr:true,members:['priya','sam']},
+      {id:'routing',name:'Route Optimizer',repo:'harbor-tools/route-optimizer',branch:'main',stack:'Python',coverage:75,pr:true,members:['priya','lena']}],
+    invites:[],
+    mcp:[{name:'github',desc:'Issues and pull requests (read-only token).',on:true,perm:'Ask',transport:'Command'},{name:'context7',desc:'Library documentation lookup.',on:true,perm:'Full',transport:'URL'},
+      {name:'postgres-orders',desc:'Live Orders database. Off: runs must not change application databases.',on:false,perm:'Ask',transport:'Command'},{name:'playwright',desc:'Browser automation. Off: application testing is done by people.',on:false,perm:'Ask',transport:'Command'}],
+    lessons:[{id:'l-inv-1',projectId:'inventory',text:'Date range filters include the whole end day. Convert the end date to an exclusive upper bound in the repository layer, not in controllers.',topics:['date','filter','range'],status:'Approved',source:'Stock report totals (thread from August)',approvedBy:'lena',runs:3}],
+    threads:seedThreads()};
+}
+
+/* ---------- engine ---------- */
+function schedule(s){
+  let running=s.threads.filter(x=>x.holdsLock&&x.state==='Running').length;
+  const queued=s.threads.filter(x=>x.state==='Queued').sort((a,b)=>a.queuedAt-b.queuedAt);
+  for(const t of queued){
+    const holder=s.threads.find(x=>x.id!==t.id&&x.projectId===t.projectId&&x.holdsLock);
+    if(holder){t.waitingFor={title:holder.title,state:stateName(holder)};continue;}
+    if(running>=s.slots){t.waitingFor={slots:true};continue;}
+    running++; t.waitingFor=null; t.state='Running'; t.holdsLock=true;
+    const p=proj(s,t.projectId);
+    if(!t.branch){t.branch='factory/'+t.hex+'-'+slug(t.title);msg(s,t,{kind:'event',text:'Repository acquired. Created branch `'+t.branch+'` from `'+p.branch+'`.'});}
+    else msg(s,t,{kind:'event',text:'Repository acquired. Checked out `'+t.branch+'` to continue on the same branch.'});
+  }
+}
+function doHandoff(s,t){
+  const p=proj(s,t.projectId);
+  t.handoffs++;
+  const commit=t.script==='csv'?(['1c9e2b4','5e07a31','9ab44f0'][t.handoffs-1]||hexOf(s.seq,7)):hexOf(s.seq+7,7);
+  t.commit=commit;
+  if(p.pr&&!t.pr){t.pr=s.nextPr++;}
+  t.stage='Handoff';t.state='AwaitingHumanTesting';t.holdsLock=false;t.verif.human='Not started';
+  const c=handoffContent(t);
+  t.checklist=c.manual.map(()=>false);
+  msg(s,t,{kind:'handoff',data:Object.assign({},c,{n:t.handoffs,commit,branch:t.branch,pr:t.pr,repo:p.repo,verif:Object.assign({},t.verif),used:t.used,cap:t.cap,files:t.files.map(f=>Object.assign({},f))})});
+}
+function stepThread(s,t){
+  const step=t.pending[0];
+  if(!step){t.state='Draft';return;}
+  if(step.call){
+    const inp=step.call[0],out=step.call[1],maxOut=step.call[2]||4000;
+    const reserve=Math.round((inp+maxOut)*1.1);
+    if(t.cap&&t.used+reserve>t.cap){
+      t.state='PausedBudget';
+      msg(s,t,{kind:'budget',data:{need:reserve,est:inp+maxOut,remaining:t.cap-t.used,cap:t.cap}});
+      return;
+    }
+    t.used+=inp+out;
+    t.ledger.push({n:t.ledger.length+1,what:step.what||'Model call',inp,out,reserved:reserve});
+  }
+  t.pending.shift();
+  if(step.stage) t.stage=step.stage;
+  if(step.verif) Object.assign(t.verif,step.verif);
+  if(step.files) t.files=mergeFiles(t.files,step.files);
+  if(step.k==='ev') msg(s,t,{kind:step.kind||'event',text:step.text,tone:step.tone,tokens:step.call?step.call[0]+step.call[1]:0});
+  else if(step.k==='decision'){t.state='AwaitingDecision';t.decision=step.d;msg(s,t,{kind:'decision',data:step.d,answer:null});}
+  else if(step.k==='specCard'){t.state='AwaitingDecision';t.specPending=true;t.stage='Spec';t.spec=step.spec;msg(s,t,{kind:'spec',data:step.spec});}
+  else if(step.k==='handoff') doHandoff(s,t);
+  if(t.state==='Running'&&t.pending.length===0) t.state='Draft';
+}
+function startImpl(s,t,user){
+  const p=proj(s,t.projectId);
+  const rework=t.handoffs>0;
+  t.runKind='impl';t.state='Queued';t.stage='Implement';s.seq++;t.queuedAt=s.seq;
+  if(rework){
+    t.iteration++;t.reworks++;t.pending=reworkSteps(t);t.checklist=[];
+    t.verif={build:'Not run',tests:'Not run',coverage:'Not measured',review:'Not run',human:'Failed'};
+    msg(s,t,{kind:'event',text:'Rework '+(t.iteration-1)+' assigned on the same task and branch. Budget used so far: '+fmt(t.used)+(t.cap?' of '+fmt(t.cap):'')+'.'});
+  } else {
+    t.pending=implSteps(t);
+    const inc=s.lessons.filter(l=>l.projectId===t.projectId&&l.status==='Approved'&&l.enabled!==false);
+    t.lessonsIncluded=inc.map(l=>l.id);inc.forEach(l=>l.runs=(l.runs||0)+1);
+    const pv=PROVIDERS[t.provider];
+    t.snap=runCapabilities(s,t);
+    msg(s,t,{kind:'event',tone:'sys',text:'Run settings recorded: MCP '+(t.snap.mcp.join(', ')||'none')+'; skills '+(t.snap.skills.join(', ')||'none')+(t.snap.skipped.length?' ('+t.snap.skipped.join(', ')+' skipped, waiting for admin approval)':'')+'; PTC '+(t.snap.ptc?'on':'off')+'; web search '+(t.snap.web?'on':'off')+'.'});
+    msg(s,t,{kind:'event',text:'Assigned by '+USERS[user].name+'. Project '+p.name+' ('+p.repo+'), '+pv.name+' '+modelOf(t)+', budget '+(t.cap?fmt(t.cap)+' tokens ('+pv.precision.toLowerCase()+')':'not capped')+'. '+
+      (inc.length?'Included '+inc.length+' approved project lesson'+(inc.length>1?'s':'')+'.':'No approved lessons for '+p.name+' yet.')+(t.specApproved?' Working from spec revision '+t.spec.rev+'.':'')});
+  }
+  schedule(s);
+}
+function chatReply(t){
+  const n=t.messages.filter(m=>m.kind==='litos').length;
+  if(t.script==='csv'&&n===0) return {tokens:6800,text:'Admin-only actions in SalesApp go through the `AdminOnly` policy in `Auth/AuthorizationPolicies.cs`, and `OrdersController` already uses it on `Delete`. The Orders grid filters on the server through `OrderQuery` and shows 50 rows per page. For an export, the open question is whether it should follow the current filters and page. A spec would pin that down before any code changes.'};
+  return {tokens:4200,text:'I looked through the relevant files with read-only tools. In the real factory this is a live Litos conversation; this prototype gives a canned reply. When you are ready, send `@factory spec` for a written spec, or `@factory` with the change to delegate it.'};
+}
+
+/* ---------- reducer ---------- */
+function reducer(state,a){
+  if(a.type==='RESET') return initialState();
+  const s=structuredClone(state);
+  const T=id=>s.threads.find(x=>x.id===id);
+  const toast=text=>{s.seq++;s.toast={text,id:s.seq};};
+  switch(a.type){
+    case 'SIGN_IN': s.screen='app';s.user=a.user||'priya';s.view='board';break;
+    case 'SIGN_OUT': s.screen='login';break;
+    case 'SWITCH_USER': s.user=a.user;if(s.view==='admin'&&USERS[a.user].role!=='Admin')s.view='board';toast('Signed in as '+USERS[a.user].name+' ('+USERS[a.user].role+').');break;
+    case 'VIEW': s.view=a.view;if(a.view==='board'&&s.threads.some(t=>t.script==='csv'&&t.state==='Accepted'))s.sawBoard=true;break;
+    case 'SELECT': s.selected=a.id;s.view='thread';break;
+    case 'SPEED': s.speed=a.speed;break;
+    case 'TOUR': s.tourOpen=a.open;break;
+    case 'TOAST': toast(a.text);break;
+    case 'CLEAR_TOAST': if(s.toast&&s.toast.id===a.id)s.toast=null;break;
+    case 'REGISTER_PROJECT':{
+      const d=a.data; const id=slug(d.name)||('p'+s.seq);
+      if(s.projects.some(p=>p.id===id)){toast(d.name+' is already registered.');break;}
+      s.projects.push({id,name:d.name,repo:d.repo.replace(/^https?:\/\/github\.com\//,''),branch:d.branch||'main',stack:d.stack,coverage:+d.coverage||80,pr:!!d.pr,members:['priya','sam','lena']});
+      if(id==='salesapp') s.settings.repoSkills.push({projectId:id,name:'salesapp-ui',status:'Waiting for approval'});
+      toast('Registered '+d.name+'. Cloned '+d.repo.replace(/^https?:\/\/github\.com\//,'')+' ('+(d.branch||'main')+') into the factory workspace.');break;}
+    case 'INVITE': s.invites.push({name:a.name,role:a.role});toast('Invitation created for '+a.name+'.');break;
+    case 'TOGGLE_MCP':{const m=s.mcp.find(x=>x.name===a.name);m.on=!m.on;toast((m.on?'Allowed ':'Removed ')+m.name+(m.on?' for':' from')+' factory runs. Running tasks keep their snapshot.');break;}
+    case 'SLOTS': s.slots=a.n;schedule(s);break;
+    case 'ADMIN_TAB': s.adminTab=a.tab;s.view='admin';if(a.tab!=='projects')s.seenSettings=true;break;
+    case 'SETTING': if(a.section==='root')s.settings[a.key]=a.value;else s.settings[a.section][a.key]=a.value;
+      fixDefault(s);
+      break;
+    case 'PROVIDER': s.settings.providers[a.id][a.key]=a.value;if(a.toast)toast(a.toast);fixDefault(s);break;
+    case 'ALLOW_MODELS':{const c=s.settings.providers[a.id];c.allowed=[...new Set(c.allowed.concat(a.models))];toast('Allowed '+a.models.length+' '+PROVIDERS[a.id].name+' model'+(a.models.length>1?'s':'')+'. Members can pick '+(a.models.length>1?'them':'it')+' for new threads.');fixDefault(s);break;}
+    case 'REMOVE_MODEL':{const c=s.settings.providers[a.id];c.allowed=c.allowed.filter(m=>m!==a.model);const wasDef=s.settings.defaultProvider===a.id&&s.settings.defaultModel===a.model;fixDefault(s);
+      toast('Removed '+a.model+'. Threads already using it keep it.'+(wasDef?' The default model is now '+s.settings.defaultModel+'.':''));break;}
+    case 'SET_DEFAULT_MODEL': s.settings.defaultProvider=a.provider;s.settings.defaultModel=a.model;toast('New threads now default to '+PROVIDERS[a.provider].name+' '+a.model+'.');break;
+    case 'REFRESH_CATALOG':{const c=s.settings.providers[a.id];c.fetched='just now';
+      if(a.id==='openrouter'&&c.catalog.some(m=>m.id==='mistralai/codestral-2501')){c.catalog=c.catalog.filter(m=>m.id!=='mistralai/codestral-2501');
+        c.catalog.push({id:'mistralai/codestral-2509',ctx:262144,tools:true,pin:0.3,pout:0.9},{id:'qwen/qwen3-coder-plus',ctx:1048576,tools:true,pin:1,pout:5});fixDefault(s);
+        toast('OpenRouter catalog refreshed: 2 new models, and 1 allowed model is no longer offered.');}
+      else toast(PROVIDERS[a.id].name+' catalog refreshed. No changes.');break;}
+    case 'MODEL_TOGGLE':{const c=s.settings.providers[a.id];c.allowed=c.allowed.includes(a.model)?c.allowed.filter(m=>m!==a.model):c.allowed.concat([a.model]);
+      if(a.id===s.settings.defaultProvider&&!c.allowed.includes(s.settings.defaultModel)&&c.allowed.length)s.settings.defaultModel=c.allowed[0];break;}
+    case 'ADD_MCP': s.mcp.push({name:a.data.name.trim(),desc:(a.data.transport==='URL'?'Remote server at ':'Runs ')+a.data.target.trim()+'.'+(a.data.secrets?' Secrets: '+a.data.secrets+'.':''),on:true,perm:a.data.perm,transport:a.data.transport,status:'Not tested yet'});
+      toast('Added '+a.data.name.trim()+'. Runs that start from now on can use it.');break;
+    case 'TEST_MCP':{const m=s.mcp.find(x=>x.name===a.name);const n=7+(m.name.length*3)%14;m.status='Connected, '+n+' tools found';toast(m.name+': connected, '+n+' tools found.');break;}
+    case 'SKILL_TOGGLE':{const k=s.settings.skills.find(x=>x.name===a.name);k.on=!k.on;break;}
+    case 'ADD_SKILL': s.settings.skills.push({name:slug(a.data.name)||a.data.name,desc:a.data.desc||'New factory skill',on:true});toast('Added skill '+(slug(a.data.name)||a.data.name)+'.');break;
+    case 'REPO_SKILL':{const r=s.settings.repoSkills.find(x=>x.projectId===a.projectId&&x.name===a.name);r.status=a.status;toast(a.name+(a.status==='Approved'?' approved. Future runs on this project load it.':' rejected. Runs will not load it.'));break;}
+    case 'PRESET': s.settings.presets[a.id][a.key]=a.value;break;
+    case 'NEW_THREAD':{
+      s.seq++;
+      const isCsv=/csv/i.test(a.data.title)&&!s.threads.some(t=>t.script==='csv');
+      const t=mkThread({id:'t'+s.seq,hex:isCsv?'7f3a':hexOf(s.seq,4),projectId:a.data.projectId,title:a.data.title,type:a.data.type,owner:s.user,
+        cap:a.data.cap?+a.data.cap:null,provider:a.data.provider||s.settings.defaultProvider,model:a.data.model||s.settings.defaultModel,ptc:a.data.ptc!==false,script:isCsv?'csv':'generic'});
+      s.threads.unshift(t);s.selected=t.id;s.view='thread';
+      {const key=t.provider+'|'+t.model;const r=s.recent[s.user]||[];s.recent[s.user]=[key].concat(r.filter(x=>x!==key)).slice(0,3);}
+      break;}
+    case 'SEND':{
+      const t=T(a.id);const text=a.text.trim();if(!text)break;
+      if(t.state==='Accepted'||t.state==='Cancelled'){toast('This task is closed. Start a new thread for more work.');break;}
+      const isSpec=/^@factory\s+spec\b/i.test(text), isFactory=/^@factory\b/i.test(text);
+      if(t.state==='AwaitingDecision'&&t.decision&&!isFactory){msg(s,t,{kind:'user',author:s.user,text});answer(s,t,text,s.user);break;}
+      if(t.state==='PausedBudget'&&isFactory){toast('Posting @factory again does not add budget. Raise the cap, then resume.');break;}
+      if(t.state==='AwaitingDecision'&&t.decision&&isFactory){toast('Answer the open decision first.');break;}
+      msg(s,t,{kind:'user',author:s.user,text});
+      if(isSpec){
+        if(t.state!=='Draft'){toast('A spec can be requested before delegation only.');break;}
+        t.state='Running';t.runKind='spec';t.pending=specSteps(t);
+        msg(s,t,{kind:'event',tone:'sys',text:'Drafting a spec with read-only tools. No repository lock is needed.'});break;}
+      if(isFactory){
+        if(t.state==='Running'||t.state==='Queued'){msg(s,t,{kind:'event',tone:'sys',text:'Follow-up added to the run\u2019s inbox. Litos reads it at the next tool boundary.'});break;}
+        if(t.specPending){toast('Approve the spec first, or ask for changes to it.');break;}
+        if(t.state==='Draft'||t.state==='AwaitingHumanTesting'){startImpl(s,t,s.user);break;}
+        if(t.state==='PausedUser'){toast('This task is paused. Resume it to continue.');break;}
+        break;}
+      if(t.state==='Running'||t.state==='Queued'){msg(s,t,{kind:'event',tone:'sys',text:'Message added to the run\u2019s inbox. Litos reads it at the next tool boundary.'});break;}
+      t.chatPending.push(chatReply(t));break;}
+    case 'APPROVE_SPEC':{
+      const t=T(a.id);t.specApproved=true;t.specPending=false;t.state='Draft';
+      const m=[...t.messages].reverse().find(x=>x.kind==='spec');if(m)m.approvedBy=s.user;
+      msg(s,t,{kind:'system',text:'Spec revision '+t.spec.rev+' approved by '+USERS[s.user].name+'. Delegate with @factory when you are ready.'});break;}
+    case 'ANSWER':{const t=T(a.id);if(!t.decision)break;msg(s,t,{kind:'user',author:s.user,text:a.text});answer(s,t,a.text,s.user);break;}
+    case 'PAUSE':{const t=T(a.id);t.state='PausedUser';msg(s,t,{kind:'event',tone:'sys',text:'Paused by '+USERS[s.user].name+' after the current step. The checkpoint is saved and the repository stays held.'});break;}
+    case 'RESUME':{const t=T(a.id);t.state=t.holdsLock?'Running':'Queued';msg(s,t,{kind:'event',tone:'sys',text:'Resumed by '+USERS[s.user].name+'.'});schedule(s);break;}
+    case 'CANCEL':{const t=T(a.id);t.state='Cancelled';t.holdsLock=false;t.pending=[];t.stage='Done';
+      msg(s,t,{kind:'system',text:'Cancelled by '+USERS[s.user].name+'. Edits and the branch are kept; nothing was reverted.'});schedule(s);break;}
+    case 'RAISE_CAP':{
+      const t=T(a.id);const old=t.cap;t.cap=old+a.add;t.capRaised=true;
+      const m=[...t.messages].reverse().find(x=>x.kind==='budget');if(m)m.resolved=true;
+      msg(s,t,{kind:'system',text:'Budget raised from '+fmt(old)+' to '+fmt(t.cap)+' tokens by '+USERS[s.user].name+'. Usage history is unchanged.'});
+      if(t.state==='PausedBudget'){t.state='Running';msg(s,t,{kind:'event',tone:'sys',text:'Resuming the same run from its checkpoint.'});}
+      break;}
+    case 'CHECK':{const t=T(a.id);t.checklist[a.i]=!t.checklist[a.i];break;}
+    case 'ACCEPT':{
+      const t=T(a.id);
+      if(!t.checklist.every(Boolean)){toast('Tick every manual check after you test them, then accept.');break;}
+      t.state='Accepted';t.stage='Done';t.holdsLock=false;t.verif.human='Passed';
+      msg(s,t,{kind:'system',text:'Accepted by '+USERS[s.user].name+' after human testing. Nothing was merged or deployed.'+(t.pr?' Merge PR #'+t.pr+' in GitHub when you are ready.':'')});
+      if(t.script==='csv'){
+        const inp=3900,out=500,reserve=Math.round((inp+1000)*1.1);
+        if(t.cap&&t.used+reserve>t.cap){msg(s,t,{kind:'event',tone:'sys',text:'Task accepted. Lesson reflection is deferred: raise the allowance, add a lesson manually, or skip.'});break;}
+        t.used+=inp+out;t.ledger.push({n:t.ledger.length+1,what:'Lesson reflection',inp,out,reserved:reserve});
+        s.seq++;const id='l'+s.seq;
+        s.lessons.push({id,projectId:t.projectId,text:'CSV exports include all filtered rows unless the task asks for a subset, and fields are quoted following RFC 4180.',topics:['csv','export','orders'],status:'Suggested',source:t.title,sourceId:t.id,
+          evidence:'Your decision to export all filtered rows, and your rework request about commas in values.'});
+        msg(s,t,{kind:'lesson',lessonId:id,tokens:inp+out});
+      } else msg(s,t,{kind:'event',tone:'sys',text:'Reflection found no reusable lesson for this task.'});
+      break;}
+    case 'LESSON':{
+      const l=s.lessons.find(x=>x.id===a.id);
+      if(a.action==='approve'){l.status='Approved';l.enabled=true;l.approvedBy=s.user;l.runs=l.runs||0;if(a.text)l.text=a.text;toast('Remembered for '+proj(s,l.projectId).name+'. Future tasks on this project can include it.');}
+      if(a.action==='dismiss'){l.status='Dismissed';toast('Lesson dismissed.');}
+      if(a.action==='toggle'){l.enabled=l.enabled===false;toast(l.enabled?'Lesson enabled for future runs.':'Lesson disabled. Past runs keep their snapshot.');}
+      break;}
+    case 'LENA_DELEGATE':{
+      if(s.threads.some(t=>t.script==='empty'))break;
+      s.seq++;
+      const t=mkThread({id:'t-empty',hex:'a0c5',projectId:'salesapp',title:'Improve empty-state messages',type:'Chore',owner:'lena',provider:'openrouter',cap:60000,script:'empty'});
+      s.threads.push(t);
+      msg(s,t,{kind:'user',author:'lena',text:'@factory Replace the blank Orders and Customers pages with helpful empty-state messages.'});
+      startImpl(s,t,'lena');
+      toast('Lena delegated \u201cImprove empty-state messages\u201d on SalesApp. It waits in the queue while SalesApp is held.');
+      break;}
+    case 'TICK':{
+      schedule(s);
+      for(const t of s.threads){
+        if(t.chatPending.length){const r=t.chatPending.shift();t.discussion+=r.tokens;msg(s,t,{kind:'litos',text:r.text,tokens:r.tokens});}
+        else if(t.state==='Running') stepThread(s,t);
+      }
+      schedule(s);
+      return s;}
+  }
+  return s;
+}
+function answer(s,t,text,user){
+  const m=[...t.messages].reverse().find(x=>x.kind==='decision'&&!x.answer);
+  if(m){m.answer=text;m.answeredBy=user;}
+  t.decision=null;t.decisionAnswered=true;t.state='Running';
+  msg(s,t,{kind:'event',tone:'sys',text:'Decision recorded in the task spec. Resuming the run.'});
+}
+
+/* ---------- small components ---------- */
+function Rich({text}){
+  const parts=String(text).split(/(`[^`]+`|@factory(?:\s+spec)?)/g);
+  return parts.map((p,i)=>p.startsWith('`')?html`<code key=${i}>${p.slice(1,-1)}</code>`:/^@factory/.test(p)?html`<span key=${i} className="mention">${p}</span>`:p);
+}
+function Pill({t}){const l=turnLabel(t);return html`<span className=${'pill '+l.cls}>${l.text}</span>`;}
+function Mark(){return html`<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="4" fill="var(--ink)"/><path d="M5 17h16" stroke="var(--bg)" strokeWidth="2" strokeDasharray="3 2"/><rect x="7" y="8" width="5" height="6" rx="1" fill="var(--amber)"/><rect x="14" y="8" width="5" height="6" rx="1" fill="var(--bg)"/></svg>`;}
+
+function Rail({t}){
+  const idx=STAGES.indexOf(t.stage);
+  const you=turnLabel(t).cls==='you';
+  return html`<div className="rail" role="list" aria-label="Stage">
+    ${STAGES.map((st,i)=>{
+      const skip=st==='Spec'&&!t.spec&&i<idx;
+      const cls='st'+(i<idx?(skip?' skip':' done'):'')+(i===idx?' now'+(you?' you':'')+(t.state==='Running'?' moving':''):'');
+      return html`<div className=${cls} role="listitem" key=${st} aria-current=${i===idx?'step':null}><i>${skip?'\u2013':i<idx?'\u2713':i+1}</i><span>${st}${skip?' (skipped)':''}</span></div>`;})}
+  </div>`;
+}
+
+/* ---------- login ---------- */
+function Login({dispatch}){
+  const [u,setU]=useState('priya');
+  return html`<div className="login">
+    <section className="login-art">
+      <div className="brand"><${Mark}/> Litos Software Factory</div>
+      <div style=${{display:'grid',gap:'18px'}}>
+        <h1>Delegate a change. Check the evidence. You decide.</h1>
+        <p>Describe a change in a thread, talk it through with Litos, then hand it to the factory. It works on a branch of your GitHub repository, builds, tests and reviews its own work, and hands the result back for you to test.</p>
+      </div>
+      <div className="login-line" aria-hidden="true">${STAGES.map((s,i)=>html`<span key=${s} className=${i===5?'on':''}>${s}</span>`)}</div>
+    </section>
+    <section className="login-form">
+      <form onSubmit=${e=>{e.preventDefault();dispatch({type:'SIGN_IN',user:u});}}>
+        <h2>Sign in</h2>
+        <div className="field"><label htmlFor="login-user">Username</label>
+          <select id="login-user" value=${u} onChange=${e=>setU(e.target.value)}>${Object.values(USERS).map(x=>html`<option key=${x.id} value=${x.id}>${x.id} (${x.name}, ${x.role})</option>`)}</select></div>
+        <div className="field"><label htmlFor="login-pass">Password</label><input id="login-pass" type="password" defaultValue="prototype-password" autoComplete="off"/>
+          <span className="hint">Accounts are invite-only. Ask your factory admin for one.</span></div>
+        <button className="btn primary" type="submit">Sign in</button>
+        <p className="small muted">Prototype with example people, repositories and results. Nothing here touches a real repository, model or database.</p>
+      </form>
+    </section>
+  </div>`;
+}
+
+/* ---------- top bar ---------- */
+function TopBar({S,dispatch}){
+  const me=USERS[S.user];
+  const mine=S.threads.filter(t=>t.owner===S.user&&turnLabel(t).cls==='you').length;
+  const tabs=[['board','Board'],['thread','Threads'],['lessons','Lessons']].concat(me.role==='Admin'?[['admin','Admin']]:[]);
+  return html`<header className="top">
+    <div className="brand"><${Mark}/> Litos Factory</div>
+    <nav className="nav" aria-label="Main">${tabs.map(([k,l])=>html`<button key=${k} aria-current=${S.view===k?'page':null} onClick=${()=>dispatch({type:'VIEW',view:k})}>${l}</button>`)}</nav>
+    <div className="top-right">
+      <button className=${'btn '+(mine?'attn':'')} onClick=${()=>dispatch({type:'VIEW',view:'board'})}>${mine} awaiting you</button>
+      <div className="userbox"><span className="avatar">${me.initials}</span>
+        <label className="small muted" htmlFor="switch-user">Prototype: switch user</label>
+        <select id="switch-user" value=${S.user} onChange=${e=>dispatch({type:'SWITCH_USER',user:e.target.value})}>${Object.values(USERS).map(x=>html`<option key=${x.id} value=${x.id}>${x.name} (${x.role})</option>`)}</select>
+      </div>
+    </div>
+  </header>`;
+}
+
+/* ---------- board ---------- */
+function Board({S,dispatch}){
+  const [pf,setPf]=useState('all');const [mineOnly,setMine]=useState(false);
+  const visible=S.threads.filter(t=>proj(S,t.projectId).members.includes(S.user)&&(pf==='all'||t.projectId===pf)&&(!mineOnly||t.owner===S.user));
+  const inFlight=S.threads.filter(t=>['Queued','Running','AwaitingDecision','PausedBudget','PausedUser'].includes(t.state)).length;
+  const awaiting=S.threads.filter(t=>t.owner===S.user&&turnLabel(t).cls==='you').length;
+  const accepted=S.threads.filter(t=>t.state==='Accepted');
+  const hist={accepted:11,firstPass:7,rework:6,tokens:11*81000};
+  const accN=hist.accepted+accepted.length, firstN=hist.firstPass+accepted.filter(t=>t.reworks===0).length;
+  const reworkAvg=(hist.rework+accepted.reduce((a,t)=>a+t.reworks,0))/accN;
+  const tokAvg=(hist.tokens+accepted.reduce((a,t)=>a+t.used,0))/accN;
+  const running=S.threads.filter(t=>t.holdsLock&&t.state==='Running').length;
+  const flow=[['Discuss',18],['Spec',9],['Implement',26],['Verify',7],['Review',4],['Handoff',190,true]];
+  const max=200;
+  return html`<div className="page">
+    <div className="board-head">
+      <div style=${{display:'grid',gap:'4px'}}><h1>Board</h1><p className="muted">Every task, by stage. Amber means it is waiting on a person.</p></div>
+      <div className="filters">
+        <label className="small" htmlFor="pf">Project</label>
+        <select id="pf" value=${pf} onChange=${e=>setPf(e.target.value)}><option value="all">All my projects</option>${S.projects.filter(p=>p.members.includes(S.user)).map(p=>html`<option key=${p.id} value=${p.id}>${p.name}</option>`)}</select>
+        <label className="check small"><input id="mine" type="checkbox" checked=${mineOnly} onChange=${e=>setMine(e.target.checked)}/> Only my tasks</label>
+      </div>
+    </div>
+    <div className="metrics">
+      <div className=${'metric'+(awaiting?' attn':'')}><b>${awaiting}</b><span>Awaiting you</span></div>
+      <div className="metric"><b>${inFlight}</b><span>Tasks in flight (${running} of ${S.slots} run slots busy)</span></div>
+      <div className="metric"><b>${Math.round(firstN/accN*100)}%</b><span>Accepted on first handoff (${firstN} of ${accN})</span></div>
+      <div className="metric"><b>${reworkAvg.toFixed(1)}</b><span>Rework rounds per accepted task</span></div>
+      <div className="metric"><b>${fmt(tokAvg/1000)}k</b><span>Tokens per accepted task</span></div>
+    </div>
+    <section className="flow" aria-label="Median minutes per stage">
+      <h3>Median minutes per stage, last 30 days <span className="muted small">(example data)</span></h3>
+      ${flow.map(([n,v,h])=>html`<div className="flow-row" key=${n}><span>${n}</span><div className="flow-bar"><i className=${h?'human':''} style=${{width:(v/max*100)+'%'}}></i></div><span className="num">${v} min</span></div>`)}
+      <p className="small muted">Tasks wait longest for human testing. The agent stages take under an hour combined.</p>
+    </section>
+    <div className="board-scroll"><div className="board">
+      ${STAGES.map(st=>{const items=visible.filter(t=>t.stage===st);return html`<section className="col" key=${st} aria-label=${st}>
+        <div className="col-head">${st}<small>${items.length}</small></div>
+        ${items.length?items.map(t=>html`<${Card} key=${t.id} t=${t} S=${S} dispatch=${dispatch}/>`):html`<p className="empty-col">Nothing here.</p>`}
+      </section>`;})}
+    </div></div>
+  </div>`;
+}
+function Card({t,S,dispatch}){
+  const l=turnLabel(t);const p=proj(S,t.projectId);
+  return html`<button className=${'card'+(l.cls==='you'?' you':'')} onClick=${()=>dispatch({type:'SELECT',id:t.id})}>
+    <span className="card-title">${t.title}</span>
+    <span className="card-meta"><${Pill} t=${t}/><span className="tag">${t.type}</span></span>
+    <span className="card-meta"><span>${p.name}</span><span>${USERS[t.owner].name}</span></span>
+    ${t.state==='Queued'&&t.waitingFor?html`<span className="small muted">${t.waitingFor.slots?'Waiting for a free run slot':'Waiting for '+p.name+', held by \u201c'+t.waitingFor.title+'\u201d'}</span>`:null}
+    ${t.cap?html`<span className="minibar" title=${fmt(t.used)+' of '+fmt(t.cap)+' tokens'}><i style=${{width:Math.min(100,t.used/t.cap*100)+'%'}}></i></span>`:html`<span className="small muted">${fmt(t.used)} tokens, no cap</span>`}
+    ${t.pr?html`<span className="small muted">PR #${t.pr}</span>`:null}
+  </button>`;
+}
+
+/* ---------- thread view ---------- */
+function Threads({S,dispatch}){
+  const [newOpen,setNew]=useState(false);const [listOpen,setListOpen]=useState(false);
+  const mine=S.projects.filter(p=>p.members.includes(S.user));
+  const t=S.threads.find(x=>x.id===S.selected&&mine.some(p=>p.id===x.projectId))||S.threads.find(x=>mine.some(p=>p.id===x.projectId));
+  return html`<div className="page"><div className="tv">
+    <aside className=${'list'+(listOpen?'':' collapsed')} aria-label="Threads">
+      <div className="btn-row"><button className="btn primary" onClick=${()=>setNew(true)}>New thread</button>
+        <button className="btn mobile-only" onClick=${()=>setListOpen(!listOpen)} aria-expanded=${listOpen}>${listOpen?'Hide threads':'Show threads'}</button></div>
+      ${mine.map(p=>html`<div className="list-proj" key=${p.id}><h3>${p.name}</h3>
+        ${S.threads.filter(x=>x.projectId===p.id).map(x=>html`<button key=${x.id} className="list-item" aria-current=${t&&x.id===t.id?'true':'false'} onClick=${()=>{dispatch({type:'SELECT',id:x.id});setListOpen(false);}}>
+          <span>${x.title}</span><span><${Pill} t=${x}/></span></button>`)}
+        ${S.threads.some(x=>x.projectId===p.id)?null:html`<p className="small muted" style=${{padding:'0 8px'}}>No threads yet.</p>`}
+      </div>`)}
+    </aside>
+    ${t?html`<${ThreadMain} key=${t.id} t=${t} S=${S} dispatch=${dispatch}/>`:html`<div className="center"><div className="panel"><h2>No threads yet</h2><p>Create a thread to start a piece of work.</p></div></div>`}
+    ${t?html`<${Details} t=${t} S=${S}/>`:null}
+  </div>
+  ${newOpen?html`<${NewThread} S=${S} dispatch=${dispatch} close=${()=>setNew(false)}/>`:null}
+  </div>`;
+}
+function ThreadMain({t,S,dispatch}){
+  const p=proj(S,t.projectId);const pv=PROVIDERS[t.provider];
+  const [draft,setDraft]=useState('');
+  const endRef=useRef(null);const taRef=useRef(null);
+  const count=t.messages.length;
+  useEffect(()=>{if(endRef.current&&count>1)endRef.current.scrollIntoView({block:'nearest',behavior:'smooth'});},[count]);
+  const send=()=>{if(!draft.trim())return;dispatch({type:'SEND',id:t.id,text:draft});setDraft('');};
+  const lastHandoff=[...t.messages].reverse().find(m=>m.kind==='handoff');
+  return html`<div className="center">
+    <section className="th-head">
+      <div className="th-title"><h1>${t.title}</h1><${Pill} t=${t}/><span className="tag">${t.type}</span></div>
+      <div className="th-sub"><span>${p.name} (${p.repo})</span>${t.branch?html`<span className="mono">${t.branch}</span>`:html`<span>Branch created on delegation</span>`}
+        ${t.pr?html`<span>Draft PR #${t.pr}</span>`:null}<span>Owner ${USERS[t.owner].name}</span><span>${stateName(t)}</span></div>
+      <${Rail} t=${t}/>
+    </section>
+    <div className="convo" aria-live="polite">
+      ${t.messages.length?null:html`<div className="panel"><h2>Start with a conversation</h2><p>Plain messages talk with Litos using read-only tools. Nothing is edited until you send <span className="mention">@factory</span>. Send <span className="mention">@factory spec</span> first if you want a written spec to approve.</p></div>`}
+      ${t.messages.map(m=>html`<${Msg} key=${m.id} m=${m} t=${t} S=${S} dispatch=${dispatch} latest=${m===lastHandoff}/>`)}
+      <div ref=${endRef}></div>
+    </div>
+    <div className="composer">
+      <div className="controls">
+        ${t.state==='Running'?html`<button className="btn" onClick=${()=>dispatch({type:'PAUSE',id:t.id})}>Pause</button><button className="btn" onClick=${()=>dispatch({type:'CANCEL',id:t.id})}>Cancel task</button><span className="small muted">Litos is working. Messages you send now go to its inbox.</span>`:null}
+        ${t.state==='Queued'?html`<button className="btn" onClick=${()=>dispatch({type:'CANCEL',id:t.id})}>Cancel task</button><span className="small muted">${t.waitingFor&&!t.waitingFor.slots?'Queued. Waiting for '+p.name+', held by \u201c'+t.waitingFor.title+'\u201d ('+t.waitingFor.state.toLowerCase()+').':'Queued for a free run slot.'}</span>`:null}
+        ${t.state==='PausedUser'?html`<button className="btn primary" onClick=${()=>dispatch({type:'RESUME',id:t.id})}>Resume</button><button className="btn" onClick=${()=>dispatch({type:'CANCEL',id:t.id})}>Cancel task</button>`:null}
+        ${t.state==='PausedBudget'?html`<button className="btn attn" onClick=${()=>dispatch({type:'RAISE_CAP',id:t.id,add:40000})}>Raise cap by 40,000 and resume</button><button className="btn" onClick=${()=>dispatch({type:'CANCEL',id:t.id})}>Cancel task</button>`:null}
+        ${t.state==='AwaitingHumanTesting'?html`<button className="btn" onClick=${()=>{setDraft('@factory ');taRef.current&&taRef.current.focus();}}>Request changes</button><span className="small muted">Pull <span className="mono">${t.branch}</span>, test it, then accept or request changes.</span>`:null}
+      </div>
+      <div className="compose-box">
+        <button className="btn ghost" title="Delegate to the factory" onClick=${()=>{if(!/^@factory/.test(draft))setDraft('@factory '+draft);taRef.current&&taRef.current.focus();}}><span className="mention">@factory</span></button>
+        <textarea id="composer" ref=${taRef} rows="2" aria-label="Message" value=${draft} placeholder=${t.state==='AwaitingDecision'&&t.decision?'Answer the decision, or pick an option above':'Message Litos, or start with @factory to delegate'}
+          onChange=${e=>setDraft(e.target.value)} onKeyDown=${e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}}></textarea>
+        <button className="btn primary" onClick=${send} disabled=${!draft.trim()}>Send</button>
+      </div>
+      <p className="compose-hint">Plain messages are a conversation (read-only, counted to your quota). <b>@factory</b> delegates within the task budget. <b>@factory spec</b> asks for a spec first. Model: ${pv.name} ${modelOf(t)}. PTC ${t.ptc===false?'off':'on'}.</p>
+    </div>
+  </div>`;
+}
+function Msg({m,t,S,dispatch,latest}){
+  if(m.kind==='user') return html`<div className="m user"><div className="m-who"><span className="avatar">${USERS[m.author].initials}</span><b>${USERS[m.author].name}</b></div><div className="bubble"><${Rich} text=${m.text}/></div></div>`;
+  if(m.kind==='litos'||m.kind==='plan') return html`<div className="m"><div className="m-who"><b>Litos</b><span>${m.kind==='plan'?'Plan':'Read-only conversation'}</span>${m.tokens?html`<span>${fmt(m.tokens)} tokens</span>`:null}</div><div className="bubble"><${Rich} text=${m.text}/></div></div>`;
+  if(m.kind==='event') return html`<div className=${'ev '+(m.tone||'')}><span></span><span><${Rich} text=${m.text}/></span><span className="tok">${m.tokens?fmt(m.tokens)+' tokens':''}</span></div>`;
+  if(m.kind==='system') return html`<div className="ev sys"><span></span><span><b><${Rich} text=${m.text}/></b></span><span></span></div>`;
+  if(m.kind==='spec') return html`<${SpecCard} m=${m} t=${t} S=${S} dispatch=${dispatch}/>`;
+  if(m.kind==='decision') return html`<${DecisionCard} m=${m} t=${t} dispatch=${dispatch}/>`;
+  if(m.kind==='budget') return html`<div className=${'panel'+(m.resolved?'':' you')}>
+    <div className="panel-head"><h2>Paused before the next model call</h2><span className=${'pill '+(m.resolved?'done':'you')}>${m.resolved?'Resolved':'Awaiting you'}</span></div>
+    <p>The next request needs about <b className="num">${fmt(m.data.need)}</b> tokens (an estimated ${fmt(m.data.est)} plus a 10% margin). Only <b className="num">${fmt(m.data.remaining)}</b> of the ${fmt(m.data.cap)}-token budget remain, so nothing was sent. Changes and the checkpoint are kept.</p>
+    ${m.resolved?null:html`<div className="btn-row"><button className="btn attn" onClick=${()=>dispatch({type:'RAISE_CAP',id:t.id,add:40000})}>Raise cap to ${fmt(m.data.cap+40000)} and resume</button></div>`}
+  </div>`;
+  if(m.kind==='handoff') return html`<${HandoffCard} m=${m} t=${t} dispatch=${dispatch} latest=${latest}/>`;
+  if(m.kind==='lesson') return html`<${LessonCard} m=${m} S=${S} dispatch=${dispatch}/>`;
+  return null;
+}
+function SpecCard({m,t,S,dispatch}){
+  const d=m.data;const pending=t.specPending&&!m.approvedBy;
+  return html`<div className=${'panel'+(pending?' you':'')}>
+    <div className="panel-head"><h2>Spec, revision ${d.rev}</h2><span className=${'pill '+(pending?'you':'done')}>${pending?'Awaiting your approval':'Approved by '+USERS[m.approvedBy||t.owner].name}</span></div>
+    <p>${d.summary}</p>
+    <h3>Acceptance criteria</h3><ol>${d.criteria.map((c,i)=>html`<li key=${i}>${c}</li>`)}</ol>
+    <h3>Test plan</h3><ul>${d.tests.map((c,i)=>html`<li key=${i}>${c}</li>`)}</ul>
+    ${d.open.length?html`<h3>Open questions</h3><ul>${d.open.map((c,i)=>html`<li key=${i}>${c}</li>`)}</ul>`:null}
+    ${pending?html`<div className="btn-row"><button className="btn primary" onClick=${()=>dispatch({type:'APPROVE_SPEC',id:t.id})}>Approve spec</button><span className="small muted">To change it, describe the change in a message; Litos revises the spec.</span></div>`:null}
+  </div>`;
+}
+function DecisionCard({m,t,dispatch}){
+  const d=m.data;const open=!m.answer;
+  return html`<div className=${'panel'+(open?' you':'')}>
+    <div className="panel-head"><h2>Decision needed</h2><span className=${'pill '+(open?'you':'done')}>${open?'Awaiting you':'Answered'}</span></div>
+    <p><b>${d.q}</b></p><p className="muted">${d.why}</p>
+    <div className="opts">${d.options.map((o,i)=>html`<button key=${i} className=${'opt'+(m.answer===o?' chosen':'')} disabled=${!open} onClick=${()=>dispatch({type:'ANSWER',id:t.id,text:o})}><span>${o}</span>${i===d.rec?html`<span className="small muted">Recommended</span>`:null}</button>`)}</div>
+    <p className="small muted">Affects ${d.impact.join(' and ')}. No further edits run until this is answered. You can also reply in your own words.</p>
+  </div>`;
+}
+function HandoffCard({m,t,dispatch,latest}){
+  const d=m.data;const [diff,setDiff]=useState(false);
+  const active=latest&&t.state==='AwaitingHumanTesting';
+  const v=d.verif;
+  return html`<div className=${'panel'+(active?' you':(t.state==='Accepted'&&latest?' okp':''))}>
+    <div className="panel-head"><h2>${active?'Ready for human testing':'Handoff '+d.n}</h2><span className=${'pill '+(active?'you':latest&&t.state==='Accepted'?'done':'neutral')}>${active?'Awaiting you':latest&&t.state==='Accepted'?'Accepted':'Superseded'}</span></div>
+    <p>${d.summary}</p>
+    <dl className="kv">
+      <dt>Branch</dt><dd className="mono">${d.branch}</dd>
+      <dt>Commit</dt><dd className="mono">${d.commit}</dd>
+      ${d.pr?html`<dt>Pull request</dt><dd>Draft PR #${d.pr} in ${d.repo}</dd>`:null}
+      <dt>Build</dt><dd>${v.build}</dd>
+      <dt>Unit tests</dt><dd>${v.tests} (${d.newTests} new)</dd>
+      <dt>Changed-line coverage</dt><dd>${v.coverage} (threshold 80%)</dd>
+      <dt>Agent review</dt><dd>${v.review}</dd>
+      <dt>Tokens</dt><dd className="num">${fmt(d.used)}${d.cap?' of '+fmt(d.cap)+' used':' used (no cap)'}</dd>
+    </dl>
+    <h3>Acceptance criteria and evidence</h3>
+    <div className="table-wrap"><table><thead><tr><th>Criterion</th><th>Covered by</th></tr></thead><tbody>${d.criteria.map((c,i)=>html`<tr key=${i}><td>${c[0]}</td><td className="mono">${c[1]}</td></tr>`)}</tbody></table></div>
+    ${d.limits&&d.limits.length?html`<p className="small"><b>Not verified:</b> ${d.limits.join(' ')} Unit tests are not application testing.</p>`:null}
+    <h3>Manual tests for you</h3>
+    <div style=${{display:'grid',gap:'6px'}}>${d.manual.map((c,i)=>html`<label key=${i} className="check"><input id=${'chk-'+m.id+'-'+i} type="checkbox" disabled=${!active} checked=${active?!!t.checklist[i]:t.state==='Accepted'&&latest} onChange=${()=>dispatch({type:'CHECK',id:t.id,i})}/><span>${c}</span></label>`)}</div>
+    ${t.script==='csv'?html`<div><button className="btn ghost" onClick=${()=>setDiff(!diff)} aria-expanded=${diff}>${diff?'Hide diff excerpt':'View diff excerpt'}</button>
+      ${diff?html`<pre className="diff">${'src/SalesApp.Api/Export/CsvWriter.cs\n'}<span className="d">${'-    return string.Join(",", values);\n'}</span><span className="a">${'+    return string.Join(",", values.Select(Quote));\n+\n+    static string Quote(string v) =>\n+        v.IndexOfAny([\',\', \'"\', \'\\n\', \'\\r\']) < 0 ? v : "\\"" + v.Replace("\\"", "\\"\\"") + "\\"";'}</span></pre>`:null}</div>`:null}
+    ${active?html`<div className="btn-row"><button className="btn primary" onClick=${()=>dispatch({type:'ACCEPT',id:t.id})}>Accept</button>
+      <button className="btn" onClick=${()=>{const el=document.getElementById('composer');if(el){el.focus();}dispatch({type:'TOAST',text:'Describe what to change, starting with @factory.'});}}>Request changes</button>
+      ${d.pr?html`<button className="btn ghost" onClick=${()=>dispatch({type:'TOAST',text:'In the real factory this opens github.com/'+d.repo+'/pull/'+d.pr+'.'})}>Open PR</button>`:null}</div>`:null}
+  </div>`;
+}
+function LessonCard({m,S,dispatch}){
+  const l=S.lessons.find(x=>x.id===m.lessonId);const [edit,setEdit]=useState(false);const [text,setText]=useState(l?l.text:'');
+  if(!l) return null;
+  const pending=l.status==='Suggested';
+  return html`<div className=${'panel'+(pending?' you':'')}>
+    <div className="panel-head"><h2>Suggested lesson for ${proj(S,l.projectId).name}</h2><span className=${'pill '+(pending?'you':l.status==='Approved'?'done':'neutral')}>${pending?'Awaiting you':l.status==='Approved'?'Remembered':'Dismissed'}</span></div>
+    ${edit?html`<div className="field"><label htmlFor=${'ledit-'+l.id}>Lesson text</label><textarea id=${'ledit-'+l.id} rows="3" value=${text} onChange=${e=>setText(e.target.value)}></textarea></div>`:html`<p><b>${l.text}</b></p>`}
+    <p className="small muted">Evidence: ${l.evidence} Topics: ${l.topics.join(', ')}. Reflection used ${fmt(m.tokens)} tokens from this task\u2019s budget.</p>
+    ${pending?html`<div className="btn-row">${edit?html`<button className="btn primary" onClick=${()=>dispatch({type:'LESSON',id:l.id,action:'approve',text})}>Save approved revision</button>`:html`<button className="btn primary" onClick=${()=>dispatch({type:'LESSON',id:l.id,action:'approve'})}>Remember for project</button><button className="btn" onClick=${()=>setEdit(true)}>Edit</button>`}
+      <button className="btn ghost" onClick=${()=>dispatch({type:'LESSON',id:l.id,action:'dismiss'})}>Dismiss</button></div>`:null}
+  </div>`;
+}
+function Details({t,S}){
+  const pv=PROVIDERS[t.provider];
+  const usedPct=t.cap?Math.min(100,t.used/t.cap*100):0;
+  const inc=S.lessons.filter(l=>t.lessonsIncluded.includes(l.id));
+  const tone=v=>/Passed|passed|Clean|fixed|%/.test(v)&&!/failed/.test(v)?'done':/fail|Failed/.test(v)?'bad':'neutral';
+  return html`<aside className="details" aria-label="Task details">
+    <section className="box"><h3>Budget</h3>
+      ${t.cap?html`<div className="gauge" role="img" aria-label=${fmt(t.used)+' of '+fmt(t.cap)+' tokens used'}><i className="u" style=${{width:usedPct+'%'}}></i></div>
+        <div className="vrow"><span className="num">${fmt(t.used)} used</span><span className="num">${fmt(Math.max(0,t.cap-t.used))} left of ${fmt(t.cap)}</span></div>`
+      :html`<p className="num">${fmt(t.used)} tokens used. No cap set.</p>`}
+      <div className="vrow"><span>${pv.name} <span className="mono">${modelOf(t)}</span></span><span className=${'pill '+(pv.precision==='Strict'?'done':'you')}>${pv.precision}</span></div>
+      <p className="small muted">${pv.note}. Discussion before delegation: ${fmt(t.discussion)} tokens, counted to your quota.</p>
+      ${t.ledger.length?html`<h3>Recent model calls</h3><div className="ledger">${t.ledger.slice(-5).reverse().map(c=>html`<div key=${c.n}><span>${c.n}. ${c.what}</span><span className="num">reserved ${fmt(c.reserved)}, used ${fmt(c.inp+c.out)}</span></div>`)}</div>
+        <p className="small muted">Each call is reserved before it is sent, then settled against the provider\u2019s reported usage.</p>`:null}
+    </section>
+    <section className="box"><h3>Verification</h3>
+      ${[['Build',t.verif.build],['Unit tests',t.verif.tests],['Changed-line coverage',t.verif.coverage],['Agent review',t.verif.review],['Human testing',t.verif.human]].map(([k,v])=>html`<div className="vrow" key=${k}><span>${k}</span><span className=${'pill '+tone(v)}>${v}</span></div>`)}
+    </section>
+    <section className="box"><h3>Changed files</h3>
+      ${t.files.length?html`<div className="files">${t.files.map(f=>html`<div key=${f.path}><span className="mono" title=${f.path}>${f.path}</span><span className="num"><span className="plus">+${f.add}</span> <span className="minus">\u2212${f.del}</span></span></div>`)}</div>`:html`<p className="small muted">No changes yet.</p>`}
+    </section>
+    <section className="box"><h3>${t.snap?'Settings this run started with':'Settings a run would start with now'}</h3>
+      ${(()=>{const c=t.snap||runCapabilities(S,t);return html`<dl className="kv small">
+        <dt>PTC</dt><dd>${c.ptc?'On':'Off'}</dd><dt>Web search</dt><dd>${c.web?'On':'Off'}</dd>
+        <dt>MCP servers</dt><dd>${c.mcp.join(', ')||'None'}</dd><dt>Skills</dt><dd>${c.skills.join(', ')||'None'}</dd>
+        ${c.skipped.length?html`<dt>Skipped</dt><dd>${c.skipped.join(', ')} (repository skill waiting for admin approval)</dd>`:null}</dl>`;})()}
+      ${t.snap?html`<p className="small muted">Changing factory settings now does not affect this run. Rework runs keep the same snapshot.</p>`:null}
+      ${inc.length?inc.map(l=>html`<p className="small" key=${l.id}><b>Lesson:</b> ${l.text}</p>`):html`<p className="small muted">No project lessons included.</p>`}
+    </section>
+  </aside>`;
+}
+function NewThread({S,dispatch,close}){
+  const mine=S.projects.filter(p=>p.members.includes(S.user));
+  const st=S.settings;const provs=usableProviders(S);
+  const defP=provs.includes(st.defaultProvider)?st.defaultProvider:provs[0];
+  const [f,setF]=useState({title:'',projectId:(mine.find(p=>p.id==='salesapp')||mine[0]||{}).id,type:'Feature',cap:String(st.limits.defaultCap),
+    choice:defP?defP+'|'+(defP===st.defaultProvider&&allowedModels(S,defP).includes(st.defaultModel)?st.defaultModel:allowedModels(S,defP)[0]):'',ptc:st.tools.ptc});
+  const [err,setErr]=useState('');
+  const set=k=>e=>setF(Object.assign({},f,{[k]:e.target.type==='checkbox'?e.target.checked:e.target.value}));
+  return html`<div className="modal-bg" onClick=${e=>{if(e.target===e.currentTarget)close();}}>
+    <form className="modal" onSubmit=${e=>{e.preventDefault();if(!f.title.trim()||!f.projectId)return;
+      if(!f.choice){setErr('No model is available. Ask an admin to set up a provider in Factory settings.');return;}
+      if(f.cap&&+f.cap>st.limits.maxCap){setErr('The largest budget you can set is '+fmt(st.limits.maxCap)+' tokens. Lower it, or ask an admin to raise the limit.');return;}
+      const [provider,model]=f.choice.split('|');dispatch({type:'NEW_THREAD',data:{title:f.title,projectId:f.projectId,type:f.type,cap:f.cap,provider,model,ptc:f.ptc}});close();}}>
+      <h2>New thread</h2><p className="small muted">One change per thread. You can talk it through before delegating.</p>
+      <div className="field"><label htmlFor="nt-title">What do you want changed?</label><input id="nt-title" required value=${f.title} onChange=${set('title')} placeholder="Add CSV export to Orders"/></div>
+      <div className="form-grid">
+        <div className="field"><label htmlFor="nt-proj">Project</label><select id="nt-proj" value=${f.projectId} onChange=${set('projectId')}>${mine.map(p=>html`<option key=${p.id} value=${p.id}>${p.name}</option>`)}</select></div>
+        <div className="field"><label htmlFor="nt-type">Type</label><select id="nt-type" value=${f.type} onChange=${set('type')}>${['Feature','Bug','Refactor','Chore'].map(x=>html`<option key=${x}>${x}</option>`)}</select></div>
+        <div className="field"><label htmlFor="nt-cap">Token budget</label><input id="nt-cap" type="number" min="10000" step="10000" value=${f.cap} onChange=${set('cap')} placeholder="No cap"/><span className="hint">Up to ${fmt(st.limits.maxCap)}</span></div>
+        </div>
+      <div className="field"><label htmlFor="nt-prov">Model</label>
+        <${ModelCombo} id="nt-prov" label="Model" choices=${modelChoices(S)} value=${f.choice} onChange=${v=>setF(Object.assign({},f,{choice:v}))}
+          pinned=${[{title:'Factory default',values:[st.defaultProvider+'|'+st.defaultModel]},{title:'Recently used',values:(S.recent[S.user]||[]).filter(v=>v!==st.defaultProvider+'|'+st.defaultModel)}]}/>
+        <span className="hint">Only models an admin has allowed appear here. Type to search.</span></div>
+      ${st.tools.ptcMemberOff?html`<label className="check"><input id="nt-ptc" type="checkbox" checked=${f.ptc} onChange=${set('ptc')}/><span>Use PTC (Litos writes scripts that make many tool calls at once)</span></label>`:null}
+      ${err?html`<p className="small" role="alert" style=${{color:'var(--bad)'}}>${err}</p>`:null}
+      <div className="btn-row"><button className="btn primary" type="submit">Create thread</button><button className="btn" type="button" onClick=${close}>Cancel</button></div>
+    </form></div>`;
+}
+
+/* ---------- lessons ---------- */
+function Lessons({S,dispatch}){
+  const mine=S.projects.filter(p=>p.members.includes(S.user));
+  return html`<div className="page" style=${{display:'grid',gap:'16px'}}>
+    <div style=${{display:'grid',gap:'4px'}}><h1>Project lessons</h1><p className="muted">Reviewed guidance the factory includes in later tasks on the same project. Only approved, enabled lessons are ever used.</p></div>
+    <div className="grid2">${mine.map(p=>{const ls=S.lessons.filter(l=>l.projectId===p.id);return html`<section className="section" key=${p.id}><h2>${p.name}</h2>
+      ${ls.length?ls.map(l=>html`<div className="lesson" key=${l.id}>
+        <div className="panel-head"><span className=${'pill '+(l.status==='Approved'&&l.enabled!==false?'done':l.status==='Suggested'?'you':'neutral')}>${l.status==='Approved'?(l.enabled===false?'Disabled':'Approved'):l.status}</span><span className="small muted">Included in ${l.runs||0} run${l.runs===1?'':'s'}</span></div>
+        <p>${l.text}</p><p className="small muted">Source: ${l.source}. Topics: ${l.topics.join(', ')}.${l.approvedBy?' Approved by '+USERS[l.approvedBy].name+'.':''}</p>
+        <div className="btn-row">${l.status==='Suggested'?html`<button className="btn primary" onClick=${()=>dispatch({type:'LESSON',id:l.id,action:'approve'})}>Remember for project</button><button className="btn ghost" onClick=${()=>dispatch({type:'LESSON',id:l.id,action:'dismiss'})}>Dismiss</button>`:null}
+          ${l.status==='Approved'?html`<button className="btn" onClick=${()=>dispatch({type:'LESSON',id:l.id,action:'toggle'})}>${l.enabled===false?'Enable':'Disable'}</button>`:null}
+          ${l.sourceId?html`<button className="btn ghost" onClick=${()=>dispatch({type:'SELECT',id:l.sourceId})}>Open source thread</button>`:null}</div>
+      </div>`):html`<p className="small muted">No lessons yet. They are suggested after a task is accepted, or you can write one.</p>`}
+    </section>`;})}</div></div>`;
+}
+
+/* ---------- admin ---------- */
+function Admin({S,dispatch}){
+  const tab=S.adminTab;const setTab=k=>dispatch({type:'ADMIN_TAB',tab:k});
+  const tabs=[['projects','Projects'],['people','People'],['providers','Providers and models'],['mcp','MCP servers'],['skills','Skills'],['tools','Tools'],['limits','Budgets and limits'],['presets','Verification presets']];
+  const V={projects:AdminProjects,people:AdminPeople,providers:AdminProviders,mcp:AdminMcp,skills:AdminSkills,tools:AdminTools,limits:AdminLimits,presets:AdminPresets}[tab];
+  return html`<div className="page" style=${{display:'grid',gap:'16px'}}>
+    <div style=${{display:'grid',gap:'4px'}}><h1>Factory settings</h1><p className="muted">These settings apply to the whole factory. Changes apply to runs that start afterwards; a running task keeps the settings it started with. All users are trusted in this version; untrusted users need sandboxed workers first.</p></div>
+    <nav className="subnav" aria-label="Settings sections">${tabs.map(([k,l])=>html`<button key=${k} aria-current=${tab===k?'page':null} onClick=${()=>setTab(k)}>${l}</button>`)}</nav>
+    <${V} S=${S} dispatch=${dispatch}/>
+  </div>`;
+}
+function Secret({label,isSet,onSave}){
+  const [open,setOpen]=useState(false);const [v,setV]=useState('');const id=useRef('sec-'+Math.random().toString(36).slice(2)).current;
+  if(!open) return html`<span className="btn-row" style=${{alignItems:'center'}}><span className=${'pill '+(isSet?'done':'you')}>${isSet?'Key set':'Key missing'}</span><button className="btn" type="button" onClick=${()=>setOpen(true)}>${isSet?'Replace key':'Set key'}</button></span>`;
+  return html`<span className="btn-row" style=${{alignItems:'center'}}><label className="sr" htmlFor=${id}>${label}</label><input id=${id} type="password" className="inline-input" value=${v} onChange=${e=>setV(e.target.value)} placeholder=${label} autoComplete="off"/>
+    <button className="btn primary" type="button" disabled=${!v} onClick=${()=>{onSave();setOpen(false);setV('');}}>Save</button><button className="btn ghost" type="button" onClick=${()=>setOpen(false)}>Cancel</button></span>`;
+}
+function AdminProjects({S,dispatch}){
+  const presets=S.settings.presets;
+  const [f,setF]=useState({name:'SalesApp',repo:'https://github.com/harbor-tools/salesapp',branch:'main',stack:'.NET + Node / React',coverage:'80',pr:true});
+  const [steps,setSteps]=useState([{preset:'dotnet',dir:'src/api'},{preset:'node',dir:'web'}]);
+  const set=k=>e=>setF(Object.assign({},f,{[k]:e.target.type==='checkbox'?e.target.checked:e.target.value}));
+  const setStep=(i,k)=>e=>{const n=steps.map(x=>Object.assign({},x));n[i][k]=e.target.value;setSteps(n);setF(Object.assign({},f,{stack:n.map(x=>presets[x.preset].name).join(' + ')}));};
+  return html`<section className="section"><h2>Projects</h2>
+    <div className="table-wrap"><table><thead><tr><th>Project</th><th>Repository</th><th>Verification profile</th><th>Coverage</th></tr></thead><tbody>
+      ${S.projects.map(p=>html`<tr key=${p.id}><td>${p.name}</td><td className="mono">${p.repo}</td><td>${p.stack}</td><td className="num">${p.coverage}%</td></tr>`)}</tbody></table></div>
+    <form style=${{display:'grid',gap:'10px'}} onSubmit=${e=>{e.preventDefault();dispatch({type:'REGISTER_PROJECT',data:f});}}>
+      <h3>Register a GitHub project</h3>
+      <div className="form-grid">
+        <div className="field"><label htmlFor="rp-name">Name</label><input id="rp-name" value=${f.name} onChange=${set('name')} required/></div>
+        <div className="field"><label htmlFor="rp-repo">GitHub URL</label><input id="rp-repo" value=${f.repo} onChange=${set('repo')} required/></div>
+        <div className="field"><label htmlFor="rp-branch">Default branch</label><input id="rp-branch" value=${f.branch} onChange=${set('branch')}/></div>
+        <div className="field"><label htmlFor="rp-cov">Changed-line coverage threshold (%)</label><input id="rp-cov" type="number" min="0" max="100" value=${f.coverage} onChange=${set('coverage')}/></div>
+      </div>
+      <div className="field"><span style=${{fontWeight:600,fontSize:'.86rem'}}>GitHub credential</span><${Secret} label="Fine-grained token or GitHub App installation ID" isSet=${false} onSave=${()=>dispatch({type:'TOAST',text:'Credential saved for this repository only. It is stored encrypted and never given to workers.'})}/></div>
+      <h3>Verification profile</h3>
+      <p className="small muted">The factory works with any language. A profile lists the commands to run and the reports they write. Presets fill them in; edit presets under Verification presets.</p>
+      ${steps.map((st,i)=>{const p=presets[st.preset];return html`<div key=${i} className="lesson">
+        <div className="form-grid">
+          <div className="field"><label htmlFor=${'ps-'+i}>Step ${i+1} preset</label><select id=${'ps-'+i} value=${st.preset} onChange=${setStep(i,'preset')}>${Object.entries(presets).map(([k,v])=>html`<option key=${k} value=${k}>${v.name}</option>`)}</select></div>
+          <div className="field"><label htmlFor=${'pd-'+i}>Working folder</label><input id=${'pd-'+i} value=${st.dir} onChange=${setStep(i,'dir')}/></div>
+        </div>
+        <dl className="kv"><dt>Build</dt><dd className="mono">${p.build||'enter a command'}</dd><dt>Unit tests</dt><dd className="mono">${p.test||'enter a command'}</dd><dt>Reports read</dt><dd>${p.report}</dd></dl>
+      </div>`;})}
+      <div className="btn-row"><button className="btn" type="button" onClick=${()=>setSteps(steps.concat([{preset:'custom',dir:''}]))}>Add a step</button></div>
+      <label className="check"><input id="rp-pr" type="checkbox" checked=${f.pr} onChange=${set('pr')}/><span>Open a draft pull request at each handoff</span></label>
+      <p className="small muted">The factory keeps its own clone and pushes only <span className="mono">factory/*</span> branches. It never merges or pushes to the default branch.</p>
+      <div className="btn-row"><button className="btn primary" type="submit">Register project</button></div>
+    </form></section>`;
+}
+function AdminPeople({S,dispatch}){
+  const [inv,setInv]=useState({name:'',role:'Member'});
+  return html`<section className="section"><h2>People</h2>
+    <div className="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Status</th></tr></thead><tbody>
+      ${Object.values(USERS).map(u=>html`<tr key=${u.id}><td>${u.name}</td><td>${u.role}</td><td>Active</td></tr>`)}
+      ${S.invites.map((u,i)=>html`<tr key=${'i'+i}><td>${u.name}</td><td>${u.role}</td><td>Invited</td></tr>`)}</tbody></table></div>
+    <form className="form-grid" onSubmit=${e=>{e.preventDefault();if(inv.name.trim()){dispatch({type:'INVITE',name:inv.name.trim(),role:inv.role});setInv({name:'',role:'Member'});}}}>
+      <div className="field"><label htmlFor="inv-name">Invite by email</label><input id="inv-name" type="email" value=${inv.name} onChange=${e=>setInv(Object.assign({},inv,{name:e.target.value}))} placeholder="name@company.com"/></div>
+      <div className="field"><label htmlFor="inv-role">Role</label><select id="inv-role" value=${inv.role} onChange=${e=>setInv(Object.assign({},inv,{role:e.target.value}))}><option>Member</option><option>Admin</option></select></div>
+      <div className="field" style=${{alignSelf:'end'}}><button className="btn" type="submit">Send invitation</button></div>
+    </form></section>`;
+}
+function ctxLabel(n){return n>=1000000?(n/1048576).toFixed(0)+'M':Math.round(n/1024)+'k';}
+function modelChoices(S){
+  return usableProviders(S).flatMap(p=>allowedModels(S,p).map(m=>({value:p+'|'+m,label:m,group:PROVIDERS[p].name,note:PROVIDERS[p].precision==='Strict'?'':'estimated budget'})));
+}
+/* Searchable model picker: grouped by provider, optional pinned sections (default, recently used). */
+function ModelCombo({id,label,choices,value,onChange,pinned}){
+  const [open,setOpen]=useState(false);const [q,setQ]=useState('');
+  const cur=choices.find(c=>c.value===value);
+  const ql=q.trim().toLowerCase();
+  const hits=choices.filter(c=>!ql||(c.group+' '+c.label).toLowerCase().includes(ql));
+  const sections=[];
+  if(!ql&&pinned) for(const p of pinned){const vs=p.values.map(v=>choices.find(c=>c.value===v)).filter(Boolean);if(vs.length)sections.push({title:p.title,items:vs});}
+  const groups=[...new Set(hits.map(c=>c.group))];
+  for(const g of groups) sections.push({title:g,items:hits.filter(c=>c.group===g)});
+  const pick=v=>{onChange(v);setOpen(false);setQ('');};
+  return html`<div className="combo" onKeyDown=${e=>{if(e.key==='Escape'){setOpen(false);}}}>
+    <button type="button" id=${id} className="combo-btn" aria-haspopup="listbox" aria-expanded=${open} aria-label=${label+': '+(cur?cur.group+' '+cur.label:'none selected')} onClick=${()=>setOpen(!open)}>
+      <span>${cur?html`${cur.group} <span className="mono">${cur.label}</span>`:'Choose a model'}</span><span aria-hidden="true">▾</span></button>
+    ${open?html`<div className="combo-pop">
+      <input className="inline-input" style=${{maxWidth:'none'}} autoFocus placeholder="Search models" aria-label="Search models" value=${q} onChange=${e=>setQ(e.target.value)}/>
+      <div className="combo-list" role="listbox" aria-label=${label}>
+        ${sections.length?sections.map((s,i)=>html`<div key=${s.title+i}><div className="combo-group">${s.title}</div>
+          ${s.items.map(c=>html`<button type="button" role="option" aria-selected=${c.value===value} key=${s.title+c.value} className=${'combo-opt'+(c.value===value?' on':'')} onClick=${()=>pick(c.value)}>
+            <span className="mono">${c.label}</span>${s.title!==c.group?html`<span className="small muted">${c.group}</span>`:null}${c.note?html`<span className="small muted">${c.note}</span>`:null}</button>`)}</div>`)
+        :html`<p className="small muted" style=${{padding:'8px'}}>No allowed model matches “${q}”.</p>`}
+      </div></div>`:null}
+  </div>`;
+}
+function AdminProviders({S,dispatch}){
+  const st=S.settings;const [picker,setPicker]=useState(null);
+  return html`<section className="section"><h2>Providers and models</h2>
+    <p className="small muted">API keys are stored encrypted by the factory host and are never shown again or given to workers. Every model call goes through the host.</p>
+    <label className="check"><input id="strict-only" type="checkbox" checked=${st.strictOnly} onChange=${e=>dispatch({type:'SETTING',section:'root',key:'strictOnly',value:e.target.checked})}/><span>Allow only providers with strict budgets</span></label>
+    <div className="field" style=${{maxWidth:'480px'}}><label htmlFor="def-model">Default model for new threads</label>
+      <${ModelCombo} id="def-model" label="Default model" choices=${modelChoices(S)} value=${st.defaultProvider+'|'+st.defaultModel} onChange=${v=>{const [p,m]=v.split('|');dispatch({type:'SET_DEFAULT_MODEL',provider:p,model:m});}}/></div>
+    ${Object.entries(PROVIDERS).map(([k,v])=>html`<${ProviderBlock} key=${k} k=${k} v=${v} S=${S} dispatch=${dispatch} openPicker=${()=>setPicker(k)}/>`)}
+    ${picker?html`<${CatalogPicker} k=${picker} S=${S} dispatch=${dispatch} close=${()=>setPicker(null)}/>`:null}
+  </section>`;
+}
+function ProviderBlock({k,v,S,dispatch,openPicker}){
+  const st=S.settings;const c=st.providers[k];
+  const rows=c.allowed.map(id=>({id,m:c.catalog.find(x=>x.id===id)}));
+  const retired=rows.filter(r=>!r.m);
+  const allN=c.catalog.filter(m=>m.tools).length;
+  return html`<div className="lesson">
+    <div className="panel-head"><div className="btn-row" style=${{alignItems:'center'}}><h3>${v.name}</h3><span className=${'pill '+(v.precision==='Strict'?'done':'you')}>${v.precision} budget</span>${usable(S,k)?null:html`<span className="pill neutral">Not available to members</span>`}</div>
+      <span className="switch"><input id=${'prov-'+k} type="checkbox" aria-label=${'Enable '+v.name} checked=${c.enabled} onChange=${e=>dispatch({type:'PROVIDER',id:k,key:'enabled',value:e.target.checked})}/><span></span></span></div>
+    <p className="small muted">${v.note}.</p>
+    ${k==='local'?html`<div className="field" style=${{maxWidth:'420px'}}><label htmlFor="local-url">Server URL</label><input id="local-url" value=${c.baseUrl||''} placeholder="http://127.0.0.1:11434/v1" onChange=${e=>dispatch({type:'PROVIDER',id:k,key:'baseUrl',value:e.target.value})}/></div>`
+      :html`<${Secret} label=${v.name+' API key'} isSet=${c.key} onSave=${()=>dispatch({type:'PROVIDER',id:k,key:'key',value:true,toast:v.name+' key saved. It is stored encrypted and never shown again.'})}/>`}
+    <div className="panel-head">
+      <b className="small">${c.allowAll?'All '+allN+' tool-capable models allowed':'Allowed models ('+rows.length+')'}</b>
+      <div className="btn-row" style=${{alignItems:'center'}}><span className="small muted">Catalog: ${c.catalog.length} models, fetched ${c.fetched}</span>
+        <button className="btn small" type="button" onClick=${()=>dispatch({type:'REFRESH_CATALOG',id:k})}>Refresh catalog</button>
+        ${c.allowAll?null:html`<button className="btn small primary" type="button" onClick=${openPicker}>Add models</button>`}</div></div>
+    ${c.allowAll?null:rows.length?html`<div className="table-wrap"><table className="models"><tbody>
+      ${rows.map(({id,m})=>{const isDef=st.defaultProvider===k&&st.defaultModel===id;return html`<tr key=${id}>
+        <td className="mono">${id}</td><td className="num">${m?ctxLabel(m.ctx)+' context':''}</td><td>${m?(m.tools?'Tool calling':'No tool calling'):''}</td>
+        <td>${!m?html`<span className="pill you">Not offered by provider</span>`:isDef?html`<span className="pill done">Default</span>`:null}</td>
+        <td className="row-actions">${m&&!isDef?html`<button className="btn small ghost" type="button" onClick=${()=>dispatch({type:'SET_DEFAULT_MODEL',provider:k,model:id})}>Make default</button>`:null}
+          <button className="btn small ghost" type="button" onClick=${()=>dispatch({type:'REMOVE_MODEL',id:k,model:id})}>Remove</button></td></tr>`;})}
+    </tbody></table></div>`:html`<p className="small muted">No models allowed yet. Members cannot use ${v.name} until you add some.</p>`}
+    ${retired.length&&!c.allowAll?html`<p className="small warn">${retired.map(r=>r.id).join(', ')} ${retired.length>1?'are':'is'} no longer offered by ${v.name}. Members can no longer start threads with ${retired.length>1?'them':'it'}; tasks already running keep their model. Remove ${retired.length>1?'them':'it'} and add a replacement.</p>`:null}
+    <label className="check small"><input id=${'all-'+k} type="checkbox" checked=${c.allowAll} onChange=${e=>dispatch({type:'PROVIDER',id:k,key:'allowAll',value:e.target.checked})}/>
+      <span>Allow every tool-capable model from ${v.name}. Costs and budgets become harder to predict.</span></label>
+  </div>`;
+}
+function CatalogPicker({k,S,dispatch,close}){
+  const c=S.settings.providers[k];const v=PROVIDERS[k];
+  const [q,setQ]=useState('');const [toolsOnly,setTools]=useState(true);const [minCtx,setMin]=useState(0);const [fam,setFam]=useState('all');const [hide,setHide]=useState(true);
+  const [sort,setSort]=useState({key:'id',dir:1});const [sel,setSel]=useState([]);const [top,setTop]=useState(0);
+  const fams=[...new Set(c.catalog.map(m=>m.id.includes('/')?m.id.split('/')[0]:null).filter(Boolean))].sort();
+  const ql=q.trim().toLowerCase();
+  const rows=c.catalog.filter(m=>(!toolsOnly||m.tools)&&m.ctx>=minCtx&&(fam==='all'||m.id.startsWith(fam+'/'))&&(!hide||!c.allowed.includes(m.id))&&(!ql||m.id.toLowerCase().includes(ql)))
+    .sort((a,b)=>{const x=a[sort.key],y=b[sort.key];return (x<y?-1:x>y?1:0)*sort.dir;});
+  const RH=34,VIEW=340;const start=Math.max(0,Math.floor(top/RH)-6);const end=Math.min(rows.length,start+Math.ceil(VIEW/RH)+12);
+  const toggle=id=>setSel(sel.includes(id)?sel.filter(x=>x!==id):sel.concat([id]));
+  const allShown=rows.length>0&&rows.every(m=>sel.includes(m.id));
+  const sortBtn=(key,label)=>html`<button type="button" className="sort" onClick=${()=>setSort({key,dir:sort.key===key?-sort.dir:1})} aria-label=${'Sort by '+label}>${label}${sort.key===key?(sort.dir>0?' ▴':' ▾'):''}</button>`;
+  return html`<div className="modal-bg" onClick=${e=>{if(e.target===e.currentTarget)close();}} onKeyDown=${e=>{if(e.key==='Escape')close();}}>
+    <div className="modal wide" role="dialog" aria-label=${'Add '+v.name+' models'}>
+      <div className="panel-head"><h2>Add ${v.name} models</h2><button className="btn ghost" type="button" onClick=${close}>Close</button></div>
+      <p className="small muted">${c.catalog.length} models in the provider’s catalog, fetched ${c.fetched}. Example catalog; the real list comes from the provider.</p>
+      <div className="picker-filters">
+        <input className="inline-input" style=${{maxWidth:'280px'}} autoFocus placeholder="Search by model ID" aria-label="Search by model ID" value=${q} onChange=${e=>setQ(e.target.value)}/>
+        ${fams.length?html`<select className="inline-input" style=${{width:'auto'}} aria-label="Model family" value=${fam} onChange=${e=>setFam(e.target.value)}><option value="all">All families</option>${fams.map(f=>html`<option key=${f} value=${f}>${f}</option>`)}</select>`:null}
+        <select className="inline-input" style=${{width:'auto'}} aria-label="Minimum context window" value=${minCtx} onChange=${e=>setMin(+e.target.value)}>
+          <option value="0">Any context</option><option value="32768">32k or more</option><option value="131072">128k or more</option><option value="200000">200k or more</option><option value="1000000">1M or more</option></select>
+        <label className="check small"><input id="f-tools" type="checkbox" checked=${toolsOnly} onChange=${e=>setTools(e.target.checked)}/> Tool calling only</label>
+        <label className="check small"><input id="f-hide" type="checkbox" checked=${hide} onChange=${e=>setHide(e.target.checked)}/> Hide allowed</label>
+      </div>
+      <p className="small muted">${rows.length} match${rows.length===1?'':'es'}. The factory needs tool calling, so models without it are hidden by default.</p>
+      <div className="vt" role="table" aria-label="Model catalog" aria-rowcount=${rows.length}>
+        <div className="vt-row vt-head" role="row">
+          <span role="columnheader"><input type="checkbox" aria-label="Select all shown" checked=${allShown} onChange=${()=>setSel(allShown?sel.filter(id=>!rows.some(m=>m.id===id)):[...new Set(sel.concat(rows.map(m=>m.id)))])}/></span>
+          <span role="columnheader">${sortBtn('id','Model')}</span><span role="columnheader">${sortBtn('ctx','Context')}</span>
+          <span role="columnheader">Tools</span><span role="columnheader" className="price">${sortBtn('pin','Price per 1M in / out')}</span></div>
+        <div className="vt-body" style=${{height:VIEW+'px'}} onScroll=${e=>setTop(e.currentTarget.scrollTop)}>
+          <div style=${{height:rows.length*RH+'px',position:'relative'}}>
+            ${rows.slice(start,end).map((m,i)=>html`<label key=${m.id} className=${'vt-row'+(sel.includes(m.id)?' sel':'')} role="row" style=${{position:'absolute',top:(start+i)*RH+'px',left:0,right:0,height:RH+'px'}}>
+              <span role="cell"><input type="checkbox" checked=${sel.includes(m.id)} onChange=${()=>toggle(m.id)} aria-label=${'Select '+m.id}/></span>
+              <span role="cell" className="mono ell" title=${m.id}>${m.id}</span><span role="cell" className="num">${ctxLabel(m.ctx)}</span>
+              <span role="cell">${m.tools?'Yes':'No'}</span><span role="cell" className="num price">$${m.pin.toFixed(2)} / $${m.pout.toFixed(2)}</span></label>`)}
+          </div>
+          ${rows.length?null:html`<p className="small muted" style=${{padding:'12px'}}>No models match. Clear the search or relax the filters.</p>`}
+        </div>
+      </div>
+      <div className="panel-head"><span className="small">${sel.length} selected</span>
+        <div className="btn-row"><button className="btn" type="button" onClick=${close}>Cancel</button>
+          <button className="btn primary" type="button" disabled=${!sel.length} onClick=${()=>{dispatch({type:'ALLOW_MODELS',id:k,models:sel});close();}}>Allow selected (${sel.length})</button></div></div>
+    </div></div>`;
+}
+function AdminMcp({S,dispatch}){
+  const [f,setF]=useState({name:'',transport:'Command',target:'',secrets:'',perm:'Ask'});
+  const set=k=>e=>setF(Object.assign({},f,{[k]:e.target.value}));
+  return html`<div className="grid2">
+    <section className="section"><h2>MCP servers</h2>
+      <p className="small muted">One list for the whole factory, managed here rather than in anyone’s own Litos settings. Servers run with the credentials you enter here, shared by every user. Servers set to Ask run without asking inside factory runs.</p>
+      ${S.mcp.map(m=>html`<div className="toggle" key=${m.name}><div style=${{minWidth:0}}><b>${m.name}</b> <span className="tag">${m.perm}</span> <span className="tag">${m.transport||'Command'}</span>
+          <p className="small muted">${m.desc}${m.status?' '+m.status+'.':''}</p>
+          <button className="btn ghost small" type="button" onClick=${()=>dispatch({type:'TEST_MCP',name:m.name})}>Test connection</button></div>
+        <span className="switch"><input id=${'mcp-'+m.name} type="checkbox" aria-label=${'Allow '+m.name+' in factory runs'} checked=${m.on} onChange=${()=>dispatch({type:'TOGGLE_MCP',name:m.name})}/><span></span></span></div>`)}
+    </section>
+    <section className="section"><h2>Add an MCP server</h2>
+      <form style=${{display:'grid',gap:'10px'}} onSubmit=${e=>{e.preventDefault();if(!f.name.trim()||!f.target.trim())return;dispatch({type:'ADD_MCP',data:f});setF({name:'',transport:'Command',target:'',secrets:'',perm:'Ask'});}}>
+        <div className="form-grid">
+          <div className="field"><label htmlFor="mcp-name">Name</label><input id="mcp-name" value=${f.name} onChange=${set('name')} placeholder="jira"/></div>
+          <div className="field"><label htmlFor="mcp-transport">Connection</label><select id="mcp-transport" value=${f.transport} onChange=${set('transport')}><option>Command</option><option>URL</option></select></div>
+        </div>
+        <div className="field"><label htmlFor="mcp-target">${f.transport==='URL'?'Server URL':'Command and arguments'}</label><input id="mcp-target" className="mono" value=${f.target} onChange=${set('target')} placeholder=${f.transport==='URL'?'https://mcp.example.com/sse':'npx -y @example/mcp-server'}/></div>
+        <div className="field"><label htmlFor="mcp-secrets">Secret environment variables</label><input id="mcp-secrets" value=${f.secrets} onChange=${set('secrets')} placeholder="JIRA_TOKEN, JIRA_URL"/><span className="hint">You enter each value once after adding. Values are stored encrypted.</span></div>
+        <div className="field"><label htmlFor="mcp-perm">Permission</label><select id="mcp-perm" value=${f.perm} onChange=${set('perm')}><option>Full</option><option>Ask</option><option>Deny</option></select></div>
+        <div className="btn-row"><button className="btn primary" type="submit">Add server</button></div>
+      </form></section></div>`;
+}
+function AdminSkills({S,dispatch}){
+  const st=S.settings;const [f,setF]=useState({name:'',desc:''});
+  return html`<div className="grid2">
+    <section className="section"><h2>Factory skill library</h2>
+      <p className="small muted">Skills are reusable instructions Litos can load during a run. These are available to every factory run.</p>
+      ${st.skills.map(k=>html`<div className="toggle" key=${k.name}><div><b className="mono">${k.name}</b><p className="small muted">${k.desc}</p></div>
+        <span className="switch"><input id=${'sk-'+k.name} type="checkbox" aria-label=${'Enable '+k.name} checked=${k.on} onChange=${()=>dispatch({type:'SKILL_TOGGLE',name:k.name})}/><span></span></span></div>`)}
+      <form className="form-grid" onSubmit=${e=>{e.preventDefault();if(!f.name.trim())return;dispatch({type:'ADD_SKILL',data:f});setF({name:'',desc:''});}}>
+        <div className="field"><label htmlFor="sk-name">New skill name</label><input id="sk-name" className="mono" value=${f.name} onChange=${e=>setF(Object.assign({},f,{name:e.target.value}))} placeholder="api-error-handling"/></div>
+        <div className="field"><label htmlFor="sk-desc">What it covers</label><input id="sk-desc" value=${f.desc} onChange=${e=>setF(Object.assign({},f,{desc:e.target.value}))} placeholder="How our APIs report errors"/></div>
+        <div className="field" style=${{alignSelf:'end'}}><button className="btn" type="submit">Add skill</button></div>
+      </form>
+    </section>
+    <section className="section"><h2>Skills found in repositories</h2>
+      <div className="field"><label htmlFor="repo-policy">Skills in a project’s <span className="mono">.litos/skills</span> folder</label>
+        <select id="repo-policy" value=${st.repoSkillPolicy} onChange=${e=>dispatch({type:'SETTING',section:'root',key:'repoSkillPolicy',value:e.target.value})}>
+          <option value="approve">Use after an admin approves each one</option><option value="trust">Always use</option><option value="ignore">Never use</option></select>
+        <span className="hint">Repository skills are written by that repository’s contributors, so they are not trusted by default.</span></div>
+      ${st.repoSkills.length?st.repoSkills.map(r=>html`<div className="toggle" key=${r.projectId+r.name}><div><b className="mono">${r.name}</b><p className="small muted">${proj(S,r.projectId).name}. ${r.status}.</p></div>
+        ${r.status==='Waiting for approval'?html`<div className="btn-row"><button className="btn primary" onClick=${()=>dispatch({type:'REPO_SKILL',projectId:r.projectId,name:r.name,status:'Approved'})}>Approve</button><button className="btn ghost" onClick=${()=>dispatch({type:'REPO_SKILL',projectId:r.projectId,name:r.name,status:'Rejected'})}>Reject</button></div>`:null}</div>`)
+        :html`<p className="small muted">No repository skills found yet.</p>`}
+    </section></div>`;
+}
+function AdminTools({S,dispatch}){
+  const t=S.settings.tools;const set=(k,v)=>dispatch({type:'SETTING',section:'tools',key:k,value:v});
+  return html`<section className="section" style=${{maxWidth:'760px'}}><h2>Tools</h2>
+    <div className="toggle"><div><b>Web search</b><p className="small muted">Lets Litos search the web during chat and runs. Results are logged with each run.</p><${Secret} label="Search API key" isSet=${t.searchKey} onSave=${()=>set('searchKey',true)}/></div>
+      <span className="switch"><input id="tool-web" type="checkbox" aria-label="Allow web search" checked=${t.web} onChange=${e=>set('web',e.target.checked)}/><span></span></span></div>
+    <div className="toggle"><div><b>PTC for new threads</b><p className="small muted">Litos writes one script that makes many tool calls, which saves model round trips and tokens.</p></div>
+      <span className="switch"><input id="tool-ptc" type="checkbox" aria-label="PTC on by default" checked=${t.ptc} onChange=${e=>set('ptc',e.target.checked)}/><span></span></span></div>
+    <div className="toggle"><div><b>Members may turn PTC off for a thread</b></div>
+      <span className="switch"><input id="tool-ptc-off" type="checkbox" aria-label="Members may turn PTC off" checked=${t.ptcMemberOff} onChange=${e=>set('ptcMemberOff',e.target.checked)}/><span></span></span></div>
+    <div className="field" style=${{maxWidth:'260px'}}><label htmlFor="shell-timeout">Shell command time limit (seconds)</label><input id="shell-timeout" type="number" min="30" step="30" value=${t.shellTimeout} onChange=${e=>set('shellTimeout',+e.target.value)}/></div>
+    <p className="small muted">File reading, editing, search and shell are always available in runs. Chat before delegation uses read-only tools only.</p>
+  </section>`;
+}
+function AdminLimits({S,dispatch}){
+  const l=S.settings.limits;const set=(k,v)=>dispatch({type:'SETTING',section:'limits',key:k,value:v});
+  const num=(id,label,k,step,hint)=>html`<div className="field"><label htmlFor=${id}>${label}</label><input id=${id} type="number" min="0" step=${step} value=${l[k]} onChange=${e=>set(k,+e.target.value)}/>${hint?html`<span className="hint">${hint}</span>`:null}</div>`;
+  return html`<section className="section" style=${{maxWidth:'760px'}}><h2>Budgets and limits</h2>
+    <div className="form-grid">
+      ${num('lim-def','Default task budget (tokens)','defaultCap',10000,'Suggested when a thread is created.')}
+      ${num('lim-max','Largest task budget a member may set','maxCap',50000,null)}
+      ${num('lim-day','Daily quota per user (tokens)','dailyQuota',100000,'Covers chat and task usage.')}
+      ${num('lim-month','Monthly quota per user (tokens)','monthlyQuota',1000000,null)}
+      ${num('lim-repair','Repair cycles per run','repairCycles',1,'After this many, a failing run stops as blocked.')}
+    </div>
+    <div className="field"><label htmlFor="slots">Concurrent runs across different repositories: ${S.slots}</label>
+      <input id="slots" type="range" min="1" max="6" value=${S.slots} onChange=${e=>dispatch({type:'SLOTS',n:+e.target.value})}/>
+      <span className="hint">A repository never has more than one factory run at a time.</span></div>
+  </section>`;
+}
+function AdminPresets({S,dispatch}){
+  const p=S.settings.presets;
+  return html`<section className="section"><h2>Verification presets</h2>
+    <p className="small muted">Starting points for project verification profiles. Editing a preset does not change projects already registered.</p>
+    <div className="table-wrap"><table><thead><tr><th>Preset</th><th>Build</th><th>Unit tests</th><th>Reports read</th></tr></thead><tbody>
+      ${Object.entries(p).map(([k,v])=>html`<tr key=${k}><td>${v.name}</td>
+        <td><input className="inline-input mono" aria-label=${v.name+' build command'} value=${v.build} onChange=${e=>dispatch({type:'PRESET',id:k,key:'build',value:e.target.value})}/></td>
+        <td><input className="inline-input mono" aria-label=${v.name+' test command'} value=${v.test} onChange=${e=>dispatch({type:'PRESET',id:k,key:'test',value:e.target.value})}/></td>
+        <td className="small">${v.report}</td></tr>`)}</tbody></table></div>
+  </section>`;
+}
+
+/* ---------- walkthrough ---------- */
+function steps(S){
+  const csv=S.threads.find(t=>t.script==='csv');const lena=S.threads.find(t=>t.script==='empty');
+  const sel=[{type:'VIEW',view:'thread'}].concat(csv?[{type:'SELECT',id:csv.id}]:[]);
+  return [
+    {title:'Sign in as the admin',body:'Priya Nair is the factory admin. Accounts are invite-only, with a username and password.',done:S.screen==='app',act:[{type:'SIGN_IN',user:'priya'}]},
+    {title:'Register a GitHub project',body:'Admins register projects by GitHub URL. The factory clones the repository into its own workspace and never touches anyone\u2019s own folders.',done:S.projects.some(p=>p.id==='salesapp'),
+      act:[{type:'VIEW',view:'admin'},{type:'REGISTER_PROJECT',data:{name:'SalesApp',repo:'https://github.com/harbor-tools/salesapp',branch:'main',stack:'.NET + Node / React',coverage:'80',pr:true}}]},
+    {title:'Look through factory settings',body:'Admins control providers and API keys, which models members may pick, MCP servers, the skill library, tools, budgets and verification presets, all factory-wide. SalesApp’s own repository skill is waiting for approval under Skills; approve it to see it appear in the run.',
+      done:S.seenSettings,act:[{type:'ADMIN_TAB',tab:'providers'}]},
+    {title:'Switch to Sam, a member',body:'Members create threads and delegate work on projects they belong to. Use the user switcher at the top right.',done:S.user==='sam',act:[{type:'SWITCH_USER',user:'sam'}]},
+    {title:'Create a thread',body:'One change per thread. Title it \u201cAdd CSV export to Orders\u201d in SalesApp, with a 120,000-token budget.',done:!!csv,
+      act:[{type:'NEW_THREAD',data:{title:'Add CSV export to Orders',projectId:'salesapp',type:'Feature',cap:'120000',provider:'anthropic'}}]},
+    {title:'Talk it through with Litos',body:'Plain messages are a real conversation with read-only tools. Nothing is edited and no budget is charged to the task.',done:!!csv&&csv.messages.some(m=>m.kind==='litos'),
+      act:sel.concat(csv?[{type:'SEND',id:csv.id,text:'How do admin-only actions work in Orders today?'}]:[])},
+    {title:'Ask for a spec',body:'Send @factory spec. Litos drafts acceptance criteria and a test plan for you to approve.',done:!!csv&&csv.messages.some(m=>m.kind==='spec'),
+      act:sel.concat(csv?[{type:'SEND',id:csv.id,text:'@factory spec'}]:[]),wait:!!csv&&csv.state==='Running'},
+    {title:'Approve the spec',body:'The approved revision becomes the contract. The acceptance criteria drive the tests and the handoff checklist.',done:!!csv&&csv.specApproved,act:sel.concat(csv?[{type:'APPROVE_SPEC',id:csv.id}]:[]),can:!!csv&&csv.specPending},
+    {title:'Delegate with @factory',body:'The factory takes the SalesApp lock, creates a factory branch and starts. Watch the stage rail and the per-call budget ledger on the right.',done:!!csv&&csv.runKind==='impl',
+      act:sel.concat(csv?[{type:'SEND',id:csv.id,text:'@factory Implement the approved spec.'}]:[])},
+    {title:'Lena delegates on the same repository',body:'Only one factory run per repository. Lena\u2019s task waits in the queue while SalesApp is held. Inventory API keeps running in parallel.',done:!!lena,act:[{type:'LENA_DELEGATE'}]},
+    {title:'Answer the decision',body:'When a choice cannot be inferred, Litos stops and asks. Pick \u201cAll filtered rows\u201d.',done:!!csv&&csv.decisionAnswered,act:sel.concat(csv?[{type:'ANSWER',id:csv.id,text:'All filtered rows'}]:[]),can:!!csv&&!!csv.decision,wait:!!csv&&!csv.decision},
+    {title:'Watch build, tests, repair and review',body:'A test fails and one bounded repair fixes it. The agent review finds and fixes an issue. Then the branch is pushed and a draft PR opened.',done:!!csv&&csv.handoffs>=1,act:[{type:'SPEED',speed:'fast'}],actLabel:'Speed up the simulation',wait:true},
+    {title:'Request changes',body:'Testing shows commas in values break the columns. Report it in the same thread with @factory. Note that Lena\u2019s task may take the repository first.',done:!!csv&&csv.iteration>=2,
+      act:sel.concat(csv?[{type:'SEND',id:csv.id,text:'@factory Values that contain commas break the columns. Quote them properly.'}]:[]),can:!!csv&&csv.state==='AwaitingHumanTesting'},
+    {title:'Raise the budget',body:'The next call would exceed the 120,000-token cap, so the factory pauses before sending it. Raise the cap to continue the same run.',done:!!csv&&csv.capRaised,act:sel.concat(csv?[{type:'RAISE_CAP',id:csv.id,add:40000}]:[]),can:!!csv&&csv.state==='PausedBudget',wait:!!csv&&csv.state!=='PausedBudget'},
+    {title:'Test and accept',body:'Tick each manual check once you have tested it, then accept. Accepting never merges or deploys.',done:!!csv&&csv.state==='Accepted',
+      act:sel.concat(csv?csv.checklist.map((c,i)=>c?null:{type:'CHECK',id:csv.id,i}).filter(Boolean).concat([{type:'ACCEPT',id:csv.id}]):[]),can:!!csv&&csv.state==='AwaitingHumanTesting'&&csv.iteration>=2,wait:!!csv&&csv.state!=='AwaitingHumanTesting'},
+    {title:'Remember the lesson',body:'The factory suggests a reusable lesson with its evidence. Only lessons you approve are used in later SalesApp tasks.',done:S.lessons.some(l=>l.sourceId&&l.status==='Approved'),
+      act:(()=>{const l=S.lessons.find(x=>x.sourceId&&x.status==='Suggested');return l?sel.concat([{type:'LESSON',id:l.id,action:'approve'}]):[];})(),can:S.lessons.some(x=>x.sourceId&&x.status==='Suggested')},
+    {title:'Review the board',body:'See every task by stage, who each one waits on, and flow metrics such as first-handoff acceptance and time per stage.',done:S.sawBoard,act:[{type:'VIEW',view:'board'}]}
+  ];
+}
+function Tour({S,dispatch}){
+  const list=steps(S);const cur=list.findIndex(x=>!x.done);const all=cur===-1;
+  const st=all?null:list[cur];
+  const open=S.tourOpen;
+  const runAct=()=>{for(const a of st.act) dispatch(a);};
+  const canAct=st&&st.act.length>0&&st.can!==false;
+  return html`<aside className="tour" aria-label="Walkthrough">
+    <button className="tour-head" onClick=${()=>dispatch({type:'TOUR',open:!open})} aria-expanded=${open}>
+      <b>${all?'Walkthrough complete':'Walkthrough, step '+(cur+1)+' of '+list.length}</b><span className="small">${open?'Hide':'Show'}</span></button>
+    ${open?html`<div className="tour-body">
+      ${all?html`<div className="tour-step"><h3>You have seen the whole loop</h3><p className="small">Delegation, a decision, verification with evidence, rework, a budget pause, acceptance and a lesson. Explore freely, or reset to start again.</p></div>`
+      :html`<div className="tour-step" style=${{display:'grid',gap:'8px'}}><h3>${st.title}</h3><p className="small">${st.body}</p>
+        <div className="btn-row"><button className="btn primary" disabled=${!canAct} onClick=${runAct}>${st.actLabel||'Do this for me'}</button>
+        ${st.wait&&!canAct?html`<span className="small muted">Waiting for the factory\u2026</span>`:null}</div>
+        <p className="small muted">Or do it yourself in the page. The step completes either way.</p></div>`}
+      <ol className="tour-list">${list.map((x,i)=>html`<li key=${i} className=${x.done?'done':i===cur?'cur':''}><i>${x.done?'\u2713':i+1}</i><span>${x.title}</span></li>`)}</ol>
+      <div className="tour-foot">
+        <label className="check small"><input id="fast" type="checkbox" checked=${S.speed==='fast'} onChange=${e=>dispatch({type:'SPEED',speed:e.target.checked?'fast':'normal'})}/> Fast simulation</label>
+        <button className="btn ghost" onClick=${()=>dispatch({type:'RESET'})}>Reset prototype</button>
+      </div>
+    </div>`:null}
+  </aside>`;
+}
+function Toast({S,dispatch}){
+  useEffect(()=>{if(!S.toast)return;const id=S.toast.id;const h=setTimeout(()=>dispatch({type:'CLEAR_TOAST',id}),4200);return ()=>clearTimeout(h);},[S.toast&&S.toast.id]);
+  return S.toast?html`<div className="toast" role="status">${S.toast.text}</div>`:null;
+}
+
+/* ---------- app ---------- */
+function App(){
+  const [S,dispatch]=useReducer(reducer,null,initialState);
+  useEffect(()=>{if(S.screen!=='app')return;const h=setInterval(()=>dispatch({type:'TICK'}),S.speed==='fast'?450:1300);return ()=>clearInterval(h);},[S.screen,S.speed]);
+  if(S.screen==='login') return html`<${React.Fragment}><${Login} dispatch=${dispatch}/><${Tour} S=${S} dispatch=${dispatch}/><${Toast} S=${S} dispatch=${dispatch}/><//>`;
+  const V={board:Board,thread:Threads,lessons:Lessons,admin:Admin}[S.view]||Board;
+  return html`<${React.Fragment}>
+    <${TopBar} S=${S} dispatch=${dispatch}/>
+    <main><${V} S=${S} dispatch=${dispatch}/></main>
+    <p className="note" style=${{paddingInline:'16px',paddingBottom:'120px'}}>Prototype of Litos Software Factory V1 with example data. It simulates the agent, GitHub and the database.</p>
+    <${Tour} S=${S} dispatch=${dispatch}/><${Toast} S=${S} dispatch=${dispatch}/>
+  <//>`;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${App}/>`);
+window.__factoryTest={reducer,initialState,steps};
+})();
+</script>
+
+</body>
+</html>

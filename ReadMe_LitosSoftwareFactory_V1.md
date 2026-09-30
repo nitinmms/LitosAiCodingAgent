@@ -302,15 +302,85 @@ Chat turns before delegation get the read-only subset: read, list, search, skill
 
 Command restrictions and the run contract are host safeguards for trusted users. They do not protect against hostile code executing under the worker's OS account (§17).
 
-### 8.1 Central MCP allowlist
+### 8.1 MCP servers (factory-wide)
 
-An Admin maintains one factory-wide list of which configured MCP servers factory runs may start. The list is stored in `litos_factory`, and each run snapshots it at start (`RunCapabilitySnapshot`). Servers run with the factory machine's credentials, so every user effectively shares them. That is acceptable only under the trusted-user rule.
+MCP servers are configured **in the factory**, under Factory settings → MCP servers, not in any user's own `~/.litos/mcp.json`. For each server an Admin records:
+
+- a name;
+- a connection, either a command with arguments or a URL;
+- the secret environment variables it needs, stored encrypted and never shown again;
+- its permission (Full, Ask, Deny);
+- whether factory runs may use it.
+
+A **Test connection** action starts the server once and reports how many tools it offers.
+
+There are no per-project overrides in V1: the list applies to every project. It is stored in `litos_factory`, and each run snapshots it at start (`RunCapabilitySnapshot`). Every user effectively shares the servers' credentials, which is acceptable only under the trusted-user rule.
 
 MCP servers start fresh in each worker. The coordinator waits for the worker's "MCP ready" signal, not merely its port handshake, before the first turn. A slow server can take up to 30 seconds.
 
 ### 8.2 Skills and web search
 
-Skills load from `~/.litos/skills`, `~/.claude/skills` and `.litos/skills` folders found walking up from the working copy (`Litos.Tools/Skills/SkillDiscovery.cs`). Skills in the target repository are authored by that repository's contributors and are treated as untrusted guidance. Each run records which skills were loaded. Search queries and result URLs are written to the run log.
+Skills come from two places. Skills in the host account's `~/.litos/skills` and `~/.claude/skills` are **not** used, so runs never depend on whichever Windows account started the host.
+
+- **Factory skill library.** Admins add, edit, enable and disable skills under Factory settings → Skills. Stored skills are materialized into a factory-owned skills folder that the worker reads.
+- **Repository skills.** These are `.litos/skills` folders in a project's repository, written by that repository's contributors. One factory-wide policy decides how they are treated:
+  - *use after an Admin approves each one* (default);
+  - *always use*;
+  - *never use*.
+
+  A newly found repository skill appears as "Waiting for approval". Runs skip it, and say so, until it is approved.
+
+The worker's skill discovery (`Litos.Tools/Skills/SkillDiscovery.cs`) needs a host-supplied list of skill roots instead of its fixed user-profile roots. This is one more `Litos.Hosting` extension point (§15.1).
+
+**Web search** is switched on or off factory-wide, with its API key held by the host. Search queries and result URLs are written to the run log.
+
+Each run records which MCP servers, skills and tool settings it started with. Changing settings affects only runs that start afterwards; a rework run reuses its task's snapshot.
+
+### 8.3 Factory settings
+
+All factory-level configuration lives in one Admin-only area. There are no per-project overrides in V1.
+
+| Tab | Contents |
+| --- | --- |
+| Projects | Register GitHub projects, credential, members, verification profile, coverage threshold, draft-PR option |
+| People | Users, roles, invitations |
+| Providers and models | Per provider: enabled, API key status (set/replace, never displayed), strict/estimated label, and a short list of **allowed models** (§8.4); default model for new threads; "strict-budget providers only" switch |
+| MCP servers | §8.1 |
+| Skills | Factory skill library and repository-skill policy and approvals (§8.2) |
+| Tools | Web search on/off and key; PTC default for new threads and whether members may turn it off per thread; shell command time limit |
+| Budgets and limits | Default and maximum task budget, daily and monthly per-user quotas, repair cycles per run, concurrent run slots |
+| Verification presets | Edit the presets projects start from (§10.2); changes do not alter registered projects |
+
+**How settings reach users:**
+
+- The New thread dialog offers only enabled providers that have a key, and only models an Admin allowed.
+- It rejects budgets above the maximum.
+- It shows the PTC choice only when members may change it.
+
+### 8.4 Model catalog and allowed models
+
+Provider model lists can be very large; OpenRouter alone offers several hundred. The factory therefore separates the small set of **allowed models** from the provider's full **catalog**.
+
+**Catalog.** The host fetches each provider's model list through the existing provider model-listing call (`ListModelsAsync`, already exposed by VsCodeHost as `/settings/models`) and caches it with its fetch time. Each entry records the model ID, context window, whether it supports tool calling, and price per million input and output tokens where the provider reports them. An Admin can refresh it at any time.
+
+**Allowed models.** Each provider shows only its allowed models, typically a handful, one row each: context window, tool support, a *Default* marker, and *Make default* and *Remove* actions.
+
+**Adding models.** *Add models* opens a catalog picker:
+
+- search as you type on model ID;
+- filters: tool calling only (on by default, since the factory cannot use a model without it), minimum context window, model family (the `vendor/` prefix for OpenRouter), and hide already-allowed models;
+- a sortable, virtualized table (model, context, tools, price);
+- multi-select with one *Allow selected* action.
+
+**Retired models.** When a refresh no longer lists an allowed model, the model is marked *Not offered by provider*:
+
+- it is withheld from members;
+- tasks already running keep it;
+- if it was the default, the default falls back to another allowed model from the same provider, then to another provider.
+
+**Allow every model.** A per-provider switch, off by default, exposes every tool-capable catalog model to members. It warns that costs and budgets become harder to predict.
+
+**Member picker.** The New thread model field and the Admin's default-model field are searchable pickers grouped by provider. The member picker pins the factory default and the member's three most recently used models at the top.
 
 ## 9. Token budget and the model gateway
 
@@ -501,7 +571,7 @@ A React SPA with two main views.
 Additional areas:
 
 - **Project lessons panel:** pending suggestions, approved lessons, sources, revisions, and Remember/Edit/Dismiss/Disable actions.
-- **Admin area:** users and invitations, projects and members, GitHub credentials, verification profiles, the MCP allowlist, providers and models, global slot cap, quotas.
+- **Factory settings (Admin only):** the tabs listed in §8.3.
 
 **Controls by state:**
 
@@ -634,7 +704,13 @@ All primary keys are UUIDs. Timestamps are `timestamptz` in UTC. Token counts an
 | ChangeSet | Baseline, file manifest, patch reference, content hashes |
 | Handoff | Run, commit SHA, branch, PR number/URL, pushed by, evidence summary |
 | WorkspaceLease | Lock identity, owning thread/run, kind (Active/ReviewHold), heartbeat, recovery-required flag |
-| McpAllowlistEntry | Server name, enabled for factory, added by/at |
+| ProviderSetting | Provider, enabled, encrypted key reference, base URL (local), allowed models, allow-every-model flag, updated by/at |
+| ModelCatalogEntry | Provider, model ID, context window, tool support, input/output price, first/last seen, fetched at |
+| McpServer | Name, transport (command/URL), command or URL, encrypted secret references, permission, enabled for factory, last test result, added by/at |
+| Skill | Name, description, content, enabled, revision, edited by/at |
+| RepositorySkill | Project, path/name, content hash, status (Waiting/Approved/Rejected), decided by/at |
+| FactorySetting | Key, JSON value, updated by/at: default model, strict-only, tool switches, budgets and limits, repository-skill policy |
+| VerificationPreset | Name, revision, profile JSON |
 | RunCapabilitySnapshot | Run, allowed MCP servers, loaded skills, model, provider precision label |
 | ProjectLesson / LessonRevision / RunLessonSnapshot | As in Rev 2 (§21–22) |
 | ReflectionJob | Thread, accepted spec revision, status, usage reference, retry state |
@@ -694,7 +770,7 @@ These are the only changes to existing Litos code. All are opt-in or behavior-pr
 | Add reasoning-token field to `UsageInfo`, filled where providers report it | `Litos.Agent`, providers | Budget contract (§9.1) |
 | Surface non-cancellation exceptions from compaction instead of losing them | worker turn handling | Currently swallowed by hosts |
 | Pass the turn's cancellation token to kernel-bridged tool calls (today `CancellationToken.None`) | `Litos.Kernel/KernelSession.cs` | Graceful pause/cancel of long commands; the hard kill remains a fallback |
-| Extension points for model source, session store location and tool set | `Litos.Hosting` | Worker isolation from the shared `~/.litos/config.json` and VS Code session history |
+| Extension points for model source, session store location, tool set, MCP server list and skill roots | `Litos.Hosting`, `Litos.Tools/Skills/SkillDiscovery.cs` | Worker isolation from the shared `~/.litos/config.json` and VS Code session history |
 
 The agent loop (`AgentLoop.RunTurnAsync`) is not modified.
 
@@ -912,9 +988,16 @@ GitHub branches are the durable copy of handed-off code. Unpushed work in workin
 - per-user usage against quota;
 - the flow metrics in §12.1.
 
-## 25. Demo ZIP
+## 25. UX prototype and demo ZIP
 
-`LitosSoftwareFactory_Demo.zip` is the Rev 2 browser prototype: plain HTML/CSS/JavaScript with simulated workers, fixed per-stage token charges and `localStorage` state. It never opens a repository, calls a model or connects to a database.
+**The Rev 3 UX prototype is the reference for building the factory's UI and behavior.** It lives in [docs/software-factory/prototype/](docs/software-factory/prototype/README.md):
+
+- a single clickable page with a guided walkthrough, covering everything in this revision;
+- headless checks that must pass after each change to the page.
+
+It is simulated end to end. Where it and this blueprint disagree, this blueprint wins, and the prototype is corrected.
+
+`LitosSoftwareFactory_Demo.zip` is the older Rev 2 browser prototype: plain HTML/CSS/JavaScript with simulated workers, fixed per-stage token charges and `localStorage` state. It never opens a repository, calls a model or connects to a database.
 
 It remains useful as a reference for the thread, state and lesson UX. It is not a code base for the React application.
 
