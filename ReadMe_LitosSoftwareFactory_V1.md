@@ -18,6 +18,8 @@ Revision history:
   - PTC on by default, with MCP, skills and web search available;
   - parallel runs across repositories;
   - optional spec stage, agent review pass, board view and flow metrics;
+  - a run orchestration contract with completion tools, a context policy and a request estimator (§8.5, §8.6, §9.5);
+  - delivery in four milestones, starting with a thin slice gated by a real-task evaluation (§18);
   - stack-agnostic verification profiles (commands plus standard report formats) with coverage evidence; .NET and Node/React are the first presets.
 
 ## 1. Product definition
@@ -382,6 +384,98 @@ Provider model lists can be very large; OpenRouter alone offers several hundred.
 
 **Member picker.** The New thread model field and the Admin's default-model field are searchable pickers grouped by provider. The member picker pins the factory default and the member's three most recently used models at the top.
 
+### 8.5 Run orchestration contract
+
+The coordinator drives a run as a sequence of **host steps** (no model) and **agent turns**. An agent turn is one `AgentLoop.RunTurnAsync` call started by `StartTurn`. Inside a turn the model may make many tool calls. By the existing loop's rules, the turn ends when the model replies without further tool calls.
+
+The host decides every stage transition from its own records, never from the agent's prose.
+
+**Completion tools.** Three worker tools, added by the factory and available both directly and from kernel code, are the only way an agent turn reports a result:
+
+| Tool | Used in | Arguments | Host reaction |
+| --- | --- | --- | --- |
+| `submit_work` | implement, repair and rework turns | summary; acceptance-criterion → test mapping; tests added; known limitations; manual test steps | Marks the turn complete and moves to Verify |
+| `request_decision` | implement, repair and rework turns | question; why it blocks; 2–4 options; recommendation; impact | Records the decision, cancels the turn once the tool returns (the transcript is repaired on cancel), sets `AwaitingDecision` |
+| `submit_review` | review turn | findings: severity (`blocking` or `minor`), file, line, text | Stores `ReviewFinding` rows and moves to Repair or Handoff |
+
+**Sequence of one run:**
+
+1. **Preflight (host).**
+   - Fetch, then create or check out the task branch, and confirm the working copy is clean.
+   - Reuse or run the baseline verification for the base commit. It is cached per commit, so pre-existing failures are known.
+   - Snapshot the settings (§8.2) and retrieve lessons (§22).
+   - Compose the **run brief**.
+2. **Implement turn (agent).**
+   - The prompt is the run brief:
+     - the execution contract (§8);
+     - the approved spec and its acceptance criteria;
+     - recorded decisions and included lessons;
+     - a summary of the verification profile;
+     - the instruction to finish with `submit_work`.
+   - The agent may run builds and tests itself for fast feedback, but only the host's run counts as evidence.
+3. **Verify (host).**
+   - Run the profile and read its reports.
+   - Compute changed-line coverage.
+   - Compare with the baseline: a failure that also fails on the baseline is reported as pre-existing, not as the task's failure.
+4. **Repair turn (agent)**, when a new test fails or coverage is below the threshold.
+   - The prompt is a **repair brief**:
+     - the failing test names;
+     - bounded failure excerpts taken from the reports (default 4,000 tokens in total);
+     - the uncovered changed lines;
+     - "repair cycle k of N".
+   - The turn ends with `submit_work`, and the run returns to Verify.
+5. **Review turn (agent).**
+   - Runs in a **fresh session**, not the thread's session, with read-only tools.
+   - Input: the diff (or, above 1,500 changed lines, the changed-file list for the agent to read), the acceptance criteria and the verification summary.
+   - Blocking findings lead to one repair turn and one more Verify. The review is not repeated, which bounds its cost.
+6. **Handoff (host).**
+   - Commit, push, and create or update the draft PR.
+   - Compose the handoff (§11) from the host's evidence plus the `submit_work` content.
+
+**Rework** is a new run on the same branch. Its first turn is a **rework brief**:
+
+- the tester's feedback;
+- the previous handoff summary;
+- the list of files changed since the base commit.
+
+It then follows the same Verify → (Repair) → Review → Handoff sequence.
+
+**Limits and no-progress rules.** All are configurable in Factory settings. Each one stops the run as `Blocked` with a stated reason, and the edits are kept.
+
+- **Repair cycles:** at most N per run (default 2), shared between test failures and review findings.
+- **Turn ends without a completion tool:** one automatic nudge turn ("You stopped without calling `submit_work` or `request_decision`…"). If that also ends without one, the run is Blocked.
+- **Nothing changes:** a turn that changes no files and makes no completion call.
+- **Repair made no difference:** the same set of failing tests before and after a repair turn.
+- **Too many questions:** at most 3 `request_decision` calls per run. Past the limit, the factory proceeds on its recommendation and records that in the handoff.
+- **Tool calls:** at most 200 per turn.
+- **Time:** a wall-clock limit per turn (default 45 minutes) and per run (default 3 hours).
+
+**Prompts are versioned assets.** The briefs are template files in `Litos.SoftwareFactory.Core`:
+
+- run brief;
+- repair brief;
+- rework brief;
+- review brief;
+- nudge.
+
+Each run records the prompt revision it used, so evaluation results (§18) can be tied to a specific prompt revision.
+
+**Chat and spec turns** use the same mechanism with read-only tools. A spec turn ends with a `submit_spec` tool (summary, criteria, test plan, open questions), which moves the thread to spec approval.
+
+### 8.6 Context policy
+
+Every turn's cost includes its whole context, so context is managed deliberately:
+
+- **Thread session.** One session per thread carries chat, spec, implement, repair and rework turns. That continuity is what lets rework understand earlier discussion.
+- **Review.** Always runs in a fresh session, for independence and a small context.
+- **Stable prefix.** The system prompt and tool list never change within a session; per-run material goes into user messages. That keeps provider prompt caches useful.
+- **Compaction before large turns.** Before starting a rework or repair turn, the host checks the session's context usage using the existing `ContextUsage` banding. Above 60% of the window, it compacts first with a factory-specific instruction:
+  - keep the acceptance criteria, decisions, the files changed and their purpose, and outstanding failures;
+  - drop raw tool output.
+
+  Compaction goes through the gateway and counts against the task budget, like any other call.
+- **Bounded tool output.** The existing shell output truncation applies. Excerpts from verification reports are bounded by the host before they enter a brief.
+
 ## 9. Token budget and the model gateway
 
 ### 9.1 Budget contract
@@ -448,6 +542,21 @@ All Litos providers are allowed. The UI labels each task's budget as **strict** 
 | Local, MeshApi | Yes | Input/output only when the server reports them; otherwise 0 | Estimated; host charges its own estimate when usage is 0 |
 
 Provider SDKs may retry internally without surfacing the usage. That is a documented accuracy limit.
+
+### 9.5 Request estimation
+
+Litos has no pre-send token estimator today. The only existing estimate is `CompactionPlanner.EstimatedTokensUsed`, which derives from the previous response's usage. Per-call reservation (§9.2) needs one, so the gateway estimates in three layers:
+
+1. **Session baseline.** Start from the last settled request in the same session, using its `TotalInputTokens`: input plus cache creation plus cache read.
+2. **Delta.** Add characters ÷ 4 for everything appended since: messages, tool calls and results, and images at a fixed allowance.
+3. **First call of a session.** No baseline exists yet, so estimate the system prompt, tool schemas and messages at characters ÷ 4.
+
+The gateway then multiplies by a **calibration ratio** for that provider and model. The ratio is learned from actual ÷ estimated over recent settled calls, with a floor of 1.0.
+
+Every call logs its estimate, actual and error. The M1 evaluation (§18) must show the 95th-percentile under-estimate staying within the reservation margin (default 10%). Where it doesn't, two remedies apply:
+
+- raise the margin for that provider;
+- use the provider's own token-counting endpoint for that provider, where one exists.
 
 ## 10. Verification: build, unit tests and coverage
 
@@ -747,9 +856,9 @@ All primary keys are UUIDs. Timestamps are `timestamptz` in UTC. Token counts an
 
 The worker prints its port on stdout. The host captures stdout and stderr into run logs.
 
-**Host → worker:** StartTurn (the prompt and the tool-set kind), Steer, Cancel, AnswerDecision (resumes with a new turn), Shutdown.
+**Host → worker:** StartTurn (the brief, the tool-set kind, and the session: the thread session or a fresh one), Steer, Cancel, Compact, Shutdown. Answering a decision is simply a new StartTurn carrying the answer (§8.5).
 
-**Worker → host events:** StageChanged, ToolStarted, ToolFinished, UsageRecorded (also known to the gateway), DecisionRequested, CheckpointSaved, TurnCompleted, Faulted, McpReady.
+**Worker → host events:** ToolStarted, ToolFinished, UsageRecorded (also known to the gateway), WorkSubmitted, DecisionRequested, SpecSubmitted, ReviewSubmitted, CheckpointSaved, TurnCompleted, Faulted, McpReady. Stage changes are decided by the host (§8.5), not reported by the worker.
 
 - The host validates results against its own verification records. An agent saying tests passed cannot override a non-zero exit code or a missing report.
 - **Pause** is implemented as cancel-then-resume: the agent loop repairs the transcript on cancel, and the next turn resumes from it.
@@ -765,7 +874,8 @@ These are the only changes to existing Litos code. All are opt-in or behavior-pr
 | --- | --- | --- |
 | Extract `Litos.Hosting`; move VsCodeHost onto it with no behavior change (own commit/PR, verified by `Litos.VsCodeHost.Tests` + manual VS Code smoke test) | new project + `Litos.VsCodeHost` | One copy of turn/cancel/PTC hosting code |
 | Add `GatewayChatProvider` | `Litos.SoftwareFactory.Worker` | Model gateway (§9.3) |
-| Add `request_decision` tool | factory worker (direct and kernel-bridged) | Decision cards (§11) |
+| Add completion tools `submit_work`, `request_decision`, `submit_review`, `submit_spec` | factory worker (direct and kernel-bridged) | Run orchestration contract (§8.5) |
+| Pre-send request estimator with per-model calibration | model gateway in `Litos.SoftwareFactory.Host` (reusing `EstimateChars` from `Litos.Agent/Session/Compaction.cs`) | Per-call reservation (§9.5) |
 | Make `MaxOutputTokens` effective in Gemini | `Litos.Providers.Gemini` | Strict budgets |
 | Add reasoning-token field to `UsageInfo`, filled where providers report it | `Litos.Agent`, providers | Budget contract (§9.1) |
 | Surface non-cancellation exceptions from compaction instead of losing them | worker turn handling | Currently swallowed by hosts |
@@ -806,20 +916,84 @@ V1 assumes **every account holder is trusted**. Anyone who can delegate to the f
 
 The `IWorkerLauncher` seam exists so this is a new launcher implementation, not a coordinator redesign.
 
-## 18. Build order
+## 18. Milestones
 
-Concurrency is designed in from the start, but the global slot cap stays at 1 until step 9 passes its acceptance scenarios.
+V1 is delivered in four milestones. **M1 exists to measure the riskiest assumption, that Litos can complete real tasks within a budget under this orchestration, before anything else is built on it.** Schema and interfaces are designed for the full V1 from the start (users, concurrency, stages), but features arrive milestone by milestone. The slot cap stays at 1 until M2.
 
-1. Extract `Litos.Hosting`; VsCodeHost moved onto it with no behavior change.
-2. Factory host skeleton: PostgreSQL in Docker, EF migrations, Identity, invitations, projects and membership, React shell with login.
-3. Threads and real Litos chat through the worker (read-only tools); SSE with replay; outbox.
-4. `@factory` dispatch: idempotent assignment, queue, repository lock, clone/branch, worker launch, cancel and pause.
-5. Model gateway: per-call reservation, ledger, quotas, precision labels, deterministic exhausted-budget report.
-6. Verification: the generic profile runner and report adapters, profile validation with a baseline run, changed-line coverage, bounded repair. Validate the .NET and Node/React presets first, then Python, Java and Go.
-7. Decision cards, agent review stage, handoff with commit, push and draft PR, human testing and rework.
-8. Board, turn labels, task types, flow metrics; optional spec stage.
-9. Recovery, external-edit detection (local-folder mode), acceptance validation. Then raise the slot cap.
-10. Lessons: CRUD, approval, retrieval, run snapshots; budgeted reflection jobs.
+### M1: thin slice and evaluation
+
+**In scope:**
+
+1. **Hosting library.** Extract `Litos.Hosting`; move VsCodeHost onto it with no behavior change. This is a separate PR, verified by `Litos.VsCodeHost.Tests` and a manual VS Code smoke test.
+2. **Worker.** `Litos.SoftwareFactory.Worker` with:
+   - the completion tools (§8.5);
+   - PTC on;
+   - the fixed default tool set, with no MCP or skills yet.
+3. **Host.**
+   - PostgreSQL in Docker, with EF migrations for the M1 tables: Project, TaskThread, Message, Specification, TaskRun, Decision, UsageReservation/UsageEntry, Verification, ReviewFinding, Handoff, WorkspaceLease, OutboxEvent.
+   - One seeded Admin account, local sign-in only.
+4. **Model gateway.** Per-call reservation, the estimator with calibration logging (§9.5), and the ledger. Providers Anthropic and OpenRouter.
+5. **Orchestration.** The full §8.5 sequence: implement, verify, repair, review, handoff, decisions, rework, limits and no-progress rules.
+6. **Verification.** The generic profile runner with JUnit XML, TRX and Cobertura/LCOV adapters, a baseline run, and changed-line coverage. The .NET and Node/React presets.
+7. **Git and GitHub.** Clone mode, task branches, push, draft PR (§6.1).
+8. **React UI**, the minimum:
+   - project registration;
+   - thread list and thread view (conversation, events, decision card, handoff card, budget panel);
+   - `@factory` only, with no chat before delegation.
+
+**Evaluation** (the M1 exit gate):
+
+- **Task set.** About 12 real, small, previously completed changes with known good outcomes:
+  - 8 from this repository (.NET);
+  - 4 from a React repository.
+
+  Each gets acceptance criteria written in advance, and is replayed from the parent commit.
+- **Measured per task:**
+  - accepted without manual code changes (yes/no);
+  - rework rounds;
+  - repair cycles;
+  - decisions asked, and whether each was warranted;
+  - tokens used;
+  - estimator error;
+  - wall-clock time;
+  - any mismatch between the handoff and the host's evidence.
+- **Exit criteria:**
+  - at least 7 of 12 tasks accepted with at most one rework;
+  - zero evidence mismatches;
+  - no budget overrun past the cap;
+  - 95th-percentile estimator under-estimate within the margin;
+  - no lock violations.
+- **If the gate is missed,** iterate on the prompts, orchestration and tools, and re-run the same task set, before starting M2.
+- **Results** are recorded per run, together with the prompt revision (§8.5). The task set is kept as a regression suite for later milestones.
+
+### M2: collaboration and concurrency
+
+- Identity with invitations, roles and project membership; per-user attribution and audit.
+- Chat before `@factory` (read-only tools) and the optional spec stage.
+- Board, whose-turn labels, task types.
+- Concurrency across repositories (the claim transaction, slot cap raised), queueing and waiting reasons.
+- SSE replay with durable sequence numbers; pause and cancel in the UI.
+- Recovery: Interrupted runs, liveness checks, reconciliation (§16).
+
+### M3: factory settings and breadth
+
+- Factory settings (§8.3):
+  - providers with the model catalog picker (§8.4);
+  - MCP servers;
+  - the skill library and repository-skill policy;
+  - tools;
+  - budgets, limits and quotas;
+  - verification presets.
+- All Litos providers, with strict/estimated labels. Gemini's output cap made effective.
+- Python, Java and Go presets validated; local-folder mode (§6.2).
+- Re-run the M1 task set, which must not regress.
+
+### M4: lessons, operations and V1 release
+
+- Lessons: CRUD, approval, retrieval, run snapshots; budgeted reflection jobs.
+- Flow metrics (§12.1) and operational counters (§24).
+- Backup and restore procedure, tested.
+- The full §19 acceptance scenarios pass, and the M1 task set does not regress. That is V1.
 
 ## 19. Acceptance scenarios for the factory itself
 
