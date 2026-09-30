@@ -1,0 +1,934 @@
+# Litos.SoftwareFactory — Version 1 Blueprint
+
+Date: 30 September 2026
+Revision: 3 — standalone multi-user host, React UI, GitHub branch handoff, model gateway, stages and board
+Status: Agreed design, not yet implemented. Statements about existing Litos code were checked against branch `litos-software-factory-v1`; everything else is a target.
+
+Revision history:
+
+- Rev 1 (28 Sep): single-user local factory, Blazor UI, SQLite.
+- Rev 2 (29 Sep): PostgreSQL factory state, approved project lessons. Shipped with `LitosSoftwareFactory_Demo.zip`.
+- Rev 3 (30 Sep): decisions from the design review. The main changes from Rev 2:
+  - a standalone `Litos.SoftwareFactory.Host` (Litos.Api stays untouched);
+  - a React SPA;
+  - trusted multi-user accounts;
+  - GitHub-cloned projects with branch-push handoff;
+  - per-run worker processes built on a new shared `Litos.Hosting` library;
+  - a model gateway with per-call token reservation;
+  - PTC on by default, with MCP, skills and web search available;
+  - parallel runs across repositories;
+  - optional spec stage, agent review pass, board view and flow metrics;
+  - stack-agnostic verification profiles (commands plus standard report formats) with coverage evidence; .NET and Node/React are the first presets.
+
+## 1. Product definition
+
+A chat-driven software factory that trusted users reach through a web browser. A user describes a change in a thread, discusses it with Litos, then delegates it with `@factory`. The factory:
+
+1. works on a factory-owned clone of the project's GitHub repository;
+2. implements the change with meaningful unit tests;
+3. builds, runs the unit tests and measures coverage of the changed lines;
+4. has the diff reviewed by an agent;
+5. pushes a task branch and optionally opens a draft PR;
+6. hands the result back to the same thread for human application testing.
+
+One change or feature = one thread. The factory works until one of these happens:
+
+- it produces a reviewable result;
+- it needs a human decision;
+- it hits a blocker;
+- it is stopped;
+- it cannot continue within the task's token allowance.
+
+Humans test the running application and decide acceptance. Passing unit tests never means the feature has passed application testing. Merging to the default branch is always a human action in GitHub.
+
+## 2. Scope and explicit exclusions
+
+### Included
+
+- Multiple **trusted** users with local username/password accounts, reaching the factory by URL on a machine or network the operator controls.
+- Admin-registered projects backed by GitHub repositories, cloned and managed by the factory. An optional local-folder mode is available for folders with no remote (§6.2).
+- Threads, real Litos conversation before delegation, `@factory` delegation, optional spec stage, pause/resume/cancel.
+- Reuse of the existing Litos engine, providers, tools, PTC kernel, MCP, skills and web search.
+- Code inspection, edits, dependency restore, compilation, unit tests and changed-line coverage for projects in any language or stack whose build and tests can run from the command line on the factory machine and produce standard reports (§10).
+- Agent code-review pass before handoff.
+- Human decisions, durable checkpoints, progress, diffs and test evidence in-thread.
+- Branch-push handoff with optional GitHub draft PR, human testing and same-thread rework.
+- Board view with "whose turn" labels, task type labels and flow metrics.
+- Concurrent runs on **different** repositories; never two factory runs on the same repository.
+- Per-task token budgets enforced before every model call, per-user quotas.
+- Durable factory state and approved project lessons in a dedicated PostgreSQL database.
+
+### Deferred
+
+- **Worker sandbox isolation (containers/VMs).** It is not needed while every user is trusted. It becomes mandatory before any untrusted or external user is given an account (§17).
+- Single sign-on (OIDC), two-factor authentication, self-service sign-up.
+- Git hosts other than GitHub.
+- Parallel factory work on the same repository (a later git-worktree mode).
+- Automated UI, browser, API, integration, database and end-to-end testing.
+- Application startup, deployment, merging, and live database migration execution.
+- Autonomous agent teams, visual workflow designers, automated triage of external issue feeds.
+- Built-in presets beyond the first ones (§10.2). Any other stack works through a custom profile; more presets are added as projects need them.
+- Report formats other than JUnit XML, TRX, Cobertura and LCOV. A stack whose runner cannot emit one of these needs a small converter or a new report adapter.
+
+The factory may write migration scripts when a task needs them. Executing them against a database and verifying the resulting application behavior remain human responsibilities.
+
+## 3. V1 decisions
+
+| Decision | V1 choice |
+| --- | --- |
+| UI | React + Vite + TypeScript SPA, served by the factory host |
+| Host | Standalone ASP.NET Core `Litos.SoftwareFactory.Host`, independent of Litos.Api |
+| Users | Invite-only local accounts (ASP.NET Core Identity), roles Admin and Member, all trusted |
+| Factory state | Dedicated PostgreSQL 18 database `litos_factory` in Docker, EF Core + Npgsql |
+| Projects | Registered by an Admin from a GitHub URL; factory-owned clone per project |
+| Delivery | Task branch `factory/<id>-<slug>` pushed at handoff; optional draft PR; humans merge |
+| Agent execution | One `Litos.SoftwareFactory.Worker` process per run, built on shared `Litos.Hosting` |
+| Model access | All model calls go through the host's model gateway; workers hold no provider keys |
+| Budget | Optional per-task cap, reserved and settled per model call; per-user quota |
+| Tools | read/write/edit/list/search/shell, PTC (`run_kernel_code`, on by default), skills, web search, allowlisted MCP |
+| Concurrency | Parallel across repositories under a global slot cap; one writer per repository |
+| Providers | Every provider Litos supports; budget precision shown per provider |
+| Verification | Stack-agnostic profiles: restore, build, unit-test and coverage commands plus standard report formats. Presets for .NET, Node/React, Python, Java and Go; custom profiles for anything else |
+| Completion | Factory returns `AwaitingHumanTesting`; a user marks `Accepted` |
+
+## 4. Main user flow
+
+1. An Admin registers a project (GitHub URL, default branch, verification profile, coverage threshold, members).
+2. A Member creates a thread in that project, picks a task type (bug, feature, refactor, chore) and optionally sets a model and token budget.
+3. The Member discusses the change with Litos. This is a real Litos conversation using read-only tools. It does not edit code, take a repository lock or charge the task budget.
+4. Optionally, `@factory spec` produces a written specification with acceptance criteria. The user approves or edits it.
+5. `@factory <request>` delegates. The host records the request, approved spec, decisions, budget, verification profile and relevant approved lessons.
+6. The factory acquires the repository, creates the task branch from the default branch, posts a concise plan and starts.
+7. It reads code, makes the change, and writes or updates unit tests.
+8. It builds, runs the unit tests and measures changed-line coverage, with bounded repair when they fail.
+9. It runs an agent review pass over the diff and addresses findings within the repair limit.
+10. It commits, pushes the branch, optionally opens or updates a draft PR, and posts the handoff.
+11. A tester pulls the branch and tests the application. They then either **Accept** or **Request changes** in the same thread; requesting changes adds new commits to the same branch.
+12. After acceptance the factory may propose up to three reusable lessons within the remaining budget. Users can Remember, Edit or Dismiss each one.
+
+There is no mandatory plan-approval pause. The factory asks only when a material choice cannot reasonably be inferred, an operation needs new authority, or the user asked for a spec.
+
+### Example thread
+
+User: `@factory Add CSV export for Orders. Administrator access only. Budget: 120,000 tokens.`
+
+Factory: `Assigned. Project: SalesApp (github.com/acme/salesapp), branch factory/7f3a-csv-export from main. I will inspect authorization, implement export, and run the unit-test profile. Application testing will be yours.`
+
+Factory: `Decision needed: should export include all filtered rows or only the current page? No further edits will run until you answer.`
+
+User: `All filtered rows.`
+
+Factory: `Ready for human testing. Branch factory/7f3a-csv-export pushed (commit 1c9e2b4), draft PR #212. Build passed. 18 unit tests passed (4 new). Changed-line coverage 91% (threshold 80%). Agent review: 1 finding fixed. Please check administrator export, non-administrator access, filters and an empty result.`
+
+User: `@factory CSV values containing commas are incorrect. Fix this.`
+
+The factory reopens the same task with the remaining cumulative budget and adds a commit to the same branch.
+
+User: **Accept** (structured action). A normal chat message is never treated as acceptance.
+
+## 5. Threads, stages and dispatch semantics
+
+- A **TaskThread** is the durable conversation and the home of one logical task inside one project. A **TaskRun** is one execution segment; several runs may belong to a thread.
+- Each thread has **one Litos session** for its whole life.
+  - Chat turns run with a read-only tool set.
+  - `@factory` turns continue the same session with the full tool set under the budget and repository lock.
+  - A run therefore starts with everything already discussed in context.
+  - Chat-turn tokens are counted against the user's quota and shown separately. They are not charged to the task budget.
+- Assignment is a structured composer mention rendered as `@factory`. A leading user-authored mention may also be parsed. Quoted text, code blocks, assistant messages and tool output never trigger delegation.
+- A unique message ID is the dispatch idempotency key. Double-clicks or network retries create one assignment.
+- Starting a run snapshots the request, approved spec and accepted corrections into a versioned task specification.
+- One active run per thread. A mention during execution becomes a follow-up instruction, not a second run.
+- Steering messages enter an inbox and are incorporated at a safe tool boundary. Pause and cancel go directly to the host.
+- A reply to a specific open decision resumes it when unambiguous. Other paused states need an explicit Resume or `@factory`.
+- Budget exhaustion cannot be bypassed by posting `@factory` again. The cap must be raised or a separate task started.
+- A thread's project is fixed. Work on a different repository needs a new thread.
+
+### 5.1 Stage and lifecycle are separate fields
+
+**Stage** records *what kind of work* the task is in:
+
+`Discuss → Spec (optional) → Implement → Verify → Review → Handoff → Done`
+
+**Lifecycle state** records *whether it is moving and who it waits for* (§7). A task can be `Implement / Running`, `Spec / AwaitingDecision`, `Handoff / AwaitingHumanTesting`, and so on. Keeping them separate lets new stages be added later without touching the state machine or schema.
+
+### 5.2 Spec stage (optional)
+
+`@factory spec` runs a read-mostly turn that produces a specification containing:
+
+- summary;
+- acceptance criteria, numbered;
+- affected areas;
+- test plan (which criteria unit tests will cover, which are manual-only);
+- open questions.
+
+The user approves it, possibly after editing, which creates a new revision. Implementation then starts from the approved revision. Acceptance criteria drive verification evidence and the handoff checklist. Small fixes may skip the stage.
+
+### 5.3 Agent review stage
+
+After build and tests pass, the host starts one review turn with fresh context and read-only tools. The turn receives the diff, the approved spec and the verification results. It reports findings (bugs, unmet criteria, missing tests, leftover debug code) as structured items.
+
+- Findings marked blocking consume one of the bounded repair cycles.
+- Everything else is listed in the handoff.
+- The review is charged to the task budget.
+- It is a single bounded pass, not an agent team.
+
+## 6. Projects, workspaces and repository ownership
+
+### 6.1 Default mode: factory-managed GitHub clone
+
+- An Admin registers a project with its GitHub URL, default branch, verification profile, coverage threshold and members. The host stores a **project-scoped GitHub credential**: a GitHub App installation or a fine-grained token limited to that repository. It is encrypted at rest with ASP.NET Core Data Protection and never given to workers.
+- The factory keeps one working copy per project under its data directory, for example `<FactoryData>/workspaces/<projectId>/`. Developers' own folders are never touched.
+- A new run fetches, creates `factory/<shortThreadId>-<slug>` from the latest default branch, and records the baseline commit.
+- **Handoff** is performed by the host, not the agent:
+  1. verify the diff and evidence;
+  2. commit as the factory identity with a `Co-authored-by:` trailer for the requesting user;
+  3. push the branch;
+  4. create or update the draft PR if the project enables it.
+- Rework runs check out the existing branch and add commits. The factory never force-pushes, rewrites history, merges or pushes to the default branch.
+- Because handoff leaves the working copy clean and the branch is pushed, the **repository lock is released at handoff** in this mode. Another thread may use the repository while the first awaits testing. Rework re-acquires the lock and checks out its branch.
+- Conflicts between factory branches are resolved by humans at merge time, as for any two branches.
+
+### 6.2 Optional mode: registered local folder
+
+This is for folders with no reachable Git remote. It keeps the Rev 2 behavior:
+
+- edits happen in place and are left uncommitted;
+- work requires a clean Git working directory, or recorded before-images for non-Git folders;
+- a **review hold** keeps the folder locked until acceptance, cancellation or explicit release;
+- the handoff offers **Download patch**.
+
+Only users who can reach the factory machine can test this mode.
+
+### 6.3 Repository lock
+
+- **Lock identity:**
+  - Clone mode: the project.
+  - Local-folder mode: the canonical Git common directory (`git rev-parse --git-common-dir`, real path), which covers worktrees, or the canonical folder path for non-Git folders. Parent and child folders conflict.
+- **What holds the lock:**
+  - Clone mode: an active run, or a run paused with uncommitted work (AwaitingDecision, PausedBudget, PausedUser, Blocked, Interrupted).
+  - Local-folder mode: additionally, AwaitingHumanTesting.
+- **Claiming:** a single serialized transaction that takes a PostgreSQL advisory lock, checks overlapping live leases, checks the global slot cap, and creates the lease and run. A unique index alone cannot express parent/child overlap.
+- **Waiting:** a queued thread shows exactly what it waits for, for example *Waiting for SalesApp — held by "Add CSV export" (awaiting decision)*.
+- **Expiry:** leases never expire silently. Recovery confirms process liveness first (§16).
+- **External edits:** in local-folder mode, users may still edit files. Before handoff the host re-hashes changed files. If content changed outside the run, it invalidates the test evidence and asks the user to reconcile.
+
+## 7. Coordinator and state machine
+
+Persist state in PostgreSQL. Never derive task status from the agent's chat memory.
+
+```mermaid
+stateDiagram-v2
+    Draft --> Queued: user delegates
+    Queued --> Running: lock, slot and worker acquired
+    Running --> AwaitingDecision: human choice needed
+    AwaitingDecision --> Queued: answer received
+    Running --> PausedBudget: next call does not fit allowance or quota
+    PausedBudget --> Queued: cap raised and resumed
+    Running --> PausedUser: user pauses
+    PausedUser --> Queued: user resumes
+    Running --> Blocked: environment or verification blocker
+    Blocked --> Queued: blocker resolved
+    Running --> AwaitingHumanTesting: handoff committed and pushed
+    AwaitingHumanTesting --> Queued: user requests changes
+    AwaitingHumanTesting --> Accepted: user accepts
+    Running --> Interrupted: host or worker lost
+    Interrupted --> Queued: explicit recovery
+    Queued --> Cancelled: user cancels
+    Running --> Cancelled: user cancels
+```
+
+- Pause and cancel also apply to waiting states.
+- Cancellation preserves edits, branches and evidence; it never reverts files or deletes branches.
+- Acceptance never merges.
+- Verification is tracked separately from lifecycle:
+  - build: `NotRun / Passed / Failed / Unavailable`;
+  - unit tests: `NotRun / Passed / Failed / NoTests / Unavailable`;
+  - coverage: `NotMeasured / Met / BelowThreshold / Unavailable`;
+  - agent review: `NotRun / Clean / FindingsFixed / FindingsOpen`;
+  - human testing: `NotStarted / Passed / Failed`.
+
+A result may be handed off with explicitly disclosed limitations, but never labeled as passing something that did not run.
+
+### 7.1 Board and "whose turn" labels
+
+The board groups threads into columns by stage. Every card carries exactly one turn label derived from lifecycle state:
+
+| Label | Lifecycle states |
+| --- | --- |
+| Awaiting you | AwaitingDecision, AwaitingHumanTesting, PausedBudget, Blocked, Interrupted |
+| Awaiting agent | Queued (with the lock/slot reason) |
+| Agent working | Running |
+| Paused | PausedUser |
+| Done | Accepted, Cancelled |
+
+Cards also show the task type label, project, owner, budget used/cap, branch and PR link. Filters: project, type, owner, label. "Awaiting you" is personal: it shows the items the current user must act on.
+
+## 8. Execution loop and deterministic boundaries
+
+**Coordinator (host) responsibilities:**
+
+- scheduling, repository ownership, slot cap and lifecycle transitions;
+- message ordering, budget accounting, quotas, timeouts and cancellation;
+- git operations (fetch, branch, commit, push, PR);
+- running configured verification commands and parsing structured reports;
+- checkpoints, status, decision and result messages.
+
+**Litos (worker) responsibilities:**
+
+- understand requirements, inspect code, and choose implementation details within scope;
+- modify code and write meaningful unit tests;
+- diagnose failures, make bounded repairs and explain results.
+
+Fixed orchestration decisions are not implemented as LLM conversations. The existing agent loop (`Litos.Agent/AgentLoop.cs`) is reused unchanged behind the worker. It is never copied.
+
+**Execution sequence:**
+
+`preflight → (spec) → inspect → plan → implement → build → unit tests + coverage → bounded repair → agent review → bounded repair → handoff`
+
+- At most two repair cycles in total after the first verification failure or blocking review finding. Persistent failure becomes `Blocked` even if tokens remain.
+- Configurable command and run wall-clock limits prevent no-progress hangs.
+
+**Tools in factory runs:**
+
+- `read_file`, `write_file`, `edit_file`, `list_directory`, `search_code`, `shell`;
+- `run_kernel_code` (PTC, **on by default**);
+- `skill`, `web_search`;
+- MCP tools from servers on the central allowlist (§8.1);
+- `request_decision` (new, §11).
+
+Chat turns before delegation get the read-only subset: read, list, search, skill, web search and allowlisted MCP.
+
+**Approvals:** routine tools keep Litos's existing auto-approval. MCP servers whose default permission is **Ask** are treated as **allowed** in factory runs, both inside kernel code (the kernel's existing rule in `Litos.Kernel/KernelSession.cs`) and on the direct tool path, so one tool behaves the same regardless of how the model called it. **Deny** is honored everywhere. The handoff lists the Ask-mode MCP tools that were actually used.
+
+Command restrictions and the run contract are host safeguards for trusted users. They do not protect against hostile code executing under the worker's OS account (§17).
+
+### 8.1 Central MCP allowlist
+
+An Admin maintains one factory-wide list of which configured MCP servers factory runs may start. The list is stored in `litos_factory`, and each run snapshots it at start (`RunCapabilitySnapshot`). Servers run with the factory machine's credentials, so every user effectively shares them. That is acceptable only under the trusted-user rule.
+
+MCP servers start fresh in each worker. The coordinator waits for the worker's "MCP ready" signal, not merely its port handshake, before the first turn. A slow server can take up to 30 seconds.
+
+### 8.2 Skills and web search
+
+Skills load from `~/.litos/skills`, `~/.claude/skills` and `.litos/skills` folders found walking up from the working copy (`Litos.Tools/Skills/SkillDiscovery.cs`). Skills in the target repository are authored by that repository's contributors and are treated as untrusted guidance. Each run records which skills were loaded. Search queries and result URLs are written to the run log.
+
+## 9. Token budget and the model gateway
+
+### 9.1 Budget contract
+
+- The optional cap belongs to the task and spans spec, planning, coding, repair, review, summarization, compaction, lesson reflection and rework. Every model request made for the task counts, including retries that incur usage.
+- Task tokens are provider-reported input plus output, including cached input and reasoning tokens where reported.
+  - Cached input is summed as `TotalInputTokens` (input + cache creation + cache read), because providers report those counts separately.
+  - Reported totals must not be double-counted.
+- This is a token allowance, not money or a context-window limit. Repeated prompt input consumes budget again even when cached pricing is cheaper. Tool schemas, MCP tool definitions, skill lists and retrieved lessons are part of every request's input.
+- Each user also has an optional **quota** (per day or per month) covering both chat and task usage.
+- The UI shows usage by provider/model and an optional estimated cost.
+
+### 9.2 Per-call reservation
+
+Every model call is admitted by the host before it is sent:
+
+1. Atomically read the task's used tokens, open reservations and the user's quota, under the thread's budget-row lock.
+2. Estimate the complete request input: system prompt, tool schemas and messages.
+3. Reserve that estimate plus a bounded output allowance plus a configurable margin (default 10%).
+4. If the reservation does not fit the remaining task allowance or the user's quota, refuse **before sending**. The run moves to `PausedBudget` with changes and checkpoint preserved.
+5. Otherwise send the call with the provider's output limit (`ChatRequest.MaxOutputTokens`) set so it cannot exceed the reservation.
+6. Settle against reported usage (`UsageInfo` on `MessageCompleted`) and release the unused reservation.
+7. If usage is unknown (timeout, cancellation, provider omitted usage), keep the reservation charged until reconciled. Never silently refund it.
+
+Example: cap 100,000; used 80,000. The next request is estimated at 15,000 input + 4,000 output + 10% = 20,900. That exceeds the 20,000 remaining, so the host pauses before spending anything.
+
+A unique request key per call prevents double-charging on repeated callbacks.
+
+On exhaustion:
+
+- stop dispatching model work;
+- let a bounded in-flight operation finish or time out;
+- preserve changes;
+- post progress, last verification, used/limit and next action.
+
+The final report is generated deterministically from saved state, with no further model call. Raising a cap changes the maximum, not the accounting history. Without a cap, cancellation, iteration and time limits still apply.
+
+### 9.3 Model gateway
+
+Workers never hold provider API keys. Every model request, including compaction and reflection, goes through the host:
+
+```text
+Worker process                                 Litos.SoftwareFactory.Host
+  AgentLoop / Compactor                          Model gateway
+    → GatewayChatProvider (IChatProvider) ─HTTP stream─►  admit + reserve (§9.2)
+      (no keys)                                            → real IChatProvider via Litos.Host
+    ◄── streamed AgentEvents ─────────────────────────── ← settle, write UsageEntry
+```
+
+- `GatewayChatProvider` is a small new `IChatProvider` in the worker. The agent loop already sends every call through a single `IChatProvider.StreamAsync` (`Litos.Agent/AgentLoop.cs`, `Litos.Agent/Session/Compactor.cs`), so no loop change is needed.
+- The gateway is the single place for per-provider concurrency limits. HTTP 429 (`ChatProviderRateLimitedException`) becomes "wait and retry with the reservation kept", not a failed run.
+- Provider keys belong to the host's own configuration (environment or secret store), not to the `~/.litos/config.json` of whichever account started it.
+
+### 9.4 Budget precision per provider
+
+All Litos providers are allowed. The UI labels each task's budget as **strict** or **estimated**:
+
+| Provider | Output cap honored | Usage reported | Budget label |
+| --- | --- | --- | --- |
+| Anthropic | Yes (defaults to 4096 when unset) | Input, output, cache create/read | Strict |
+| OpenRouter | Yes | Input, output, cached (detects inclusive vs separate reporting) | Strict |
+| OpenAI | Yes | Input, output (no cache breakdown) | Strict |
+| Gemini | **No — must be fixed** (`GeminiChatProvider` sets no generation config) | Prompt, candidates | Estimated until fixed |
+| Local, MeshApi | Yes | Input/output only when the server reports them; otherwise 0 | Estimated; host charges its own estimate when usage is 0 |
+
+Provider SDKs may retry internally without surfacing the usage. That is a documented accuracy limit.
+
+## 10. Verification: build, unit tests and coverage
+
+A build is a compilation check, not application testing. Dependency restore/install needed to compile is allowed and recorded.
+
+The factory is **stack-agnostic**. It does not know about any language or build tool. Each project has a reviewed **verification profile**, which is just data: the commands to run and the report formats they produce. The factory runs the commands and reads the reports. Supporting a new stack means writing a profile, not changing factory code.
+
+- Profiles use argument arrays, never concatenated shell strings.
+- Repository changes to verification configuration are untrusted until an Admin accepts them. An agent cannot redefine the gate to make its own task pass.
+- A multi-stack repository (for example an API and a web front end) lists several steps, each with its own working subdirectory, commands and reports.
+
+### 10.1 Profile schema
+
+```json
+{
+  "profileVersion": 2,
+  "environment": { "CI": "true" },
+  "steps": [
+    {
+      "name": "api",
+      "workingDirectory": "src/api",
+      "restore": { "executable": "<tool>", "arguments": ["..."], "timeoutSeconds": 600 },
+      "build":   { "executable": "<tool>", "arguments": ["..."], "timeoutSeconds": 600 },
+      "unitTests": [
+        { "executable": "<tool>", "arguments": ["..."], "timeoutSeconds": 300,
+          "testReport":     { "format": "junit", "path": "artifacts/test-results/*.xml" },
+          "coverageReport": { "format": "cobertura", "path": "artifacts/coverage/*.xml" } }
+      ]
+    }
+  ],
+  "coverage": { "changedLinesThresholdPercent": 80 },
+  "applicationTesting": "human",
+  "databaseExecution": "disabled",
+  "maximumRepairCycles": 2
+}
+```
+
+- **Every command is optional except unit tests.** An interpreted stack with nothing to compile leaves `build` out, and the handoff says *Build: not applicable*.
+- **Test report formats:** `junit` (JUnit XML), which most runners in most languages can emit, and `trx`. Anything else is converted to JUnit XML by a small step in the profile, or supported later by a new report adapter.
+- **Coverage formats:** `cobertura` and `lcov`, which cover most coverage tools across languages.
+- **Report paths** are globs relative to the step's working directory. The factory deletes stale reports before each run, so old results can never count as new evidence.
+
+### 10.2 Presets
+
+Presets are ready-made profiles an Admin picks when registering a project and then adjusts. They are data shipped with the factory, not special code paths. V1 ships these presets, with .NET and Node/React validated first:
+
+| Preset | Restore | Build | Unit tests (report) | Coverage |
+| --- | --- | --- | --- | --- |
+| .NET | `dotnet restore` | `dotnet build -nodeReuse:false` | `dotnet test --logger trx` (TRX) | coverlet, Cobertura |
+| Node / React | `npm ci` | `npm run build` | `vitest run --reporter=junit` or `jest --ci` with a JUnit reporter | `--coverage`, Cobertura or LCOV |
+| Python | `pip install -r requirements.txt` | none | `pytest --junitxml=...` | `coverage xml` (Cobertura) |
+| Java | `mvn -B dependency:resolve` | `mvn -B compile` | `mvn -B test` (Surefire JUnit XML) | JaCoCo converted to Cobertura |
+| Go | `go mod download` | `go build ./...` | `go test` with `go-junit-report` | `gocover-cobertura` |
+| Custom | any | any | any command writing JUnit XML or TRX | Cobertura or LCOV |
+
+The factory machine must have each stack's toolchain installed. Profile validation at registration checks that the executables exist and runs the profile once against the default branch. That baseline run also records pre-existing failures, so they are not blamed on a task.
+
+**Rules:**
+
+- **Non-interactive, non-watch execution.** The factory always sets `CI=true`, gives commands no standard input, and requires non-watch test commands. Several test runners (Vitest and Jest, for example) otherwise start in watch mode and would hang the run until its timeout.
+- **Build isolation between concurrent runs.** Profiles turn off build tools' shared background servers where a stack has them (for example MSBuild node reuse and the .NET build server). Otherwise concurrent builds of different repositories can share processes and file locks. Package caches (NuGet, npm, pip, Maven, Go modules) are safe to share.
+- **Recorded side effects.** Restore steps may run the repository's own install scripts (for example npm lifecycle scripts or Python build hooks). The run log records that they ran, and they fall under the "repository-provided config is untrusted" rule.
+- **Counts only from reports.** Pass/fail counts and coverage come only from the declared structured reports, never from parsing console text or the agent's own claims. A test command that exits non-zero with no report is *Failed (no report)*, never passed.
+- **Changed-line coverage.** Computed by intersecting the coverage report with the baseline-relative diff. Below the project threshold, it triggers a repair cycle; persistently below, it is disclosed in the handoff.
+- **Comprehensive unit tests are a requirement, shown as evidence.**
+  - Each acceptance criterion is mapped to the tests that cover it or marked *manual-only*.
+  - New and changed behavior must have tests.
+  - Tests that merely mirror the implementation are avoided.
+  - If a project has no test or coverage tooling, the factory asks via a decision card before adding it.
+  - It never invents counts.
+- **Explicit unit-test scope.** Configure explicit unit-test projects, packages, directories or reviewed filters. Do not run a whole solution or repository test command that also contains integration, database or UI suites.
+
+## 11. Human decisions and handoff
+
+**Decisions** are raised by the new `request_decision` tool. It is available both directly and from kernel code, and it ends the current turn.
+
+- A decision card includes:
+  - the question;
+  - why it blocks work;
+  - concrete options;
+  - a recommendation where appropriate;
+  - impacted files and behavior;
+  - a decision ID.
+- The run stops while awaiting the answer, and the answer is persisted in the task specification.
+- Typical triggers:
+  - an ambiguous business rule;
+  - conflicting external edits (local-folder mode);
+  - a dependency outside the agreed scope;
+  - no test or coverage tooling;
+  - a proposed destructive data operation (always manual).
+
+**The handoff contains:**
+
+- what changed, and which acceptance criteria it addresses;
+- branch name, commit SHA, draft PR link, and the baseline-relative diff with the changed-file list;
+- exact build and test commands, results, durations, new versus pre-existing tests, and changed-line coverage against the threshold;
+- agent review findings, fixed and open;
+- pre-existing failures, unverified behavior and known limitations;
+- migration scripts, labeled `Not applied / not database-tested`;
+- manual test steps with expected results and setup, derived from the acceptance criteria;
+- MCP tools used from Ask-mode servers, and skills loaded;
+- cumulative tokens used and remaining;
+- actions: Accept, Request changes, Resume (where applicable), Open PR, View diff, View logs, Download patch.
+
+The manual testing checklist is generated guidance, not evidence of testing. If budget is insufficient, feedback is collected but no model is invoked until the budget is adjusted.
+
+## 12. UI structure
+
+A React SPA with two main views.
+
+**Board:** columns by stage, turn labels, filters and flow metrics (§12.1).
+
+**Thread view**, in three regions:
+
+| Region | Contents |
+| --- | --- |
+| Left | Projects, threads, status badges, search/filter, "Awaiting you" count |
+| Center | Conversation, compact progress events, decision cards, spec, review findings, handoff, composer with `@factory` |
+| Right (collapsible) | Project and branch/PR, stage and lifecycle, model, budget used/cap/remaining with strict/estimated label, changed files, build/test/coverage/review results, lessons, MCP servers and skills included in the run |
+
+Additional areas:
+
+- **Project lessons panel:** pending suggestions, approved lessons, sources, revisions, and Remember/Edit/Dismiss/Disable actions.
+- **Admin area:** users and invitations, projects and members, GitHub credentials, verification profiles, the MCP allowlist, providers and models, global slot cap, quotas.
+
+**Controls by state:**
+
+- Before delegation, the composer shows the project, branch base and budget.
+- While running: Pause and Cancel.
+- In a budget pause: Change budget and Resume.
+- Awaiting human testing: Accept and Request changes.
+
+Post meaningful stage changes, not every thought or tool output. Large tool output goes to log artifacts, with bounded excerpts in chat.
+
+Live updates use Server-Sent Events carrying durable sequence numbers, so a reconnecting client replays everything after its last seen event (`Last-Event-ID`).
+
+Testing: Vitest and React Testing Library for components and state logic. The API client is mocked at the HTTP boundary.
+
+### 12.1 Flow metrics
+
+Per project and overall, shown on the board:
+
+- time spent in each stage and state;
+- tokens per task (by stage and model);
+- rework rounds per task;
+- first-handoff acceptance rate;
+- open decisions and the oldest one waiting;
+- queue wait time for repository locks and slots.
+
+Record lesson inclusion separately from evidence that a lesson helped.
+
+## 13. Architecture
+
+```text
+Browser (React SPA)
+  └─ HTTPS/cookie ─► Litos.SoftwareFactory.Host (ASP.NET Core, Windows, native)
+                       ├─ Identity (local accounts, roles, project membership)
+                       ├─ Factory API + SSE event stream (outbox-backed)
+                       ├─ Coordinator (BackgroundService): queue, locks, slots, stages, state machine
+                       ├─ Model gateway: admission, reservations, quotas, provider limits
+                       ├─ Git service: clone, fetch, branch, commit, push, GitHub PR API
+                       ├─ Verification runner (profile-driven) + report adapters (JUnit XML, TRX, Cobertura, LCOV)
+                       ├─ Lesson service
+                       ├─ Worker launcher (IWorkerLauncher: LocalProcessLauncher in V1)
+                       │    └─ Litos.SoftwareFactory.Worker (one process per run, cwd = working copy)
+                       │         ├─ Litos.Hosting: AgentWorker, turns, cancel, steering, PTC, MCP, skills
+                       │         ├─ GatewayChatProvider → host model gateway
+                       │         └─ Litos.Kernel.Host (PTC) child process
+                       └─ EF Core/Npgsql ─► PostgreSQL 18 (Docker) litos_factory
+                                         + factory data directory (working copies, logs, artifacts)
+```
+
+### 13.1 Projects
+
+```text
+Litos.SoftwareFactory.Web             React + Vite + TypeScript SPA (Vitest + React Testing Library)
+Litos.SoftwareFactory.Host      (exe) ASP.NET Core host: API, SSE, Identity, serves the SPA build, runs the coordinator
+Litos.SoftwareFactory.Core            Domain: states, stages, policies, budget, locks, lessons, board. No ASP.NET, no EF.
+Litos.SoftwareFactory.Infrastructure  EF Core FactoryDbContext + migrations, git/GitHub, worker launcher, verification runners
+Litos.SoftwareFactory.Worker    (exe) Per-run worker on Litos.Hosting
+Litos.Hosting                         Shared hosting library extracted from Litos.VsCodeHost
+```
+
+**Dependency rules:**
+
+- Host depends on Core and Infrastructure.
+- Worker depends on Litos.Hosting, which depends on Litos.Host, Litos.Agent, Litos.Tools, Litos.Kernel and Litos.Tools.Mcp.
+- Nothing references Litos.Api.
+- Core has no infrastructure dependencies and is covered by fast unit tests.
+
+**Unaffected existing projects:**
+
+- **Litos.Api** keeps its own purpose as the standalone agent server and is not modified.
+- **Litos.VsCodeHost** is refactored onto Litos.Hosting with no behavior change (§15.1).
+
+### 13.2 Litos.Hosting and the worker
+
+`Litos.Hosting` receives the parts of Litos.VsCodeHost that both programs need:
+
+- `AgentWorker`: per-session turns, start/steer/cancel, PTC wiring;
+- the SSE turns and cancel endpoints;
+- the PTC endpoints;
+- the approval relay;
+- loopback startup and the port handshake;
+- MCP, skill and web-search registration.
+
+It also gains extension points for the tool set, the chat provider, the model source and the session store location.
+
+VsCodeHost keeps its VS Code-specific endpoints: key entry, MCP management, file mentions, attachments, share_file, branch/compact/reflect, and model selection persisted to `~/.litos/config.json`.
+
+**`Litos.SoftwareFactory.Worker` adds:**
+
+- a per-launch secret required on every request, plus a `Host` header check;
+- `GatewayChatProvider`, with no provider keys in its environment;
+- PTC enabled at session start;
+- the factory tool set, MCP limited to the run's allowlist snapshot, and the `request_decision` tool;
+- provider/model from launch arguments, never written to `~/.litos/config.json`;
+- transcripts in the factory data directory, so they do not appear in VS Code session history;
+- exit when the parent host process exits;
+- no database connection string in its environment.
+
+The worker's current directory is the working copy. That matters because `ShellTool` inherits the process directory and sets none of its own.
+
+### 13.3 Authentication and access
+
+- **Accounts:** ASP.NET Core Identity with local username/password accounts. Admins invite users; there is no self-service sign-up.
+- **Sign-in:** cookie authentication, same origin as the SPA, so no bearer tokens are stored in the browser. CSRF protection for state-changing requests, a password policy, lockout after repeated failures, and rate-limited sign-in.
+- **Roles:** Admin (users, projects, credentials, profiles, allowlist, providers, limits) and Member (threads and delegation in projects they belong to, decisions, acceptance, lesson approval for those projects).
+- **Authorization:** every API call checks project membership. Every action records the acting user.
+- **Transport:** bind to loopback by default. When exposed on a network, terminate HTTPS at the host or a reverse proxy, with SSE buffering disabled and keep-alives enabled.
+- **Secrets:** GitHub credentials and provider keys stay in the host (Data Protection or environment). They are never placed in messages, lessons, checkpoints, logs or worker environments.
+
+## 14. Persisted records
+
+All primary keys are UUIDs. Timestamps are `timestamptz` in UTC. Token counts and caps are `bigint`.
+
+| Record | Important fields |
+| --- | --- |
+| User / Role (Identity) | Identity tables, display name, disabled flag, quota |
+| Invitation | Email/username, role, token hash, expiry, inviter |
+| Project | Name, GitHub owner/repo, default branch, mode (Clone/LocalFolder), PR enabled, coverage threshold, credential reference |
+| ProjectMember | Project, user, role in project |
+| Workspace | Project, machine, canonical path, lock identity |
+| VerificationProfile | Project, revision, JSON profile, approved by/at |
+| TaskThread | Project, owner, title, type label, stage, lifecycle state, spec revision, budget cap, branch, PR URL, session ID |
+| Message | Thread, author user or agent, role/type, text, sequence, dispatch key, decision reference |
+| Specification | Thread, revision, summary, acceptance criteria (JSONB), approved by/at |
+| TaskRun | Thread, kind (Chat/Spec/Implement/Review/Reflection), status, baseline commit, head commit, worker PID and start time, checkpoint, heartbeat, stop reason |
+| Decision | Run, question/options/recommendation, status, answer message, answered by |
+| UsageReservation / UsageEntry | Request key, run, user, provider/model, estimate, reserved, actual input/cached/output/reasoning, status (Reserved/Settled/Unknown) |
+| ToolExecution | Run, tool, start/end, exit code, artifact reference |
+| Verification | Run, profile revision, kind, result, counts, changed-line coverage, command, diff hash, report and log references |
+| ReviewFinding | Run, severity, file/line, text, status (Open/Fixed/Dismissed) |
+| ChangeSet | Baseline, file manifest, patch reference, content hashes |
+| Handoff | Run, commit SHA, branch, PR number/URL, pushed by, evidence summary |
+| WorkspaceLease | Lock identity, owning thread/run, kind (Active/ReviewHold), heartbeat, recovery-required flag |
+| McpAllowlistEntry | Server name, enabled for factory, added by/at |
+| RunCapabilitySnapshot | Run, allowed MCP servers, loaded skills, model, provider precision label |
+| ProjectLesson / LessonRevision / RunLessonSnapshot | As in Rev 2 (§21–22) |
+| ReflectionJob | Thread, accepted spec revision, status, usage reference, retry state |
+| OutboxEvent | Thread/project, payload, sequence, created/delivered timestamps |
+| AuditEvent | User, action, target, timestamp, details |
+
+**Constraints and indexes:**
+
+- unique `(thread_id, message_sequence)` and a unique dispatch key;
+- one active run per thread;
+- live lease uniqueness per lock identity, with overlap resolved in the claim transaction;
+- a global slot count;
+- a unique usage request key;
+- unique `(lesson_id, revision)` and `(run_id, lesson_id)`;
+- unique reflection job `(thread_id, accepted_spec_revision)`;
+- indexes on queued eligibility, board queries (project, stage, state), undelivered outbox events and per-user usage by period;
+- composite foreign keys carrying the project ID, so no source, lesson, run or thread can be attached across projects.
+
+**Transaction rules:**
+
+1. Persist the user message, dispatch key, spec revision and Queued state in one transaction.
+2. Claim work in a short serialized transaction: advisory lock, lease check, slot check, run creation, outbox event. Never hold a transaction open while a worker, git or build command runs.
+3. Commit each state transition together with its checkpoint reference and outbox event. Deliver events at least once; clients deduplicate by event ID and replay by sequence.
+4. Use optimistic revision checks for user actions: acceptance, decision answers, spec and lesson edits. Stale actions return a conflict.
+5. If the database is unavailable, stop new model and tool dispatch. Let running bounded commands settle, and reconcile before continuing.
+
+## 15. Host/worker contract
+
+**Launch:** the host starts the worker with:
+
+- working directory = working copy;
+- an environment containing only the per-launch secret, the gateway URL, and non-secret settings;
+- arguments: run and session IDs, model/provider, and the capability snapshot reference.
+
+The worker prints its port on stdout. The host captures stdout and stderr into run logs.
+
+**Host → worker:** StartTurn (the prompt and the tool-set kind), Steer, Cancel, AnswerDecision (resumes with a new turn), Shutdown.
+
+**Worker → host events:** StageChanged, ToolStarted, ToolFinished, UsageRecorded (also known to the gateway), DecisionRequested, CheckpointSaved, TurnCompleted, Faulted, McpReady.
+
+- The host validates results against its own verification records. An agent saying tests passed cannot override a non-zero exit code or a missing report.
+- **Pause** is implemented as cancel-then-resume: the agent loop repairs the transcript on cancel, and the next turn resumes from it.
+- **Hard cancel** kills the worker's process tree, which also stops shell commands started from kernel code.
+
+Checkpoints are persisted after meaningful edits, tool completion, decisions and stage transitions. They contain the specification, progress, modified-file hashes, last command outcome, next action and log references. They never contain credentials.
+
+### 15.1 Engine and host changes required
+
+These are the only changes to existing Litos code. All are opt-in or behavior-preserving.
+
+| Change | Where | Why |
+| --- | --- | --- |
+| Extract `Litos.Hosting`; move VsCodeHost onto it with no behavior change (own commit/PR, verified by `Litos.VsCodeHost.Tests` + manual VS Code smoke test) | new project + `Litos.VsCodeHost` | One copy of turn/cancel/PTC hosting code |
+| Add `GatewayChatProvider` | `Litos.SoftwareFactory.Worker` | Model gateway (§9.3) |
+| Add `request_decision` tool | factory worker (direct and kernel-bridged) | Decision cards (§11) |
+| Make `MaxOutputTokens` effective in Gemini | `Litos.Providers.Gemini` | Strict budgets |
+| Add reasoning-token field to `UsageInfo`, filled where providers report it | `Litos.Agent`, providers | Budget contract (§9.1) |
+| Surface non-cancellation exceptions from compaction instead of losing them | worker turn handling | Currently swallowed by hosts |
+| Pass the turn's cancellation token to kernel-bridged tool calls (today `CancellationToken.None`) | `Litos.Kernel/KernelSession.cs` | Graceful pause/cancel of long commands; the hard kill remains a fallback |
+| Extension points for model source, session store location and tool set | `Litos.Hosting` | Worker isolation from the shared `~/.litos/config.json` and VS Code session history |
+
+The agent loop (`AgentLoop.RunTurnAsync`) is not modified.
+
+## 16. Crash, pause and recovery behavior
+
+- **Host restart:** mark runs whose worker is gone as Interrupted. Check worker liveness by PID *and* process start time, not by heartbeat alone. Workers exit when the host exits. Never blindly re-run work.
+- **Worker crash:** preserve the working copy and logs. Offer Resume after checking git status against the checkpoint and open usage reservations.
+- **Pause:** stop new tool/model dispatch, settle or cancel the running bounded operation, checkpoint.
+- **Cancel:** terminate the worker process tree, report interrupted commands, preserve edits and branch.
+- **Unknown command result:** inspect before retrying, since commands may have side effects.
+- **Interrupted test run:** reported as incomplete, never as pass or fail evidence.
+- **Push failure** (credential, network, protected branch): the task becomes `Blocked` with the reason. Local commits are kept, and the push is retried on Resume.
+- **Durability limit:** local disk failure is a V1 limit. Factory backups (§24) are separate from repository backups.
+
+## 17. Trust model and the sandbox tripwire
+
+V1 assumes **every account holder is trusted**. Anyone who can delegate to the factory can cause arbitrary commands to run on the factory machine under the worker's OS account, through shell, PTC or MCP. That includes reading other projects' working copies and anything that account can reach. Text retrieved by web search can also steer the agent.
+
+**Mitigations in V1:**
+
+- invite-only accounts;
+- project membership checks;
+- a full audit trail;
+- no database or GitHub credentials, and no provider keys, in worker environments;
+- the MCP allowlist;
+- recommended: run workers under a dedicated low-privilege Windows account with access only to the factory data directory.
+
+**Tripwire:** before any untrusted or external user receives an account, per-run sandbox isolation becomes mandatory:
+
+- a container or VM per run;
+- restricted outbound network;
+- MCP servers split into host-side and sandbox-side.
+
+The `IWorkerLauncher` seam exists so this is a new launcher implementation, not a coordinator redesign.
+
+## 18. Build order
+
+Concurrency is designed in from the start, but the global slot cap stays at 1 until step 9 passes its acceptance scenarios.
+
+1. Extract `Litos.Hosting`; VsCodeHost moved onto it with no behavior change.
+2. Factory host skeleton: PostgreSQL in Docker, EF migrations, Identity, invitations, projects and membership, React shell with login.
+3. Threads and real Litos chat through the worker (read-only tools); SSE with replay; outbox.
+4. `@factory` dispatch: idempotent assignment, queue, repository lock, clone/branch, worker launch, cancel and pause.
+5. Model gateway: per-call reservation, ledger, quotas, precision labels, deterministic exhausted-budget report.
+6. Verification: the generic profile runner and report adapters, profile validation with a baseline run, changed-line coverage, bounded repair. Validate the .NET and Node/React presets first, then Python, Java and Go.
+7. Decision cards, agent review stage, handoff with commit, push and draft PR, human testing and rework.
+8. Board, turn labels, task types, flow metrics; optional spec stage.
+9. Recovery, external-edit detection (local-folder mode), acceptance validation. Then raise the slot cap.
+10. Lessons: CRUD, approval, retrieval, run snapshots; budgeted reflection jobs.
+
+## 19. Acceptance scenarios for the factory itself
+
+1. A normal chat message never edits code; one explicit assignment starts exactly one run.
+2. A small feature produces a pushed branch, draft PR, real unit-test and coverage evidence, then waits for human testing.
+3. Two threads on the same repository never run at the same time. Threads on different repositories run in parallel up to the slot cap.
+4. In clone mode, a task awaiting human testing does not block a new task on the same repository. Rework re-acquires the lock and adds commits without force-pushing.
+5. A decision pauses execution, and a linked answer resumes it without losing context.
+6. A small allowance refuses the next unaffordable call before sending it, and a deterministic handoff still appears.
+7. Raising a cap preserves prior usage and resumes the same task.
+8. A provider timeout with unknown usage cannot silently refund the allowance. A 429 waits and retries without losing the reservation.
+9. A failing unit test or blocking review finding triggers bounded repair; persistent failure is reported honestly.
+10. Test counts and coverage come only from structured reports. A test runner left in watch mode cannot hang a run past its timeout.
+11. No integration tests, app startup, deployment, merge or database changes occur under the profile.
+12. A host or worker restart recovers task state without duplicating unsafe operations, and never steals a lock from a live worker.
+13. A Member cannot see or act on projects they do not belong to. Every action is attributed to its user.
+14. Workers never receive provider keys, the GitHub credential or the database connection string.
+15. Accept records approval without merging or deploying.
+16. A pending, dismissed or disabled lesson is never retrieved, and no lesson leaks across projects.
+17. Editing a lesson preserves past run snapshots.
+18. Reflection cannot exceed the task budget or block acceptance. Manual lesson saving needs no model call.
+19. Duplicate messages, acceptances or reflection retries create no duplicate runs or proposals.
+20. Loss of the database stops new dispatch.
+
+## 20. PostgreSQL: factory state, not the application's database
+
+`litos_factory` holds the coordinator's records, users, conversations, decisions, usage, locks, lessons and audit trail for all projects. It is never a target application's test database, and coding tasks never receive its credentials.
+
+EF Core with Npgsql is the persistence stack, and EF Core migrations are the single migration authority for this schema:
+
+- relational columns for identity, ownership, lifecycle, revisions, budgets and timestamps;
+- JSONB for bounded structured payloads (checkpoints, verification details, acceptance criteria);
+- large logs, patches and reports stored in the factory data directory, with relative paths, sizes and hashes in the database.
+
+### Local development
+
+```yaml
+# compose.factory-state.yml — development only; pair with a private .env file
+services:
+  factory-db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: litos_factory
+      POSTGRES_USER: factory_admin
+      POSTGRES_PASSWORD: ${FACTORY_DB_ADMIN_PASSWORD:?Set FACTORY_DB_ADMIN_PASSWORD}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - factory_state:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factory_admin -d litos_factory"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+volumes:
+  factory_state:
+```
+
+Port 5433 avoids clashing with any existing PostgreSQL on 5432.
+
+**Roles:**
+
+- `factory_admin`: bootstrap only.
+- a migration role: owns the schema.
+- `factory_runtime`: least-privilege role used by the host at runtime.
+
+The host reads `ConnectionStrings__FactoryState` from its private environment or secret configuration, for example `Host=127.0.0.1;Port=5433;Database=litos_factory;Username=factory_runtime;Password=<secret>`. Connection strings never reach browser code or workers. Changing the init variables does not rotate credentials in an existing volume, and removing the named volume deletes all factory state.
+
+## 21. Lessons: the V1 self-improvement loop
+
+Unchanged from Rev 2 except for multi-user attribution.
+
+The factory improves by retaining reviewed, reusable guidance per project. It does not train models or rewrite its own policies.
+
+**What makes a good lesson:**
+
+- Suitable: business rules corrected by a human, project conventions with a source, and repeated implementation guidance.
+- Avoid: secrets, raw logs, stack traces, transient failures, speculation, whole source files and one-off instructions.
+
+**Lifecycle:** `Suggested → Approved` or `Suggested → Dismissed`. Approved lessons may be disabled, edited into a new revision, re-enabled, or superseded by an explicitly linked replacement. Pending suggestions are never execution context.
+
+1. At acceptance, persist the accepted revision and a reflection job independently of the accepted state.
+2. If useful evidence and budget exist, a reflection turn proposes zero to three lessons, each citing the human correction, decision or evidence behind it. Zero is a valid result.
+3. The thread shows the rule, scope, topics, source and reason, with **Remember for project**, **Edit** and **Dismiss**.
+4. A structured approval by a project Member activates exactly the reviewed revision and records the approving user. Saving an agent draft is not approval. A user-written lesson may use **Save and approve**.
+5. Later delegations retrieve a bounded set of relevant approved lessons and copy their exact revisions into the run.
+6. The UI shows which lessons were included and links to their sources.
+
+The agent can only propose. It cannot approve, overwrite approved guidance, write SQL or change budgets. Exact duplicate proposals are detected by normalized text. Possible semantic duplicates or contradictions are shown to a human, never merged silently.
+
+## 22. Lesson retrieval and context assembly
+
+- **Retrieval.** Deterministic topic matching over approved, enabled lessons in the task's project, against the request, title and task type label. Ranked by topic overlap and component/path applicability, with stable tie-breaking. No embeddings or extra model call in V1.
+- **Limits.** Defaults: at most five lessons and 1,500 input tokens, also bounded by the remaining budget. Users may select a missed lesson manually; manual selections that cannot fit are reported.
+
+**Context order:**
+
+1. Stable system and tool instructions.
+2. The factory execution contract and approved verification profile.
+3. Retrieved project lessons, marked as guidance with IDs, revisions and evidence links.
+4. Task request, approved spec, decisions, and current code/tool context.
+
+- **Prompt cache.** Keep the stable prefix unchanged, for prompt-cache usefulness.
+- **Snapshots.** Take a snapshot once per run. Resume with the same snapshot. Refresh on rework or explicit request, visibly.
+- **Authority.** Authority comes from host policy, not prompt order. A lesson cannot enable integration tests, database writes, deployment, merging or unlimited tokens. If a lesson and current evidence conflict materially, ask instead of guessing.
+- **Audit.** `RunLessonSnapshot` records the ID, revision, copied text, retrieval reason and inclusion time.
+
+## 23. Reflection jobs and lesson API
+
+Reflection is a small optional turn through the same worker and model gateway, charged to the accepted task's budget.
+
+- **States:** `Pending`, `Running`, `DeferredBudget`, `Completed`, `Failed`, `Skipped`.
+- **Commit acceptance first.** Reflection failure or lack of budget never undoes acceptance or holds a repository lock.
+- **Usage.** Unknown usage keeps its reservation.
+- **Duplicates.** Proposals are persisted with job completion under stable identities, so retries cannot duplicate them.
+- **No budget left:** “Task accepted. Lesson reflection is deferred; increase the allowance, add a lesson manually, or skip.”
+
+| Operation | Contract |
+| --- | --- |
+| List project lessons | `GET /api/projects/{projectId}/lessons?status=` |
+| Create human lesson | `POST /api/projects/{projectId}/lessons` |
+| Approve | `POST /api/lessons/{id}/approve` (expected revision, idempotency key) |
+| Edit | `POST /api/lessons/{id}/revisions` (expected revision, approval intent) |
+| Dismiss / enable / disable | Explicit commands with expected revision; audited |
+| Inspect run context | `GET /api/runs/{runId}/lessons` |
+| Retry / skip reflection | Thread reflection action, subject to budget and job state |
+
+Every call is authenticated and checked against project membership.
+
+## 24. Migrations, backups and operations
+
+**Migrations:**
+
+- The factory schema has its own EF Core migration history. Released migrations are immutable; corrections are forward migrations.
+- Upgrades run through a trusted setup command using the migration role, before dispatch starts. The host fails clearly on a schema/application version mismatch.
+- A coding task can never trigger factory migrations.
+
+**Backups:**
+
+1. Pause dispatch and settle active commands.
+2. `pg_dump` in custom format.
+3. Copy the referenced artifacts plus a manifest.
+4. Restart.
+
+Store backups off the machine and test restores into a separate database and location.
+
+**On restore:**
+
+- mark unfinished runs Interrupted;
+- reconcile locks and unknown usage;
+- validate artifact hashes;
+- require explicit recovery.
+
+GitHub branches are the durable copy of handed-off code. Unpushed work in working copies is not covered by factory backups.
+
+**Operational counters:**
+
+- queued, running and paused tasks;
+- oldest pending decision;
+- unreconciled reservations;
+- worker heartbeats;
+- outbox backlog;
+- push failures;
+- reflection failures;
+- per-user usage against quota;
+- the flow metrics in §12.1.
+
+## 25. Demo ZIP
+
+`LitosSoftwareFactory_Demo.zip` is the Rev 2 browser prototype: plain HTML/CSS/JavaScript with simulated workers, fixed per-stage token charges and `localStorage` state. It never opens a repository, calls a model or connects to a database.
+
+It remains useful as a reference for the thread, state and lesson UX. It is not a code base for the React application.
+
+To run it:
+
+1. Extract the ZIP.
+2. Run `py -3 serve.py` in `LitosSoftwareFactory_Demo`.
+3. Open `http://127.0.0.1:8080`.
+
+## 26. References
+
+- Zach Lloyd, “Software Engineering Is Becoming Factory Engineering” (AI Engineer, Warp), https://www.youtube.com/watch?v=tUPPVhBBcoM. This was the source for the board, "whose turn" labels, spec stage, agent review and flow metrics. The transcript was not directly accessible; the design drew on a written summary and Warp's public board at https://build.warp.dev.
+- PostgreSQL 18 SELECT and row locking: https://www.postgresql.org/docs/18/sql-select.html
+- PostgreSQL SQL dump backups: https://www.postgresql.org/docs/18/backup-dump.html
+- Official PostgreSQL Docker image: https://hub.docker.com/_/postgres
+
+Validate the coordinator, schema migrations, GitHub integration and restore process against pinned dependency versions before release.
