@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Litos.Agent.Session;
 using Litos.Agent.Tools;
+using Litos.Hosting;
 using Litos.VsCodeHost;
 
 namespace Litos.VsCodeHost.Files;

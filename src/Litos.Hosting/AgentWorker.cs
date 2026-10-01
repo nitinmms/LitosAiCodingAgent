@@ -8,7 +8,7 @@ using Litos.Agent.Tools;
 using Litos.Host;
 using Litos.Kernel;
 
-namespace Litos.VsCodeHost;
+namespace Litos.Hosting;
 
 public enum TurnOutcome
 {
@@ -17,10 +17,15 @@ public enum TurnOutcome
 }
 
 /// <summary>
-/// Litos.Api's AgentWorker, trimmed for this single-user local host: no attachment queueing
+/// Litos.Api's AgentWorker, trimmed for a single-user local host: no attachment queueing
 /// (queueIfActive path — text-only turns always steer into an already-running turn rather than
 /// queue, since there are no ImageBlocks to lose), otherwise the same per-session-key turn
 /// lifecycle over the same Litos.Host/AgentLoop.
+///
+/// Shared by Litos.VsCodeHost and the software factory's worker. What differs between them —
+/// where the provider/model comes from, which tools a turn gets, and which directory it runs
+/// in — sits behind IModelSelection, IToolSetPolicy and IWorkingDirectoryResolver; the first
+/// constructor below wires the defaults that reproduce Litos.VsCodeHost's behaviour.
 /// </summary>
 public sealed class AgentWorker : BackgroundService
 {
@@ -28,8 +33,10 @@ public sealed class AgentWorker : BackgroundService
     private readonly Dictionary<(SessionOwner Owner, string SessionId), ActiveTurn> _activeTurns = [];
     private readonly IChatProviderFactory _providerFactory;
     private readonly AgentLoopFactory _loopFactory;
-    private readonly ToolRegistryFactory _toolRegistryFactory;
     private readonly ITranscriptStore _transcriptStore;
+    private readonly IModelSelection _modelSelection;
+    private readonly IToolSetPolicy _toolSetPolicy;
+    private readonly IWorkingDirectoryResolver _workingDirectoryResolver;
 
     /// <summary>
     /// Owns this host's chatSessionId -> KernelSession map. Null when kernel mode is unavailable
@@ -39,55 +46,41 @@ public sealed class AgentWorker : BackgroundService
     private readonly KernelSessionManager? _kernelSessionManager;
     private readonly CancellationTokenSource _stopping = new();
 
-    private readonly Lock _settingsLock = new();
-    private LitosConfig _config;
-    private string _providerName;
-    private string _model;
-    private int? _contextLength;
-
     public AgentWorker(
         IChatProviderFactory providerFactory, AgentLoopFactory loopFactory, ToolRegistryFactory toolRegistryFactory,
         ITranscriptStore transcriptStore, LitosConfig config, KernelSessionManager? kernelSessionManager = null)
+        : this(
+            providerFactory, loopFactory, transcriptStore,
+            new PersistedModelSelection(providerFactory, config), new DefaultToolSetPolicy(toolRegistryFactory),
+            new TranscriptWorkingDirectoryResolver(), kernelSessionManager)
+    {
+    }
+
+    public AgentWorker(
+        IChatProviderFactory providerFactory, AgentLoopFactory loopFactory, ITranscriptStore transcriptStore,
+        IModelSelection modelSelection, IToolSetPolicy toolSetPolicy, IWorkingDirectoryResolver workingDirectoryResolver,
+        KernelSessionManager? kernelSessionManager = null)
     {
         _providerFactory = providerFactory;
         _loopFactory = loopFactory;
-        _toolRegistryFactory = toolRegistryFactory;
         _transcriptStore = transcriptStore;
+        _modelSelection = modelSelection;
+        _toolSetPolicy = toolSetPolicy;
+        _workingDirectoryResolver = workingDirectoryResolver;
         _kernelSessionManager = kernelSessionManager;
-        _config = config;
-
-        _providerName = config.IsProviderConfigured(config.DefaultProvider)
-            ? config.DefaultProvider
-            : config.AvailableChatProviders.FirstOrDefault()
-                ?? throw new InvalidOperationException(
-                    "No API key found for any chat provider. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, or LOCAL_BASE_URL.");
-        _model = config.DefaultModel ?? "";
     }
 
     /// <summary>The provider a *new* turn will use — same process-wide (not per-session) semantics
     /// as Litos.Api's AgentWorker/Litos.Gui's MainWindowSession. A turn already running keeps
     /// whatever provider/model it snapshotted at its own start (see RunTurnCoreAsync).</summary>
-    public string ProviderName
-    {
-        get { lock (_settingsLock) return _providerName; }
-    }
+    public string ProviderName => _modelSelection.ProviderName;
 
-    public string? Model
-    {
-        get { lock (_settingsLock) return string.IsNullOrEmpty(_model) ? null : _model; }
-    }
+    public string? Model => _modelSelection.Model;
 
-    /// <summary>The current model's context window size, resolved alongside the model itself
-    /// (constructor's default, SwitchProviderAsync, SetModel, EnsureModelResolvedAsync's own
-    /// fallback) — same "resolved once per provider/model switch, not per turn" caching Gui's
-    /// MainWindowSession.ContextLength uses. Null until a model carrying ModelInfo.ContextLength
-    /// has been resolved at least once (e.g. before the first turn's EnsureModelResolvedAsync).</summary>
-    public int? ContextLength
-    {
-        get { lock (_settingsLock) return _contextLength; }
-    }
+    /// <summary>The current model's context window size — see IModelSelection.ContextLength.</summary>
+    public int? ContextLength => _modelSelection.ContextLength;
 
-    public IReadOnlyList<string> AvailableProviders => _config.AvailableChatProviders;
+    public IReadOnlyList<string> AvailableProviders => _modelSelection.AvailableProviders;
 
     public Task<IReadOnlyList<ModelInfo>> ListModelsAsync(string providerName, CancellationToken ct) =>
         _providerFactory.Resolve(providerName).ListModelsAsync(ct);
@@ -95,44 +88,13 @@ public sealed class AgentWorker : BackgroundService
     /// <summary>Switches the provider a *new* turn will use, resetting to that provider's own
     /// default model — model ids aren't portable across providers, same rule Litos.Api/Litos.Gui's
     /// own /provider-equivalent commands follow.</summary>
-    public async Task SwitchProviderAsync(string providerName, CancellationToken ct)
-    {
-        var models = await _providerFactory.Resolve(providerName).ListModelsAsync(ct);
-        var defaultModelInfo = models.FirstOrDefault(m => m.IsDefault) ?? models.FirstOrDefault()
-            ?? throw new InvalidOperationException($"Provider '{providerName}' returned no models.");
-
-        lock (_settingsLock)
-        {
-            _providerName = providerName;
-            _model = defaultModelInfo.Id;
-            _contextLength = defaultModelInfo.ContextLength;
-            SaveLastUsedProviderAndModel();
-        }
-    }
+    public Task SwitchProviderAsync(string providerName, CancellationToken ct) =>
+        _modelSelection.SwitchProviderAsync(providerName, ct);
 
     /// <summary>Switches the model a *new* turn will use, keeping the current provider. Looks up
     /// the new model's ContextLength from the same ListModelsAsync call /settings/models already
     /// makes for the picker, so this stays a cache lookup rather than a second network round-trip.</summary>
-    public void SetModel(string modelId, int? contextLength)
-    {
-        lock (_settingsLock)
-        {
-            _model = modelId;
-            _contextLength = contextLength;
-            SaveLastUsedProviderAndModel();
-        }
-    }
-
-    /// <summary>Persists the just-changed provider/model to ~/.litos/config.json so the next
-    /// Litos.VsCodeHost process (spawned on the next VS Code launch, or after a saveKeys respawn)
-    /// starts with the same selection instead of falling back to DefaultModel: null — the same
-    /// write-on-select approach Litos.Gui's own SaveLastUsedProviderAndModel uses. Must be called
-    /// under _settingsLock, since it reads _providerName/_model.</summary>
-    private void SaveLastUsedProviderAndModel()
-    {
-        _config = _config with { DefaultProvider = _providerName, DefaultModel = _model };
-        _config.Save();
-    }
+    public void SetModel(string modelId, int? contextLength) => _modelSelection.SetModel(modelId, contextLength);
 
     /// <summary>Resolves the IChatProvider for the current ProviderName — used by /compact and
     /// /reflect endpoints, which run a one-off provider call outside the normal turn lifecycle
@@ -140,7 +102,8 @@ public sealed class AgentWorker : BackgroundService
     public IChatProvider ResolveActiveProvider() => _providerFactory.Resolve(ProviderName);
 
     public ChannelReader<AgentEvent>? StartOrSteerTurn(
-        SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content, CancellationToken requestAborted, out TurnOutcome outcome)
+        SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content, CancellationToken requestAborted, out TurnOutcome outcome,
+        string? turnKind = null)
     {
         var key = (owner, sessionId);
         Channel<AgentEvent>? events = null;
@@ -166,7 +129,7 @@ public sealed class AgentWorker : BackgroundService
             _activeTurns[key] = turn;
         }
 
-        var runTask = RunTurnAsync(owner, sessionId, content, events.Writer, turn.Steering, requestAborted, turn.Cancel);
+        var runTask = RunTurnAsync(owner, sessionId, content, turnKind, events.Writer, turn.Steering, requestAborted, turn.Cancel);
         lock (_turnsLock)
             _activeTurns[key] = turn with { Run = runTask };
         outcome = TurnOutcome.Started;
@@ -206,29 +169,10 @@ public sealed class AgentWorker : BackgroundService
     /// turn ran, even though ListModelsAsync (and, for "local", the LM Studio vendor-catalog
     /// lookup) already had everything needed to answer as soon as the panel opened.
     /// </summary>
-    public async Task EnsureModelResolvedAsync(CancellationToken ct)
-    {
-        // _contextLength is checked too, not just _model: LitosConfig.DefaultModel can already
-        // populate _model at construction (see ctor) without ever resolving its ContextLength via
-        // ListModelsAsync, which only this method and SwitchProviderAsync/SetModel actually call.
-        if (!string.IsNullOrEmpty(_model) && _contextLength is not null)
-            return;
-
-        var provider = _providerFactory.Resolve(_providerName);
-        var models = await provider.ListModelsAsync(ct);
-        if (models.Count == 0)
-            throw new InvalidOperationException("No default model configured and the provider returned no models to fall back to.");
-
-        lock (_settingsLock)
-        {
-            if (string.IsNullOrEmpty(_model))
-                _model = (models.FirstOrDefault(m => m.IsDefault) ?? models[0]).Id;
-            _contextLength ??= models.FirstOrDefault(m => m.Id == _model)?.ContextLength;
-        }
-    }
+    public Task EnsureModelResolvedAsync(CancellationToken ct) => _modelSelection.EnsureResolvedAsync(ct);
 
     private Task RunTurnAsync(
-        SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content,
+        SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content, string? turnKind,
         ChannelWriter<AgentEvent> events, Channel<SteeringMessage> steering, CancellationToken requestAborted,
         CancellationTokenSource explicitCancel) =>
         // Sets ChannelContext.Owner/SessionId for the whole turn — PendingApprovalRelay reads
@@ -236,10 +180,10 @@ public sealed class AgentWorker : BackgroundService
         // AgentLoop.RunTurnAsync, itself inside this scope) to route an Ask-mode MCP approval back
         // to the SSE stream that started the turn which triggered it. See ChannelContext.cs and
         // PendingApprovalRelay.cs for the full mechanism.
-        ChannelContext.RunAsAsync(owner, sessionId, () => RunTurnCoreAsync(owner, sessionId, content, events, steering, requestAborted, explicitCancel));
+        ChannelContext.RunAsAsync(owner, sessionId, () => RunTurnCoreAsync(owner, sessionId, content, turnKind, events, steering, requestAborted, explicitCancel));
 
     private async Task RunTurnCoreAsync(
-        SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content,
+        SessionOwner owner, string sessionId, IReadOnlyList<ContentBlock> content, string? turnKind,
         ChannelWriter<AgentEvent> events, Channel<SteeringMessage> steering, CancellationToken requestAborted,
         CancellationTokenSource explicitCancel)
     {
@@ -249,14 +193,7 @@ public sealed class AgentWorker : BackgroundService
 
             // Snapshot under the lock at turn start — a /provider or /model switch made mid-turn
             // only affects the *next* turn, matching Litos.Api's AgentWorker.RunTurnCoreAsync.
-            string providerName, model;
-            int? contextLength;
-            lock (_settingsLock)
-            {
-                providerName = _providerName;
-                model = _model;
-                contextLength = _contextLength;
-            }
+            var (providerName, model, contextLength) = _modelSelection.Snapshot();
 
             // explicitCancel (CancelTurn/the Stop button) is linked in alongside requestAborted (the
             // SSE connection dying) and _stopping (host shutdown) — any of the three ends the turn.
@@ -268,19 +205,20 @@ public sealed class AgentWorker : BackgroundService
             // per-session in the transcript (Transcript.KernelModeEnabled, §5.3), so it has to be
             // read before deciding which registry this turn gets.
             var transcript = await Transcript.LoadAsync(_transcriptStore, owner, sessionId, turnCts.Token);
-            if (transcript.WorkingDirectory is null)
-                transcript.SetWorkingDirectory(Directory.GetCurrentDirectory());
+            var workingDirectory = _workingDirectoryResolver.Resolve(transcript.WorkingDirectory);
+            if (transcript.WorkingDirectory != workingDirectory)
+                transcript.SetWorkingDirectory(workingDirectory);
 
             // Toggle-gated exactly as Litos.Gui does it (§1/§6/§8.2): OFF builds today's full
             // registry with no kernel awareness at all; ON builds a registry containing ONLY
             // KernelCodeTool, so tools.Schemas genuinely has one entry rather than one entry plus
             // everything else filtered model-side. "Hidden from the model" happens here, at
-            // registry construction.
+            // registry construction. Either way the turn's tools come from the tool-set policy.
             ToolRegistry toolRegistry;
             AgentLoop loop;
             if (_kernelSessionManager is not null && transcript.KernelModeEnabled)
             {
-                var bridgedTools = _toolRegistryFactory.Create();
+                var bridgedTools = _toolSetPolicy.Create(sessionId, turnKind);
                 toolRegistry = new ToolRegistry([new KernelCodeTool(bridgedTools.Schemas)]);
                 loop = _loopFactory.Create(
                     _providerFactory.Resolve(providerName),
@@ -289,7 +227,7 @@ public sealed class AgentWorker : BackgroundService
             }
             else
             {
-                toolRegistry = _toolRegistryFactory.Create();
+                toolRegistry = _toolSetPolicy.Create(sessionId, turnKind);
                 loop = _loopFactory.Create(_providerFactory.Resolve(providerName), toolRegistry);
             }
 

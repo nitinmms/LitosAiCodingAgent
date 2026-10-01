@@ -17,6 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Litos.Hosting.Tests" />
     <InternalsVisibleTo Include="Litos.VsCodeHost.Tests" />
   </ItemGroup>
 

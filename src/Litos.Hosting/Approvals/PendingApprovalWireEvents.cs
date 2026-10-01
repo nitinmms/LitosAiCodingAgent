@@ -1,6 +1,6 @@
 using Litos.Tools.Shell;
 
-namespace Litos.VsCodeHost.Approvals;
+namespace Litos.Hosting.Approvals;
 
 /// <summary>
 /// Pushed inline on the same SSE turn stream as AgentEvent, for an MCP tool call gated Ask by

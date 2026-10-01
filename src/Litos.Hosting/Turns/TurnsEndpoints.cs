@@ -4,9 +4,9 @@ using Litos.Agent.Messages;
 using Litos.Agent.Session;
 using Litos.Agent.Streaming;
 using Litos.Tools.Shell;
-using Litos.VsCodeHost.Approvals;
+using Litos.Hosting.Approvals;
 
-namespace Litos.VsCodeHost.Turns;
+namespace Litos.Hosting.Turns;
 
 /// <summary>
 /// Litos.Api's Turns/TurnsEndpoints.cs, stripped for a local, single-user, no-auth host: every
@@ -17,11 +17,17 @@ namespace Litos.VsCodeHost.Turns;
 /// client (Litos.VsCode's sseClient.ts) parses this exactly like Litos.Api's own stream, plus one
 /// addition Litos.Api doesn't have: PendingApprovalRequested/Resolved wire events for MCP tools
 /// gated Ask by McpAwareApprovalGate (see Program.cs), merged onto the same stream — see ToSseData.
+///
+/// What a turn request's body looks like is the host's business, not this library's: the host
+/// passes a TurnRequestReader, and the default reads a plain TurnRequest (text plus an optional
+/// turn kind). Litos.VsCodeHost passes its own reader so attachments stay where they are defined.
 /// </summary>
 public static class TurnsEndpoints
 {
-    public static IEndpointRouteBuilder MapTurnsEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapLitosTurnEndpoints(this IEndpointRouteBuilder app, TurnRequestReader? readTurnRequest = null)
     {
+        readTurnRequest ??= ReadTurnRequestAsync;
+
         app.MapPost("/sessions/{id}/cancel", (string id, AgentWorker worker) =>
             worker.CancelTurn(SessionOwner.Local, id)
                 ? Results.Ok()
@@ -71,19 +77,8 @@ public static class TurnsEndpoints
         app.MapPost("/sessions/{id}/turns", async (
             string id, HttpRequest request, AgentWorker worker, PendingApprovalRelay approvalRelay, CancellationToken requestAborted) =>
         {
-            var turnRequest = await request.ReadFromJsonAsync<TurnRequest>(requestAborted)
-                ?? throw new BadHttpRequestException("Request body is required.");
-
-            // Attachments (from /attach's file picker or clipboard paste) travel as opaque
-            // AttachedContent the extension already fetched from /attachments/from-{path,bytes} —
-            // this endpoint just converts each back to the ContentBlock AgentLoop needs and folds
-            // it in alongside the typed text, same order Litos.Api's AttachmentContentBuilder uses
-            // (leading text, then attachments).
-            List<ContentBlock> content = [new TextBlock(turnRequest.Input)];
-            if (turnRequest.Attachments is { Count: > 0 } attachments)
-                content.AddRange(attachments.Select(AttachEndpoints.ToContentBlock));
-
-            var events = worker.StartOrSteerTurn(SessionOwner.Local, id, content, requestAborted, out var outcome);
+            var turn = await readTurnRequest(request, requestAborted);
+            var events = worker.StartOrSteerTurn(SessionOwner.Local, id, turn.Content, requestAborted, out var outcome, turn.TurnKind);
 
             return outcome switch
             {
@@ -94,6 +89,13 @@ public static class TurnsEndpoints
         });
 
         return app;
+    }
+
+    internal static async ValueTask<TurnInput> ReadTurnRequestAsync(HttpRequest request, CancellationToken ct)
+    {
+        var turnRequest = await request.ReadFromJsonAsync<TurnRequest>(ct)
+            ?? throw new BadHttpRequestException("Request body is required.");
+        return new TurnInput([new TextBlock(turnRequest.Input)], turnRequest.TurnKind);
     }
 
     // Merges the turn's own AgentEvent channel with this session's PendingApprovalRelay
@@ -232,6 +234,14 @@ public static class TurnsEndpoints
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 }
 
-public sealed record TurnRequest(string Input, IReadOnlyList<AttachedContent>? Attachments = null);
+/// <summary>The default turn request body: the typed text, plus an optional label for the kind
+/// of turn, handed to IToolSetPolicy unchanged.</summary>
+public sealed record TurnRequest(string Input, string? TurnKind = null);
+
+/// <summary>What a turn starts with, once a host has read its own request body.</summary>
+public sealed record TurnInput(IReadOnlyList<ContentBlock> Content, string? TurnKind = null);
+
+/// <summary>Reads a host's /sessions/{id}/turns request body into the turn's content.</summary>
+public delegate ValueTask<TurnInput> TurnRequestReader(HttpRequest request, CancellationToken ct);
 
 public sealed record ResolveApprovalRequest(ApprovalDecision Decision);

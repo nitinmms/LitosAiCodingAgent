@@ -9,7 +9,7 @@
  *
  * Two extra shapes on this stream have no AngularChat precedent, since Litos.Api doesn't have
  * them: PendingApprovalRequestedWireEvent/PendingApprovalResolvedWireEvent
- * (src/Litos.VsCodeHost/Approvals/PendingApprovalWireEvents.cs), merged onto the same SSE stream
+ * (src/Litos.Hosting/Approvals/PendingApprovalWireEvents.cs), merged onto the same SSE stream
  * by TurnsEndpoints.ToSseData for an MCP tool call gated Ask by McpAwareApprovalGate. Distinguished
  * by "ApprovalId", a property no real AgentEvent variant has.
  */

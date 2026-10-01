@@ -1,6 +1,7 @@
 using Litos.Agent.Session;
 using Litos.Tools.Shell;
-using Litos.VsCodeHost.Approvals;
+using Litos.Hosting.Approvals;
+using Litos.Hosting;
 
 namespace Litos.VsCodeHost.Tests.Approvals;
 

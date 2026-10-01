@@ -5,6 +5,7 @@ using Litos.Agent.Session;
 using Litos.Agent.Streaming;
 using Litos.Agent.Tools;
 using Litos.Host;
+using Litos.Hosting;
 using Litos.VsCodeHost.Tests.Fakes;
 
 namespace Litos.VsCodeHost.Tests;

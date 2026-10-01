@@ -1,6 +1,6 @@
 using Litos.Agent.Session;
 
-namespace Litos.VsCodeHost.Turns;
+namespace Litos.Hosting.Turns;
 
 /// <summary>
 /// Backs the extension's /ptc toggle (Programmatic Tool Calling — the user-facing name for kernel
@@ -13,7 +13,7 @@ namespace Litos.VsCodeHost.Turns;
 /// </summary>
 public static class KernelEndpoints
 {
-    public static IEndpointRouteBuilder MapKernelEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapLitosKernelEndpoints(this IEndpointRouteBuilder app)
     {
         // `available` is what lets the webview distinguish "PTC is off" from "PTC cannot be turned
         // on in this build" — the latter happens when Litos.Kernel.Host was not bundled alongside

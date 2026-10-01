@@ -1,3 +1,4 @@
+using Litos.Hosting;
 using Litos.Tools.Mcp;
 using Litos.Tools.Shell;
 using Litos.VsCodeHost;

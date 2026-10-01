@@ -1,6 +1,6 @@
 using Litos.Tools.Shell;
 
-namespace Litos.VsCodeHost;
+namespace Litos.Hosting;
 
 /// <summary>
 /// Approves every tool call unconditionally — this process has no interactive approval UI,

@@ -1,4 +1,5 @@
 using Litos.Agent.Session;
+using Litos.Hosting;
 
 namespace Litos.VsCodeHost.Turns;
 

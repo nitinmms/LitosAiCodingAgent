@@ -2,8 +2,9 @@ using System.Threading.Channels;
 using Litos.Agent.Messages;
 using Litos.Agent.Streaming;
 using Litos.Tools.Shell;
-using Litos.VsCodeHost.Approvals;
-using Litos.VsCodeHost.Turns;
+using Litos.Hosting.Approvals;
+using Litos.Hosting.Turns;
+using Litos.Hosting;
 
 namespace Litos.VsCodeHost.Tests.Turns;
 

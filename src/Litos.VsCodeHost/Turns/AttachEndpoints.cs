@@ -1,4 +1,5 @@
 using Litos.Agent.Messages;
+using Litos.Hosting.Turns;
 using Litos.Tools.Attachments;
 
 namespace Litos.VsCodeHost.Turns;
@@ -80,6 +81,25 @@ public static class AttachEndpoints
         return app;
     }
 
+    /// <summary>
+    /// Reads this host's /sessions/{id}/turns body for Litos.Hosting's turn endpoint. Attachments
+    /// (from /attach's file picker or clipboard paste) travel as opaque AttachedContent the
+    /// extension already fetched from /attachments/from-{path,bytes} — this converts each back to
+    /// the ContentBlock AgentLoop needs and folds it in alongside the typed text, same order
+    /// Litos.Api's AttachmentContentBuilder uses (leading text, then attachments).
+    /// </summary>
+    public static async ValueTask<TurnInput> ReadTurnRequestAsync(HttpRequest request, CancellationToken ct)
+    {
+        var turnRequest = await request.ReadFromJsonAsync<AttachedTurnRequest>(ct)
+            ?? throw new BadHttpRequestException("Request body is required.");
+
+        List<ContentBlock> content = [new TextBlock(turnRequest.Input)];
+        if (turnRequest.Attachments is { Count: > 0 } attachments)
+            content.AddRange(attachments.Select(ToContentBlock));
+
+        return new TurnInput(content);
+    }
+
     /// <summary>Converts an AttachedContent (as returned above, and as sent back on the next
     /// turn's Attachments list) into the ContentBlock AgentLoop actually needs.</summary>
     public static ContentBlock ToContentBlock(this AttachedContent content) => content.Kind switch
@@ -95,3 +115,6 @@ public sealed record AttachPathRequest(string Path);
 public sealed record AttachBytesRequest(string Base64Data, string? MimeType, string? FileName);
 
 public sealed record AttachedContent(string Kind, string FileName, string? MimeType, string? Base64Data, string? DocumentText);
+
+/// <summary>This host's turn request body: the typed text plus any attachments.</summary>
+public sealed record AttachedTurnRequest(string Input, IReadOnlyList<AttachedContent>? Attachments = null);

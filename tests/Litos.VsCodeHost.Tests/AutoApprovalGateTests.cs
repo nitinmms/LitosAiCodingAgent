@@ -1,3 +1,4 @@
+using Litos.Hosting;
 using Litos.Tools.Shell;
 
 namespace Litos.VsCodeHost.Tests;

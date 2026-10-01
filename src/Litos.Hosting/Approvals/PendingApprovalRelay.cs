@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using Litos.Agent.Session;
 using Litos.Tools.Shell;
 
-namespace Litos.VsCodeHost.Approvals;
+namespace Litos.Hosting.Approvals;
 
 /// <summary>
 /// Bridges PendingApprovalStore's process-wide Added/Resolved events onto the one SSE turn stream

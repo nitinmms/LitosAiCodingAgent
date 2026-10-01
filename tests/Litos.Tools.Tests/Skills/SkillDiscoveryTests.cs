@@ -144,4 +144,92 @@ public class SkillDiscoveryTests : IDisposable
         var skill = Assert.Single(skills, s => s.Name == "path-check");
         Assert.Equal(Path.Combine(skillsRoot, "path-check"), skill.DirectoryPath);
     }
+
+    // --- userRoots (the software factory's worker must not read the host account's skills) ---
+
+    [Fact]
+    public async Task DiscoverAsync_ExplicitUserRoots_ScansThoseRoots()
+    {
+        var factoryRoot = Path.Combine(_tempRoot, "factory-skills");
+        WriteSkill(factoryRoot, "factory-skill", "factory-skill", "From the factory library.");
+        var isolatedDir = Path.Combine(_tempRoot, "work");
+        Directory.CreateDirectory(isolatedDir);
+        var discovery = new SkillDiscovery(startDirectory: isolatedDir, userRoots: [factoryRoot]);
+
+        var skills = await discovery.DiscoverAsync(CancellationToken.None);
+
+        Assert.Contains(skills, s => s.Name == "factory-skill");
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_EmptyUserRoots_SkipsUserLevelSkillsButKeepsProjectSkills()
+    {
+        // Asserted by name rather than by count: the project walk climbs every ancestor of the
+        // temp directory, which on a developer machine can pass a real .litos/skills folder.
+        var userRoot = Path.Combine(_tempRoot, "user");
+        WriteSkill(userRoot, "user-only-skill", "user-only-skill", "desc");
+        var workDir = Path.Combine(_tempRoot, "work");
+        WriteSkill(Path.Combine(workDir, ".litos", "skills"), "project-skill", "project-skill", "desc");
+
+        var withRoot = await new SkillDiscovery(workDir, [userRoot]).DiscoverAsync(CancellationToken.None);
+        var withoutRoots = await new SkillDiscovery(workDir, []).DiscoverAsync(CancellationToken.None);
+
+        Assert.Contains(withRoot, s => s.Name == "user-only-skill");
+        Assert.DoesNotContain(withoutRoots, s => s.Name == "user-only-skill");
+        Assert.Contains(withoutRoots, s => s.Name == "project-skill");
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_UserRootsNameCollision_EarlierRootWins()
+    {
+        var first = Path.Combine(_tempRoot, "first");
+        var second = Path.Combine(_tempRoot, "second");
+        WriteSkill(first, "shared", "shared", "first description");
+        WriteSkill(second, "shared", "shared", "second description");
+        WriteSkill(second, "only-second", "only-second", "fills the gap");
+        var workDir = Path.Combine(_tempRoot, "work");
+        Directory.CreateDirectory(workDir);
+        var discovery = new SkillDiscovery(startDirectory: workDir, userRoots: [first, second]);
+
+        var skills = await discovery.DiscoverAsync(CancellationToken.None);
+
+        Assert.Equal("first description", Assert.Single(skills, s => s.Name == "shared").Description);
+        Assert.Contains(skills, s => s.Name == "only-second");
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_ProjectSkill_OverridesAUserRootSkillOfTheSameName()
+    {
+        var userRoot = Path.Combine(_tempRoot, "user");
+        WriteSkill(userRoot, "shared", "shared", "user description");
+        var workDir = Path.Combine(_tempRoot, "work");
+        WriteSkill(Path.Combine(workDir, ".litos", "skills"), "shared", "shared", "project description");
+        var discovery = new SkillDiscovery(startDirectory: workDir, userRoots: [userRoot]);
+
+        var skills = await discovery.DiscoverAsync(CancellationToken.None);
+
+        Assert.Equal("project description", Assert.Single(skills, s => s.Name == "shared").Description);
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_MissingUserRoot_IsIgnored()
+    {
+        var workDir = Path.Combine(_tempRoot, "work");
+        WriteSkill(Path.Combine(workDir, ".litos", "skills"), "project-skill", "project-skill", "desc");
+        var discovery = new SkillDiscovery(startDirectory: workDir, userRoots: [Path.Combine(_tempRoot, "does-not-exist")]);
+
+        var skills = await discovery.DiscoverAsync(CancellationToken.None);
+
+        Assert.Contains(skills, s => s.Name == "project-skill");
+    }
+
+    [Fact]
+    public void DefaultUserRoots_AreLitosThenClaudeUnderTheUserProfile()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        Assert.Equal(
+            [Path.Combine(userProfile, ".litos", "skills"), Path.Combine(userProfile, ".claude", "skills")],
+            SkillDiscovery.DefaultUserRoots());
+    }
 }

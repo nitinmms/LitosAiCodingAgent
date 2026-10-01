@@ -1,6 +1,6 @@
 using Litos.Agent.Session;
 
-namespace Litos.VsCodeHost;
+namespace Litos.Hosting;
 
 /// <summary>
 /// Local copy of Litos.Api.Channels.ChannelContext.cs, trimmed to just Owner/SessionId — this

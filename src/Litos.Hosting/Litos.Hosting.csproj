@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The turn/cancel/PTC hosting code shared by Litos.VsCodeHost and the software factory's
+       per-run worker (ReadMe_LitosSoftwareFactory_V1.md §13.2). A class library rather than a
+       Web SDK project: it maps endpoints onto whichever host references it, it is never run. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.Host\Litos.Host.csproj" />
+    <ProjectReference Include="..\Litos.Tools.Mcp\Litos.Tools.Mcp.csproj" />
+    <ProjectReference Include="..\Litos.Kernel\Litos.Kernel.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- The Web SDK's implicit usings, which the files moved here from Litos.VsCodeHost rely on. -->
+  <ItemGroup>
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Hosting" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.Hosting.Tests" />
+    <InternalsVisibleTo Include="Litos.VsCodeHost.Tests" />
+  </ItemGroup>
+
+</Project>
