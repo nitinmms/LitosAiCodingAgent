@@ -346,7 +346,7 @@ All factory-level configuration lives in one Admin-only area. There are no per-p
 | --- | --- |
 | Projects | Register GitHub projects, credential, members, verification profile, coverage threshold, draft-PR option |
 | People | Users, roles, invitations |
-| Providers and models | Per provider: enabled, API key status (set/replace, never displayed), strict/estimated label, and a short list of **allowed models** (§8.4); default model for new threads; "strict-budget providers only" switch |
+| Providers and models | Per provider: enabled, API key status (set/replace, never displayed), strict/estimated label, and a short list of **allowed models** (§8.4); **defaults for new threads**: a default provider plus a default model chosen from that provider's allowed models (members can change both per thread); "strict-budget providers only" switch |
 | MCP servers | §8.1 |
 | Skills | Factory skill library and repository-skill policy and approvals (§8.2) |
 | Tools | Web search on/off and key; PTC default for new threads and whether members may turn it off per thread; shell command time limit |

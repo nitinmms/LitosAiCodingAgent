@@ -230,6 +230,7 @@ th{font-weight:600;color:var(--muted)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .btn.small{padding:2px 8px;font-size:.78rem}
 .warn{color:var(--amber);font-weight:600}
+.defaults-card{border:1px solid var(--petrol);box-shadow:inset 3px 0 0 var(--petrol);border-radius:var(--r-sm);padding:12px 14px;display:grid;gap:8px;background:var(--surface)}
 table.models td{vertical-align:middle}
 .row-actions{text-align:right;white-space:nowrap}
 .modal.wide{width:min(860px,100%)}
@@ -1184,11 +1185,31 @@ function AdminProviders({S,dispatch}){
   return html`<section className="section"><h2>Providers and models</h2>
     <p className="small muted">API keys are stored encrypted by the factory host and are never shown again or given to workers. Every model call goes through the host.</p>
     <label className="check"><input id="strict-only" type="checkbox" checked=${st.strictOnly} onChange=${e=>dispatch({type:'SETTING',section:'root',key:'strictOnly',value:e.target.checked})}/><span>Allow only providers with strict budgets</span></label>
-    <div className="field" style=${{maxWidth:'480px'}}><label htmlFor="def-model">Default model for new threads</label>
-      <${ModelCombo} id="def-model" label="Default model" choices=${modelChoices(S)} value=${st.defaultProvider+'|'+st.defaultModel} onChange=${v=>{const [p,m]=v.split('|');dispatch({type:'SET_DEFAULT_MODEL',provider:p,model:m});}}/></div>
+    <${DefaultsCard} S=${S} dispatch=${dispatch}/>
     ${Object.entries(PROVIDERS).map(([k,v])=>html`<${ProviderBlock} key=${k} k=${k} v=${v} S=${S} dispatch=${dispatch} openPicker=${()=>setPicker(k)}/>`)}
     ${picker?html`<${CatalogPicker} k=${picker} S=${S} dispatch=${dispatch} close=${()=>setPicker(null)}/>`:null}
   </section>`;
+}
+/* The factory-wide defaults a new thread starts with; members can change them per thread. */
+function DefaultsCard({S,dispatch}){
+  const st=S.settings;const provs=usableProviders(S);
+  const current=provs.includes(st.defaultProvider)?st.defaultProvider:null;
+  const pv=current?PROVIDERS[current]:null;
+  const chooseProvider=p=>{const models=allowedModels(S,p);const model=p===st.defaultProvider&&models.includes(st.defaultModel)?st.defaultModel:models[0];dispatch({type:'SET_DEFAULT_MODEL',provider:p,model});};
+  return html`<div className="defaults-card" role="group" aria-labelledby="defaults-heading">
+    <h3 id="defaults-heading">Defaults for new threads</h3>
+    <p className="small muted">Every new thread starts with this provider and model. Members can change them for a thread; tasks already running keep the model they started with.</p>
+    ${provs.length===0?html`<p className="small warn">Set an API key and allow at least one model below, then choose the defaults here.</p>`:html`
+    <div className="form-grid">
+      <div className="field"><label htmlFor="def-provider">Default provider</label>
+        <select id="def-provider" value=${current??''} onChange=${e=>chooseProvider(e.target.value)}>
+          ${provs.map(p=>html`<option key=${p} value=${p}>${PROVIDERS[p].name} (${PROVIDERS[p].precision.toLowerCase()} budget)</option>`)}</select></div>
+      <div className="field"><label htmlFor="def-model">Default model</label>
+        <${ModelCombo} id="def-model" label="Default model" choices=${modelChoices(S).filter(c=>c.value.startsWith((current??'')+'|'))} value=${st.defaultProvider+'|'+st.defaultModel}
+          onChange=${v=>{const [p,m]=v.split('|');dispatch({type:'SET_DEFAULT_MODEL',provider:p,model:m});}}/></div>
+    </div>
+    <p className="small" role="status" aria-label="Current defaults">New threads use <b>${pv?.name??'—'}</b> <span className="mono">${st.defaultModel}</span>${pv?html`, with a ${pv.precision.toLowerCase()} token budget`:null}.</p>`}
+  </div>`;
 }
 function ProviderBlock({k,v,S,dispatch,openPicker}){
   const st=S.settings;const c=st.providers[k];
@@ -1196,7 +1217,7 @@ function ProviderBlock({k,v,S,dispatch,openPicker}){
   const retired=rows.filter(r=>!r.m);
   const allN=c.catalog.filter(m=>m.tools).length;
   return html`<div className="lesson">
-    <div className="panel-head"><div className="btn-row" style=${{alignItems:'center'}}><h3>${v.name}</h3><span className=${'pill '+(v.precision==='Strict'?'done':'you')}>${v.precision} budget</span>${usable(S,k)?null:html`<span className="pill neutral">Not available to members</span>`}</div>
+    <div className="panel-head"><div className="btn-row" style=${{alignItems:'center'}}><h3>${v.name}</h3>${st.defaultProvider===k&&usable(S,k)?html`<span className="pill agent">Default provider</span>`:null}<span className=${'pill '+(v.precision==='Strict'?'done':'you')}>${v.precision} budget</span>${usable(S,k)?null:html`<span className="pill neutral">Not available to members</span>`}</div>
       <span className="switch"><input id=${'prov-'+k} type="checkbox" aria-label=${'Enable '+v.name} checked=${c.enabled} onChange=${e=>dispatch({type:'PROVIDER',id:k,key:'enabled',value:e.target.checked})}/><span></span></span></div>
     <p className="small muted">${v.note}.</p>
     ${k==='local'?html`<div className="field" style=${{maxWidth:'420px'}}><label htmlFor="local-url">Server URL</label><input id="local-url" value=${c.baseUrl||''} placeholder="http://127.0.0.1:11434/v1" onChange=${e=>dispatch({type:'PROVIDER',id:k,key:'baseUrl',value:e.target.value})}/></div>`
@@ -1358,7 +1379,7 @@ function steps(S){
     {title:'Sign in as the admin',body:'Priya Nair is the factory admin. Accounts are invite-only, with a username and password.',done:S.screen==='app',act:[{type:'SIGN_IN',user:'priya'}]},
     {title:'Register a GitHub project',body:'Admins register projects by GitHub URL. The factory clones the repository into its own workspace and never touches anyone\u2019s own folders.',done:S.projects.some(p=>p.id==='salesapp'),
       act:[{type:'VIEW',view:'admin'},{type:'REGISTER_PROJECT',data:{name:'SalesApp',repo:'https://github.com/harbor-tools/salesapp',branch:'main',stack:'.NET + Node / React',coverage:'80',pr:true}}]},
-    {title:'Look through factory settings',body:'Admins control providers and API keys, which models members may pick, MCP servers, the skill library, tools, budgets and verification presets, all factory-wide. SalesApp’s own repository skill is waiting for approval under Skills; approve it to see it appear in the run.',
+    {title:'Look through factory settings',body:'Admins control providers and API keys, the default provider and model for new threads (top of Providers and models), which models members may pick, MCP servers, the skill library, tools, budgets and verification presets, all factory-wide. SalesApp’s own repository skill is waiting for approval under Skills; approve it to see it appear in the run.',
       done:S.seenSettings,act:[{type:'ADMIN_TAB',tab:'providers'}]},
     {title:'Switch to Sam, a member',body:'Members create threads and delegate work on projects they belong to. Use the user switcher at the top right.',done:S.user==='sam',act:[{type:'SWITCH_USER',user:'sam'}]},
     {title:'Create a thread',body:'One change per thread. Title it \u201cAdd CSV export to Orders\u201d in SalesApp, with a 120,000-token budget.',done:!!csv,

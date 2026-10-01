@@ -73,4 +73,14 @@ A = X.reducer(A, { type: 'PROVIDER', id: 'anthropic', key: 'enabled', value: fal
 ok(!X.usableProviders(A).includes('anthropic'), 'disabled provider must not be offered');
 render(X.Admin, { S: A });
 
+// 5. Defaults: the providers tab shows separate default provider and model controls, and switching
+//    the default provider picks one of that provider's allowed models.
+let D = X.reducer(X.initialState(), { type: 'SIGN_IN', user: 'priya' });
+D = X.reducer(D, { type: 'ADMIN_TAB', tab: 'providers' });
+const providersHtml = render(X.Admin, { S: D });
+ok(providersHtml.includes('id="def-provider"') && providersHtml.includes('id="def-model"'), 'defaults card must show provider and model controls');
+ok(providersHtml.includes('Default provider'), 'the default provider is marked on its card');
+D = X.reducer(D, { type: 'SET_DEFAULT_MODEL', provider: 'openai', model: X.allowedModels(D, 'openai')[0] });
+ok(D.settings.defaultProvider === 'openai' && X.allowedModels(D, 'openai').includes(D.settings.defaultModel), 'default model belongs to the default provider');
+
 console.log(`OK: ${passed} assertions, ${renders} screen renders.`);
