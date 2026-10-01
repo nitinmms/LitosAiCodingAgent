@@ -296,6 +296,84 @@ public sealed class GatewayTests : IAsyncLifetime
         Assert.Equal(UsageStatus.Unknown, (await OnlyEntryAsync()).Status);
     }
 
+    // ---- A reply cut off at the output limit ----
+
+    private static MessageCompleted Completed(UsageInfo usage, params ContentBlock[] content) => new(ChatMessage.Assistant(content), usage);
+
+    /// <summary>
+    /// The first real run stopped here: the model spent its whole output allowance reasoning and
+    /// returned an empty message, twice. Passed on, that looks like a turn that chose to stop,
+    /// and the run was blamed for not calling submit_review.
+    /// </summary>
+    [Fact]
+    public async Task ReplyCutOffAtTheOutputLimitWithNothingInIt_IsAnError_ThatSaysSo_AndIsStillCharged()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(Completed(new UsageInfo(14_200, 4_000, ReasoningTokens: 4_000))));
+
+        var events = await CallAsync(Request());
+
+        var error = Assert.IsType<GatewayError>(Assert.Single(events));
+        Assert.Equal(GatewayErrorCodes.ProviderError, error.Code);
+        Assert.Equal(
+            "The model reached the output limit of 4,000 tokens without producing a reply (4,000 of them were reasoning). Nothing was lost; resuming tries the step again.",
+            error.Message);
+
+        // The call was made, so it is charged and its reservation released.
+        var entry = await OnlyEntryAsync();
+        Assert.Equal((UsageStatus.Settled, 18_200L), (entry.Status, entry.Charged));
+        Assert.Equal((18_200L, 0L), ((await ThreadAsync()).TokensUsed, (await ThreadAsync()).TokensReserved));
+    }
+
+    [Fact]
+    public async Task ReplyAtTheOutputLimit_ThatDidProduceSomething_IsPassedOn()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.EnqueueReply("a long answer", new UsageInfo(14_200, 4_000));
+
+        var events = await CallAsync(Request());
+
+        Assert.IsType<GatewayMessageCompleted>(events[^1]);
+        Assert.DoesNotContain(events, e => e is GatewayError);
+    }
+
+    [Fact]
+    public async Task EmptyReply_BelowTheOutputLimit_IsPassedOn_BecauseTheModelChoseToSayNothing()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(Completed(new UsageInfo(14_200, 12))));
+
+        var events = await CallAsync(Request());
+
+        Assert.IsType<GatewayMessageCompleted>(Assert.Single(events));
+    }
+
+    public static TheoryData<string, MessageCompleted, int?, bool> CutOffCases => new()
+    {
+        { "empty at the limit", Completed(new UsageInfo(10, 4_000)), 4_000, true },
+        { "empty over the limit", Completed(new UsageInfo(10, 4_100)), 4_000, true },
+        { "only whitespace at the limit", Completed(new UsageInfo(10, 4_000), new TextBlock("  \n")), 4_000, true },
+        { "text at the limit", Completed(new UsageInfo(10, 4_000), new TextBlock("answer")), 4_000, false },
+        { "a tool call at the limit", Completed(new UsageInfo(10, 4_000), new ToolUseBlock("c", "submit_review", default)), 4_000, false },
+        { "empty below the limit", Completed(new UsageInfo(10, 3_999)), 4_000, false },
+        { "no limit was set", Completed(new UsageInfo(10, 4_000)), null, false },
+    };
+
+    [Theory]
+    [MemberData(nameof(CutOffCases))]
+    public void CutOffBeforeReplying_OnlyWhenTheLimitWasReachedAndNothingCameBack(string name, MessageCompleted completed, int? limit, bool expected)
+    {
+        Assert.True(expected == ModelGateway.CutOffBeforeReplying(completed, limit), name);
+    }
+
+    [Fact]
+    public void CutOffMessage_LeavesReasoningOut_WhenTheProviderDidNotReportIt()
+    {
+        Assert.Equal(
+            "The model reached the output limit of 32,768 tokens without producing a reply. Nothing was lost; resuming tries the step again.",
+            ModelGateway.CutOffMessage(new UsageInfo(10, 32_768), 32_768));
+    }
+
     [Fact]
     public async Task CancelledMidResponse_UsageIsUnknown_AndTheCancellationPropagates()
     {

@@ -340,7 +340,8 @@ public class BudgetLedgerTests
         var policy = new BudgetPolicy();
 
         Assert.Equal(0.10, policy.Margin);
-        Assert.Equal(8_192, policy.OutputAllowanceTokens);
+        // Room for a reasoning model's thinking and its reply: 8,192 was not enough in practice.
+        Assert.Equal(32_768, policy.OutputAllowanceTokens);
     }
 
     [Fact]

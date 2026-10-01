@@ -6,6 +6,7 @@ using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Api;
 using Litos.SoftwareFactory.Host.Auth;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Litos.SoftwareFactory.Host.Tests;
@@ -611,6 +612,49 @@ public class FactoryOptionsTests
         Assert.Equal("deepseek/deepseek-v4.1-flash", options.Model);
         Assert.Equal(1, options.SlotCap);
         Assert.Equal(2, options.Limits.MaxRepairCycles);
+    }
+
+    private static FactoryOptions From(params (string Key, string Value)[] settings) => FactoryOptions.From(
+        new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(settings.ToDictionary(s => s.Key, s => (string?)s.Value))
+            .Build());
+
+    [Fact]
+    public void From_NothingSet_KeepsTheDefaultBudgetAndOutputAllowance()
+    {
+        var options = From();
+
+        Assert.Equal(300_000, options.DefaultBudget);
+        Assert.Equal(32_768, options.Budget.OutputAllowanceTokens);
+        Assert.Equal(0.10, options.Budget.Margin);
+    }
+
+    [Fact]
+    public void From_ReadsTheOutputAllowanceAndTheDefaultBudget()
+    {
+        var options = From(("FACTORY_OUTPUT_ALLOWANCE", "16000"), ("FACTORY_DEFAULT_BUDGET", "1000000"));
+
+        Assert.Equal(16_000, options.Budget.OutputAllowanceTokens);
+        Assert.Equal(0.10, options.Budget.Margin);
+        Assert.Equal(1_000_000, options.DefaultBudget);
+    }
+
+    [Theory]
+    [InlineData("none")]
+    [InlineData("NONE")]
+    public void From_DefaultBudgetNone_MeansNoCap(string value) =>
+        Assert.Null(From(("FACTORY_DEFAULT_BUDGET", value)).DefaultBudget);
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("lots")]
+    public void From_UnusableNumbers_AreIgnored(string value)
+    {
+        var options = From(("FACTORY_OUTPUT_ALLOWANCE", value), ("FACTORY_DEFAULT_BUDGET", value));
+
+        Assert.Equal(32_768, options.Budget.OutputAllowanceTokens);
+        Assert.Equal(300_000, options.DefaultBudget);
     }
 
     [Fact]

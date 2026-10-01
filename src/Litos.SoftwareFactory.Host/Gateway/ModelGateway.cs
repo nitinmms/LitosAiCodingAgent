@@ -129,6 +129,16 @@ public sealed class ModelGateway(
                     {
                         await SettleAsync(requestKey, completed, estimate, calibration);
                         call.Settled = true;
+
+                        // Charged, but not passed on: to the agent loop an empty reply looks like
+                        // a turn that chose to stop, and the run would be blamed for not calling
+                        // its completion tool when the model never got to answer.
+                        if (CutOffBeforeReplying(completed, chat.MaxOutputTokens))
+                        {
+                            await write(new GatewayError(GatewayErrorCodes.ProviderError, CutOffMessage(completed.Usage, chat.MaxOutputTokens!.Value)));
+                            return;
+                        }
+
                         run.Baselines[sessionKey] = SessionBaseline.From(chat, completed.Usage);
                     }
 
@@ -160,6 +170,20 @@ public sealed class ModelGateway(
             }
         }
     }
+
+    /// <summary>
+    /// True when the model reached the call's output limit having produced no text and no tool
+    /// call — in practice, a reasoning model that spent the whole allowance thinking.
+    /// </summary>
+    internal static bool CutOffBeforeReplying(MessageCompleted completed, int? maxOutputTokens) =>
+        maxOutputTokens is { } limit
+        && completed.Usage.OutputTokens >= limit
+        && !completed.Message.Content.Any(block => block is not Litos.Agent.Messages.TextBlock text || !string.IsNullOrWhiteSpace(text.Text));
+
+    internal static string CutOffMessage(UsageInfo usage, int maxOutputTokens) =>
+        $"The model reached the output limit of {maxOutputTokens:N0} tokens without producing a reply"
+        + (usage.ReasoningTokens > 0 ? $" ({usage.ReasoningTokens:N0} of them were reasoning)" : "")
+        + ". Nothing was lost; resuming tries the step again.";
 
     private async Task SettleAsync(string requestKey, MessageCompleted completed, RequestEstimate estimate, CalibrationWindow calibration)
     {

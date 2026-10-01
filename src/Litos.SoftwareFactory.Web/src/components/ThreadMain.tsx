@@ -125,8 +125,8 @@ export function ThreadMain({
         );
       case 'Status':
         return (
+          // The marker is the row's ::before, which takes the grid's first column.
           <div key={m.id} className={`ev ${m.author === 'User' ? 'sys' : ''}`}>
-            <span />
             <span>
               <Rich text={m.text} />
             </span>

@@ -81,6 +81,16 @@ public sealed class FactoryOptions
             options.Model = model;
         if (int.TryParse(configuration["FACTORY_CONTEXT_LENGTH"], out var contextLength) && contextLength > 0)
             options.ContextLength = contextLength;
+        if (int.TryParse(configuration["FACTORY_OUTPUT_ALLOWANCE"], out var outputAllowance) && outputAllowance > 0)
+            options.Budget = options.Budget with { OutputAllowanceTokens = outputAllowance };
+        if (configuration["FACTORY_DEFAULT_BUDGET"] is { Length: > 0 } defaultBudget)
+        {
+            // "none" removes the default cap; a number replaces it.
+            if (defaultBudget.Equals("none", StringComparison.OrdinalIgnoreCase))
+                options.DefaultBudget = null;
+            else if (long.TryParse(defaultBudget, out var cap) && cap > 0)
+                options.DefaultBudget = cap;
+        }
         return options;
     }
 

@@ -47,8 +47,12 @@ public sealed record Refused(RefusalReason Reason, long Needed, long Remaining) 
 
 public sealed record BudgetPolicy
 {
-    /// <summary>The bounded output allowance reserved for, and imposed on, every call.</summary>
-    public int OutputAllowanceTokens { get; init; } = 8_192;
+    /// <summary>
+    /// The bounded output allowance reserved for, and imposed on, every call. A reasoning
+    /// model's thinking counts as output, so this has to leave room for the reply after it: at
+    /// 8,192 the first real run spent the whole allowance reasoning and returned nothing.
+    /// </summary>
+    public int OutputAllowanceTokens { get; init; } = 32_768;
 
     /// <summary>Head-room over the estimate, covering estimator error.</summary>
     public double Margin { get; init; } = 0.10;
