@@ -506,6 +506,33 @@ public abstract class FactoryStoreContract : IAsyncLifetime
 
     // ---- Checkpoints and evidence ----
 
+    /// <summary>The first real run failed here. PostgreSQL's jsonb does not keep key order, so
+    /// what comes back is not byte-for-byte what was saved; the checkpoint must still be read.</summary>
+    [SkippableFact]
+    public async Task StopRun_TheCheckpointReadBackFromTheStore_StillDeserializes_WithItsResumePoint()
+    {
+        var running = await RunningAsync();
+        var resumeAt = new StartTurnStep(Litos.SoftwareFactory.Contracts.TurnKind.Implement, BriefKind.Resume);
+        var state = RunOrchestrator.NewRun(RunKind.Implement) with
+        {
+            Phase = RunPhase.Stopped,
+            ResumePoint = resumeAt,
+            LastStop = new StopStep(LifecycleTrigger.ExhaustBudget, StopReason.BudgetExhausted, "Out of budget."),
+        };
+
+        await Store.StopRunAsync(
+            Stop(running.Run.Id, LifecycleTrigger.ExhaustBudget, StopReason.BudgetExhausted, "Out of budget.") with
+            {
+                Stage = Stage.Implement, StateJson = RunStateJson.Serialize(state),
+            },
+            T0, default);
+
+        var stored = (await Store.GetRunAsync(running.Run.Id, default))!.StateJson!;
+        var back = RunStateJson.Deserialize(stored);
+        Assert.Equal(resumeAt, back.ResumePoint);
+        Assert.Equal(StopReason.BudgetExhausted, back.LastStop!.Reason);
+    }
+
     [SkippableFact]
     public async Task Checkpoint_SavesTheState_AndEmitsAnEventOnlyWhenTheStageChanges()
     {

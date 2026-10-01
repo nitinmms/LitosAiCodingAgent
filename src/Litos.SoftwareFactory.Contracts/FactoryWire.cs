@@ -51,6 +51,10 @@ public static class FactoryWire
     {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         options.Converters.Add(new JsonStringEnumConverter());
+        // A type discriminator is read wherever it sits in the object, not only first.
+        // PostgreSQL's jsonb does not keep key order, so a checkpoint read back from the store
+        // has its keys rearranged; without this, a stored polymorphic value cannot be read.
+        options.AllowOutOfOrderMetadataProperties = true;
         options.MakeReadOnly(populateMissingResolver: true);
         return options;
     }

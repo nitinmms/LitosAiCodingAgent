@@ -972,6 +972,69 @@ public class RunStateJsonTests
         }
     }
 
+    /// <summary>Rewrites JSON the way PostgreSQL's jsonb stores it: object keys ordered by
+    /// length, then by their bytes. A step's "step" discriminator then no longer comes first.</summary>
+    private static string AsJsonbStoresIt(string json)
+    {
+        static System.Text.Json.Nodes.JsonNode? Reorder(System.Text.Json.Nodes.JsonNode? node) => node switch
+        {
+            System.Text.Json.Nodes.JsonObject o => new System.Text.Json.Nodes.JsonObject(o
+                .OrderBy(p => p.Key.Length).ThenBy(p => p.Key, StringComparer.Ordinal)
+                .Select(p => KeyValuePair.Create(p.Key, Reorder(p.Value?.DeepClone())))),
+            System.Text.Json.Nodes.JsonArray a => new System.Text.Json.Nodes.JsonArray([.. a.Select(item => Reorder(item?.DeepClone()))]),
+            _ => node,
+        };
+
+        return Reorder(System.Text.Json.Nodes.JsonNode.Parse(json))!.ToJsonString();
+    }
+
+    /// <summary>The first real run failed here: the checkpoint is kept in a jsonb column, which
+    /// rearranges keys, and the resume point could not be read back.</summary>
+    [Fact]
+    public void Deserialize_ACheckpointWhoseKeysWereRearrangedByTheDatabase_StillReadsEveryKindOfStep()
+    {
+        RunStep[] steps =
+        [
+            new PreflightStep(), new VerifyStep(), new HandoffStep(),
+            new StartTurnStep(TurnKind.Implement, BriefKind.Resume),
+            new StartTurnStep(TurnKind.Review, BriefKind.Resume, SessionScope.Review),
+            new StopStep(LifecycleTrigger.ExhaustBudget, StopReason.BudgetExhausted, "The task's budget has 31,834 left."),
+        ];
+
+        foreach (var step in steps)
+        {
+            var state = RunOrchestrator.NewRun(RunKind.Implement) with { ResumePoint = step, AfterPreflight = step };
+            var stored = AsJsonbStoresIt(RunStateJson.Serialize(state));
+
+            // The rearrangement is real: a turn step's "kind" now sorts ahead of its "step".
+            if (step is StartTurnStep)
+                Assert.DoesNotContain("\"resumePoint\":{\"step\"", stored);
+
+            var back = RunStateJson.Deserialize(stored);
+            Assert.Equal(step, back.ResumePoint);
+            Assert.Equal(step, back.AfterPreflight);
+        }
+    }
+
+    [Fact]
+    public void Deserialize_ARearrangedCheckpointOfAPausedRun_ResumesWhereItStopped()
+    {
+        var resumeAt = new StartTurnStep(TurnKind.Implement, BriefKind.Resume);
+        var paused = RunOrchestrator.NewRun(RunKind.Implement) with
+        {
+            Phase = RunPhase.Stopped,
+            ResumePoint = resumeAt,
+            LastStop = new StopStep(LifecycleTrigger.ExhaustBudget, StopReason.BudgetExhausted, "The task's budget has 31,834 left."),
+        };
+
+        var back = RunStateJson.Deserialize(AsJsonbStoresIt(RunStateJson.Serialize(paused)));
+        var resumed = new RunOrchestrator().Next(back, new Resumed(), new DateTimeOffset(2026, 10, 1, 9, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(RunStateJson.Serialize(paused), RunStateJson.Serialize(back));
+        Assert.IsType<PreflightStep>(resumed.Step);
+        Assert.Equal(resumeAt, resumed.State.AfterPreflight);
+    }
+
     [Fact]
     public void RoundTrip_ReviewStateDecisionsAndDisclosures()
     {
