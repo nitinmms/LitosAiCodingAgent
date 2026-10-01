@@ -389,11 +389,42 @@ public class RunOrchestratorTests
         run.Submit();
         run.Verify(Passing());           // review starts
 
-        Assert.IsType<HandoffStep>(run.ReviewWith(Blocking()));
+        // Both cycles went on test failures, so none is left for the review's finding: the run
+        // stops rather than handing a known blocking issue to a tester.
+        var stop = AssertStopped(run.ReviewWith(Blocking(), Minor()), LifecycleTrigger.Block, StopReason.RepairCyclesExhausted);
 
+        Assert.Contains("1 blocking issue", stop.Message);
         Assert.Equal(2, run.State.RepairCyclesUsed);
         Assert.Equal(ReviewStatus.FindingsOpen, run.State.Review);
-        Assert.Contains(run.State.Disclosures, d => d.Contains("Blocking review findings were not addressed"));
+        Assert.Equal(2, run.State.Findings.Count);
+        Assert.Equal(Stage.Review, run.State.Stage);
+        Assert.DoesNotContain(run.Steps, s => s is HandoffStep);
+    }
+
+    [Fact]
+    public void BlockedOnReviewFindings_Resume_RepairsThem_Verifies_AndHandsOff_WithoutReviewingAgain()
+    {
+        var run = new Run(limits: new RunLimits { MaxRepairCycles = 0 }).AtReview();
+        var stop = AssertStopped(run.ReviewWith(Blocking(), Blocking("Second issue.")), LifecycleTrigger.Block, StopReason.RepairCyclesExhausted);
+        Assert.Contains("2 blocking issues", stop.Message);
+
+        Assert.IsType<PreflightStep>(run.Report(new Resumed()));
+        AssertTurn(run.Report(new PreflightCompleted(true)), TurnKind.Repair, BriefKind.Repair);
+        Assert.True(run.State.ReviewRepairPending); // so the repair brief lists the findings
+        Assert.Equal(1, run.State.RepairCyclesUsed); // this repair is the first cycle of the fresh allowance
+
+        Assert.IsType<VerifyStep>(run.Submit());
+        Assert.IsType<HandoffStep>(run.Verify(Passing()));
+        Assert.Equal(ReviewStatus.FindingsFixed, run.State.Review);
+        Assert.Single(run.Steps.OfType<StartTurnStep>(), s => s.Brief == BriefKind.Review);
+    }
+
+    [Fact]
+    public void MinorFindings_WithNoRepairCyclesLeft_StillHandOff()
+    {
+        var run = new Run(limits: new RunLimits { MaxRepairCycles = 0 }).AtReview();
+
+        Assert.IsType<HandoffStep>(run.ReviewWith(Minor()));
     }
 
     [Fact]

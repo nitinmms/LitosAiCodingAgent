@@ -443,6 +443,8 @@ It then follows the same Verify → (Repair) → Review → Handoff sequence.
 **Limits and no-progress rules.** All are configurable in Factory settings. Each one stops the run as `Blocked` with a stated reason, and the edits are kept.
 
 - **Repair cycles:** at most N per run (default 2), shared between test failures and review findings.
+  - A review that reports blocking findings when no repair cycle is left stops the run as Blocked. It is never handed off with a known blocking finding.
+  - Resuming a Blocked run grants a fresh allowance of N cycles, because a person has looked at the blocker. Resuming after a pause keeps the count.
 - **Turn ends without a completion tool:** one automatic nudge turn ("You stopped without calling `submit_work` or `request_decision`…"). If that also ends without one, the run is Blocked.
 - **Nothing changes:** a turn that changes no files and makes no completion call.
 - **Repair made no difference:** the same set of failing tests before and after a repair turn.

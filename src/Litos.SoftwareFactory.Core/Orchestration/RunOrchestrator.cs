@@ -68,11 +68,15 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         // A blocker a person has resolved earns a fresh allowance: the run would otherwise stop
         // again at once on a limit it had already reached. Pauses keep their counts.
         var afterBlock = state.LastStop?.Trigger == LifecycleTrigger.Block;
+
+        // When the run resumes straight into a repair turn, that turn is the first cycle of the
+        // fresh allowance.
+        var freshCycles = state.ResumePoint is StartTurnStep { Brief: BriefKind.Repair } ? 1 : 0;
         var resumed = state with
         {
             ActiveSince = now,
             NudgeUsed = false,
-            RepairCyclesUsed = afterBlock ? 0 : state.RepairCyclesUsed,
+            RepairCyclesUsed = afterBlock ? freshCycles : state.RepairCyclesUsed,
             FailuresBeforeRepair = afterBlock ? null : state.FailuresBeforeRepair,
         };
         return Preflight(resumed, state.ResumePoint!);
@@ -195,12 +199,15 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
 
         if (reviewed.RepairCyclesUsed >= Limits.MaxRepairCycles)
         {
-            return Enter(
-                reviewed with
-                {
-                    Disclosures = [.. reviewed.Disclosures, "Blocking review findings were not addressed: no repair cycles were left."],
-                },
-                new HandoffStep());
+            // A blocking finding is, by definition, not something to hand to a tester unfixed. With
+            // no repair cycle left the run stops; resuming it repairs the findings.
+            var count = review.Findings.Count(f => f.Severity == FindingSeverity.Blocking);
+            return Stop(
+                reviewed with { ReviewRepairPending = true, FailuresBeforeRepair = null },
+                LifecycleTrigger.Block, StopReason.RepairCyclesExhausted,
+                $"The review found {(count == 1 ? "1 blocking issue" : $"{count} blocking issues")}, and no repair cycles are left to fix "
+                + (count == 1 ? "it." : "them."),
+                new StartTurnStep(TurnKind.Repair, BriefKind.Repair));
         }
 
         // Blocking findings lead to one repair turn and one more Verify. The review itself is
