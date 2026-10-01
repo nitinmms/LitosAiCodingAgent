@@ -1,0 +1,36 @@
+{
+  "profileVersion": 2,
+  "environment": {
+    "CI": "true",
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_NOLOGO": "1",
+    "MSBUILDDISABLENODEREUSE": "1"
+  },
+  "steps": [
+    {
+      "name": "dotnet",
+      "restore": { "executable": "dotnet", "arguments": ["restore"], "timeoutSeconds": 600 },
+      "build": {
+        "executable": "dotnet",
+        "arguments": ["build", "--no-restore", "-nodeReuse:false", "--disable-build-servers"],
+        "timeoutSeconds": 600
+      },
+      "unitTests": [
+        {
+          "executable": "dotnet",
+          "arguments": [
+            "test", "--no-build",
+            "--logger", "trx",
+            "--results-directory", "artifacts/factory-test-results",
+            "--collect", "XPlat Code Coverage"
+          ],
+          "timeoutSeconds": 600,
+          "testReport": { "format": "trx", "path": "artifacts/factory-test-results/*.trx" },
+          "coverageReport": { "format": "cobertura", "path": "artifacts/factory-test-results/*/coverage.cobertura.xml" }
+        }
+      ]
+    }
+  ],
+  "coverage": { "changedLinesThresholdPercent": 80 },
+  "maximumRepairCycles": 2
+}

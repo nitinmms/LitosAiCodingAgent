@@ -16,7 +16,7 @@ namespace Litos.SoftwareFactory.Core.Orchestration;
 public sealed class RunOrchestrator(RunLimits? limits = null)
 {
     private const string BuildFailure = "<build>";
-    private const string NoReportFailure = "<no test report>";
+    private const string NoReportFailure = "<unit-test command>";
 
     public RunLimits Limits { get; } = limits ?? new RunLimits();
 
@@ -299,8 +299,9 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
     }
 
     /// <summary>
-    /// What makes a verification the task's failure: a failed build, a test command that produced
-    /// no report, or a test that fails now and did not fail on the base commit.
+    /// What makes a verification the task's failure: a failed build, a unit-test command that
+    /// failed without its report naming a failing test (it crashed, timed out or wrote no report),
+    /// or a test that fails now and did not fail on the base commit.
     /// </summary>
     internal static IReadOnlySet<string> HardFailures(VerificationOutcome outcome, VerificationOutcome? baseline)
     {
@@ -318,7 +319,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         if (failures.Contains(BuildFailure))
             parts.Add("the build");
         if (failures.Contains(NoReportFailure))
-            parts.Add("a test command with no report");
+            parts.Add("a unit-test command that reported no failing test");
         var tests = failures.Count(f => f != BuildFailure && f != NoReportFailure);
         if (tests > 0)
             parts.Add(tests == 1 ? "1 test" : $"{tests} tests");

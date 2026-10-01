@@ -236,10 +236,15 @@ public class BriefComposerTests
         var state = State() with
         {
             RepairCyclesUsed = 1,
-            LastVerification = new VerificationOutcome(BuildStatus.Passed, UnitTestStatus.Failed, CoverageStatus.NotMeasured, [], null, [], []),
+            LastVerification = new VerificationOutcome(
+                BuildStatus.Passed, UnitTestStatus.Failed, CoverageStatus.NotMeasured, [], null, [],
+                ["Step 'api': unit tests failed with exit code 1 (no report)."]),
         };
 
-        Assert.Contains("without producing its report", Compose(BriefKind.Repair, state, kind: TurnKind.Repair));
+        var brief = Compose(BriefKind.Repair, state, kind: TurnKind.Repair);
+
+        Assert.Contains("no failing test could be read from its report", brief);
+        Assert.Contains("- Step 'api': unit tests failed with exit code 1 (no report).", brief);
     }
 
     [Fact]

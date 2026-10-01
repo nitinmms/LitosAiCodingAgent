@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="123" failures="0" errors="0" time="10.7783138">
+    <testsuite name="server/app.test.ts" timestamp="2026-09-30T11:49:58.973Z" hostname="factorypc" tests="12" failures="0" errors="0" skipped="0" time="0.202174">
+        <testcase classname="server/app.test.ts" name="GET /api/config &gt; lists configured providers without keys" time="0.0487494">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story &gt; writes a story with the default provider" time="0.0403897">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story &gt; uses the requested provider" time="0.0096141">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story &gt; rejects a provider that is not configured" time="0.0093356">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story &gt; explains how to configure a provider when none is set up" time="0.0122273">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story &gt; validates the request and names the bad field" time="0.0116753">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story &gt; rejects too many photos" time="0.0079072">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story &gt; passes provider errors through with their status" time="0.0139948">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story &gt; hides unexpected errors" time="0.0125837">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story &gt; rejects malformed JSON" time="0.0098735">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="POST /api/story/slide &gt; rewrites one slide" time="0.0135986">
+        </testcase>
+        <testcase classname="server/app.test.ts" name="unknown API routes &gt; return JSON 404s" time="0.0078513">
+        </testcase>
+    </testsuite>
+    <testsuite name="server/providers/anthropic.test.ts" timestamp="2026-09-30T11:49:58.980Z" hostname="factorypc" tests="10" failures="0" errors="0" skipped="0" time="0.0198497">
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; asks Claude for structured JSON with photos labelled by index, and parses the answer" time="0.010742">
+        </testcase>
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; uses Claude Opus 5.5 by default" time="0.0006154">
+        </testcase>
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; reports a refusal as a 422" time="0.0021083">
+        </testcase>
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; reports a truncated answer" time="0.0005664">
+        </testcase>
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; reports output that is not JSON" time="0.000508">
+        </testcase>
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; maps [Function AuthenticationError] to a user-facing error" time="0.0008564">
+        </testcase>
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; maps [Function RateLimitError] to a user-facing error" time="0.0003528">
+        </testcase>
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; maps [Function BadRequestError] to a user-facing error" time="0.0003323">
+        </testcase>
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; maps [Function APIConnectionError] to a user-facing error" time="0.0004938">
+        </testcase>
+        <testcase classname="server/providers/anthropic.test.ts" name="Anthropic provider &gt; maps [Function InternalServerError] to a user-facing error" time="0.0003985">
+        </testcase>
+    </testsuite>
+    <testsuite name="server/providers/openaiCompatible.test.ts" timestamp="2026-09-30T11:49:58.983Z" hostname="factorypc" tests="8" failures="0" errors="0" skipped="0" time="0.0171906">
+        <testcase classname="server/providers/openaiCompatible.test.ts" name="OpenAI-compatible provider &gt; sends a strict JSON schema, a system message and data-URL photos, and parses the answer" time="0.0078668">
+        </testcase>
+        <testcase classname="server/providers/openaiCompatible.test.ts" name="OpenAI-compatible provider &gt; reports refusals, content filtering and truncation" time="0.0029446">
+        </testcase>
+        <testcase classname="server/providers/openaiCompatible.test.ts" name="OpenAI-compatible provider &gt; reports an empty or unreadable answer" time="0.0007163">
+        </testcase>
+        <testcase classname="server/providers/openaiCompatible.test.ts" name="OpenAI-compatible provider &gt; names the right environment variable when the key is rejected" time="0.001096">
+        </testcase>
+        <testcase classname="server/providers/openaiCompatible.test.ts" name="OpenAI-compatible provider &gt; maps [Function RateLimitError] to status 429" time="0.0005986">
+        </testcase>
+        <testcase classname="server/providers/openaiCompatible.test.ts" name="OpenAI-compatible provider &gt; maps [Function NotFoundError] to status 400" time="0.0003877">
+        </testcase>
+        <testcase classname="server/providers/openaiCompatible.test.ts" name="OpenAI-compatible provider &gt; maps [Function APIConnectionError] to status 502" time="0.000339">
+        </testcase>
+        <testcase classname="server/providers/openaiCompatible.test.ts" name="OpenAI-compatible provider &gt; maps [Function InternalServerError] to status 502" time="0.0003217">
+        </testcase>
+    </testsuite>
+    <testsuite name="server/providers/registry.test.ts" timestamp="2026-09-30T11:49:58.985Z" hostname="factorypc" tests="5" failures="0" errors="0" skipped="0" time="0.0069314">
+        <testcase classname="server/providers/registry.test.ts" name="createProviders &gt; creates nothing without keys" time="0.0031021">
+        </testcase>
+        <testcase classname="server/providers/registry.test.ts" name="createProviders &gt; creates each provider whose key is set, in a fixed order, with default models" time="0.0009326">
+        </testcase>
+        <testcase classname="server/providers/registry.test.ts" name="createProviders &gt; accepts GOOGLE_API_KEY for Gemini and model overrides" time="0.0008556">
+        </testcase>
+        <testcase classname="server/providers/registry.test.ts" name="chooseDefaultProvider &gt; honours STORY_PROVIDER when that provider is configured" time="0.000203">
+        </testcase>
+        <testcase classname="server/providers/registry.test.ts" name="chooseDefaultProvider &gt; falls back to the first configured provider" time="0.0001862">
+        </testcase>
+    </testsuite>
+    <testsuite name="server/storyPlanner.test.ts" timestamp="2026-09-30T11:49:58.987Z" hostname="factorypc" tests="5" failures="0" errors="0" skipped="0" time="0.0268581">
+        <testcase classname="server/storyPlanner.test.ts" name="story planner &gt; sends the brief and photos with the plan schema and normalises the result" time="0.0165805">
+        </testcase>
+        <testcase classname="server/storyPlanner.test.ts" name="story planner &gt; leaves optional brief fields out of the prompt when empty" time="0.0012037">
+        </testcase>
+        <testcase classname="server/storyPlanner.test.ts" name="story planner &gt; rejects output in the wrong shape" time="0.0038282">
+        </testcase>
+        <testcase classname="server/storyPlanner.test.ts" name="story planner &gt; rewrites one slide with the story as context" time="0.0010014">
+        </testcase>
+        <testcase classname="server/storyPlanner.test.ts" name="story planner &gt; uses a default instruction and refuses a slide that does not exist" time="0.0008749">
+        </testcase>
+    </testsuite>
+    <testsuite name="shared/color.test.ts" timestamp="2026-09-30T11:49:58.988Z" hostname="factorypc" tests="6" failures="0" errors="0" skipped="0" time="0.0049254">
+        <testcase classname="shared/color.test.ts" name="normalizeHex &gt; expands short hex and upper-cases" time="0.0020958">
+        </testcase>
+        <testcase classname="shared/color.test.ts" name="normalizeHex &gt; falls back for anything that is not a hex colour" time="0.0002434">
+        </testcase>
+        <testcase classname="shared/color.test.ts" name="contrastRatio &gt; is 21 for black on white and 1 for identical colours" time="0.0003826">
+        </testcase>
+        <testcase classname="shared/color.test.ts" name="readableText &gt; keeps a readable choice" time="0.0001903">
+        </testcase>
+        <testcase classname="shared/color.test.ts" name="readableText &gt; replaces unreadable text with black or white, whichever contrasts more" time="0.0001517">
+        </testcase>
+        <testcase classname="shared/color.test.ts" name="shade &gt; moves towards black or white" time="0.0002177">
+        </testcase>
+    </testsuite>
+    <testsuite name="shared/story.test.ts" timestamp="2026-09-30T11:49:58.991Z" hostname="factorypc" tests="10" failures="0" errors="0" skipped="0" time="0.0468723">
+        <testcase classname="shared/story.test.ts" name="normalizeSlide &gt; drops photo indexes outside the uploaded photos" time="0.0120723">
+        </testcase>
+        <testcase classname="shared/story.test.ts" name="normalizeSlide &gt; repairs invalid colours and unreadable text" time="0.0006557">
+        </testcase>
+        <testcase classname="shared/story.test.ts" name="normalizeSlide &gt; bounds text length and collapses whitespace" time="0.0019352">
+        </testcase>
+        <testcase classname="shared/story.test.ts" name="normalizeSlide &gt; clears sticker text when there is no sticker" time="0.000721">
+        </testcase>
+        <testcase classname="shared/story.test.ts" name="normalizePlan &gt; keeps at most the requested number of slides" time="0.006063">
+        </testcase>
+        <testcase classname="shared/story.test.ts" name="normalizePlan &gt; normalises, de-duplicates and caps hashtags" time="0.0043547">
+        </testcase>
+        <testcase classname="shared/story.test.ts" name="normalizePlan &gt; gives an untitled story a title" time="0.0004997">
+        </testcase>
+        <testcase classname="shared/story.test.ts" name="normalizeHashtag &gt; keeps letters in any script and strips punctuation" time="0.0003691">
+        </testcase>
+        <testcase classname="shared/story.test.ts" name="briefSchema &gt; rejects a topic that is too short" time="0.0094753">
+        </testcase>
+        <testcase classname="shared/story.test.ts" name="planJsonSchema &gt; requires every property and forbids extras, as strict structured output needs" time="0.0041942">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/App.test.tsx" timestamp="2026-09-30T11:49:58.995Z" hostname="factorypc" tests="10" failures="0" errors="0" skipped="0" time="7.2543467">
+        <testcase classname="src/App.test.tsx" name="App &gt; writes a story with the default provider and shows the first slide for editing" time="1.3642846">
+        </testcase>
+        <testcase classname="src/App.test.tsx" name="App &gt; uses the provider the user picks" time="0.5600502">
+        </testcase>
+        <testcase classname="src/App.test.tsx" name="App &gt; edits, reorders and rewrites slides" time="1.659379">
+        </testcase>
+        <testcase classname="src/App.test.tsx" name="App &gt; shows sticker suggestions as instructions for the Instagram app" time="0.6244406">
+        </testcase>
+        <testcase classname="src/App.test.tsx" name="App &gt; downloads every slide as a zip named after the story" time="0.5629521">
+        </testcase>
+        <testcase classname="src/App.test.tsx" name="App &gt; shows the provider&apos;s error and keeps the brief" time="0.4890203">
+        </testcase>
+        <testcase classname="src/App.test.tsx" name="App &gt; validates the brief before calling the server" time="0.0847482">
+        </testcase>
+        <testcase classname="src/App.test.tsx" name="App &gt; explains how to set up a provider when the server has none" time="0.0347753">
+        </testcase>
+        <testcase classname="src/App.test.tsx" name="App &gt; restores the story from the saved draft after a reload" time="0.96964">
+        </testcase>
+        <testcase classname="src/App.test.tsx" name="App &gt; asks before discarding the story" time="0.9001196">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/api.test.ts" timestamp="2026-09-30T11:49:58.997Z" hostname="factorypc" tests="5" failures="0" errors="0" skipped="0" time="0.0567586">
+        <testcase classname="src/api.test.ts" name="api client &gt; posts the brief, only the photo fields the server needs, and the provider" time="0.0343752">
+        </testcase>
+        <testcase classname="src/api.test.ts" name="api client &gt; omits the provider when none is chosen, so the server default applies" time="0.0051361">
+        </testcase>
+        <testcase classname="src/api.test.ts" name="api client &gt; surfaces the server&apos;s error message" time="0.0033317">
+        </testcase>
+        <testcase classname="src/api.test.ts" name="api client &gt; explains a server that cannot be reached" time="0.0029788">
+        </testcase>
+        <testcase classname="src/api.test.ts" name="api client &gt; copes with an error response that is not JSON" time="0.0012331">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/ExportPanel.test.tsx" timestamp="2026-09-30T11:49:58.999Z" hostname="factorypc" tests="4" failures="0" errors="0" skipped="0" time="0.7506358">
+        <testcase classname="src/components/ExportPanel.test.tsx" name="ExportPanel &gt; copies the caption with its hashtags" time="0.5502045">
+        </testcase>
+        <testcase classname="src/components/ExportPanel.test.tsx" name="ExportPanel &gt; tells the user when copying is not allowed" time="0.0847441">
+        </testcase>
+        <testcase classname="src/components/ExportPanel.test.tsx" name="ExportPanel &gt; normalises typed hashtags" time="0.0341391">
+        </testcase>
+        <testcase classname="src/components/ExportPanel.test.tsx" name="ExportPanel &gt; disables download while busy" time="0.0727711">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/PhotoPicker.test.tsx" timestamp="2026-09-30T11:49:59.000Z" hostname="factorypc" tests="4" failures="0" errors="0" skipped="0" time="0.8649301">
+        <testcase classname="src/components/PhotoPicker.test.tsx" name="PhotoPicker &gt; prepares chosen photos and adds them" time="0.5530282">
+        </testcase>
+        <testcase classname="src/components/PhotoPicker.test.tsx" name="PhotoPicker &gt; explains unsupported files and the photo limit" time="0.104456">
+        </testcase>
+        <testcase classname="src/components/PhotoPicker.test.tsx" name="PhotoPicker &gt; reports photos that cannot be read" time="0.0877016">
+        </testcase>
+        <testcase classname="src/components/PhotoPicker.test.tsx" name="PhotoPicker &gt; removes a photo" time="0.1131067">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/SlideEditor.test.tsx" timestamp="2026-09-30T11:49:59.002Z" hostname="factorypc" tests="6" failures="0" errors="0" skipped="0" time="1.3126489">
+        <testcase classname="src/components/SlideEditor.test.tsx" name="SlideEditor &gt; assigns a photo and changes the text position" time="0.8408166">
+        </testcase>
+        <testcase classname="src/components/SlideEditor.test.tsx" name="SlideEditor &gt; changes one theme colour and keeps the others" time="0.0300439">
+        </testcase>
+        <testcase classname="src/components/SlideEditor.test.tsx" name="SlideEditor &gt; disables moves and deletion at the edges" time="0.1477666">
+        </testcase>
+        <testcase classname="src/components/SlideEditor.test.tsx" name="SlideEditor &gt; duplicates and deletes the selected slide" time="0.2384535">
+        </testcase>
+        <testcase classname="src/components/SlideEditor.test.tsx" name="SlideEditor &gt; does not offer rewriting while the AI is busy" time="0.0493689">
+        </testcase>
+        <testcase classname="src/components/SlideEditor.test.tsx" name="SlideEditor &gt; renders nothing without a story" time="0.0025868">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/export/exportStory.test.ts" timestamp="2026-09-30T11:49:59.003Z" hostname="factorypc" tests="4" failures="0" errors="0" skipped="0" time="0.0098299">
+        <testcase classname="src/export/exportStory.test.ts" name="export helpers &gt; names slides so they sort in story order" time="0.0042085">
+        </testcase>
+        <testcase classname="src/export/exportStory.test.ts" name="export helpers &gt; builds a safe zip name from the title" time="0.0012931">
+        </testcase>
+        <testcase classname="src/export/exportStory.test.ts" name="export helpers &gt; joins caption and hashtags the way they are pasted into Instagram" time="0.0004853">
+        </testcase>
+        <testcase classname="src/export/exportStory.test.ts" name="export helpers &gt; lists alt text for every slide in the notes file" time="0.0007871">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/story/geometry.test.ts" timestamp="2026-09-30T11:49:59.005Z" hostname="factorypc" tests="9" failures="0" errors="0" skipped="0" time="0.032181">
+        <testcase classname="src/story/geometry.test.ts" name="coverRect &gt; crops the sides of a wide image to fill a tall frame" time="0.0089926">
+        </testcase>
+        <testcase classname="src/story/geometry.test.ts" name="coverRect &gt; follows the focus point and clamps it" time="0.0034021">
+        </testcase>
+        <testcase classname="src/story/geometry.test.ts" name="fitWithin &gt; scales the longest side down and never up" time="0.0035645">
+        </testcase>
+        <testcase classname="src/story/geometry.test.ts" name="layoutSlideText &gt; keeps top-aligned text inside the safe area" time="0.0039063">
+        </testcase>
+        <testcase classname="src/story/geometry.test.ts" name="layoutSlideText &gt; keeps center-aligned text inside the safe area" time="0.0019185">
+        </testcase>
+        <testcase classname="src/story/geometry.test.ts" name="layoutSlideText &gt; keeps bottom-aligned text inside the safe area" time="0.0004985">
+        </testcase>
+        <testcase classname="src/story/geometry.test.ts" name="layoutSlideText &gt; places top, center and bottom layouts in order" time="0.0029404">
+        </testcase>
+        <testcase classname="src/story/geometry.test.ts" name="layoutSlideText &gt; stays inside the safe area even with the longest allowed text" time="0.0007445">
+        </testcase>
+        <testcase classname="src/story/geometry.test.ts" name="layoutSlideText &gt; omits the body block when there is no body text" time="0.000389">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/story/render.test.ts" timestamp="2026-09-30T11:49:59.007Z" hostname="factorypc" tests="4" failures="0" errors="0" skipped="0" time="0.0491169">
+        <testcase classname="src/story/render.test.ts" name="drawSlide &gt; draws the headline, body and handle inside Instagram&apos;s safe area" time="0.0230562">
+        </testcase>
+        <testcase classname="src/story/render.test.ts" name="drawSlide &gt; uses the theme&apos;s text colour on a designed background" time="0.0008779">
+        </testcase>
+        <testcase classname="src/story/render.test.ts" name="drawSlide &gt; draws the photo cropped to fill the frame and uses white text over it" time="0.0146852">
+        </testcase>
+        <testcase classname="src/story/render.test.ts" name="drawSlide &gt; omits the handle when none is set" time="0.0069449">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/story/state.test.ts" timestamp="2026-09-30T11:49:59.009Z" hostname="factorypc" tests="10" failures="0" errors="0" skipped="0" time="0.0339437">
+        <testcase classname="src/story/state.test.ts" name="editorReducer &gt; updates the brief without touching other fields" time="0.0090205">
+        </testcase>
+        <testcase classname="src/story/state.test.ts" name="editorReducer &gt; re-points slides when a photo is removed" time="0.0029206">
+        </testcase>
+        <testcase classname="src/story/state.test.ts" name="editorReducer &gt; moves a slide and keeps it selected" time="0.0018361">
+        </testcase>
+        <testcase classname="src/story/state.test.ts" name="editorReducer &gt; ignores moves outside the story" time="0.0003882">
+        </testcase>
+        <testcase classname="src/story/state.test.ts" name="editorReducer &gt; never deletes the last remaining slide" time="0.0007347">
+        </testcase>
+        <testcase classname="src/story/state.test.ts" name="editorReducer &gt; keeps the selection valid after deleting the selected last slide" time="0.0046001">
+        </testcase>
+        <testcase classname="src/story/state.test.ts" name="editorReducer &gt; duplicates a slide as an independent copy, up to the slide limit" time="0.0032022">
+        </testcase>
+        <testcase classname="src/story/state.test.ts" name="editorReducer &gt; replaces and updates single slides" time="0.0045785">
+        </testcase>
+        <testcase classname="src/story/state.test.ts" name="editorReducer &gt; resets to an empty story but keeps the provider choice" time="0.0022948">
+        </testcase>
+        <testcase classname="src/story/state.test.ts" name="slidePhoto &gt; returns null for no photo or an index past the photos" time="0.0005276">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/story/storage.test.ts" timestamp="2026-09-30T11:49:59.017Z" hostname="factorypc" tests="5" failures="0" errors="0" skipped="0" time="0.0814379">
+        <testcase classname="src/story/storage.test.ts" name="draft storage &gt; round-trips a draft without its transient status" time="0.0622002">
+        </testcase>
+        <testcase classname="src/story/storage.test.ts" name="draft storage &gt; drops photos when the full draft does not fit" time="0.0017462">
+        </testcase>
+        <testcase classname="src/story/storage.test.ts" name="draft storage &gt; reports unavailable storage instead of throwing" time="0.0080543">
+        </testcase>
+        <testcase classname="src/story/storage.test.ts" name="draft storage &gt; ignores missing, corrupt or outdated drafts" time="0.001124">
+        </testcase>
+        <testcase classname="src/story/storage.test.ts" name="draft storage &gt; clears the draft" time="0.0049107">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/story/text.test.ts" timestamp="2026-09-30T11:49:59.018Z" hostname="factorypc" tests="6" failures="0" errors="0" skipped="0" time="0.0076828">
+        <testcase classname="src/story/text.test.ts" name="wrapText &gt; keeps short text on one line" time="0.0037215">
+        </testcase>
+        <testcase classname="src/story/text.test.ts" name="wrapText &gt; wraps at word boundaries" time="0.0002797">
+        </testcase>
+        <testcase classname="src/story/text.test.ts" name="wrapText &gt; honours explicit line breaks" time="0.0001928">
+        </testcase>
+        <testcase classname="src/story/text.test.ts" name="wrapText &gt; splits a word that is wider than a line" time="0.0002548">
+        </testcase>
+        <testcase classname="src/story/text.test.ts" name="wrapText &gt; ends with an ellipsis when the text needs more lines than allowed" time="0.0012334">
+        </testcase>
+        <testcase classname="src/story/text.test.ts" name="wrapText &gt; returns no lines for empty text" time="0.000174">
+        </testcase>
+    </testsuite>
+</testsuites>

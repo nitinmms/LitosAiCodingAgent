@@ -1,0 +1,277 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="a0a2fde2-bfec-495e-8288-78212fefc60d" name="factory@FACTORYPC 2026-10-01 10:51:24" runUser="FACTORYPC\factory" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-01T10:51:25.0083801+05:30" queuing="2026-10-01T10:51:25.0083804+05:30" start="2026-10-01T10:51:22.4528252+05:30" finish="2026-10-01T10:51:25.7583594+05:30" />
+  <TestSettings name="default" id="de6d3117-8095-4df1-82f6-831d145ed81b">
+    <Deployment runDeploymentRoot="factory_FACTORYPC_2026-10-01_10_51_24" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="a98fd2e0-377c-433d-affd-4c03c49bc3ec" testId="6fa8ddf4-1570-997b-606b-361e01d46119" testName="FileDbSharp.Tests.TransactionTests.Completed_transaction_cannot_be_reused" computerName="FACTORYPC" duration="00:00:00.0045565" startTime="2026-10-01T10:51:24.9786261+05:30" endTime="2026-10-01T10:51:24.9799334+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a98fd2e0-377c-433d-affd-4c03c49bc3ec" />
+    <UnitTestResult executionId="ff175483-3097-48ce-becb-a63a915c02c9" testId="7f566ae3-0ce2-a286-1b06-a53a01f307b6" testName="FileDbSharp.Tests.DurabilityTests.Data_survives_reopen(durability: FlushToOperatingSystem)" computerName="FACTORYPC" duration="00:00:00.0095195" startTime="2026-10-01T10:51:24.9820883+05:30" endTime="2026-10-01T10:51:24.9887582+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ff175483-3097-48ce-becb-a63a915c02c9" />
+    <UnitTestResult executionId="e56a0bce-d64d-4931-9e18-01b67cc6604c" testId="778ea5f0-d235-8f88-6ac7-72d469c07425" testName="FileDbSharp.Tests.CollectionTests.Update_of_missing_key_throws_and_writes_nothing" computerName="FACTORYPC" duration="00:00:00.0060427" startTime="2026-10-01T10:51:24.9761303+05:30" endTime="2026-10-01T10:51:24.9770750+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e56a0bce-d64d-4931-9e18-01b67cc6604c" />
+    <UnitTestResult executionId="4936e904-ca67-4bc6-ac1f-626a13ac8f8a" testId="1cb91227-dd1a-e2ef-46be-51fad9f05d29" testName="FileDbSharp.Tests.CollectionTests.Empty_key_and_null_document_are_rejected" computerName="FACTORYPC" duration="00:00:00.0046832" startTime="2026-10-01T10:51:24.9997653+05:30" endTime="2026-10-01T10:51:25.0040203+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4936e904-ca67-4bc6-ac1f-626a13ac8f8a" />
+    <UnitTestResult executionId="b9fd7ab3-c822-49d6-a961-eccd9aadfca7" testId="960fb24f-511a-deeb-6c18-c7a84bdd117f" testName="FileDbSharp.Tests.CollectionTests.Stats_track_documents_and_reclaimable_space" computerName="FACTORYPC" duration="00:00:00.0098874" startTime="2026-10-01T10:51:25.0050205+05:30" endTime="2026-10-01T10:51:25.0128839+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b9fd7ab3-c822-49d6-a961-eccd9aadfca7" />
+    <UnitTestResult executionId="5ed84acf-9a3a-43d6-9b74-9ac2979de8e9" testId="087f3e07-bdc3-d8a2-47eb-d0fe0f3cdead" testName="FileDbSharp.Tests.CollectionTests.Delete_reports_whether_the_document_existed" computerName="FACTORYPC" duration="00:00:00.0073428" startTime="2026-10-01T10:51:24.9798798+05:30" endTime="2026-10-01T10:51:24.9821798+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5ed84acf-9a3a-43d6-9b74-9ac2979de8e9" />
+    <UnitTestResult executionId="c6e0d2ce-5648-4999-a302-5ffc176fc6f8" testId="e46c8bee-3ca8-f5e5-8a81-c5bbc4d6cb85" testName="FileDbSharp.Tests.TransactionTests.Committed_writes_become_visible_together" computerName="FACTORYPC" duration="00:00:00.0056334" startTime="2026-10-01T10:51:24.9804289+05:30" endTime="2026-10-01T10:51:24.9805032+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c6e0d2ce-5648-4999-a302-5ffc176fc6f8" />
+    <UnitTestResult executionId="c81544f5-2b24-4e11-80d3-3e6588af2e99" testId="29febc94-3186-0aa9-676b-14648f1ddfc8" testName="FileDbSharp.Tests.CompactionTests.Compacted_file_reopens_with_the_same_contents_and_accepts_writes" computerName="FACTORYPC" duration="00:00:00.0461367" startTime="2026-10-01T10:51:25.0912949+05:30" endTime="2026-10-01T10:51:25.1370654+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c81544f5-2b24-4e11-80d3-3e6588af2e99" />
+    <UnitTestResult executionId="5a360121-c3d9-4133-889b-bbeba8712583" testId="ed12ea71-17f9-4e64-afaa-9c76a70382c4" testName="FileDbSharp.Tests.LogFormatTests.Encoded_batch_decodes_to_the_same_operations_with_value_locations" computerName="FACTORYPC" duration="00:00:00.0207601" startTime="2026-10-01T10:51:24.9069729+05:30" endTime="2026-10-01T10:51:24.9095371+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5a360121-c3d9-4133-889b-bbeba8712583" />
+    <UnitTestResult executionId="3c795df0-7941-45e4-b263-122d722c72b3" testId="4e62d70f-73ec-81da-ff79-c63c84978b28" testName="FileDbSharp.Tests.TransactionTests.Drop_then_write_in_one_transaction_keeps_only_new_documents" computerName="FACTORYPC" duration="00:00:00.0161350" startTime="2026-10-01T10:51:24.9725626+05:30" endTime="2026-10-01T10:51:24.9780242+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3c795df0-7941-45e4-b263-122d722c72b3" />
+    <UnitTestResult executionId="f828a560-ea2b-4daf-8d5a-556b5afc7323" testId="e948867e-b30d-b902-bb81-ebc888537db6" testName="FileDbSharp.Tests.CollectionTests.Upsert_replaces_an_existing_document" computerName="FACTORYPC" duration="00:00:00.0056559" startTime="2026-10-01T10:51:25.0293054+05:30" endTime="2026-10-01T10:51:25.0345083+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f828a560-ea2b-4daf-8d5a-556b5afc7323" />
+    <UnitTestResult executionId="6400b06a-c785-4b80-9945-9d3c24b55cc7" testId="476f7d4e-a6a6-cdfc-696b-076f16704fbd" testName="FileDbSharp.Tests.TransactionTests.Delete_then_insert_of_same_key_in_one_transaction_succeeds" computerName="FACTORYPC" duration="00:00:00.0086693" startTime="2026-10-01T10:51:24.9887216+05:30" endTime="2026-10-01T10:51:24.9966366+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="6400b06a-c785-4b80-9945-9d3c24b55cc7" />
+    <UnitTestResult executionId="aebe106b-8e08-41d9-85f6-92a461e8df18" testId="3616ef04-6c3a-57a7-a1ab-13fbf5b2a66b" testName="FileDbSharp.Tests.CollectionTests.Upsert_then_get_returns_the_document" computerName="FACTORYPC" duration="00:00:00.0596084" startTime="2026-10-01T10:51:24.9004842+05:30" endTime="2026-10-01T10:51:24.9376843+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="aebe106b-8e08-41d9-85f6-92a461e8df18" />
+    <UnitTestResult executionId="82c0d5fb-d5a3-4bae-9036-8675276f8f58" testId="1f85a541-6736-0cea-2cc6-43bf8df5378a" testName="FileDbSharp.Tests.DurabilityTests.Data_survives_reopen(durability: FlushToDisk)" computerName="FACTORYPC" duration="00:00:00.0249755" startTime="2026-10-01T10:51:24.9769432+05:30" endTime="2026-10-01T10:51:24.9815495+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="82c0d5fb-d5a3-4bae-9036-8675276f8f58" />
+    <UnitTestResult executionId="a726171f-f2e8-4d46-b408-19ffb9f34453" testId="f998f8eb-ccde-299d-f5ba-2ad3b8da05e3" testName="FileDbSharp.Tests.LogFormatTests.Truncated_payload_is_rejected" computerName="FACTORYPC" duration="00:00:00.0009080" startTime="2026-10-01T10:51:24.9304837+05:30" endTime="2026-10-01T10:51:24.9305556+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a726171f-f2e8-4d46-b408-19ffb9f34453" />
+    <UnitTestResult executionId="e09f1be6-ae87-4a64-8a8c-0f39b9f40410" testId="d46cbd86-c4ab-4f5d-30f8-d1a2c3a09488" testName="FileDbSharp.Tests.CompactionTests.Compact_shrinks_the_file_and_keeps_current_documents" computerName="FACTORYPC" duration="00:00:00.1470060" startTime="2026-10-01T10:51:24.9697901+05:30" endTime="2026-10-01T10:51:25.0859486+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e09f1be6-ae87-4a64-8a8c-0f39b9f40410" />
+    <UnitTestResult executionId="cf1096e5-57e4-47bf-bc99-a0956ac2e7f1" testId="b59a0e2c-589a-0aeb-76a3-4474a3a3b442" testName="FileDbSharp.Tests.DurabilityTests.Operations_after_dispose_throw" computerName="FACTORYPC" duration="00:00:00.0059670" startTime="2026-10-01T10:51:24.9982543+05:30" endTime="2026-10-01T10:51:25.0027709+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cf1096e5-57e4-47bf-bc99-a0956ac2e7f1" />
+    <UnitTestResult executionId="9d8b624e-0bb7-495a-80be-a5bdd4efea11" testId="11b3fe66-bf4a-7d36-b2c5-a07de6599250" testName="FileDbSharp.Tests.DurabilityTests.A_file_can_be_open_in_only_one_instance" computerName="FACTORYPC" duration="00:00:00.0083320" startTime="2026-10-01T10:51:24.9891281+05:30" endTime="2026-10-01T10:51:24.9974874+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9d8b624e-0bb7-495a-80be-a5bdd4efea11" />
+    <UnitTestResult executionId="b529a2bc-f32a-47d8-a954-c748211634de" testId="4a8ef685-60f1-ecfb-4fa0-05f56b8bfefa" testName="FileDbSharp.Tests.CollectionTests.Get_of_missing_key_throws_and_TryGet_returns_false" computerName="FACTORYPC" duration="00:00:00.0042043" startTime="2026-10-01T10:51:24.9791400+05:30" endTime="2026-10-01T10:51:24.9792873+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b529a2bc-f32a-47d8-a954-c748211634de" />
+    <UnitTestResult executionId="28e6d6d0-bbf8-47c3-a37f-dab8d81fc9d8" testId="86244078-0a33-acb1-f6c5-9c80473b17bc" testName="FileDbSharp.Tests.ConcurrencyTests.Concurrent_inserts_of_the_same_key_let_exactly_one_win" computerName="FACTORYPC" duration="00:00:00.0050358" startTime="2026-10-01T10:51:25.1387782+05:30" endTime="2026-10-01T10:51:25.1437772+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="28e6d6d0-bbf8-47c3-a37f-dab8d81fc9d8" />
+    <UnitTestResult executionId="286dbdda-fc04-418f-92c6-be9e64668798" testId="f25a2617-45de-7aee-eb21-162c74a891e2" testName="FileDbSharp.Tests.CollectionTests.Collections_are_isolated_by_name" computerName="FACTORYPC" duration="00:00:00.0094170" startTime="2026-10-01T10:51:24.9705257+05:30" endTime="2026-10-01T10:51:24.9726369+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="286dbdda-fc04-418f-92c6-be9e64668798" />
+    <UnitTestResult executionId="58314ce6-47fc-4849-ab22-a9accff35017" testId="6181af84-9fe7-59a9-a64d-dfe860f5baee" testName="FileDbSharp.Tests.ConcurrencyTests.Concurrent_inserts_of_distinct_keys_are_all_kept" computerName="FACTORYPC" duration="00:00:00.0631237" startTime="2026-10-01T10:51:24.9070501+05:30" endTime="2026-10-01T10:51:24.9711876+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="58314ce6-47fc-4849-ab22-a9accff35017" />
+    <UnitTestResult executionId="89efc2ef-ad0e-4ca4-808b-acd7256079ad" testId="4c17549a-0db4-ae8b-e3d2-e17cda9005f7" testName="FileDbSharp.Tests.CollectionTests.Unicode_keys_and_values_roundtrip" computerName="FACTORYPC" duration="00:00:00.0050237" startTime="2026-10-01T10:51:24.9688085+05:30" endTime="2026-10-01T10:51:24.9698932+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="89efc2ef-ad0e-4ca4-808b-acd7256079ad" />
+    <UnitTestResult executionId="5b3cfd4a-db13-4000-984b-cb9e4e4199fd" testId="4a8b7fab-4c4b-51c7-5d47-cfedb92b379b" testName="FileDbSharp.Tests.CompactionTests.Compacting_an_empty_database_works" computerName="FACTORYPC" duration="00:00:00.0047937" startTime="2026-10-01T10:51:25.0864866+05:30" endTime="2026-10-01T10:51:25.0908390+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5b3cfd4a-db13-4000-984b-cb9e4e4199fd" />
+    <UnitTestResult executionId="f19dda55-b257-4a33-b987-685817e711a7" testId="dc6b00d0-f568-85ce-2c48-87e033264ba3" testName="FileDbSharp.Tests.TransactionTests.Failed_condition_at_commit_writes_nothing" computerName="FACTORYPC" duration="00:00:00.0063203" startTime="2026-10-01T10:51:24.9711209+05:30" endTime="2026-10-01T10:51:24.9719336+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f19dda55-b257-4a33-b987-685817e711a7" />
+    <UnitTestResult executionId="35c4ade7-46ba-4ffb-8f48-af8ed2fb2540" testId="95b6fb95-e5a1-a7eb-af97-f298a4964eac" testName="FileDbSharp.Tests.LogFormatTests.Header_with_unknown_magic_or_version_is_rejected" computerName="FACTORYPC" duration="00:00:00.0012006" startTime="2026-10-01T10:51:24.9264231+05:30" endTime="2026-10-01T10:51:24.9265264+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="35c4ade7-46ba-4ffb-8f48-af8ed2fb2540" />
+    <UnitTestResult executionId="b260a9a1-2cdf-4ab9-91ad-9065eb922842" testId="702e9f0d-0dad-ef4e-3d00-83da84791c76" testName="FileDbSharp.Tests.CollectionTests.Keys_are_returned_in_ordinal_order" computerName="FACTORYPC" duration="00:00:00.0098395" startTime="2026-10-01T10:51:25.0140493+05:30" endTime="2026-10-01T10:51:25.0229452+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b260a9a1-2cdf-4ab9-91ad-9065eb922842" />
+    <UnitTestResult executionId="15c182c0-061d-4c8f-9b51-80e55b7cb123" testId="879f4d48-56c8-2827-6554-247965ae6938" testName="FileDbSharp.Tests.DurabilityTests.Corrupted_final_frame_is_discarded_and_earlier_data_kept" computerName="FACTORYPC" duration="00:00:00.0747078" startTime="2026-10-01T10:51:24.9018859+05:30" endTime="2026-10-01T10:51:24.9761851+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="15c182c0-061d-4c8f-9b51-80e55b7cb123" />
+    <UnitTestResult executionId="0e38f8a7-7908-4b9a-88f8-9e13c7261934" testId="2423c7bd-dd51-3a0f-536b-00d62c417a77" testName="FileDbSharp.Tests.TransactionTests.Transaction_survives_reopen" computerName="FACTORYPC" duration="00:00:00.0129813" startTime="2026-10-01T10:51:24.9982130+05:30" endTime="2026-10-01T10:51:25.0097131+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0e38f8a7-7908-4b9a-88f8-9e13c7261934" />
+    <UnitTestResult executionId="894e40a5-5807-48d8-88a8-9a84629378df" testId="9c37ea37-89c2-f715-666e-1d345d9214b9" testName="FileDbSharp.Tests.CollectionTests.Insert_of_existing_key_throws_and_keeps_the_original" computerName="FACTORYPC" duration="00:00:00.0055245" startTime="2026-10-01T10:51:25.0243088+05:30" endTime="2026-10-01T10:51:25.0286553+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="894e40a5-5807-48d8-88a8-9a84629378df" />
+    <UnitTestResult executionId="ec011e7e-0a25-4d93-a2c0-23d0426f8300" testId="f57e61f9-76fa-fc0d-9965-e95936726e43" testName="FileDbSharp.Tests.DurabilityTests.Missing_directories_are_created" computerName="FACTORYPC" duration="00:00:00.0042392" startTime="2026-10-01T10:51:25.0317983+05:30" endTime="2026-10-01T10:51:25.0350317+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ec011e7e-0a25-4d93-a2c0-23d0426f8300" />
+    <UnitTestResult executionId="7506a346-7c46-41b5-83ad-85b5a71b3528" testId="b0e7641c-a109-73ae-dc18-5bc73b5a13b8" testName="FileDbSharp.Tests.CollectionTests.Find_returns_matching_documents_in_key_order" computerName="FACTORYPC" duration="00:00:00.0180559" startTime="2026-10-01T10:51:24.9880716+05:30" endTime="2026-10-01T10:51:24.9983228+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7506a346-7c46-41b5-83ad-85b5a71b3528" />
+    <UnitTestResult executionId="48ad272e-6b40-48c1-aa0d-a844daf91864" testId="1dbf35da-2ef6-a598-3735-72712c2be1a7" testName="FileDbSharp.Tests.DurabilityTests.Non_database_file_is_rejected_and_left_unchanged" computerName="FACTORYPC" duration="00:00:00.0114796" startTime="2026-10-01T10:51:25.0197386+05:30" endTime="2026-10-01T10:51:25.0305632+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="48ad272e-6b40-48c1-aa0d-a844daf91864" />
+    <UnitTestResult executionId="2805bc2d-8f1e-42ad-b100-ba41b3ed6bf9" testId="056318da-ad6d-1334-223a-0daf7a9ed1f3" testName="FileDbSharp.Tests.TransactionTests.Disposing_without_commit_discards_writes" computerName="FACTORYPC" duration="00:00:00.0092563" startTime="2026-10-01T10:51:24.9814974+05:30" endTime="2026-10-01T10:51:24.9881678+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2805bc2d-8f1e-42ad-b100-ba41b3ed6bf9" />
+    <UnitTestResult executionId="d61770a3-40e9-4b7d-af31-bd7635ea8080" testId="16eaf51d-8822-22a0-0bf1-6b8aebd66b45" testName="FileDbSharp.Tests.CompactionTests.Leftover_compaction_file_is_removed_on_open" computerName="FACTORYPC" duration="00:00:00.0596204" startTime="2026-10-01T10:51:24.9070345+05:30" endTime="2026-10-01T10:51:24.9688915+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d61770a3-40e9-4b7d-af31-bd7635ea8080" />
+    <UnitTestResult executionId="907e5429-3a1f-46bf-8d6a-415796193e18" testId="5dad8b9c-5291-dcca-54de-d3b8e5400cca" testName="FileDbSharp.Tests.ConcurrencyTests.Readers_always_see_complete_documents_while_a_writer_and_compaction_run" computerName="FACTORYPC" duration="00:00:00.1888398" startTime="2026-10-01T10:51:24.9718320+05:30" endTime="2026-10-01T10:51:25.1383900+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="907e5429-3a1f-46bf-8d6a-415796193e18" />
+    <UnitTestResult executionId="35d8c2c6-1755-4d14-97a6-d734e61b47bc" testId="16d8d8da-08f7-e406-94f3-2f8cdfd88e99" testName="FileDbSharp.Tests.LogFormatTests.Crc32_matches_the_standard_check_value" computerName="FACTORYPC" duration="00:00:00.0001184" startTime="2026-10-01T10:51:24.9282657+05:30" endTime="2026-10-01T10:51:24.9295848+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="35d8c2c6-1755-4d14-97a6-d734e61b47bc" />
+    <UnitTestResult executionId="445d11aa-e367-4933-9579-7e91cf38fd1d" testId="bc77cb21-afd5-4237-53da-6fbdec38618e" testName="FileDbSharp.Tests.TransactionTests.Transaction_reads_its_own_writes_and_deletes" computerName="FACTORYPC" duration="00:00:00.0675270" startTime="2026-10-01T10:51:24.9070086+05:30" endTime="2026-10-01T10:51:24.9706066+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="445d11aa-e367-4933-9579-7e91cf38fd1d" />
+    <UnitTestResult executionId="a5c11467-f360-46b3-8c06-ce7b020a1332" testId="a0f202bf-1085-a2d4-d82c-334fc1fb7895" testName="FileDbSharp.Tests.DurabilityTests.Incomplete_final_frame_is_discarded_on_open" computerName="FACTORYPC" duration="00:00:00.0160733" startTime="2026-10-01T10:51:25.0049784+05:30" endTime="2026-10-01T10:51:25.0189957+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a5c11467-f360-46b3-8c06-ce7b020a1332" />
+    <UnitTestResult executionId="5ff58c77-816a-4f5a-bab3-4a50000a0119" testId="c54a005c-4baa-a9bc-c677-7d5d1720980a" testName="FileDbSharp.Tests.CollectionTests.DropCollection_removes_all_its_documents" computerName="FACTORYPC" duration="00:00:00.0097452" startTime="2026-10-01T10:51:24.9779191+05:30" endTime="2026-10-01T10:51:24.9786627+05:30" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5ff58c77-816a-4f5a-bab3-4a50000a0119" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Collections_are_isolated_by_name" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="f25a2617-45de-7aee-eb21-162c74a891e2">
+      <Execution id="286dbdda-fc04-418f-92c6-be9e64668798" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Collections_are_isolated_by_name" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.ConcurrencyTests.Concurrent_inserts_of_the_same_key_let_exactly_one_win" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="86244078-0a33-acb1-f6c5-9c80473b17bc">
+      <Execution id="28e6d6d0-bbf8-47c3-a37f-dab8d81fc9d8" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.ConcurrencyTests" name="Concurrent_inserts_of_the_same_key_let_exactly_one_win" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.DurabilityTests.Non_database_file_is_rejected_and_left_unchanged" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="1dbf35da-2ef6-a598-3735-72712c2be1a7">
+      <Execution id="48ad272e-6b40-48c1-aa0d-a844daf91864" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.DurabilityTests" name="Non_database_file_is_rejected_and_left_unchanged" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.ConcurrencyTests.Readers_always_see_complete_documents_while_a_writer_and_compaction_run" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="5dad8b9c-5291-dcca-54de-d3b8e5400cca">
+      <Execution id="907e5429-3a1f-46bf-8d6a-415796193e18" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.ConcurrencyTests" name="Readers_always_see_complete_documents_while_a_writer_and_compaction_run" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.TransactionTests.Transaction_reads_its_own_writes_and_deletes" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="bc77cb21-afd5-4237-53da-6fbdec38618e">
+      <Execution id="445d11aa-e367-4933-9579-7e91cf38fd1d" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.TransactionTests" name="Transaction_reads_its_own_writes_and_deletes" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.DurabilityTests.Corrupted_final_frame_is_discarded_and_earlier_data_kept" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="879f4d48-56c8-2827-6554-247965ae6938">
+      <Execution id="15c182c0-061d-4c8f-9b51-80e55b7cb123" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.DurabilityTests" name="Corrupted_final_frame_is_discarded_and_earlier_data_kept" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.DurabilityTests.A_file_can_be_open_in_only_one_instance" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="11b3fe66-bf4a-7d36-b2c5-a07de6599250">
+      <Execution id="9d8b624e-0bb7-495a-80be-a5bdd4efea11" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.DurabilityTests" name="A_file_can_be_open_in_only_one_instance" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Insert_of_existing_key_throws_and_keeps_the_original" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="9c37ea37-89c2-f715-666e-1d345d9214b9">
+      <Execution id="894e40a5-5807-48d8-88a8-9a84629378df" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Insert_of_existing_key_throws_and_keeps_the_original" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Delete_reports_whether_the_document_existed" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="087f3e07-bdc3-d8a2-47eb-d0fe0f3cdead">
+      <Execution id="5ed84acf-9a3a-43d6-9b74-9ac2979de8e9" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Delete_reports_whether_the_document_existed" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CompactionTests.Compact_shrinks_the_file_and_keeps_current_documents" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="d46cbd86-c4ab-4f5d-30f8-d1a2c3a09488">
+      <Execution id="e09f1be6-ae87-4a64-8a8c-0f39b9f40410" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CompactionTests" name="Compact_shrinks_the_file_and_keeps_current_documents" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CompactionTests.Compacting_an_empty_database_works" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="4a8b7fab-4c4b-51c7-5d47-cfedb92b379b">
+      <Execution id="5b3cfd4a-db13-4000-984b-cb9e4e4199fd" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CompactionTests" name="Compacting_an_empty_database_works" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CompactionTests.Compacted_file_reopens_with_the_same_contents_and_accepts_writes" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="29febc94-3186-0aa9-676b-14648f1ddfc8">
+      <Execution id="c81544f5-2b24-4e11-80d3-3e6588af2e99" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CompactionTests" name="Compacted_file_reopens_with_the_same_contents_and_accepts_writes" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Stats_track_documents_and_reclaimable_space" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="960fb24f-511a-deeb-6c18-c7a84bdd117f">
+      <Execution id="b9fd7ab3-c822-49d6-a961-eccd9aadfca7" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Stats_track_documents_and_reclaimable_space" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.ConcurrencyTests.Concurrent_inserts_of_distinct_keys_are_all_kept" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="6181af84-9fe7-59a9-a64d-dfe860f5baee">
+      <Execution id="58314ce6-47fc-4849-ab22-a9accff35017" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.ConcurrencyTests" name="Concurrent_inserts_of_distinct_keys_are_all_kept" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Get_of_missing_key_throws_and_TryGet_returns_false" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="4a8ef685-60f1-ecfb-4fa0-05f56b8bfefa">
+      <Execution id="b529a2bc-f32a-47d8-a954-c748211634de" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Get_of_missing_key_throws_and_TryGet_returns_false" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.LogFormatTests.Truncated_payload_is_rejected" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="f998f8eb-ccde-299d-f5ba-2ad3b8da05e3">
+      <Execution id="a726171f-f2e8-4d46-b408-19ffb9f34453" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.LogFormatTests" name="Truncated_payload_is_rejected" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.DurabilityTests.Incomplete_final_frame_is_discarded_on_open" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="a0f202bf-1085-a2d4-d82c-334fc1fb7895">
+      <Execution id="a5c11467-f360-46b3-8c06-ce7b020a1332" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.DurabilityTests" name="Incomplete_final_frame_is_discarded_on_open" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Update_of_missing_key_throws_and_writes_nothing" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="778ea5f0-d235-8f88-6ac7-72d469c07425">
+      <Execution id="e56a0bce-d64d-4931-9e18-01b67cc6604c" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Update_of_missing_key_throws_and_writes_nothing" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Upsert_replaces_an_existing_document" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="e948867e-b30d-b902-bb81-ebc888537db6">
+      <Execution id="f828a560-ea2b-4daf-8d5a-556b5afc7323" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Upsert_replaces_an_existing_document" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CompactionTests.Leftover_compaction_file_is_removed_on_open" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="16eaf51d-8822-22a0-0bf1-6b8aebd66b45">
+      <Execution id="d61770a3-40e9-4b7d-af31-bd7635ea8080" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CompactionTests" name="Leftover_compaction_file_is_removed_on_open" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.TransactionTests.Failed_condition_at_commit_writes_nothing" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="dc6b00d0-f568-85ce-2c48-87e033264ba3">
+      <Execution id="f19dda55-b257-4a33-b987-685817e711a7" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.TransactionTests" name="Failed_condition_at_commit_writes_nothing" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.DurabilityTests.Missing_directories_are_created" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="f57e61f9-76fa-fc0d-9965-e95936726e43">
+      <Execution id="ec011e7e-0a25-4d93-a2c0-23d0426f8300" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.DurabilityTests" name="Missing_directories_are_created" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Find_returns_matching_documents_in_key_order" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="b0e7641c-a109-73ae-dc18-5bc73b5a13b8">
+      <Execution id="7506a346-7c46-41b5-83ad-85b5a71b3528" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Find_returns_matching_documents_in_key_order" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.TransactionTests.Transaction_survives_reopen" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="2423c7bd-dd51-3a0f-536b-00d62c417a77">
+      <Execution id="0e38f8a7-7908-4b9a-88f8-9e13c7261934" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.TransactionTests" name="Transaction_survives_reopen" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.LogFormatTests.Encoded_batch_decodes_to_the_same_operations_with_value_locations" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="ed12ea71-17f9-4e64-afaa-9c76a70382c4">
+      <Execution id="5a360121-c3d9-4133-889b-bbeba8712583" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.LogFormatTests" name="Encoded_batch_decodes_to_the_same_operations_with_value_locations" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Keys_are_returned_in_ordinal_order" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="702e9f0d-0dad-ef4e-3d00-83da84791c76">
+      <Execution id="b260a9a1-2cdf-4ab9-91ad-9065eb922842" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Keys_are_returned_in_ordinal_order" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.LogFormatTests.Header_with_unknown_magic_or_version_is_rejected" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="95b6fb95-e5a1-a7eb-af97-f298a4964eac">
+      <Execution id="35c4ade7-46ba-4ffb-8f48-af8ed2fb2540" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.LogFormatTests" name="Header_with_unknown_magic_or_version_is_rejected" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Unicode_keys_and_values_roundtrip" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="4c17549a-0db4-ae8b-e3d2-e17cda9005f7">
+      <Execution id="89efc2ef-ad0e-4ca4-808b-acd7256079ad" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Unicode_keys_and_values_roundtrip" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.DurabilityTests.Data_survives_reopen(durability: FlushToDisk)" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="1f85a541-6736-0cea-2cc6-43bf8df5378a">
+      <Execution id="82c0d5fb-d5a3-4bae-9036-8675276f8f58" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.DurabilityTests" name="Data_survives_reopen" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.TransactionTests.Committed_writes_become_visible_together" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="e46c8bee-3ca8-f5e5-8a81-c5bbc4d6cb85">
+      <Execution id="c6e0d2ce-5648-4999-a302-5ffc176fc6f8" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.TransactionTests" name="Committed_writes_become_visible_together" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.TransactionTests.Completed_transaction_cannot_be_reused" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="6fa8ddf4-1570-997b-606b-361e01d46119">
+      <Execution id="a98fd2e0-377c-433d-affd-4c03c49bc3ec" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.TransactionTests" name="Completed_transaction_cannot_be_reused" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.DurabilityTests.Operations_after_dispose_throw" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="b59a0e2c-589a-0aeb-76a3-4474a3a3b442">
+      <Execution id="cf1096e5-57e4-47bf-bc99-a0956ac2e7f1" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.DurabilityTests" name="Operations_after_dispose_throw" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.DurabilityTests.Data_survives_reopen(durability: FlushToOperatingSystem)" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="7f566ae3-0ce2-a286-1b06-a53a01f307b6">
+      <Execution id="ff175483-3097-48ce-becb-a63a915c02c9" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.DurabilityTests" name="Data_survives_reopen" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Empty_key_and_null_document_are_rejected" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="1cb91227-dd1a-e2ef-46be-51fad9f05d29">
+      <Execution id="4936e904-ca67-4bc6-ac1f-626a13ac8f8a" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Empty_key_and_null_document_are_rejected" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.DropCollection_removes_all_its_documents" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="c54a005c-4baa-a9bc-c677-7d5d1720980a">
+      <Execution id="5ff58c77-816a-4f5a-bab3-4a50000a0119" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="DropCollection_removes_all_its_documents" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.CollectionTests.Upsert_then_get_returns_the_document" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="3616ef04-6c3a-57a7-a1ab-13fbf5b2a66b">
+      <Execution id="aebe106b-8e08-41d9-85f6-92a461e8df18" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.CollectionTests" name="Upsert_then_get_returns_the_document" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.TransactionTests.Drop_then_write_in_one_transaction_keeps_only_new_documents" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="4e62d70f-73ec-81da-ff79-c63c84978b28">
+      <Execution id="3c795df0-7941-45e4-b263-122d722c72b3" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.TransactionTests" name="Drop_then_write_in_one_transaction_keeps_only_new_documents" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.TransactionTests.Disposing_without_commit_discards_writes" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="056318da-ad6d-1334-223a-0daf7a9ed1f3">
+      <Execution id="2805bc2d-8f1e-42ad-b100-ba41b3ed6bf9" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.TransactionTests" name="Disposing_without_commit_discards_writes" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.LogFormatTests.Crc32_matches_the_standard_check_value" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="16d8d8da-08f7-e406-94f3-2f8cdfd88e99">
+      <Execution id="35d8c2c6-1755-4d14-97a6-d734e61b47bc" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.LogFormatTests" name="Crc32_matches_the_standard_check_value" />
+    </UnitTest>
+    <UnitTest name="FileDbSharp.Tests.TransactionTests.Delete_then_insert_of_same_key_in_one_transaction_succeeds" storage="c:\genai\filedb-sharp\tests\filedbsharp.tests\bin\debug\net10.0\filedbsharp.tests.dll" id="476f7d4e-a6a6-cdfc-696b-076f16704fbd">
+      <Execution id="6400b06a-c785-4b80-9945-9d3c24b55cc7" />
+      <TestMethod codeBase="C:\GenAI\filedb-sharp\tests\FileDbSharp.Tests\bin\Debug\net10.0\FileDbSharp.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="FileDbSharp.Tests.TransactionTests" name="Delete_then_insert_of_same_key_in_one_transaction_succeeds" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="6fa8ddf4-1570-997b-606b-361e01d46119" executionId="a98fd2e0-377c-433d-affd-4c03c49bc3ec" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7f566ae3-0ce2-a286-1b06-a53a01f307b6" executionId="ff175483-3097-48ce-becb-a63a915c02c9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="778ea5f0-d235-8f88-6ac7-72d469c07425" executionId="e56a0bce-d64d-4931-9e18-01b67cc6604c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1cb91227-dd1a-e2ef-46be-51fad9f05d29" executionId="4936e904-ca67-4bc6-ac1f-626a13ac8f8a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="960fb24f-511a-deeb-6c18-c7a84bdd117f" executionId="b9fd7ab3-c822-49d6-a961-eccd9aadfca7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="087f3e07-bdc3-d8a2-47eb-d0fe0f3cdead" executionId="5ed84acf-9a3a-43d6-9b74-9ac2979de8e9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e46c8bee-3ca8-f5e5-8a81-c5bbc4d6cb85" executionId="c6e0d2ce-5648-4999-a302-5ffc176fc6f8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="29febc94-3186-0aa9-676b-14648f1ddfc8" executionId="c81544f5-2b24-4e11-80d3-3e6588af2e99" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ed12ea71-17f9-4e64-afaa-9c76a70382c4" executionId="5a360121-c3d9-4133-889b-bbeba8712583" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4e62d70f-73ec-81da-ff79-c63c84978b28" executionId="3c795df0-7941-45e4-b263-122d722c72b3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e948867e-b30d-b902-bb81-ebc888537db6" executionId="f828a560-ea2b-4daf-8d5a-556b5afc7323" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="476f7d4e-a6a6-cdfc-696b-076f16704fbd" executionId="6400b06a-c785-4b80-9945-9d3c24b55cc7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3616ef04-6c3a-57a7-a1ab-13fbf5b2a66b" executionId="aebe106b-8e08-41d9-85f6-92a461e8df18" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1f85a541-6736-0cea-2cc6-43bf8df5378a" executionId="82c0d5fb-d5a3-4bae-9036-8675276f8f58" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f998f8eb-ccde-299d-f5ba-2ad3b8da05e3" executionId="a726171f-f2e8-4d46-b408-19ffb9f34453" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d46cbd86-c4ab-4f5d-30f8-d1a2c3a09488" executionId="e09f1be6-ae87-4a64-8a8c-0f39b9f40410" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b59a0e2c-589a-0aeb-76a3-4474a3a3b442" executionId="cf1096e5-57e4-47bf-bc99-a0956ac2e7f1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="11b3fe66-bf4a-7d36-b2c5-a07de6599250" executionId="9d8b624e-0bb7-495a-80be-a5bdd4efea11" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4a8ef685-60f1-ecfb-4fa0-05f56b8bfefa" executionId="b529a2bc-f32a-47d8-a954-c748211634de" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="86244078-0a33-acb1-f6c5-9c80473b17bc" executionId="28e6d6d0-bbf8-47c3-a37f-dab8d81fc9d8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f25a2617-45de-7aee-eb21-162c74a891e2" executionId="286dbdda-fc04-418f-92c6-be9e64668798" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6181af84-9fe7-59a9-a64d-dfe860f5baee" executionId="58314ce6-47fc-4849-ab22-a9accff35017" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4c17549a-0db4-ae8b-e3d2-e17cda9005f7" executionId="89efc2ef-ad0e-4ca4-808b-acd7256079ad" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4a8b7fab-4c4b-51c7-5d47-cfedb92b379b" executionId="5b3cfd4a-db13-4000-984b-cb9e4e4199fd" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="dc6b00d0-f568-85ce-2c48-87e033264ba3" executionId="f19dda55-b257-4a33-b987-685817e711a7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="95b6fb95-e5a1-a7eb-af97-f298a4964eac" executionId="35c4ade7-46ba-4ffb-8f48-af8ed2fb2540" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="702e9f0d-0dad-ef4e-3d00-83da84791c76" executionId="b260a9a1-2cdf-4ab9-91ad-9065eb922842" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="879f4d48-56c8-2827-6554-247965ae6938" executionId="15c182c0-061d-4c8f-9b51-80e55b7cb123" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2423c7bd-dd51-3a0f-536b-00d62c417a77" executionId="0e38f8a7-7908-4b9a-88f8-9e13c7261934" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="9c37ea37-89c2-f715-666e-1d345d9214b9" executionId="894e40a5-5807-48d8-88a8-9a84629378df" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f57e61f9-76fa-fc0d-9965-e95936726e43" executionId="ec011e7e-0a25-4d93-a2c0-23d0426f8300" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b0e7641c-a109-73ae-dc18-5bc73b5a13b8" executionId="7506a346-7c46-41b5-83ad-85b5a71b3528" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1dbf35da-2ef6-a598-3735-72712c2be1a7" executionId="48ad272e-6b40-48c1-aa0d-a844daf91864" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="056318da-ad6d-1334-223a-0daf7a9ed1f3" executionId="2805bc2d-8f1e-42ad-b100-ba41b3ed6bf9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="16eaf51d-8822-22a0-0bf1-6b8aebd66b45" executionId="d61770a3-40e9-4b7d-af31-bd7635ea8080" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="5dad8b9c-5291-dcca-54de-d3b8e5400cca" executionId="907e5429-3a1f-46bf-8d6a-415796193e18" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="16d8d8da-08f7-e406-94f3-2f8cdfd88e99" executionId="35d8c2c6-1755-4d14-97a6-d734e61b47bc" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="bc77cb21-afd5-4237-53da-6fbdec38618e" executionId="445d11aa-e367-4933-9579-7e91cf38fd1d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a0f202bf-1085-a2d4-d82c-334fc1fb7895" executionId="a5c11467-f360-46b3-8c06-ce7b020a1332" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c54a005c-4baa-a9bc-c677-7d5d1720980a" executionId="5ff58c77-816a-4f5a-bab3-4a50000a0119" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="40" executed="40" passed="40" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.10)&#xD;
+[xUnit.net 00:00:00.08]   Discovering: FileDbSharp.Tests&#xD;
+[xUnit.net 00:00:00.13]   Discovered:  FileDbSharp.Tests&#xD;
+[xUnit.net 00:00:00.16]   Starting:    FileDbSharp.Tests&#xD;
+[xUnit.net 00:00:00.45]   Finished:    FileDbSharp.Tests&#xD;
+</StdOut>
+    </Output>
+    <CollectorDataEntries>
+      <Collector agentName="FACTORYPC" uri="datacollector://microsoft/CoverletCodeCoverage/1.0" collectorDisplayName="XPlat code coverage">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="FACTORYPC\coverage.cobertura.xml"></A>
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>

@@ -102,7 +102,15 @@ public static partial class BriefComposer
         if (buildFailed)
             failures.AppendLine("The build failed. Run the build command yourself to see the errors.").AppendLine();
         if (noReport)
-            failures.AppendLine("A unit-test command failed without producing its report, so no test results could be read. Make the test command run to completion.").AppendLine();
+        {
+            // The command failed, yet its report names no failing test: it crashed, timed out, or
+            // wrote no report at all. The verifier's own findings are all there is to go on.
+            failures.AppendLine("A unit-test command failed, but no failing test could be read from its report. Make the test command run to completion.").AppendLine();
+            foreach (var problem in verification!.Problems)
+                failures.AppendLine($"- {problem}");
+            if (verification.Problems.Count > 0)
+                failures.AppendLine();
+        }
         if (failing.Count > 0)
         {
             failures.AppendLine($"## Failing tests ({failing.Count})").AppendLine();

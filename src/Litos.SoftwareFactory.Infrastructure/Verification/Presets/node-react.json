@@ -1,0 +1,24 @@
+{
+  "profileVersion": 2,
+  "environment": {
+    "CI": "true"
+  },
+  "steps": [
+    {
+      "name": "node",
+      "restore": { "executable": "npm", "arguments": ["ci"], "timeoutSeconds": 900 },
+      "build": { "executable": "npm", "arguments": ["run", "typecheck"], "timeoutSeconds": 600 },
+      "unitTests": [
+        {
+          "executable": "npm",
+          "arguments": ["run", "test:ci"],
+          "timeoutSeconds": 600,
+          "testReport": { "format": "junit", "path": "test-results/junit.xml" },
+          "coverageReport": { "format": "cobertura", "path": "coverage/cobertura-coverage.xml" }
+        }
+      ]
+    }
+  ],
+  "coverage": { "changedLinesThresholdPercent": 80 },
+  "maximumRepairCycles": 2
+}

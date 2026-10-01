@@ -17,6 +17,7 @@
     <Project Path="src/Litos.Providers.OpenRouter/Litos.Providers.OpenRouter.csproj" />
     <Project Path="src/Litos.SoftwareFactory.Contracts/Litos.SoftwareFactory.Contracts.csproj" />
     <Project Path="src/Litos.SoftwareFactory.Core/Litos.SoftwareFactory.Core.csproj" />
+    <Project Path="src/Litos.SoftwareFactory.Infrastructure/Litos.SoftwareFactory.Infrastructure.csproj" />
     <Project Path="src/Litos.Tools/Litos.Tools.csproj" />
     <Project Path="src/Litos.Tools.Mcp/Litos.Tools.Mcp.csproj" />
     <Project Path="src/Litos.VsCodeHost/Litos.VsCodeHost.csproj" />
@@ -32,6 +33,7 @@
     <Project Path="tests/Litos.Persistence.Tests/Litos.Persistence.Tests.csproj" />
     <Project Path="tests/Litos.Providers.Tests/Litos.Providers.Tests.csproj" />
     <Project Path="tests/Litos.SoftwareFactory.Core.Tests/Litos.SoftwareFactory.Core.Tests.csproj" />
+    <Project Path="tests/Litos.SoftwareFactory.Infrastructure.Tests/Litos.SoftwareFactory.Infrastructure.Tests.csproj" />
     <Project Path="tests/Litos.Tools.Tests/Litos.Tools.Tests.csproj" />
     <Project Path="tests/Litos.Tools.Mcp.Tests/Litos.Tools.Mcp.Tests.csproj" />
     <Project Path="tests/Litos.VsCodeHost.Tests/Litos.VsCodeHost.Tests.csproj" />
