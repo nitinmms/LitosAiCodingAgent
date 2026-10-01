@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Verification;
@@ -55,6 +57,12 @@ public enum BriefKind
 
 // ---- Steps: what the host should do next ----
 
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "step")]
+[JsonDerivedType(typeof(PreflightStep), "preflight")]
+[JsonDerivedType(typeof(StartTurnStep), "turn")]
+[JsonDerivedType(typeof(VerifyStep), "verify")]
+[JsonDerivedType(typeof(HandoffStep), "handoff")]
+[JsonDerivedType(typeof(StopStep), "stop")]
 public abstract record RunStep;
 
 /// <summary>Host step: fetch, create or check out the task branch, confirm a clean working
@@ -202,7 +210,7 @@ public sealed record RunState(RunKind Kind)
 
     /// <summary>What was failing when the current repair turn started; null when the repair is
     /// for review findings or for coverage alone.</summary>
-    public IReadOnlySet<string>? FailuresBeforeRepair { get; init; }
+    public IReadOnlyList<string>? FailuresBeforeRepair { get; init; }
 
     public bool ReviewCompleted { get; init; }
 
@@ -241,3 +249,15 @@ public sealed record RunState(RunKind Kind)
 }
 
 public sealed record RunTransition(RunState State, RunStep Step);
+
+/// <summary>
+/// RunState as the checkpoint the store keeps. A run resumes from this, so the shape is pinned
+/// by round-trip tests: a field that failed to come back would silently reset a limit.
+/// </summary>
+public static class RunStateJson
+{
+    public static string Serialize(RunState state) => JsonSerializer.Serialize(state, FactoryWire.Json);
+
+    public static RunState Deserialize(string json) =>
+        JsonSerializer.Deserialize<RunState>(json, FactoryWire.Json) ?? throw new JsonException("The run checkpoint is empty.");
+}

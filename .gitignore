@@ -389,3 +389,6 @@ Litos-Agent-Prompt-Construction.mmd
 .gitignore
 .gitignore
 Litos-Agent-Prompt-Construction.png
+
+# Software factory: private host and database settings (see .env.factory.example)
+.env.factory

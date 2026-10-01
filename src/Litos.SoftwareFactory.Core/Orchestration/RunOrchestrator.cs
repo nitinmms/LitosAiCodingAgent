@@ -250,7 +250,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             return AfterPassingVerification(verifiedState);
 
         // "Repair made no difference": the same failures before and after a repair turn.
-        if (failures.Count > 0 && state.FailuresBeforeRepair is { } before && before.SetEquals(failures))
+        if (failures.Count > 0 && state.FailuresBeforeRepair is { } before && failures.SetEquals(before))
         {
             return Stop(
                 verifiedState, LifecycleTrigger.Block, StopReason.RepairMadeNoDifference,
@@ -263,7 +263,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
                 verifiedState with
                 {
                     RepairCyclesUsed = verifiedState.RepairCyclesUsed + 1,
-                    FailuresBeforeRepair = failures.Count > 0 ? failures : null,
+                    FailuresBeforeRepair = failures.Count > 0 ? [.. failures.Order(StringComparer.Ordinal)] : null,
                 },
                 new StartTurnStep(TurnKind.Repair, BriefKind.Repair));
         }

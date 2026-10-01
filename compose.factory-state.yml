@@ -1,0 +1,30 @@
+# Factory state database for Litos.SoftwareFactory.Host — development only.
+# See ReadMe_LitosSoftwareFactory_V1.md §20. Pair with a private .env.factory file:
+#
+#   docker compose -f compose.factory-state.yml --env-file .env.factory up -d
+#
+# Port 5433 avoids clashing with any existing PostgreSQL on 5432. Removing the named volume
+# deletes all factory state; changing the passwords in .env.factory does not rotate them in an
+# existing volume.
+services:
+  factory-db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: litos_factory
+      POSTGRES_USER: factory_admin
+      POSTGRES_PASSWORD: ${FACTORY_DB_ADMIN_PASSWORD:?Set FACTORY_DB_ADMIN_PASSWORD}
+      FACTORY_DB_MIGRATOR_PASSWORD: ${FACTORY_DB_MIGRATOR_PASSWORD:?Set FACTORY_DB_MIGRATOR_PASSWORD}
+      FACTORY_DB_RUNTIME_PASSWORD: ${FACTORY_DB_RUNTIME_PASSWORD:?Set FACTORY_DB_RUNTIME_PASSWORD}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - factory_state:/var/lib/postgresql
+      - ./deploy/factory/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factory_admin -d litos_factory"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+volumes:
+  factory_state:

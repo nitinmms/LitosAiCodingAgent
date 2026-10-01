@@ -290,7 +290,7 @@ public class RunOrchestratorTests
         var step = run.Verify(Failing("T.AlreadyBroken", "T.New"), baseline: Failing("T.AlreadyBroken"));
 
         AssertTurn(step, TurnKind.Repair, BriefKind.Repair);
-        Assert.Equal(new HashSet<string> { "T.New" }, run.State.FailuresBeforeRepair);
+        Assert.Equal(["T.New"], run.State.FailuresBeforeRepair);
     }
 
     [Fact]
@@ -879,6 +879,147 @@ public class RunOrchestratorTests
         Assert.Equal(TimeSpan.FromHours(3), limits.RunTimeout);
         Assert.Equal(1_500, limits.InlineReviewMaxChangedLines);
         Assert.Equal(4_000, limits.RepairExcerptTokens);
+    }
+}
+
+/// <summary>
+/// The checkpoint a run resumes from. A field that failed to come back would silently reset a
+/// limit or lose a decision, so the whole state is compared after a round trip.
+/// </summary>
+public class RunStateJsonTests
+{
+    private static readonly DateTimeOffset T0 = new(2026, 10, 1, 9, 0, 0, TimeSpan.Zero);
+
+    private static RunState Drive(params StepOutcome[] outcomes)
+    {
+        var orchestrator = new RunOrchestrator();
+        var state = RunOrchestrator.NewRun(RunKind.Implement);
+        foreach (var outcome in outcomes)
+            state = orchestrator.Next(state, outcome, T0).State;
+        return state;
+    }
+
+    private static VerificationOutcome Failing() => new(
+        BuildStatus.Passed, UnitTestStatus.Failed, CoverageStatus.BelowThreshold,
+        [new TestCaseResult("T.Broken", TestOutcome.Failed, "boom", 0.5), new TestCaseResult("T.Fine", TestOutcome.Passed)],
+        new ChangedLineCoverage(5, 10, [new UncoveredLines("src/Orders.cs", [3, 4])]) { UnmeasuredFiles = ["src/New.cs"] },
+        [new CommandRun("api", "build", "dotnet build", 0, TimeSpan.FromSeconds(3), false, "logs/01.log")],
+        ["a problem"]);
+
+    private static void AssertSame(RunState expected, RunState actual) =>
+        Assert.Equal(RunStateJson.Serialize(expected), RunStateJson.Serialize(actual));
+
+    [Fact]
+    public void RoundTrip_ARunInTheMiddleOfARepair_KeepsEverything()
+    {
+        var state = Drive(
+            new RunStarted(), new PreflightCompleted(true),
+            new TurnEnded(TurnEndReason.Completed, new WorkSubmission("done", [new CriterionCoverage("works", ["T.A"])], ["T.A"], ["limit"], ["step"]), FilesChanged: true),
+            new Verified(Failing(), Failing()));
+
+        var back = RunStateJson.Deserialize(RunStateJson.Serialize(state));
+
+        AssertSame(state, back);
+        Assert.Equal(RunPhase.Turn, back.Phase);
+        Assert.Equal(TurnKind.Repair, back.WorkTurn);
+        Assert.Equal(1, back.RepairCyclesUsed);
+        Assert.Equal("done", back.LastSubmission!.Summary);
+        Assert.Equal(["T.A"], back.LastSubmission.Criteria[0].Tests);
+        Assert.Equal(CoverageStatus.BelowThreshold, back.LastVerification!.Coverage);
+        Assert.Equal("boom", back.LastVerification.Tests[0].Message);
+        Assert.Equal([3, 4], back.LastVerification.ChangedLines!.Uncovered[0].Lines);
+        Assert.Equal(["src/New.cs"], back.LastVerification.ChangedLines.UnmeasuredFiles);
+        Assert.Equal(TimeSpan.FromSeconds(3), back.LastVerification.Commands[0].Duration);
+        Assert.NotNull(back.Baseline);
+        Assert.Equal(T0, back.ActiveSince);
+    }
+
+    [Fact]
+    public void RoundTrip_AStoppedRun_KeepsItsStopItsResumePointAndItsOpenDecision()
+    {
+        var state = Drive(
+            new RunStarted(), new PreflightCompleted(true),
+            new TurnEnded(TurnEndReason.Completed, new DecisionSubmission("All rows?", "unclear", ["yes", "no"], "yes", "Orders")));
+
+        var back = RunStateJson.Deserialize(RunStateJson.Serialize(state));
+
+        AssertSame(state, back);
+        Assert.Equal(new StopStep(LifecycleTrigger.RequestDecision, StopReason.DecisionNeeded, "All rows?"), back.LastStop);
+        Assert.Equal("All rows?", back.OpenDecision!.Question);
+        Assert.Equal(["yes", "no"], back.OpenDecision.Options);
+        Assert.Null(back.ResumePoint);
+        Assert.Equal(1, back.DecisionsAsked);
+    }
+
+    [Fact]
+    public void RoundTrip_ResumePointsOfEveryKind_ComeBackAsTheSameStep()
+    {
+        RunStep[] steps =
+        [
+            new PreflightStep(), new VerifyStep(), new HandoffStep(),
+            new StartTurnStep(TurnKind.Review, BriefKind.Resume, SessionScope.Review),
+            new StopStep(LifecycleTrigger.Block, StopReason.HandoffFailed, "Push rejected."),
+        ];
+
+        foreach (var step in steps)
+        {
+            var state = RunOrchestrator.NewRun(RunKind.Rework) with { ResumePoint = step, AfterPreflight = step };
+            var back = RunStateJson.Deserialize(RunStateJson.Serialize(state));
+
+            Assert.Equal(step, back.ResumePoint);
+            Assert.Equal(step, back.AfterPreflight);
+            Assert.Equal(RunKind.Rework, back.Kind);
+        }
+    }
+
+    [Fact]
+    public void RoundTrip_ReviewStateDecisionsAndDisclosures()
+    {
+        var state = RunOrchestrator.NewRun(RunKind.Implement) with
+        {
+            ReviewCompleted = true,
+            Review = ReviewStatus.FindingsOpen,
+            ReviewRepairPending = true,
+            NudgeUsed = true,
+            Findings = [new ReviewFinding(FindingSeverity.Blocking, "src/Orders.cs", 42, "Crashes."), new ReviewFinding(FindingSeverity.Minor, "a.cs", null, "Nit.")],
+            Decisions = [new AnsweredDecision("All rows?", "Yes.")],
+            Disclosures = ["Coverage is below the threshold."],
+            FailuresBeforeRepair = ["<build>", "T.A"],
+        };
+
+        var back = RunStateJson.Deserialize(RunStateJson.Serialize(state));
+
+        AssertSame(state, back);
+        Assert.Equal(state.Findings, back.Findings);
+        Assert.Equal(state.Decisions, back.Decisions);
+        Assert.Equal(state.Disclosures, back.Disclosures);
+        Assert.Equal(["<build>", "T.A"], back.FailuresBeforeRepair);
+        Assert.True(back.ReviewRepairPending && back.ReviewCompleted && back.NudgeUsed);
+    }
+
+    /// <summary>A resumed run must behave exactly as if the host had never restarted.</summary>
+    [Fact]
+    public void ARunRestoredFromItsCheckpoint_ContinuesTheSameWay()
+    {
+        var orchestrator = new RunOrchestrator();
+        var live = Drive(
+            new RunStarted(), new PreflightCompleted(true),
+            new TurnEnded(TurnEndReason.Completed, new WorkSubmission("done", [], [], [], []), FilesChanged: true),
+            new Verified(Failing()));
+        var restored = RunStateJson.Deserialize(RunStateJson.Serialize(live));
+        var next = new TurnEnded(TurnEndReason.Completed, new WorkSubmission("fixed", [], [], [], []), FilesChanged: true);
+
+        var fromLive = orchestrator.Next(live, next, T0);
+        var fromRestored = orchestrator.Next(restored, next, T0);
+
+        Assert.Equal(fromLive.Step, fromRestored.Step);
+        AssertSame(fromLive.State, fromRestored.State);
+    }
+
+    [Fact]
+    public void Deserialize_Empty_Throws()
+    {
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => RunStateJson.Deserialize("null"));
     }
 }
 
