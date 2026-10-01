@@ -131,6 +131,40 @@ public class WorkerOptionsTests
         Assert.Throws<WorkerOptionsException>(() => Parse(["stray", "--provider", "p"]));
     }
 
+    /// <summary>The agent's shell commands inherit the worker's environment. With the secret,
+    /// host URL and run id left there, an agent could call the host as if it were the worker.</summary>
+    [Fact]
+    public void RemoveFromEnvironment_ClearsTheSecretTheHostUrlAndTheRunId()
+    {
+        var environment = new Dictionary<string, string?>
+        {
+            ["FACTORY_WORKER_SECRET"] = "s3cret",
+            ["FACTORY_HOST_URL"] = "http://127.0.0.1:5180",
+            ["FACTORY_RUN_ID"] = "run-42",
+            ["PATH"] = "/usr/bin",
+        };
+
+        WorkerLaunchVariables.RemoveFromEnvironment((name, value) => environment[name] = value);
+
+        Assert.Null(environment["FACTORY_WORKER_SECRET"]);
+        Assert.Null(environment["FACTORY_HOST_URL"]);
+        Assert.Null(environment["FACTORY_RUN_ID"]);
+        Assert.Equal("/usr/bin", environment["PATH"]);
+    }
+
+    [Fact]
+    public void RemoveFromEnvironment_HappensAfterParsing_SoTheOptionsStillHoldTheValues()
+    {
+        var environment = new Dictionary<string, string?>(Environment);
+
+        var options = WorkerOptions.Parse(Arguments, name => environment.GetValueOrDefault(name));
+        WorkerLaunchVariables.RemoveFromEnvironment((name, value) => environment[name] = value);
+
+        Assert.Equal("s3cret", options.Secret);
+        Assert.Equal("run-42", options.RunId);
+        Assert.Throws<WorkerOptionsException>(() => WorkerOptions.Parse(Arguments, name => environment.GetValueOrDefault(name)));
+    }
+
     /// <summary>The secret arrives by environment only: a command line is visible to other processes.</summary>
     [Fact]
     public void Parse_SecretOnTheCommandLine_IsNotAccepted()
@@ -536,6 +570,19 @@ public class FactoryToolSetPolicyTests
         Assert.Equal(["read_file", "list_directory", "search_code", "submit_review"], Names(policy.Create("review", "Nudge")));
         // And a second nudge still follows the original turn, not the nudge.
         Assert.Contains("submit_review", Names(policy.Create("review", "Nudge")));
+    }
+
+    /// <summary>A restarted worker has no record of the session: guessing "implement" would hand
+    /// write tools and the shell to what may be a review session.</summary>
+    [Fact]
+    public void Nudge_ForASessionWithNoEarlierTurn_IsRefused_RatherThanGivenWriteTools()
+    {
+        var policy = Policy();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => policy.Create("never-started", "Nudge"));
+
+        Assert.Contains("has had no turn", ex.Message);
+        Assert.DoesNotContain("shell", Names(policy.CreateForBridge("never-started")));
     }
 
     [Theory]

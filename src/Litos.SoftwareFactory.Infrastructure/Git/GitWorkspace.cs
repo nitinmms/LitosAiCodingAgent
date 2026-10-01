@@ -41,8 +41,10 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
         await GitAsync(parent, ["clone", "--", options.RemoteUrl, options.Path], authenticated: true, ct);
     }
 
+    // Fetch and push name the remote by its URL, not as "origin": the working copy's own config
+    // is writable by the agent, and "origin" would resolve through whatever it says there.
     public Task FetchAsync(CancellationToken ct) =>
-        GitAsync(options.Path, ["fetch", "--prune", "origin"], authenticated: true, ct);
+        GitAsync(options.Path, ["fetch", "--prune", options.RemoteUrl, "+refs/heads/*:refs/remotes/origin/*"], authenticated: true, ct);
 
     public async Task<string> CreateTaskBranchAsync(string branch, string defaultBranch, CancellationToken ct)
     {
@@ -85,7 +87,13 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
         // costs nothing: the host commits the whole working copy at handoff anyway.
         await GitAsync(options.Path, ["add", "--all"], authenticated: false, ct);
         var patch = await GitAsync(
-            options.Path, ["diff", "--cached", "--unified=0", "--no-color", "--no-ext-diff", baseCommit], authenticated: false, ct);
+            options.Path,
+            // The prefixes are pinned because the parser relies on them and a user's git config
+            // (diff.noprefix, diff.mnemonicPrefix) can change them; renames are shown as an add
+            // and a delete so every added line has a plain path.
+            ["diff", "--cached", "--unified=0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
+                "--src-prefix=a/", "--dst-prefix=b/", baseCommit],
+            authenticated: false, ct);
         return new WorkspaceDiff(baseCommit, patch, DiffParser.Parse(patch));
     }
 
@@ -101,7 +109,7 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
         var fullMessage = coAuthoredBy is null ? message : $"{message.TrimEnd()}\n\nCo-authored-by: {coAuthoredBy}";
         await GitAsync(
             options.Path,
-            ["-c", $"user.name={author.Name}", "-c", $"user.email={author.Email}", "commit", "--no-gpg-sign", "-m", fullMessage],
+            ["-c", $"user.name={author.Name}", "-c", $"user.email={author.Email}", "commit", "--no-gpg-sign", "--no-verify", "-m", fullMessage],
             authenticated: false, ct);
         return (await GitAsync(options.Path, ["rev-parse", "HEAD"], authenticated: false, ct)).Trim();
     }
@@ -112,7 +120,7 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
 
         // An explicit refspec with no leading "+": a push that is not a fast-forward is rejected
         // by the remote rather than forced.
-        await GitAsync(options.Path, ["push", "origin", $"refs/heads/{branch}:refs/heads/{branch}"], authenticated: true, ct);
+        await GitAsync(options.Path, ["push", options.RemoteUrl, $"refs/heads/{branch}:refs/heads/{branch}"], authenticated: true, ct);
     }
 
     private void RequireTaskBranch(string branch, string defaultBranch)
@@ -151,28 +159,46 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
 
     private Task<ProcessResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments, bool authenticated, CancellationToken ct)
     {
+        // Configuration passed through the environment outranks the repository's own config,
+        // which the agent can edit. Hooks, the fsmonitor hook and the "ext" transport are ways a
+        // repository's config makes git run a program, and the host runs git here with its own
+        // environment — so they are switched off for every command.
+        List<(string Key, string Value)> config =
+        [
+            ("core.quotepath", "false"), // paths are reported as written rather than octal-escaped
+            ("core.hooksPath", NoHooksDirectory.Value),
+            ("core.fsmonitor", "false"),
+            ("protocol.ext.allow", "never"),
+        ];
+
+        if (authenticated && options.AccessToken is { Length: > 0 } token)
+        {
+            // Scoped to the real remote: if the repository's config rewrites the URL to some other
+            // server (url.<x>.insteadOf), the header does not match it and is not sent there.
+            var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"x-access-token:{token}"));
+            config.Add(($"http.{options.RemoteUrl}.extraheader", $"Authorization: Basic {basic}"));
+        }
+
         var environment = new Dictionary<string, string?>
         {
             // Never stop to ask for a username or password: fail instead.
             ["GIT_TERMINAL_PROMPT"] = "0",
             ["GCM_INTERACTIVE"] = "never",
-            // Paths are reported as written rather than octal-escaped.
-            ["GIT_CONFIG_COUNT"] = "1",
-            ["GIT_CONFIG_KEY_0"] = "core.quotepath",
-            ["GIT_CONFIG_VALUE_0"] = "false",
+            ["GIT_CONFIG_COUNT"] = config.Count.ToString(),
         };
-
-        if (authenticated && options.AccessToken is { Length: > 0 } token)
+        for (var i = 0; i < config.Count; i++)
         {
-            var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"x-access-token:{token}"));
-            environment["GIT_CONFIG_COUNT"] = "2";
-            environment["GIT_CONFIG_KEY_1"] = "http.extraheader";
-            environment["GIT_CONFIG_VALUE_1"] = $"Authorization: Basic {basic}";
+            environment[$"GIT_CONFIG_KEY_{i}"] = config[i].Key;
+            environment[$"GIT_CONFIG_VALUE_{i}"] = config[i].Value;
         }
 
         return _processRunner.RunAsync(
             new ProcessRequest("git", arguments, workingDirectory) { Timeout = options.CommandTimeout, Environment = environment }, ct);
     }
+
+    /// <summary>An empty directory outside every working copy, for core.hooksPath to point at.</summary>
+    private static readonly Lazy<string> NoHooksDirectory = new(() =>
+        Directory.CreateDirectory(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "litos-factory-git-no-hooks")).FullName);
 
     /// <summary>The subcommand and its flags, without commit messages or identities.</summary>
     private static string DescribeCommand(IReadOnlyList<string> arguments)

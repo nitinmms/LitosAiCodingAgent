@@ -12,6 +12,12 @@ public sealed record ProcessRequest(string Executable, IReadOnlyList<string> Arg
     /// <summary>Variables added to (or, with a null value, removed from) the inherited environment.</summary>
     public IReadOnlyDictionary<string, string?> Environment { get; init; } = new Dictionary<string, string?>();
 
+    /// <summary>
+    /// When true the command inherits nothing: its environment is exactly <see cref="Environment"/>.
+    /// Used for every command that runs agent-written code, so the host's secrets never reach it.
+    /// </summary>
+    public bool ReplaceEnvironment { get; init; }
+
     /// <summary>When set, everything the command writes is also appended to this file.</summary>
     public string? LogPath { get; init; }
 
@@ -57,6 +63,8 @@ public sealed class ProcessRunner : IProcessRunner
         };
         foreach (var argument in request.Arguments)
             startInfo.ArgumentList.Add(argument);
+        if (request.ReplaceEnvironment)
+            startInfo.Environment.Clear();
         foreach (var (name, value) in request.Environment)
         {
             if (value is null)
@@ -79,7 +87,18 @@ public sealed class ProcessRunner : IProcessRunner
             if (log is not null)
             {
                 lock (logLock)
-                    log.WriteLine(line);
+                {
+                    try
+                    {
+                        log.WriteLine(line);
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // A line delivered after a timeout or cancellation already returned and
+                        // closed the log. This runs on the process's reader thread, where an
+                        // unhandled exception would take the host down; the line is dropped.
+                    }
+                }
             }
         }
 

@@ -69,4 +69,20 @@ public sealed record WorkerOptions(
     }
 }
 
+public static class WorkerLaunchVariables
+{
+    /// <summary>
+    /// Removes the launch secret, host URL and run id from this process's environment once they
+    /// have been read. Everything the worker starts — the agent's shell commands above all —
+    /// inherits its environment, and with these three an agent could call the factory host as
+    /// if it were the worker and submit its own results.
+    /// </summary>
+    public static void RemoveFromEnvironment(Action<string, string?> setVariable)
+    {
+        setVariable(FactoryWire.WorkerSecretVariable, null);
+        setVariable(FactoryWire.HostUrlVariable, null);
+        setVariable(FactoryWire.RunIdVariable, null);
+    }
+}
+
 public sealed class WorkerOptionsException(string message) : Exception(message);

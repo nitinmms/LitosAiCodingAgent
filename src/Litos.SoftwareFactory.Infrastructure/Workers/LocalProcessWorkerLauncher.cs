@@ -19,39 +19,14 @@ public sealed record WorkerCommand(string Executable, IReadOnlyList<string> Pref
 public sealed class WorkerLaunchException(string message) : Exception(message);
 
 /// <summary>
-/// The worker's environment, built from nothing rather than inherited
-/// (docs/software-factory/m1-architecture.md §5). A worker runs agent-chosen commands, so it is
-/// given only what a build needs to work: no database connection string, no provider keys and
-/// no GitHub token can reach it, whatever the host's own environment holds.
+/// The worker's environment (docs/software-factory/m1-architecture.md §5): the toolchain
+/// allowlist plus the three values the worker needs to call the host back.
 /// </summary>
 public static class WorkerEnvironment
 {
-    /// <summary>Passed through by exact name when the host has them.</summary>
-    private static readonly string[] AllowedNames =
-    [
-        "PATH", "PATHEXT", "SystemRoot", "SystemDrive", "windir", "ComSpec", "TEMP", "TMP", "TMPDIR",
-        "USERPROFILE", "HOME", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "ProgramData",
-        "ProgramFiles", "ProgramFiles(x86)", "CommonProgramFiles", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
-        "OS", "LANG", "LC_ALL",
-    ];
-
-    /// <summary>Passed through by prefix: toolchain configuration such as DOTNET_ROOT,
-    /// NUGET_PACKAGES and npm_config_cache.</summary>
-    private static readonly string[] AllowedPrefixes = ["DOTNET_", "NUGET_", "npm_config_"];
-
-    /// <summary>Never passed, even when a name or prefix above would allow it: these carry
-    /// credentials (npm's registry token, a NuGet feed key).</summary>
-    private static readonly string[] SecretMarkers = ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "APIKEY", "API_KEY", "_AUTH", "CONNECTIONSTRING"];
-
     public static IReadOnlyDictionary<string, string> Build(IReadOnlyDictionary<string, string> hostEnvironment, WorkerLaunch launch)
     {
-        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (name, value) in hostEnvironment)
-        {
-            if (IsAllowed(name))
-                environment[name] = value;
-        }
-
+        var environment = ToolchainEnvironment.Scrub(hostEnvironment);
         environment[FactoryWire.WorkerSecretVariable] = launch.Secret;
         environment[FactoryWire.HostUrlVariable] = launch.HostUrl;
         environment[FactoryWire.RunIdVariable] = launch.RunId;
@@ -59,24 +34,9 @@ public static class WorkerEnvironment
         return environment;
     }
 
-    internal static bool IsAllowed(string name)
-    {
-        var allowed = AllowedNames.Contains(name, StringComparer.OrdinalIgnoreCase)
-            || AllowedPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-        return allowed && !SecretMarkers.Any(marker => name.Contains(marker, StringComparison.OrdinalIgnoreCase));
-    }
+    internal static bool IsAllowed(string name) => ToolchainEnvironment.IsAllowed(name);
 
-    public static IReadOnlyDictionary<string, string> CurrentHostEnvironment()
-    {
-        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
-        {
-            if (entry.Key is string name && entry.Value is string value)
-                environment[name] = value;
-        }
-
-        return environment;
-    }
+    public static IReadOnlyDictionary<string, string> CurrentHostEnvironment() => ToolchainEnvironment.CurrentHostEnvironment();
 }
 
 /// <summary>

@@ -13,10 +13,18 @@ namespace Litos.SoftwareFactory.Infrastructure.Verification;
 /// Counts come only from structured reports. A test command that exits non-zero with no report
 /// is a failure, never a pass, and a report left over from an earlier run can never count,
 /// because every declared report is deleted before its step runs.
+///
+/// The commands build and run code the agent wrote, so they get the toolchain allowlist and the
+/// profile's own variables — never the host's environment, which holds its keys and credentials.
 /// </summary>
-public sealed class ProfileVerifier(IProcessRunner? processRunner = null) : IVerifier
+/// <param name="hostEnvironment">The host's environment, to take the allowlisted part from;
+/// supplied by tests.</param>
+public sealed class ProfileVerifier(
+    IProcessRunner? processRunner = null, Func<IReadOnlyDictionary<string, string>>? hostEnvironment = null) : IVerifier
 {
     private readonly IProcessRunner _processRunner = processRunner ?? new ProcessRunner();
+    private readonly Func<IReadOnlyDictionary<string, string>> _hostEnvironment =
+        hostEnvironment ?? ToolchainEnvironment.CurrentHostEnvironment;
 
     public async Task<VerificationOutcome> VerifyAsync(VerificationRequest request, CancellationToken ct)
     {
@@ -24,6 +32,8 @@ public sealed class ProfileVerifier(IProcessRunner? processRunner = null) : IVer
         var run = new RunRecord();
 
         var environment = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, value) in ToolchainEnvironment.Scrub(_hostEnvironment()))
+            environment[name] = value;
         foreach (var (name, value) in profile.Environment ?? new Dictionary<string, string>())
             environment[name] = value;
 
@@ -131,6 +141,7 @@ public sealed class ProfileVerifier(IProcessRunner? processRunner = null) : IVer
             {
                 Timeout = TimeSpan.FromSeconds(command.TimeoutSeconds),
                 Environment = environment,
+                ReplaceEnvironment = true,
                 LogPath = logPath,
             },
             ct);
@@ -272,6 +283,8 @@ public sealed class ProfileVerifier(IProcessRunner? processRunner = null) : IVer
             }
 
             changedLines = ChangedLineCoverageCalculator.Calculate(request.ChangedFiles, Coverage);
+            if (changedLines.UnmeasuredFiles.Count > 0)
+                Problems.Add($"Not in the coverage report, so not measured: {string.Join(", ", changedLines.UnmeasuredFiles)}.");
             return request.Profile.Coverage is { } rule && changedLines.Percent < rule.ChangedLinesThresholdPercent
                 ? CoverageStatus.BelowThreshold
                 : CoverageStatus.Met;

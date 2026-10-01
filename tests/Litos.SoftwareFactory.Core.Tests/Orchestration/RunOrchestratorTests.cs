@@ -757,6 +757,15 @@ public class RunOrchestratorTests
     }
 
     [Fact]
+    public void RunTimeLimit_OfOneHour_ReadsAsOneHour()
+    {
+        var run = new Run(limits: new RunLimits { RunTimeout = TimeSpan.FromHours(1) }).Started();
+        run.Now = T0 + TimeSpan.FromHours(2);
+
+        Assert.Contains("1 hour.", ((StopStep)run.Submit()).Message);
+    }
+
+    [Fact]
     public void RunTimeLimit_CountsFromTheLastResume_NotFromTheFirstStart()
     {
         var run = new Run().Started();

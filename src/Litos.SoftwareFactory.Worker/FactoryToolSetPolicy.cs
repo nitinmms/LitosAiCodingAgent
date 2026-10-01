@@ -43,7 +43,15 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
         if (!Enum.TryParse<TurnKind>(turnKind, ignoreCase: false, out var kind) || !Enum.IsDefined(kind))
             throw new InvalidOperationException($"Unknown turn kind '{turnKind ?? "(none)"}'. The factory host must name the kind of every turn.");
 
-        var effective = kind == TurnKind.Nudge ? _lastKind.GetValueOrDefault(sessionId, TurnKind.Implement) : kind;
+        var effective = kind;
+        if (kind == TurnKind.Nudge && !_lastKind.TryGetValue(sessionId, out effective))
+        {
+            // A nudge with nothing before it — a restarted worker, say. Guessing "implement" here
+            // would hand write tools and the shell to what may be a review session.
+            throw new InvalidOperationException(
+                $"Session '{sessionId}' has had no turn in this worker, so a Nudge has no tool set to continue. Start it with the turn's real kind.");
+        }
+
         _lastKind[sessionId] = effective;
         return ToolsFor(effective, sessionId);
     }

@@ -570,8 +570,7 @@ public class GitWorkspaceTests : IAsyncLifetime
 
         var request = Assert.Single(runner.Requests);
         Assert.DoesNotContain(request.Arguments, a => a.Contains(Token) || a.Contains("extraheader", StringComparison.OrdinalIgnoreCase));
-        var header = request.Environment["GIT_CONFIG_VALUE_1"]!;
-        Assert.Equal("http.extraheader", request.Environment["GIT_CONFIG_KEY_1"]);
+        var header = ConfigOf(request)["http.https://github.com/acme/salesapp.git.extraheader"];
         Assert.StartsWith("Authorization: Basic ", header);
         Assert.Equal(
             $"x-access-token:{Token}",
@@ -586,7 +585,144 @@ public class GitWorkspaceTests : IAsyncLifetime
 
         await workspace.GetStatusAsync(default);
 
-        Assert.All(runner.Requests, r => Assert.False(r.Environment.ContainsKey("GIT_CONFIG_VALUE_1")));
+        Assert.All(runner.Requests, r => Assert.DoesNotContain(ConfigOf(r).Keys, k => k.Contains("extraheader")));
+    }
+
+    /// <summary>The git configuration a command was given through GIT_CONFIG_* variables.</summary>
+    private static Dictionary<string, string> ConfigOf(ProcessRequest request)
+    {
+        var count = int.Parse(request.Environment["GIT_CONFIG_COUNT"]!);
+        return Enumerable.Range(0, count).ToDictionary(
+            i => request.Environment[$"GIT_CONFIG_KEY_{i}"]!, i => request.Environment[$"GIT_CONFIG_VALUE_{i}"]!);
+    }
+
+    // ---- A working copy the agent can write must not be able to run programs as the host ----
+
+    /// <summary>The header is scoped to the real remote, so a config that rewrites the URL to
+    /// another server does not carry the credential there.</summary>
+    [Fact]
+    public async Task Token_IsScopedToTheRemoteUrl_NotSentToWhateverServerGitEndsUpTalkingTo()
+    {
+        var runner = new RecordingRunner();
+        var workspace = new GitWorkspace(new GitWorkspaceOptions(_workspace.Path, "https://github.com/acme/salesapp.git") { AccessToken = Token }, runner);
+
+        await workspace.PushAsync("factory/x", "main", default);
+
+        var config = ConfigOf(Assert.Single(runner.Requests));
+        Assert.DoesNotContain("http.extraheader", config.Keys);
+        Assert.Contains("http.https://github.com/acme/salesapp.git.extraheader", config.Keys);
+    }
+
+    [Fact]
+    public async Task EveryGitCommand_DisablesHooksFsmonitorAndTheExtTransport()
+    {
+        var runner = new RecordingRunner { Result = new(0, "main\n", "", TimeSpan.Zero, false, true) };
+        var workspace = new GitWorkspace(new GitWorkspaceOptions(_workspace.Path, _remote), runner);
+
+        await workspace.GetStatusAsync(default);
+        await workspace.FetchAsync(default);
+
+        Assert.All(runner.Requests, request =>
+        {
+            var config = ConfigOf(request);
+            Assert.Equal("false", config["core.fsmonitor"]);
+            Assert.Equal("never", config["protocol.ext.allow"]);
+            Assert.True(Directory.Exists(config["core.hooksPath"]));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(config["core.hooksPath"]));
+            Assert.False(config["core.hooksPath"].StartsWith(_workspace.Path, StringComparison.OrdinalIgnoreCase));
+        });
+    }
+
+    [Fact]
+    public async Task FetchAndPush_NameTheRemoteByUrl_NotAsOrigin()
+    {
+        var runner = new RecordingRunner();
+        var workspace = new GitWorkspace(new GitWorkspaceOptions(_workspace.Path, "https://github.com/acme/salesapp.git"), runner);
+
+        await workspace.FetchAsync(default);
+        await workspace.PushAsync("factory/x", "main", default);
+
+        Assert.All(runner.Requests, r => Assert.Contains("https://github.com/acme/salesapp.git", r.Arguments));
+        Assert.All(runner.Requests, r => Assert.DoesNotContain("origin", r.Arguments));
+    }
+
+    private void WriteHook(string name, string marker)
+    {
+        var hooks = InWorkspace(".git/hooks");
+        Directory.CreateDirectory(hooks);
+        var path = Path.Combine(hooks, name);
+        File.WriteAllText(path, $"#!/bin/sh\necho ran > \"{marker.Replace('\\', '/')}\"\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    }
+
+    /// <summary>Real git: hooks the agent planted in the working copy do not run when the host
+    /// commits and pushes. Each hook would also fail the command (exit 1) if it ran.</summary>
+    [Fact]
+    public async Task HooksPlantedInTheWorkingCopy_DoNotRun_WhenTheHostCommitsAndPushes()
+    {
+        var marker = _temp.Combine("hook-ran.txt");
+        await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        foreach (var hook in new[] { "pre-commit", "commit-msg", "post-commit", "pre-push" })
+            WriteHook(hook, marker);
+        File.WriteAllText(InWorkspace("new.txt"), "new\n");
+
+        var commit = await _workspace.CommitAllAsync("Work", Factory, null, default);
+        await _workspace.PushAsync("factory/x", "main", default);
+
+        Assert.NotNull(commit);
+        Assert.False(File.Exists(marker), "A hook from the working copy ran as the host.");
+        Assert.Equal(commit, await GitAsync(_remote, "rev-parse", "refs/heads/factory/x"));
+    }
+
+    /// <summary>Real git: the working copy's config points "origin" at a different repository;
+    /// the push still goes to the project's real remote.</summary>
+    [Fact]
+    public async Task RemoteRewrittenInTheWorkingCopysConfig_DoesNotRedirectThePush()
+    {
+        var elsewhere = _temp.Combine("elsewhere.git");
+        await GitAsync(_temp.Path, "init", "--bare", "--initial-branch=main", elsewhere);
+        await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        File.WriteAllText(InWorkspace("new.txt"), "new\n");
+        var commit = await _workspace.CommitAllAsync("Work", Factory, null, default);
+        await GitAsync(_workspace.Path, "config", "remote.origin.url", elsewhere);
+        await GitAsync(_workspace.Path, "config", "remote.origin.pushurl", elsewhere);
+
+        await _workspace.PushAsync("factory/x", "main", default);
+
+        Assert.Equal(commit, await GitAsync(_remote, "rev-parse", "refs/heads/factory/x"));
+        var leaked = await _runner.RunAsync(new ProcessRequest("git", ["rev-parse", "--verify", "refs/heads/factory/x"], elsewhere), default);
+        Assert.False(leaked.Succeeded, "The push went to the repository named in the working copy's config.");
+    }
+
+    /// <summary>Real git: a diff setting in the working copy's config that changes the path
+    /// prefixes does not stop the changed files being recognised.</summary>
+    [Theory]
+    [InlineData("diff.noprefix")]
+    [InlineData("diff.mnemonicPrefix")]
+    public async Task DiffAsync_PathsAreRight_WhateverPrefixTheGitConfigAsksFor(string setting)
+    {
+        var baseCommit = await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        await GitAsync(_workspace.Path, "config", setting, "true");
+        Directory.CreateDirectory(InWorkspace("src"));
+        File.WriteAllText(InWorkspace("src/Orders.cs"), "a\nb\n");
+
+        var diff = await _workspace.DiffAsync(baseCommit, default);
+
+        Assert.Equal("src/Orders.cs", Assert.Single(diff.Files).Path);
+    }
+
+    [Fact]
+    public async Task DiffAsync_RenamedFile_IsReportedUnderItsNewPath_WithItsLines()
+    {
+        var baseCommit = await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        File.Move(InWorkspace("README.md"), InWorkspace("GUIDE.md"));
+
+        var diff = await _workspace.DiffAsync(baseCommit, default);
+
+        var added = Assert.Single(diff.Files, f => f.AddedLineCount > 0);
+        Assert.Equal("GUIDE.md", added.Path);
+        Assert.Equal([new LineRange(1, 3)], added.AddedLines);
     }
 
     [Fact]

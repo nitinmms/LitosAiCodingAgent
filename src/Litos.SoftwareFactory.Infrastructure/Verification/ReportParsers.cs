@@ -9,7 +9,9 @@ namespace Litos.SoftwareFactory.Infrastructure.Verification;
 public sealed class ReportFormatException(string message, Exception? inner = null) : Exception(message, inner);
 
 /// <summary>One source file in a coverage report: line number → how many times it ran.</summary>
-public sealed record CoverageFile(string Path, IReadOnlyDictionary<int, int> LineHits);
+/// <param name="InRepository">True once the path has been resolved to a repository-relative
+/// path; false while it is still as the report wrote it.</param>
+public sealed record CoverageFile(string Path, IReadOnlyDictionary<int, int> LineHits, bool InRepository = false);
 
 /// <summary>SourceRoots are the directories a report's relative file paths are relative to.</summary>
 public sealed record CoverageReport(IReadOnlyList<string> SourceRoots, IReadOnlyList<CoverageFile> Files);

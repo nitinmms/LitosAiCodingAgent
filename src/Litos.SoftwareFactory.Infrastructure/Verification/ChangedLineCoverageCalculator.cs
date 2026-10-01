@@ -17,10 +17,14 @@ public static class ChangedLineCoverageCalculator
     public static IReadOnlyList<CoverageFile> Normalize(CoverageReport report, string workingCopy, string stepDirectory)
     {
         var repository = Path.GetFullPath(workingCopy);
-        return [.. report.Files.Select(file => file with { Path = Resolve(file.Path, report.SourceRoots, repository, stepDirectory) })];
+        return [.. report.Files.Select(file =>
+        {
+            var (path, placed) = Resolve(file.Path, report.SourceRoots, repository, stepDirectory);
+            return file with { Path = path, InRepository = placed };
+        })];
     }
 
-    private static string Resolve(string path, IReadOnlyList<string> sourceRoots, string repository, string stepDirectory)
+    private static (string Path, bool InRepository) Resolve(string path, IReadOnlyList<string> sourceRoots, string repository, string stepDirectory)
     {
         var native = path.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
 
@@ -41,11 +45,14 @@ public static class ChangedLineCoverageCalculator
         }
 
         var inside = candidates.Select(Path.GetFullPath).Where(c => IsUnder(c, repository)).ToList();
-        var chosen = inside.FirstOrDefault(File.Exists) ?? inside.FirstOrDefault();
+        // Only a candidate that is really there counts as placed. One that merely could be inside
+        // the repository is a guess: its path is used, but it stays open to suffix matching.
+        var existing = inside.FirstOrDefault(File.Exists);
+        var chosen = existing ?? inside.FirstOrDefault();
 
         // Outside the working copy (a report produced elsewhere): keep the path as written and
         // let suffix matching find it.
-        return (chosen is null ? path : Path.GetRelativePath(repository, chosen)).Replace('\\', '/');
+        return ((chosen is null ? path : Path.GetRelativePath(repository, chosen)).Replace('\\', '/'), existing is not null);
     }
 
     private static bool IsUnder(string path, string directory) =>
@@ -56,11 +63,14 @@ public static class ChangedLineCoverageCalculator
     public static ChangedLineCoverage Calculate(IReadOnlyList<FileChange> changes, IReadOnlyList<CoverageFile> coverage)
     {
         var byPath = new Dictionary<string, Dictionary<int, int>>(StringComparer.OrdinalIgnoreCase);
+        var unplaced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in coverage)
         {
             var key = file.Path.Replace('\\', '/');
             if (!byPath.TryGetValue(key, out var hits))
                 byPath[key] = hits = [];
+            if (!file.InRepository)
+                unplaced.Add(key);
             foreach (var (line, count) in file.LineHits)
                 hits[line] = hits.TryGetValue(line, out var existing) ? Math.Max(existing, count) : count;
         }
@@ -68,13 +78,20 @@ public static class ChangedLineCoverageCalculator
         var covered = 0;
         var measurable = 0;
         var uncovered = new List<UncoveredLines>();
+        var unmeasured = new List<string>();
 
         foreach (var change in changes)
         {
-            // A file the report says nothing about (a test file, a config file, documentation)
-            // has no measurable lines.
-            if (Find(byPath, change.Path.Replace('\\', '/')) is not { } hits)
+            // A file the report says nothing about has no measurable lines. For a test file, a
+            // config file or documentation that is right; for a new source file no test ever
+            // loaded it is not, and the two cannot be told apart from here — so the file is named,
+            // and the percentage is never left to imply it was measured.
+            if (Find(byPath, unplaced, change.Path.Replace('\\', '/')) is not { } hits)
+            {
+                if (change.AddedLineCount > 0)
+                    unmeasured.Add(change.Path);
                 continue;
+            }
 
             var missed = new List<int>();
             foreach (var range in change.AddedLines)
@@ -97,17 +114,22 @@ public static class ChangedLineCoverageCalculator
                 uncovered.Add(new UncoveredLines(change.Path, missed));
         }
 
-        return new ChangedLineCoverage(covered, measurable, uncovered);
+        return new ChangedLineCoverage(covered, measurable, uncovered) { UnmeasuredFiles = unmeasured };
     }
 
-    private static Dictionary<int, int>? Find(Dictionary<string, Dictionary<int, int>> byPath, string changedPath)
+    private static Dictionary<int, int>? Find(
+        Dictionary<string, Dictionary<int, int>> byPath, HashSet<string> unplaced, string changedPath)
     {
         if (byPath.TryGetValue(changedPath, out var exact))
             return exact;
 
         // Fall back to a path-segment suffix match, in either direction, but only when exactly
-        // one report file matches: two files with the same name must not be confused.
+        // one report file matches: two files with the same name must not be confused. Only
+        // entries that could not be placed in the repository take part — one that was placed has
+        // an exact repository path, and matching it by suffix would lend its hit counts to a
+        // different file that merely shares its name (a root Program.cs and src/Program.cs).
         var matches = byPath
+            .Where(entry => unplaced.Contains(entry.Key))
             .Where(entry =>
                 entry.Key.EndsWith("/" + changedPath, StringComparison.OrdinalIgnoreCase)
                 || changedPath.EndsWith("/" + entry.Key, StringComparison.OrdinalIgnoreCase))

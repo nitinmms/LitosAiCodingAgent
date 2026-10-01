@@ -83,6 +83,14 @@ public sealed record ChangedLineCoverage(int Covered, int Measurable, IReadOnlyL
 {
     /// <summary>100 when nothing measurable changed — there is nothing the tests failed to reach.</summary>
     public double Percent => Measurable == 0 ? 100 : 100.0 * Covered / Measurable;
+
+    /// <summary>
+    /// Changed files the coverage report does not mention at all. Their lines count neither way,
+    /// which is right for tests, configuration and documentation — but a new source file no test
+    /// loaded looks the same, so they are listed for the handoff rather than hidden behind the
+    /// percentage.
+    /// </summary>
+    public IReadOnlyList<string> UnmeasuredFiles { get; init; } = [];
 }
 
 /// <summary>

@@ -355,5 +355,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
     }
 
     private static string Describe(TimeSpan span) =>
-        span.TotalHours >= 1 && span.Minutes == 0 ? $"{span.TotalHours:0} hours" : $"{span.TotalMinutes:0} minutes";
+        span.TotalHours >= 1 && span.Minutes == 0
+            ? (span.TotalHours == 1 ? "1 hour" : $"{span.TotalHours:0} hours")
+            : $"{span.TotalMinutes:0} minutes";
 }

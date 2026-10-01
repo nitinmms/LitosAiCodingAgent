@@ -15,6 +15,8 @@ catch (WorkerOptionsException ex)
     return 2;
 }
 
+WorkerLaunchVariables.RemoveFromEnvironment(Environment.SetEnvironmentVariable);
+
 // The worker's own arguments are not ASP.NET configuration, so none are passed on.
 var app = WorkerApp.Build(options, []);
 await WorkerApp.StartAsync(app);
