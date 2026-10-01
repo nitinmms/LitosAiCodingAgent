@@ -203,18 +203,88 @@ public class BudgetLedgerTests
     [Fact]
     public void SettlementCharge_ReportedUsage_IsChargedAsReported()
     {
-        Assert.Equal(1_500, BudgetLedger.SettlementCharge(new UsageInfo(1_000, 500), estimatedInputTokens: 9_999));
+        Assert.Equal(1_500, BudgetLedger.SettlementCharge(new UsageInfo(1_000, 500), estimatedInputTokens: 9_999, estimatedOutputTokens: 7_777));
     }
 
-    /// <summary>§9.4: a local server that reports no usage is charged the host's own estimate,
-    /// never nothing.</summary>
     [Fact]
-    public void SettlementCharge_ProviderReportedNothing_ChargesTheEstimate()
+    public void SettlementCharge_ReportedUsage_CountsCachedInput()
+    {
+        var usage = new UsageInfo(200, 900, 3_000, 12_000);
+
+        Assert.Equal(16_100, BudgetLedger.SettlementCharge(usage, estimatedInputTokens: 1, estimatedOutputTokens: 1));
+    }
+
+    /// <summary>§9.4: a local server that reports no usage is charged the host's own estimate
+    /// for both the request and the reply — never nothing, and never the request alone.</summary>
+    [Fact]
+    public void SettlementCharge_ProviderReportedNothing_ChargesTheEstimateForInputAndOutput()
     {
         var unreported = new UsageInfo(0, 0);
 
         Assert.True(BudgetLedger.IsUnreported(unreported));
-        Assert.Equal(9_999, BudgetLedger.SettlementCharge(unreported, estimatedInputTokens: 9_999));
+        Assert.Equal(9_999 + 1_200, BudgetLedger.SettlementCharge(unreported, estimatedInputTokens: 9_999, estimatedOutputTokens: 1_200));
+    }
+
+    /// <summary>A server that reports completion tokens but no prompt tokens must still pay for
+    /// its prompt.</summary>
+    [Fact]
+    public void SettlementCharge_OnlyOutputReported_ChargesTheInputEstimateToo()
+    {
+        var outputOnly = new UsageInfo(0, 500);
+
+        Assert.Equal(9_999 + 500, BudgetLedger.SettlementCharge(outputOnly, estimatedInputTokens: 9_999, estimatedOutputTokens: 1_200));
+    }
+
+    [Fact]
+    public void SettlementCharge_OnlyInputReported_ChargesTheOutputEstimateToo()
+    {
+        var inputOnly = new UsageInfo(8_000, 0);
+
+        Assert.Equal(8_000 + 1_200, BudgetLedger.SettlementCharge(inputOnly, estimatedInputTokens: 9_999, estimatedOutputTokens: 1_200));
+    }
+
+    /// <summary>A fully cached request reports zero uncached input; the cached counts are its
+    /// input, and they are what is charged — not the estimate.</summary>
+    [Fact]
+    public void SettlementCharge_FullyCachedInput_IsReportedInput_NotReplacedByTheEstimate()
+    {
+        var cached = new UsageInfo(0, 300, CacheReadInputTokens: 12_000);
+
+        Assert.Equal(12_300, BudgetLedger.SettlementCharge(cached, estimatedInputTokens: 99_999, estimatedOutputTokens: 1));
+    }
+
+    [Fact]
+    public void SettlementCharge_EmptyReplyAndNoReportedOutput_ChargesNoOutput()
+    {
+        Assert.Equal(8_000, BudgetLedger.SettlementCharge(new UsageInfo(8_000, 0), estimatedInputTokens: 9_999, estimatedOutputTokens: 0));
+    }
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(0, -1)]
+    public void SettlementCharge_NegativeEstimate_IsRejected(long input, long output)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => BudgetLedger.SettlementCharge(new UsageInfo(1, 1), input, output));
+    }
+
+    /// <summary>The whole path a local server takes: admitted, reserved, settled with no usage
+    /// reported. The allowance must go down by what the call plausibly cost.</summary>
+    [Fact]
+    public void UnreportedCall_SettlesAgainstTheAllowance_SoRepeatedCallsCannotRunForFree()
+    {
+        var budget = new BudgetSnapshot(TaskCap: 60_000, TaskUsed: 0, TaskReserved: 0);
+        var calls = 0;
+
+        while (BudgetLedger.Admit(budget, 10_000, Policy) is Admitted admitted)
+        {
+            budget = BudgetLedger.Reserve(budget, admitted.Reserved);
+            var charge = BudgetLedger.SettlementCharge(new UsageInfo(0, 0), estimatedInputTokens: 10_000, estimatedOutputTokens: 3_000);
+            budget = BudgetLedger.Settle(budget, admitted.Reserved, charge);
+            calls++;
+        }
+
+        Assert.Equal(4, calls);
+        Assert.Equal(52_000, budget.TaskUsed);
     }
 
     [Fact]

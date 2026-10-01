@@ -105,12 +105,17 @@ public static class ConfigEndpoints
     /// over unset" precedence without touching real environment variables or ~/.litos/config.json —
     /// same "extract the pure decision, test that" shape as ApiKeysDialog.MergeConfig.
     /// </summary>
-    internal static Dictionary<string, string> BuildKeyStatus(LitosConfig config)
+    /// <param name="readVariable">The environment to consult; null uses the real one. Tests
+    /// supply their own so they never have to change real environment variables.</param>
+    internal static Dictionary<string, string> BuildKeyStatus(LitosConfig config, Func<string, string?>? readVariable = null)
     {
         var status = new Dictionary<string, string>();
         foreach (var provider in KeyStatusProviders)
         {
-            status[provider] = LitosConfig.IsSetByEnvironmentVariable(provider)
+            var setByEnvironment = readVariable is null
+                ? LitosConfig.IsSetByEnvironmentVariable(provider)
+                : LitosConfig.IsSetByEnvironmentVariable(provider, readVariable);
+            status[provider] = setByEnvironment
                 ? "env"
                 : config.ApiKeys.ContainsKey(provider)
                     ? "config"

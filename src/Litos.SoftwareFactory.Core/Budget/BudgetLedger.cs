@@ -108,11 +108,24 @@ public static class BudgetLedger
 
     /// <summary>
     /// What to charge when a call completes. Reported usage is charged as reported, even when it
-    /// exceeds the reservation. A provider that reported nothing is charged the host's own
-    /// estimate instead (§9.4).
+    /// exceeds the reservation. Whatever the provider did not report is charged from the host's
+    /// own estimate instead (§9.4) — and that is decided for input and output separately, because
+    /// a server can report one and omit the other. A completed call always had some input, so a
+    /// reported input of zero means "not reported", never "free"; the same holds for output
+    /// whenever the host can see the reply was not empty.
     /// </summary>
-    public static long SettlementCharge(UsageInfo usage, long estimatedInputTokens) =>
-        IsUnreported(usage) ? estimatedInputTokens : ChargeFor(usage);
+    /// <param name="estimatedInputTokens">The pre-send estimate the call was admitted on.</param>
+    /// <param name="estimatedOutputTokens">The host's estimate of the reply it relayed — see
+    /// RequestEstimator.EstimateOutputTokens. Zero for a reply with no content.</param>
+    public static long SettlementCharge(UsageInfo usage, long estimatedInputTokens, long estimatedOutputTokens)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(estimatedInputTokens);
+        ArgumentOutOfRangeException.ThrowIfNegative(estimatedOutputTokens);
+
+        long input = usage.TotalInputTokens > 0 ? usage.TotalInputTokens : estimatedInputTokens;
+        long output = usage.OutputTokens > 0 ? usage.OutputTokens : estimatedOutputTokens;
+        return input + output;
+    }
 
     /// <summary>The snapshot once a reservation is replaced by its actual charge.</summary>
     public static BudgetSnapshot Settle(BudgetSnapshot budget, long reserved, long charge) => budget with

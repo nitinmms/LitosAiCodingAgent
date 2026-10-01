@@ -147,9 +147,17 @@ public sealed record LitosConfig(
     /// take effect when it silently won't.
     /// </summary>
     public static bool IsSetByEnvironmentVariable(string providerName) =>
+        IsSetByEnvironmentVariable(providerName, GetEnvironmentVariable);
+
+    /// <summary>
+    /// The same decision against a supplied environment. Tests pass their own lookup here, so
+    /// checking the precedence rules never means clearing and restoring real variables — which on
+    /// Windows are the user's own registry entries, and stay deleted if a test run is interrupted.
+    /// </summary>
+    public static bool IsSetByEnvironmentVariable(string providerName, Func<string, string?> readVariable) =>
         EnvVarNames.TryGetValue(providerName, out var envVar) &&
-        (!string.IsNullOrEmpty(GetEnvironmentVariable(envVar))
-            || (providerName == "gemini" && !string.IsNullOrEmpty(GetEnvironmentVariable("GOOGLE_API_KEY"))));
+        (!string.IsNullOrEmpty(readVariable(envVar))
+            || (providerName == "gemini" && !string.IsNullOrEmpty(readVariable("GOOGLE_API_KEY"))));
 
     /// <summary>
     /// Reads an environment variable the way a value just saved by ConfigEndpoints.cs/

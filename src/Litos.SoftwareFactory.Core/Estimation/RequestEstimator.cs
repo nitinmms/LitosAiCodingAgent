@@ -59,6 +59,13 @@ public static class RequestEstimator
         return new RequestEstimate(fromScratch, Calibrate(fromScratch, ratio), EstimateBasis.FromScratch, ratio);
     }
 
+    /// <summary>
+    /// The size of a reply the host relayed, by the same characters ÷ 4 rule — what a call is
+    /// charged for its output when the provider reports none. It cannot see reasoning the
+    /// provider kept to itself, so it is a floor, not a full count.
+    /// </summary>
+    public static long EstimateOutputTokens(ChatMessage reply) => Tokens(MessageChars(reply));
+
     private static long MessageChars(ChatMessage message) => CompactionPlanner.EstimateChars(message);
 
     private static long ToolSchemaChars(Litos.Agent.Tools.ToolSchema tool) =>

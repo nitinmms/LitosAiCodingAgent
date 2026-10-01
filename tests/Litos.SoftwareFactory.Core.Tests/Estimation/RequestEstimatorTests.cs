@@ -73,6 +73,24 @@ public class RequestEstimatorTests
         Assert.Equal((25 + 75 + 4_800) / 4, estimate.RawTokens);
     }
 
+    // ---- Output, for a provider that reports none ----
+
+    [Fact]
+    public void EstimateOutputTokens_CountsTheReplysTextAndToolCalls_RoundedUp()
+    {
+        var arguments = JsonDocument.Parse("""{"path":"a.txt"}""").RootElement.Clone(); // 16 chars
+        var reply = ChatMessage.Assistant([new TextBlock(new string('t', 100)), new ToolUseBlock("c1", "read_file", arguments)]);
+
+        // 100 + (9 + 16) = 125 characters → 32 tokens.
+        Assert.Equal(32, RequestEstimator.EstimateOutputTokens(reply));
+    }
+
+    [Fact]
+    public void EstimateOutputTokens_EmptyReply_IsZero()
+    {
+        Assert.Equal(0, RequestEstimator.EstimateOutputTokens(ChatMessage.Assistant([])));
+    }
+
     // ---- Layers 1 and 2: session baseline plus delta ----
 
     [Fact]
