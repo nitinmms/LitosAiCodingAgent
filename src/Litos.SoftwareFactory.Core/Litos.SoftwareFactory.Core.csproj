@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The software factory's domain: lifecycle, run orchestration, budget arithmetic, request
+       estimation and briefs (docs/software-factory/m1-architecture.md §4). Pure: no I/O, no
+       ASP.NET, no EF. Everything with a side effect is a port implemented elsewhere. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.SoftwareFactory.Contracts\Litos.SoftwareFactory.Contracts.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Briefs\Templates\*.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.SoftwareFactory.Core.Tests" />
+  </ItemGroup>
+
+</Project>

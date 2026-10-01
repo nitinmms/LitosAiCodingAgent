@@ -471,4 +471,63 @@ public class CompactionPlannerTests
         Assert.Equal(0, usage.CacheReadInputTokens);
         Assert.Equal(1_000, usage.TotalInputTokens);
     }
+
+    // ---- EstimateChars (public: the software factory's request estimator reuses it) ----
+
+    [Fact]
+    public void EstimateChars_CountsEachBlockTypeByItsOwnRule()
+    {
+        var arguments = JsonSerializer.SerializeToElement(new { path = "a.txt" });
+        var message = new ChatMessage(Role.Assistant,
+        [
+            new TextBlock("12345"),
+            new ToolUseBlock("call-1", "read_file", arguments),
+            new ToolResultBlock("call-1", "1234567"),
+            new CompactionSummaryBlock("123", TokensBefore: 99_999),
+        ]);
+
+        var expected = 5 + ("read_file".Length + arguments.GetRawText().Length) + 7 + 3;
+
+        Assert.Equal(expected, CompactionPlanner.EstimateChars(message));
+    }
+
+    [Fact]
+    public void EstimateChars_Image_UsesAFixedAllowance_WhateverItsSize()
+    {
+        var small = new ChatMessage(Role.User, [new ImageBlock("image/png", new byte[10])]);
+        var large = new ChatMessage(Role.User, [new ImageBlock("image/png", new byte[500_000])]);
+
+        Assert.Equal(4_800, CompactionPlanner.EstimateChars(small));
+        Assert.Equal(CompactionPlanner.EstimateChars(small), CompactionPlanner.EstimateChars(large));
+    }
+
+    [Fact]
+    public void EstimateChars_EmptyMessage_IsZero()
+    {
+        Assert.Equal(0, CompactionPlanner.EstimateChars(new ChatMessage(Role.User, [])));
+    }
+
+    // ---- UsageInfo.ReasoningTokens ----
+
+    [Fact]
+    public void UsageInfo_ReasoningTokens_DefaultToZero_AndNeverCountTowardsInput()
+    {
+        var withoutReasoning = new UsageInfo(100, 50, 10, 20);
+        var withReasoning = new UsageInfo(100, 50, 10, 20, ReasoningTokens: 30);
+
+        Assert.Equal(0, withoutReasoning.ReasoningTokens);
+        Assert.Equal(130, withReasoning.TotalInputTokens);
+        Assert.Equal(withoutReasoning.TotalInputTokens, withReasoning.TotalInputTokens);
+    }
+
+    [Fact]
+    public void EstimatedTokensUsed_IgnoresReasoningTokens_BecauseOutputAlreadyIncludesThem()
+    {
+        var plain = new Transcript();
+        plain.Append(ChatMessage.Assistant([new TextBlock("x")]), new UsageInfo(1_000, 400));
+        var reasoning = new Transcript();
+        reasoning.Append(ChatMessage.Assistant([new TextBlock("x")]), new UsageInfo(1_000, 400, ReasoningTokens: 300));
+
+        Assert.Equal(CompactionPlanner.EstimatedTokensUsed(plain), CompactionPlanner.EstimatedTokensUsed(reasoning));
+    }
 }

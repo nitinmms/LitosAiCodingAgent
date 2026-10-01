@@ -260,8 +260,10 @@ public static class CompactionPlanner
         return 0;
     }
 
-    /// <summary>Internal (not private) so ContextBreakdown can reuse the same per-block-type estimate rather than duplicating it.</summary>
-    internal static int EstimateChars(ChatMessage message) =>
+    /// <summary>The per-block-type character estimate behind every chars/4 token figure. Public so
+    /// ContextBreakdown and the software factory's pre-send request estimator count a message
+    /// exactly the way compaction does, rather than each keeping its own copy of these rules.</summary>
+    public static int EstimateChars(ChatMessage message) =>
         message.Content.Sum(block => block switch
         {
             TextBlock t => t.Text.Length,

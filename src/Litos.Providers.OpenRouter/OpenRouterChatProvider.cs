@@ -79,6 +79,7 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
         var outputTokens = 0;
         var cacheReadTokens = 0;
         var cacheWriteTokens = 0;
+        var reasoningTokens = 0;
 
         while (await reader.ReadLineAsync(ct) is { } line)
         {
@@ -122,6 +123,8 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
                 var cachedTotal = cacheReadTokens + cacheWriteTokens;
                 inputTokens = usage.PromptTokens > cachedTotal ? usage.PromptTokens - cachedTotal : usage.PromptTokens;
                 outputTokens = usage.CompletionTokens;
+                // Already counted inside CompletionTokens — carried as a breakdown, never added.
+                reasoningTokens = usage.CompletionTokensDetails?.ReasoningTokens ?? 0;
             }
 
             var delta = chunk.Choices?.FirstOrDefault()?.Delta;
@@ -164,7 +167,7 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
         foreach (var index in toolCallOrder)
             contentBlocks.Add(new LM.ToolUseBlock(toolCallIds[index], toolCallNames[index], ParseToolArguments(toolCallJson[index])));
 
-        yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), new UsageInfo(inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens));
+        yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), new UsageInfo(inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, reasoningTokens));
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -303,7 +306,11 @@ internal sealed record OpenRouterFunctionCallDelta(string? Name, string? Argumen
 internal sealed record OpenRouterUsage(
     int PromptTokens,
     int CompletionTokens,
-    [property: JsonPropertyName("prompt_tokens_details")] OpenRouterPromptTokensDetails? PromptTokensDetails);
+    [property: JsonPropertyName("prompt_tokens_details")] OpenRouterPromptTokensDetails? PromptTokensDetails,
+    [property: JsonPropertyName("completion_tokens_details")] OpenRouterCompletionTokensDetails? CompletionTokensDetails = null);
+
+internal sealed record OpenRouterCompletionTokensDetails(
+    [property: JsonPropertyName("reasoning_tokens")] int? ReasoningTokens);
 
 internal sealed record OpenRouterPromptTokensDetails(
     [property: JsonPropertyName("cached_tokens")] int? CachedTokens,

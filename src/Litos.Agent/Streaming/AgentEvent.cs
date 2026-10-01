@@ -58,8 +58,14 @@ public sealed record StreamHeartbeat : AgentEvent;
 /// active it is *not* a measure of how full the context window is. Anything reasoning about window
 /// occupancy (CompactionPlanner.EstimatedTokensUsed, ContextBreakdown) must use TotalInputTokens;
 /// InputTokens alone remains the right figure for billed, non-cached cost.
+///
+/// ReasoningTokens is different in kind: it is a *breakdown of* OutputTokens (the part the model
+/// spent thinking), not a fourth exclusive count, so it must never be added to a total. It is
+/// filled only where the provider reports it and is zero otherwise — which means "not reported",
+/// not "no reasoning happened".
 /// </summary>
-public sealed record UsageInfo(int InputTokens, int OutputTokens, int CacheCreationInputTokens = 0, int CacheReadInputTokens = 0)
+public sealed record UsageInfo(
+    int InputTokens, int OutputTokens, int CacheCreationInputTokens = 0, int CacheReadInputTokens = 0, int ReasoningTokens = 0)
 {
     /// <summary>
     /// Every input token that occupied the context window this turn, cached or not — the figure

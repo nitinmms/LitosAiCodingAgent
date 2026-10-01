@@ -447,4 +447,49 @@ public class OpenRouterChatProviderTests
         using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
         Assert.Equal(256, json.RootElement.GetProperty("session_id").GetString()!.Length);
     }
+
+    [Fact]
+    public async Task StreamAsync_ReasoningTokensReported_AreCarriedAsABreakdownOfOutput()
+    {
+        // completion_tokens (900) already includes reasoning_tokens (640): the breakdown is
+        // carried for visibility and must not inflate OutputTokens.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":900,\"completion_tokens_details\":{\"reasoning_tokens\":640}}}\n\ndata: [DONE]\n\n"));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "openai/gpt-5");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var usage = events.OfType<MessageCompleted>().Single().Usage;
+        Assert.Equal(900, usage.OutputTokens);
+        Assert.Equal(640, usage.ReasoningTokens);
+    }
+
+    [Fact]
+    public async Task StreamAsync_NoCompletionDetails_LeavesReasoningTokensZero()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":56}}\n\ndata: [DONE]\n\n"));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "openai/gpt-5");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var usage = events.OfType<MessageCompleted>().Single().Usage;
+        Assert.Equal(56, usage.OutputTokens);
+        Assert.Equal(0, usage.ReasoningTokens);
+    }
+
+    [Fact]
+    public async Task StreamAsync_CompletionDetailsWithoutReasoningTokens_LeavesReasoningTokensZero()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":56,\"completion_tokens_details\":{}}}\n\ndata: [DONE]\n\n"));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "openai/gpt-5");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        Assert.Equal(0, events.OfType<MessageCompleted>().Single().Usage.ReasoningTokens);
+    }
 }

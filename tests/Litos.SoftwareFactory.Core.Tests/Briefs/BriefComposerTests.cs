@@ -1,0 +1,513 @@
+using Litos.SoftwareFactory.Contracts;
+using Litos.SoftwareFactory.Core.Briefs;
+using Litos.SoftwareFactory.Core.Lifecycle;
+using Litos.SoftwareFactory.Core.Orchestration;
+using Litos.SoftwareFactory.Core.Verification;
+
+namespace Litos.SoftwareFactory.Core.Tests.Briefs;
+
+public class BriefComposerTests
+{
+    private static readonly RunLimits Limits = new();
+
+    private static readonly RunContext Context = new("SalesApp", "factory/7f3a-csv-export", "main", "Add CSV export for Orders.")
+    {
+        AcceptanceCriteria = ["Administrators can export.", "Non-administrators are refused."],
+        VerificationSummary = "dotnet build, then dotnet test (TRX, Cobertura)",
+        CoverageThresholdPercent = 80,
+    };
+
+    private static RunState State(RunKind kind = RunKind.Implement) => RunOrchestrator.NewRun(kind);
+
+    private static string Compose(BriefKind brief, RunState state, RunContext? context = null, RunLimits? limits = null, TurnKind kind = TurnKind.Implement) =>
+        BriefComposer.Compose(new StartTurnStep(kind, brief), context ?? Context, state, limits ?? Limits);
+
+    private static VerificationOutcome Failing(params (string Name, string Message)[] tests) => new(
+        BuildStatus.Passed, UnitTestStatus.Failed, CoverageStatus.NotMeasured,
+        [.. tests.Select(t => new TestCaseResult(t.Name, TestOutcome.Failed, t.Message))], null, [], []);
+
+    // ---- Run brief ----
+
+    [Fact]
+    public void RunBrief_CarriesTheRequestTheContractAndTheInstructionToFinishWithSubmitWork()
+    {
+        var brief = Compose(BriefKind.Run, State());
+
+        Assert.Contains("**SalesApp**", brief);
+        Assert.Contains("`factory/7f3a-csv-export`", brief);
+        Assert.Contains("created from `main`", brief);
+        Assert.Contains("Add CSV export for Orders.", brief);
+        Assert.Contains("1. Administrators can export.", brief);
+        Assert.Contains("2. Non-administrators are refused.", brief);
+        Assert.Contains("dotnet build, then dotnet test (TRX, Cobertura)", brief);
+        Assert.Contains("at least 80% covered", brief);
+        Assert.Contains("call `submit_work`", brief);
+        Assert.Contains("`request_decision`", brief);
+        Assert.Contains("Do not commit, push, merge", brief);
+    }
+
+    [Fact]
+    public void RunBrief_OmitsEmptySections_AndLeavesNoPlaceholdersOrBlankRuns()
+    {
+        var context = new RunContext("P", "factory/x", "main", "Do the thing.");
+
+        var brief = Compose(BriefKind.Run, State(), context);
+
+        Assert.DoesNotContain("{{", brief);
+        Assert.DoesNotContain("Acceptance criteria", brief);
+        Assert.DoesNotContain("Decisions already made", brief);
+        Assert.DoesNotContain("Project lessons", brief);
+        Assert.DoesNotContain("already failing", brief);
+        Assert.DoesNotContain("\n\n\n", brief);
+        Assert.Contains("(not configured)", brief);
+    }
+
+    [Fact]
+    public void RunBrief_IncludesDecisionsLessonsAndPreExistingFailures()
+    {
+        var context = Context with { Lessons = ["Exports must honour the tenant filter."], SpecificationSummary = "Export orders as CSV." };
+        var state = State() with
+        {
+            Decisions = [new AnsweredDecision("All rows or the current page?", "All filtered rows.")],
+            Baseline = Failing(("Legacy.BrokenTest", "old")),
+        };
+
+        var brief = Compose(BriefKind.Run, state, context);
+
+        Assert.Contains("## Approved specification", brief);
+        Assert.Contains("Export orders as CSV.", brief);
+        Assert.Contains("**All rows or the current page?** — All filtered rows.", brief);
+        Assert.Contains("- Exports must honour the tenant filter.", brief);
+        Assert.Contains("- `Legacy.BrokenTest`", brief);
+    }
+
+    /// <summary>A request quoting template syntax must come through literally: substitution is a
+    /// single pass, so values are never expanded.</summary>
+    [Fact]
+    public void RunBrief_RequestContainingBraces_IsNotExpanded()
+    {
+        var context = Context with { Request = "Render {{branch}} and {{nonexistent}} literally." };
+
+        var brief = Compose(BriefKind.Run, State(), context);
+
+        Assert.Contains("Render {{branch}} and {{nonexistent}} literally.", brief);
+    }
+
+    // ---- Rework brief ----
+
+    [Fact]
+    public void ReworkBrief_CarriesFeedbackPreviousHandoffAndChangedFiles()
+    {
+        var context = Context with
+        {
+            TesterFeedback = "CSV values containing commas are incorrect.",
+            PreviousHandoffSummary = "Added OrdersCsvExporter and 4 tests.",
+            ChangedFiles = ["src/OrdersCsvExporter.cs", "tests/OrdersCsvExporterTests.cs"],
+        };
+
+        var brief = Compose(BriefKind.Rework, State(RunKind.Rework), context, kind: TurnKind.Rework);
+
+        Assert.Contains("CSV values containing commas are incorrect.", brief);
+        Assert.Contains("Added OrdersCsvExporter and 4 tests.", brief);
+        Assert.Contains("- `src/OrdersCsvExporter.cs`", brief);
+        Assert.Contains("- `tests/OrdersCsvExporterTests.cs`", brief);
+        Assert.Contains("do not start over", brief);
+        Assert.Contains("`submit_work`", brief);
+    }
+
+    [Fact]
+    public void ReworkBrief_MissingInputs_SayNoneRatherThanLeavingGaps()
+    {
+        var brief = Compose(BriefKind.Rework, State(RunKind.Rework), kind: TurnKind.Rework);
+
+        Assert.Equal(3, brief.Split("(none)").Length - 1);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    // ---- Repair brief ----
+
+    [Fact]
+    public void RepairBrief_NamesTheFailingTests_WithExcerpts_AndTheCycle()
+    {
+        var state = State() with
+        {
+            RepairCyclesUsed = 1,
+            LastVerification = Failing(("Orders.Tests.Export_Commas", "Expected \"a,b\" but was a,b"), ("Orders.Tests.Export_Empty", "NullReferenceException")),
+        };
+
+        var brief = Compose(BriefKind.Repair, state, kind: TurnKind.Repair);
+
+        Assert.Contains("repair cycle 1 of 2", brief);
+        Assert.Contains("## Failing tests (2)", brief);
+        Assert.Contains("### `Orders.Tests.Export_Commas`", brief);
+        Assert.Contains("Expected \"a,b\" but was a,b", brief);
+        Assert.Contains("### `Orders.Tests.Export_Empty`", brief);
+        Assert.Contains("do not delete, skip or weaken a test", brief);
+        Assert.DoesNotContain("last repair cycle", brief);
+    }
+
+    [Fact]
+    public void RepairBrief_LastCycle_SaysSo()
+    {
+        var state = State() with { RepairCyclesUsed = 2, LastVerification = Failing(("T.A", "boom")) };
+
+        Assert.Contains("This is the last repair cycle.", Compose(BriefKind.Repair, state, kind: TurnKind.Repair));
+    }
+
+    [Fact]
+    public void RepairBrief_LeavesOutFailuresThatPredateTheTask()
+    {
+        var state = State() with
+        {
+            RepairCyclesUsed = 1,
+            LastVerification = Failing(("Legacy.Broken", "old"), ("New.Broken", "new")),
+            Baseline = Failing(("Legacy.Broken", "old")),
+        };
+
+        var brief = Compose(BriefKind.Repair, state, kind: TurnKind.Repair);
+
+        Assert.Contains("## Failing tests (1)", brief);
+        Assert.Contains("`New.Broken`", brief);
+        Assert.DoesNotContain("Legacy.Broken", brief);
+    }
+
+    [Fact]
+    public void RepairBrief_BoundsTheExcerptsToTheConfiguredTotal()
+    {
+        var limits = new RunLimits { RepairExcerptTokens = 100 }; // 400 characters in total
+        var state = State() with
+        {
+            RepairCyclesUsed = 1,
+            LastVerification = Failing(("T.A", new string('~', 5_000)), ("T.B", new string('^', 5_000))),
+        };
+
+        var brief = Compose(BriefKind.Repair, state, limits: limits, kind: TurnKind.Repair);
+
+        // Neither character appears in the template, so every one counted is excerpt text.
+        Assert.Equal(200, brief.Count(c => c == '~'));
+        Assert.Equal(200, brief.Count(c => c == '^'));
+        Assert.Contains("[truncated]", brief);
+        Assert.Contains("`T.A`", brief);
+        Assert.Contains("`T.B`", brief);
+    }
+
+    [Fact]
+    public void BoundExcerpts_SharesTheBudgetEvenly_AndKeepsEveryName()
+    {
+        List<TestCaseResult> failing =
+        [
+            new("T.Short", TestOutcome.Failed, "short"),
+            new("T.Long", TestOutcome.Failed, new string('x', 1_000)),
+            new("T.None", TestOutcome.Failed),
+        ];
+
+        var bounded = BriefComposer.BoundExcerpts(failing, totalChars: 300);
+
+        Assert.Equal(["T.Short", "T.Long", "T.None"], bounded.Select(b => b.Name));
+        Assert.Equal("short", bounded[0].Excerpt);
+        Assert.StartsWith(new string('x', 100), bounded[1].Excerpt);
+        Assert.EndsWith("[truncated]", bounded[1].Excerpt);
+        Assert.Equal("", bounded[2].Excerpt);
+    }
+
+    [Fact]
+    public void BoundExcerpts_ZeroBudget_KeepsNamesWithEmptyExcerpts()
+    {
+        var bounded = BriefComposer.BoundExcerpts([new("T.A", TestOutcome.Failed, "message")], totalChars: 0);
+
+        Assert.Equal(("T.A", ""), Assert.Single(bounded));
+    }
+
+    [Fact]
+    public void RepairBrief_BuildFailure_SaysTheBuildFailed()
+    {
+        var state = State() with
+        {
+            RepairCyclesUsed = 1,
+            LastVerification = new VerificationOutcome(BuildStatus.Failed, UnitTestStatus.NotRun, CoverageStatus.NotMeasured, [], null, [], []),
+        };
+
+        Assert.Contains("The build failed.", Compose(BriefKind.Repair, state, kind: TurnKind.Repair));
+    }
+
+    [Fact]
+    public void RepairBrief_TestCommandWithNoReport_SaysSo()
+    {
+        var state = State() with
+        {
+            RepairCyclesUsed = 1,
+            LastVerification = new VerificationOutcome(BuildStatus.Passed, UnitTestStatus.Failed, CoverageStatus.NotMeasured, [], null, [], []),
+        };
+
+        Assert.Contains("without producing its report", Compose(BriefKind.Repair, state, kind: TurnKind.Repair));
+    }
+
+    [Fact]
+    public void RepairBrief_CoverageBelowThreshold_ListsTheUncoveredChangedLines()
+    {
+        var state = State() with
+        {
+            RepairCyclesUsed = 1,
+            LastVerification = new VerificationOutcome(
+                BuildStatus.Passed, UnitTestStatus.Passed, CoverageStatus.BelowThreshold, [],
+                new ChangedLineCoverage(5, 10, [new UncoveredLines("src/Orders.cs", [3, 4, 5, 9, 12, 13])]), [], []),
+        };
+
+        var brief = Compose(BriefKind.Repair, state, kind: TurnKind.Repair);
+
+        Assert.Contains("50% of the lines you changed are covered", brief);
+        Assert.Contains("the project requires 80%", brief);
+        Assert.Contains("- `src/Orders.cs`: lines 3-5, 9, 12-13", brief);
+        Assert.DoesNotContain("Failing tests", brief);
+    }
+
+    [Theory]
+    [InlineData(new[] { 1 }, "1")]
+    [InlineData(new[] { 1, 2, 3 }, "1-3")]
+    [InlineData(new[] { 5, 1, 2, 9, 10, 2 }, "1-2, 5, 9-10")]
+    [InlineData(new int[0], "")]
+    public void FormatLines_CollapsesRuns(int[] lines, string expected)
+    {
+        Assert.Equal(expected, BriefComposer.FormatLines(lines));
+    }
+
+    [Fact]
+    public void RepairBrief_ForReviewFindings_ListsOnlyTheBlockingOnes_AndNoStaleTestFailures()
+    {
+        var state = State() with
+        {
+            RepairCyclesUsed = 1,
+            ReviewRepairPending = true,
+            LastVerification = Failing(("Stale.Failure", "from before the review")),
+            Findings =
+            [
+                new ReviewFinding(FindingSeverity.Blocking, "src/Orders.cs", 42, "Crashes on an empty list."),
+                new ReviewFinding(FindingSeverity.Blocking, "src/Auth.cs", null, "Non-administrators are not refused."),
+                new ReviewFinding(FindingSeverity.Minor, "src/Orders.cs", 7, "Leftover Console.WriteLine."),
+            ],
+        };
+
+        var brief = Compose(BriefKind.Repair, state, kind: TurnKind.Repair);
+
+        Assert.Contains("## Blocking review findings", brief);
+        Assert.Contains("- `src/Orders.cs:42` — Crashes on an empty list.", brief);
+        Assert.Contains("- `src/Auth.cs` — Non-administrators are not refused.", brief);
+        Assert.DoesNotContain("Leftover Console.WriteLine", brief);
+        Assert.DoesNotContain("Stale.Failure", brief);
+    }
+
+    // ---- Review brief ----
+
+    [Fact]
+    public void ReviewBrief_SmallChange_IncludesTheDiffTheCriteriaAndTheVerificationResult()
+    {
+        var context = Context with { Diff = "+public void Export() { }", ChangedLineCount = 1 };
+        var state = State() with
+        {
+            LastVerification = new VerificationOutcome(
+                BuildStatus.Passed, UnitTestStatus.Passed, CoverageStatus.Met,
+                [new("T.A", TestOutcome.Passed), new("T.B", TestOutcome.Passed), new("T.C", TestOutcome.Skipped)],
+                new ChangedLineCoverage(91, 100, []), [], []),
+        };
+
+        var brief = Compose(BriefKind.Review, state, context, kind: TurnKind.Review);
+
+        Assert.Contains("```diff\n+public void Export() { }\n```", brief);
+        Assert.Contains("1. Administrators can export.", brief);
+        Assert.Contains("- Build: Passed", brief);
+        Assert.Contains("- Unit tests: Passed (2 passed, 0 failed, 1 skipped)", brief);
+        Assert.Contains("- Changed-line coverage: Met (91%)", brief);
+        Assert.Contains("read-only tools", brief);
+        Assert.Contains("`submit_review`", brief);
+    }
+
+    [Fact]
+    public void ReviewBrief_AboveTheInlineLimit_GivesTheFileListInsteadOfTheDiff()
+    {
+        var context = Context with
+        {
+            Diff = "+a very large diff",
+            ChangedLineCount = 1_501,
+            ChangedFiles = ["src/A.cs", "src/B.cs"],
+        };
+
+        var brief = Compose(BriefKind.Review, State(), context, kind: TurnKind.Review);
+
+        Assert.DoesNotContain("a very large diff", brief);
+        Assert.Contains("1501 lines", brief);
+        Assert.Contains("- `src/A.cs`", brief);
+        Assert.Contains("- `src/B.cs`", brief);
+    }
+
+    [Fact]
+    public void ReviewBrief_ExactlyAtTheInlineLimit_StillIncludesTheDiff()
+    {
+        var context = Context with { Diff = "+the diff", ChangedLineCount = 1_500 };
+
+        Assert.Contains("+the diff", Compose(BriefKind.Review, State(), context, kind: TurnKind.Review));
+    }
+
+    [Fact]
+    public void ReviewBrief_NoVerificationYet_SaysNotRun()
+    {
+        Assert.Contains("(not run)", Compose(BriefKind.Review, State(), Context with { Diff = "+x", ChangedLineCount = 1 }, kind: TurnKind.Review));
+    }
+
+    // ---- Nudge, decision answer, proceed, resume ----
+
+    [Fact]
+    public void Nudge_ForAWorkTurn_NamesSubmitWorkAndRequestDecision()
+    {
+        var nudge = Compose(BriefKind.Nudge, State() with { WorkTurn = TurnKind.Implement }, kind: TurnKind.Nudge);
+
+        Assert.Contains("You stopped without calling `submit_work` or `request_decision`.", nudge);
+        Assert.Contains("call `request_decision`", nudge);
+    }
+
+    [Fact]
+    public void Nudge_ForAReviewTurn_NamesOnlySubmitReview()
+    {
+        var nudge = Compose(BriefKind.Nudge, State() with { WorkTurn = TurnKind.Review }, kind: TurnKind.Nudge);
+
+        Assert.Contains("You stopped without calling `submit_review`.", nudge);
+        Assert.DoesNotContain("request_decision", nudge);
+        Assert.DoesNotContain("submit_work", nudge);
+    }
+
+    [Fact]
+    public void DecisionAnswer_QuotesTheLatestQuestionAndAnswer()
+    {
+        var state = State() with
+        {
+            Decisions = [new AnsweredDecision("First?", "One."), new AnsweredDecision("All rows or\nthe current page?", "All filtered rows.")],
+        };
+
+        var brief = Compose(BriefKind.DecisionAnswer, state);
+
+        Assert.Contains("> All rows or\n> the current page?", brief);
+        Assert.Contains("> All filtered rows.", brief);
+        Assert.DoesNotContain("First?", brief);
+    }
+
+    [Fact]
+    public void DecisionAnswer_WithNoAnsweredDecision_IsAnError()
+    {
+        Assert.Throws<InvalidOperationException>(() => Compose(BriefKind.DecisionAnswer, State()));
+    }
+
+    [Fact]
+    public void ProceedOnRecommendation_StatesTheLimit_AndAsksForTheAssumptionToBeDisclosed()
+    {
+        var brief = Compose(BriefKind.ProceedOnRecommendation, State(), limits: new RunLimits { MaxDecisions = 3 }, kind: TurnKind.Nudge);
+
+        Assert.Contains("already asked the 3 questions", brief);
+        Assert.Contains("Proceed on your own recommendation.", brief);
+        Assert.Contains("known limitations", brief);
+    }
+
+    [Fact]
+    public void Resume_SaysWhyTheRunStopped_AndWhichToolFinishesIt()
+    {
+        var state = State() with
+        {
+            LastStop = new StopStep(LifecycleTrigger.ExhaustBudget, StopReason.BudgetExhausted, "The token allowance ran out."),
+        };
+
+        var brief = Compose(BriefKind.Resume, state);
+
+        Assert.Contains("It had stopped because: The token allowance ran out.", brief);
+        Assert.Contains("Check the current state of the working copy", brief);
+        Assert.Contains("`submit_work`", brief);
+    }
+
+    [Fact]
+    public void Resume_OfAReview_FinishesWithSubmitReview()
+    {
+        Assert.Contains("`submit_review`", Compose(BriefKind.Resume, State() with { WorkTurn = TurnKind.Review }, kind: TurnKind.Review));
+    }
+
+    // ---- Templates and revision ----
+
+    [Fact]
+    public void Compose_UnknownBriefKind_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Compose((BriefKind)999, State()));
+    }
+
+    [Fact]
+    public void EveryBriefKind_Composes_WithNoPlaceholderLeftBehind()
+    {
+        var state = State() with { Decisions = [new AnsweredDecision("Q?", "A.")] };
+
+        foreach (var kind in Enum.GetValues<BriefKind>())
+        {
+            var brief = Compose(kind, state);
+            Assert.False(string.IsNullOrWhiteSpace(brief));
+            Assert.DoesNotMatch(@"\{\{\w+\}\}", brief);
+        }
+    }
+
+    [Fact]
+    public void CompactionInstruction_SaysWhatMustSurvive()
+    {
+        var instruction = BriefComposer.CompactionInstruction();
+
+        Assert.Contains("acceptance criterion", instruction);
+        Assert.Contains("decision", instruction);
+        Assert.Contains("file changed", instruction);
+        Assert.Contains("outstanding", instruction);
+        Assert.Contains("Drop raw tool output", instruction);
+    }
+
+    [Fact]
+    public void Revision_IsSet_SoARunCanRecordWhichPromptsItUsed()
+    {
+        Assert.False(string.IsNullOrWhiteSpace(BriefComposer.Revision));
+    }
+
+    [Theory]
+    [InlineData("run")]
+    [InlineData("rework")]
+    [InlineData("repair")]
+    [InlineData("review")]
+    [InlineData("nudge")]
+    [InlineData("decision-answer")]
+    [InlineData("proceed")]
+    [InlineData("resume")]
+    [InlineData("compaction")]
+    public void Templates_AreEmbedded(string name)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(BriefComposer.LoadTemplate(name)));
+    }
+
+    [Fact]
+    public void LoadTemplate_Unknown_Throws()
+    {
+        Assert.Throws<InvalidOperationException>(() => BriefComposer.LoadTemplate("no-such-template"));
+    }
+
+    [Fact]
+    public void Render_PlaceholderWithNoValue_IsAnError()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => BriefComposer.Render("proceed", []));
+
+        Assert.Contains("maxDecisions", ex.Message);
+    }
+
+    [Fact]
+    public void Render_ValueWithNoPlaceholder_IsAnError()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => BriefComposer.Render("proceed", new() { ["maxDecisions"] = "3", ["typo"] = "x" }));
+
+        Assert.Contains("typo", ex.Message);
+    }
+
+    [Fact]
+    public void Composing_IsDeterministic()
+    {
+        var state = State() with { Baseline = Failing(("B.Test", "x"), ("A.Test", "y")) };
+
+        Assert.Equal(Compose(BriefKind.Run, state), Compose(BriefKind.Run, state));
+    }
+}

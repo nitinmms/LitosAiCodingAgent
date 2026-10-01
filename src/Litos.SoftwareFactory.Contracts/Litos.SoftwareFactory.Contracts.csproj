@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Wire DTOs shared by the software factory's host and its per-run worker
+       (docs/software-factory/m1-architecture.md §3). No ASP.NET, no EF. Litos.Agent is
+       referenced because the model gateway carries ChatRequest/ChatMessage/UsageInfo as they are. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.Agent\Litos.Agent.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

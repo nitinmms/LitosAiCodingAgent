@@ -314,4 +314,39 @@ public sealed class JsonlTranscriptStoreTests : IDisposable
             entries.Add(entry);
         return entries;
     }
+
+    // ---- UsageInfo.ReasoningTokens ----
+
+    [Fact]
+    public async Task AppendAsync_UsageWithReasoningTokens_RoundTrips()
+    {
+        var usage = new Litos.Agent.Streaming.UsageInfo(100, 50, 10, 20, ReasoningTokens: 30);
+        await _store.AppendAsync(
+            SessionOwner.Local, "reasoning", TranscriptEntry.FromMessage(ChatMessage.Assistant([new TextBlock("hi")]), usage), CancellationToken.None);
+
+        var entries = new List<TranscriptEntry>();
+        await foreach (var entry in _store.ReadAsync(SessionOwner.Local, "reasoning", CancellationToken.None))
+            entries.Add(entry);
+
+        Assert.Equal(usage, Assert.Single(entries).Usage);
+    }
+
+    [Fact]
+    public async Task ReadAsync_TranscriptWrittenBeforeReasoningTokensExisted_LoadsWithZero()
+    {
+        // The exact shape every transcript on disk has today: a usage object with no
+        // reasoningTokens property at all.
+        var directory = Path.Combine(_root, SessionOwner.Local.Value, "legacy-usage");
+        Directory.CreateDirectory(directory);
+        var line = """{"kind":"assistant","timestamp":"2026-09-01T00:00:00+00:00","message":{"role":1,"content":[{"type":"text","text":"hi"}]},"callId":null,"usage":{"inputTokens":100,"outputTokens":50,"cacheCreationInputTokens":10,"cacheReadInputTokens":20}}""";
+        await File.WriteAllTextAsync(Path.Combine(directory, "transcript.jsonl"), line + "\n");
+
+        var entries = new List<TranscriptEntry>();
+        await foreach (var entry in _store.ReadAsync(SessionOwner.Local, "legacy-usage", CancellationToken.None))
+            entries.Add(entry);
+
+        var usage = Assert.Single(entries).Usage!;
+        Assert.Equal(new Litos.Agent.Streaming.UsageInfo(100, 50, 10, 20), usage);
+        Assert.Equal(0, usage.ReasoningTokens);
+    }
 }
