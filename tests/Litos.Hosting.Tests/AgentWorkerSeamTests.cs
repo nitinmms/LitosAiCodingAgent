@@ -226,6 +226,167 @@ public class AgentWorkerSeamTests
     }
 }
 
+/// <summary>
+/// Failures that happen outside AgentLoop's own stream handling. The turn's task is awaited by
+/// nobody, so before these were caught the event stream just ended — indistinguishable from a
+/// turn that finished with nothing to say.
+/// </summary>
+public class AgentWorkerTurnFailureTests
+{
+    private sealed class NoopSystemPromptProvider : ISystemPromptProvider
+    {
+        public Task<SystemPromptSections?> BuildAsync(ToolRegistry tools, string? workingDirectory, CancellationToken ct) =>
+            Task.FromResult<SystemPromptSections?>(null);
+    }
+
+    private sealed class ThrowingToolSetPolicy : IToolSetPolicy
+    {
+        public ToolRegistry Create(string sessionId, string? turnKind) =>
+            throw new InvalidOperationException("Unknown turn kind 'Mystery'.");
+    }
+
+    private sealed class EmptyToolSetPolicy : IToolSetPolicy
+    {
+        public ToolRegistry Create(string sessionId, string? turnKind) => new([]);
+    }
+
+    private sealed class UnresolvableModelSelection : IModelSelection
+    {
+        public string ProviderName => "fake";
+        public string? Model => null;
+        public int? ContextLength => null;
+        public IReadOnlyList<string> AvailableProviders => ["fake"];
+        public ModelSelectionSnapshot Snapshot() => new("fake", "", null);
+        public Task SwitchProviderAsync(string providerName, CancellationToken ct) => Task.CompletedTask;
+        public void SetModel(string modelId, int? contextLength) { }
+        public Task EnsureResolvedAsync(CancellationToken ct) => throw new InvalidOperationException("The provider returned no models.");
+    }
+
+    /// <summary>Answers ordinary turns, but fails the summarization call compaction makes — the
+    /// one request that carries no tools and ends with the summarization prompt.</summary>
+    private sealed class CompactionFailingProvider : Litos.Agent.Providers.IChatProvider
+    {
+        public string ProviderName => "fake";
+
+        public int OrdinaryCalls { get; private set; }
+
+        public Task<IReadOnlyList<Litos.Agent.Providers.ModelInfo>> ListModelsAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<Litos.Agent.Providers.ModelInfo>>([]);
+
+        public async IAsyncEnumerable<AgentEvent> StreamAsync(
+            Litos.Agent.Providers.ChatRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            var lastText = request.Messages[^1].Content.OfType<TextBlock>().LastOrDefault()?.Text ?? "";
+            if (lastText.Contains("context checkpoint summary"))
+                throw new InvalidOperationException("The gateway refused the call: budget_exhausted.");
+
+            OrdinaryCalls++;
+            yield return new MessageCompleted(ChatMessage.Assistant([new TextBlock("ok")]), new UsageInfo(1, 1));
+        }
+    }
+
+    private sealed class SingleProviderFactory(Litos.Agent.Providers.IChatProvider provider) : Litos.Agent.Providers.IChatProviderFactory
+    {
+        public Litos.Agent.Providers.IChatProvider Resolve(string providerName) => provider;
+    }
+
+    private static AgentWorker Worker(
+        FakeTranscriptStore store, Litos.Agent.Providers.IChatProvider provider, IModelSelection? selection = null, IToolSetPolicy? policy = null) => new(
+        new SingleProviderFactory(provider),
+        new AgentLoopFactory(store, new ContextAccountant(), new NoopSystemPromptProvider(), new Compactor(new CompactionSettings())),
+        store, selection ?? new FixedModelSelection("fake", "model", 200_000), policy ?? new EmptyToolSetPolicy(),
+        new TranscriptWorkingDirectoryResolver());
+
+    private static async Task<List<AgentEvent>> DrainAsync(ChannelReader<AgentEvent> reader)
+    {
+        var events = new List<AgentEvent>();
+        await foreach (var evt in reader.ReadAllAsync())
+            events.Add(evt);
+        return events;
+    }
+
+    [Fact]
+    public async Task CompactionFails_TheTurnReportsTheError_InsteadOfEndingSilently()
+    {
+        // A session already past its compaction threshold: the turn's first act is to compact.
+        var store = new FakeTranscriptStore();
+        await store.AppendAsync(SessionOwner.Local, "s", TranscriptEntry.FromMessage(ChatMessage.User(new string('a', 400_000))), default);
+        await store.AppendAsync(
+            SessionOwner.Local, "s",
+            TranscriptEntry.FromMessage(ChatMessage.Assistant([new TextBlock(new string('b', 400_000))]), new UsageInfo(190_000, 1_000)), default);
+        var provider = new CompactionFailingProvider();
+        var worker = Worker(store, provider);
+
+        var events = await DrainAsync(worker.StartOrSteerTurn(SessionOwner.Local, "s", [new TextBlock("continue")], default, out _)!);
+
+        var error = Assert.IsType<ErrorOccurred>(Assert.Single(events));
+        Assert.Contains("budget_exhausted", error.Exception.Message);
+        Assert.Equal(0, provider.OrdinaryCalls); // the turn did not carry on with an uncompacted context
+    }
+
+    [Fact]
+    public async Task ToolSetPolicyThrows_TheTurnReportsTheError()
+    {
+        var worker = Worker(new FakeTranscriptStore(), new CompactionFailingProvider(), policy: new ThrowingToolSetPolicy());
+
+        var events = await DrainAsync(worker.StartOrSteerTurn(SessionOwner.Local, "s", [new TextBlock("go")], default, out _, turnKind: "Mystery")!);
+
+        Assert.Contains("Unknown turn kind 'Mystery'.", Assert.IsType<ErrorOccurred>(Assert.Single(events)).Exception.Message);
+    }
+
+    [Fact]
+    public async Task ModelCannotBeResolved_TheTurnReportsTheError()
+    {
+        var worker = Worker(new FakeTranscriptStore(), new CompactionFailingProvider(), selection: new UnresolvableModelSelection());
+
+        var events = await DrainAsync(worker.StartOrSteerTurn(SessionOwner.Local, "s", [new TextBlock("go")], default, out _)!);
+
+        Assert.Contains("returned no models", Assert.IsType<ErrorOccurred>(Assert.Single(events)).Exception.Message);
+    }
+
+    [Fact]
+    public async Task AfterAFailedTurn_TheSessionCanStartANewTurn()
+    {
+        var store = new FakeTranscriptStore();
+        var failing = Worker(store, new CompactionFailingProvider(), policy: new ThrowingToolSetPolicy());
+        await DrainAsync(failing.StartOrSteerTurn(SessionOwner.Local, "s", [new TextBlock("go")], default, out _)!);
+
+        // Give the failed turn's cleanup a moment: it leaves the active set just after its
+        // event stream completes.
+        ChannelReader<AgentEvent>? retry = null;
+        for (var attempt = 0; attempt < 100 && retry is null; attempt++)
+        {
+            retry = failing.StartOrSteerTurn(SessionOwner.Local, "s", [new TextBlock("again")], default, out _);
+            if (retry is null)
+                await Task.Delay(10);
+        }
+
+        Assert.NotNull(retry);
+        Assert.IsType<ErrorOccurred>(Assert.Single(await DrainAsync(retry)));
+    }
+
+    /// <summary>Cancellation is not a failure: it must still end the stream with no error event.</summary>
+    [Fact]
+    public async Task CancelledTurn_ReportsNoError()
+    {
+        var provider = new FakeChatProvider();
+        provider.EnqueueAwaiting(new TaskCompletionSource().Task, new TextDelta("never"));
+        var store = new FakeTranscriptStore();
+        var worker = new AgentWorker(
+            new FakeChatProviderFactory(provider),
+            new AgentLoopFactory(store, new ContextAccountant(), new NoopSystemPromptProvider(), new Compactor(new CompactionSettings())),
+            store, new FixedModelSelection("fake", "model", 200_000), new EmptyToolSetPolicy(), new TranscriptWorkingDirectoryResolver());
+        var events = worker.StartOrSteerTurn(SessionOwner.Local, "s", [new TextBlock("go")], default, out _)!;
+        while (provider.ReceivedMessageLists.Count == 0)
+            await Task.Delay(10);
+
+        worker.CancelTurn(SessionOwner.Local, "s");
+
+        Assert.DoesNotContain(await DrainAsync(events), e => e is ErrorOccurred);
+    }
+}
+
 public class DefaultSeamTests
 {
     private sealed class FakeTool(string name) : ITool

@@ -29,6 +29,8 @@ public sealed class KernelSession : IAsyncDisposable
     private Task? _readerLoop;
     private readonly Dictionary<string, TaskCompletionSource<EvalResult>> _pendingEvals = [];
     private readonly Lock _pendingLock = new();
+    private readonly Lock _evalTokenLock = new();
+    private CancellationToken _evalToken = CancellationToken.None;
 
     public KernelSession(
         string sessionId,
@@ -79,6 +81,13 @@ public sealed class KernelSession : IAsyncDisposable
         using var timeoutCts = new CancellationTokenSource(_hardTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
+        // Bridged tool calls made by this eval run under its token, so cancelling the turn (or
+        // the eval timing out) stops a long tool call — a shell command, say — as it would on
+        // the direct path, instead of leaving it to the process-tree kill alone.
+        var evalToken = linkedCts.Token;
+        lock (_evalTokenLock)
+            _evalToken = evalToken;
+
         try
         {
             await WriteLockedAsync(KernelWireMessage.Of(new EvalRequest(requestId, code)), linkedCts.Token);
@@ -114,7 +123,21 @@ public sealed class KernelSession : IAsyncDisposable
         {
             lock (_pendingLock)
                 _pendingEvals.Remove(requestId);
+
+            // Only if no later eval has replaced it: this eval must not clear another's token.
+            lock (_evalTokenLock)
+            {
+                if (_evalToken == evalToken)
+                    _evalToken = CancellationToken.None;
+            }
         }
+    }
+
+    /// <summary>The token bridged tool calls run under: the eval in progress, or none.</summary>
+    private CancellationToken CurrentEvalToken()
+    {
+        lock (_evalTokenLock)
+            return _evalToken;
     }
 
     private static string Combine(EvalResult result)
@@ -348,12 +371,12 @@ public sealed class KernelSession : IAsyncDisposable
                 if (DenyMcpToolReason(serverName, toolName) is { } denial)
                     return ToolResult.Error(denial);
 
-                return await _mcpToolProvider.InvokeDirectAsync(serverName, mcpToolName, arguments, CancellationToken.None);
+                return await _mcpToolProvider.InvokeDirectAsync(serverName, mcpToolName, arguments, CurrentEvalToken());
             }
         }
 
         var tool = _bridgedToolsSource().Resolve(toolName);
-        return await tool.InvokeAsync(arguments, CancellationToken.None);
+        return await tool.InvokeAsync(arguments, CurrentEvalToken());
     }
 
     /// <summary>

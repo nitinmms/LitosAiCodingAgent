@@ -131,7 +131,13 @@ public sealed class AgentWorker : BackgroundService
 
         var runTask = RunTurnAsync(owner, sessionId, content, turnKind, events.Writer, turn.Steering, requestAborted, turn.Cancel);
         lock (_turnsLock)
-            _activeTurns[key] = turn with { Run = runTask };
+        {
+            // Only while the turn is still registered: one that ran to completion synchronously
+            // (it failed before its first real await) has already removed itself, and putting it
+            // back would leave the session steering a dead turn for the life of the process.
+            if (_activeTurns.TryGetValue(key, out var registered) && ReferenceEquals(registered, turn))
+                _activeTurns[key] = turn with { Run = runTask };
+        }
         outcome = TurnOutcome.Started;
         return events.Reader;
     }
@@ -238,6 +244,15 @@ public sealed class AgentWorker : BackgroundService
         {
             // Host shutdown, the request disconnecting, or an explicit CancelTurn — nothing
             // further to report to a writer nobody is (necessarily) reading from anymore.
+        }
+        catch (Exception ex)
+        {
+            // Anything else that escapes the loop — a compaction that failed, a model that could
+            // not be resolved, a tool-set policy that threw. AgentLoop reports a failed model call
+            // as an ErrorOccurred event itself, but these happen outside its stream handling, and
+            // this task is awaited by nobody: without this the turn's event stream would simply
+            // end, indistinguishable from a turn that finished with nothing to say.
+            events.TryWrite(new ErrorOccurred(ex));
         }
         finally
         {

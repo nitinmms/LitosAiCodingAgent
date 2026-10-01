@@ -47,10 +47,19 @@ public sealed class Compactor(CompactionSettings settings)
     /// summary when there isn't yet enough history old enough to safely cut.
     /// </summary>
     /// <param name="contextWindowTokens">See TryCompactAsync's parameter of the same name.</param>
-    public Task<bool> ForceCompactAsync(Transcript transcript, IChatProvider provider, string model, int? contextWindowTokens, CancellationToken ct) =>
-        CompactAsync(transcript, provider, model, contextWindowTokens, force: true, ct);
+    /// <param name="additionalInstruction">
+    /// Extra guidance for the summarizer about what must survive, appended to the standard
+    /// summarization prompt — the software factory uses it to keep acceptance criteria, decisions
+    /// and outstanding failures. Null (every existing caller) leaves the prompt unchanged.
+    /// </param>
+    public Task<bool> ForceCompactAsync(
+        Transcript transcript, IChatProvider provider, string model, int? contextWindowTokens, CancellationToken ct,
+        string? additionalInstruction = null) =>
+        CompactAsync(transcript, provider, model, contextWindowTokens, force: true, ct, additionalInstruction);
 
-    private async Task<bool> CompactAsync(Transcript transcript, IChatProvider provider, string model, int? contextWindowTokens, bool force, CancellationToken ct)
+    private async Task<bool> CompactAsync(
+        Transcript transcript, IChatProvider provider, string model, int? contextWindowTokens, bool force, CancellationToken ct,
+        string? additionalInstruction = null)
     {
         var effectiveSettings = contextWindowTokens is { } window ? settings.ForContextWindow(window) : settings;
 
@@ -70,16 +79,20 @@ public sealed class Compactor(CompactionSettings settings)
         // since the latter silently drops the trailing-messages estimate. Not carried forward as
         // the transcript's new baseline usage: see ApplyCompaction's remarks for why that's unsafe.
         var tokensBefore = CompactionPlanner.EstimatedTokensUsed(transcript) ?? 0;
-        var summary = await SummarizeAsync(toSummarize, provider, model, ct);
+        var summary = await SummarizeAsync(toSummarize, provider, model, additionalInstruction, ct);
 
         transcript.ApplyCompaction(cutPoint.Index, ChatMessage.CompactionSummary(summary, tokensBefore));
         return true;
     }
 
-    private static async Task<string> SummarizeAsync(IReadOnlyList<ChatMessage> messages, IChatProvider provider, string model, CancellationToken ct)
+    private static async Task<string> SummarizeAsync(
+        IReadOnlyList<ChatMessage> messages, IChatProvider provider, string model, string? additionalInstruction, CancellationToken ct)
     {
+        var prompt = string.IsNullOrWhiteSpace(additionalInstruction)
+            ? SummarizationPrompt
+            : $"{SummarizationPrompt}\n\nAdditional instructions for this summary:\n\n{additionalInstruction.Trim()}";
         var request = new ChatRequest(
-            Messages: [.. messages, ChatMessage.User(SummarizationPrompt)],
+            Messages: [.. messages, ChatMessage.User(prompt)],
             Tools: [],
             Model: model);
 

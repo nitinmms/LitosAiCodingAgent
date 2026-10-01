@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- The software factory's per-run worker (ReadMe_LitosSoftwareFactory_V1.md §13.2): one
+       process per run, started by the factory host in the run's working copy. It holds no
+       provider keys, no GitHub credential and no database connection string. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.Hosting\Litos.Hosting.csproj" />
+    <ProjectReference Include="..\Litos.SoftwareFactory.Contracts\Litos.SoftwareFactory.Contracts.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.SoftwareFactory.Worker.Tests" />
+  </ItemGroup>
+
+</Project>

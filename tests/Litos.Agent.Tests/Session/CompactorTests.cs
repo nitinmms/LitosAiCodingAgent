@@ -169,6 +169,75 @@ public class CompactorTests
         Assert.True(compactedWithContextWindow);
     }
 
+    // ---- ForceCompactAsync's additionalInstruction (the software factory's compaction) ----
+
+    private static Transcript CompactableTranscript()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.User(new string('a', 100_000)));
+        transcript.Append(ChatMessage.Assistant([new TextBlock(new string('b', 100_000))]));
+        transcript.Append(ChatMessage.User("recent question"));
+        return transcript;
+    }
+
+    private static string SummarizationPromptSentTo(FakeChatProvider provider) =>
+        Assert.IsType<TextBlock>(Assert.Single(Assert.Single(provider.ReceivedRequests).Messages[^1].Content)).Text;
+
+    [Fact]
+    public async Task ForceCompactAsync_AdditionalInstruction_IsAppendedToTheSummarizationPrompt()
+    {
+        var provider = new FakeChatProvider();
+        provider.Enqueue(new TextDelta("summary"));
+        var compactor = new Compactor(new CompactionSettings());
+
+        var compacted = await compactor.ForceCompactAsync(
+            CompactableTranscript(), provider, "model", contextWindowTokens: null, CancellationToken.None,
+            additionalInstruction: "  Keep every acceptance criterion, word for word.  ");
+
+        Assert.True(compacted);
+        var prompt = SummarizationPromptSentTo(provider);
+        Assert.Contains("## Goal", prompt); // the standard prompt is still there
+        Assert.EndsWith("Additional instructions for this summary:\n\nKeep every acceptance criterion, word for word.", prompt);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ForceCompactAsync_NoAdditionalInstruction_SendsTheStandardPromptUnchanged(string? instruction)
+    {
+        var withInstructionParameter = new FakeChatProvider();
+        withInstructionParameter.Enqueue(new TextDelta("summary"));
+        var plain = new FakeChatProvider();
+        plain.Enqueue(new TextDelta("summary"));
+        var compactor = new Compactor(new CompactionSettings());
+
+        await compactor.ForceCompactAsync(
+            CompactableTranscript(), withInstructionParameter, "model", null, CancellationToken.None, additionalInstruction: instruction);
+        await compactor.ForceCompactAsync(CompactableTranscript(), plain, "model", null, CancellationToken.None);
+
+        Assert.Equal(SummarizationPromptSentTo(plain), SummarizationPromptSentTo(withInstructionParameter));
+        Assert.DoesNotContain("Additional instructions", SummarizationPromptSentTo(plain));
+    }
+
+    [Fact]
+    public async Task ForceCompactAsync_ProviderThrows_PropagatesAndLeavesTheTranscriptUntouched()
+    {
+        // A host must be able to see a failed compaction; and a failed one must not have
+        // replaced any history with a summary that was never written.
+        var transcript = CompactableTranscript();
+        var provider = new FakeChatProvider();
+        provider.EnqueueThrow(new InvalidOperationException("gateway refused: budget_exhausted"));
+        var compactor = new Compactor(new CompactionSettings());
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => compactor.ForceCompactAsync(transcript, provider, "model", null, CancellationToken.None));
+
+        Assert.Contains("budget_exhausted", ex.Message);
+        Assert.Equal(3, transcript.Messages.Count);
+        Assert.DoesNotContain(transcript.Messages, m => m.Content.OfType<CompactionSummaryBlock>().Any());
+    }
+
     // ---- ForceCompactAsync (/compact) ----
 
     [Fact]
