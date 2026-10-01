@@ -64,6 +64,8 @@ public sealed class LocalProcessWorkerLauncher(
         ];
         if (launch.ContextLength is { } contextLength)
             arguments.AddRange(["--context-length", contextLength.ToString()]);
+        if (!launch.PtcEnabled)
+            arguments.AddRange(["--ptc", "off"]);
         return arguments;
     }
 

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- The software factory's host (ReadMe_LitosSoftwareFactory_V1.md §13): the API and event
+       stream the browser talks to, sign-in, the model gateway, and the coordinator that drives
+       runs. Standalone: nothing here references Litos.Api, and Litos.Host is referenced only for
+       the real chat providers behind the gateway. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.SoftwareFactory.Core\Litos.SoftwareFactory.Core.csproj" />
+    <ProjectReference Include="..\Litos.SoftwareFactory.Infrastructure\Litos.SoftwareFactory.Infrastructure.csproj" />
+    <ProjectReference Include="..\Litos.SoftwareFactory.Contracts\Litos.SoftwareFactory.Contracts.csproj" />
+    <ProjectReference Include="..\Litos.Host\Litos.Host.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.SoftwareFactory.Host.Tests" />
+  </ItemGroup>
+
+</Project>

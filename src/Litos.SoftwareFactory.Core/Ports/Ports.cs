@@ -104,7 +104,11 @@ public interface IVerifier
 
 public sealed record WorkerLaunch(
     string RunId, string WorkingCopy, string Provider, string Model, int? ContextLength,
-    string DataDirectory, string HostUrl, string Secret);
+    string DataDirectory, string HostUrl, string Secret)
+{
+    /// <summary>Whether new sessions start with Programmatic Tool Calling on (the default, §8).</summary>
+    public bool PtcEnabled { get; init; } = true;
+}
 
 /// <summary>A running worker process.</summary>
 public interface IWorkerHandle : IAsyncDisposable

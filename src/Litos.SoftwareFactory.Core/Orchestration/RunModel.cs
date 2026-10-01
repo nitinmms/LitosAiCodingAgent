@@ -118,6 +118,9 @@ public enum StopReason
     /// <summary>The verification commands could not be started at all.</summary>
     VerificationUnavailable,
     HandoffFailed,
+
+    /// <summary>The host or the worker was lost while the run was in progress.</summary>
+    Interrupted,
 }
 
 // ---- Outcomes: what happened when the host did it ----
