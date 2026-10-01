@@ -27,9 +27,7 @@ public static class EventStream
                 return;
             }
 
-            // An explicit ?after= wins; otherwise the browser's own reconnect header.
-            var cursor = after
-                ?? (long.TryParse(context.Request.Headers["Last-Event-ID"], out var lastSeen) ? lastSeen : 0);
+            var cursor = StartCursor(after, context.Request.Headers["Last-Event-ID"]);
 
             context.Response.Headers.ContentType = "text/event-stream";
             context.Response.Headers.CacheControl = "no-cache";
@@ -74,6 +72,14 @@ public static class EventStream
 
         return app;
     }
+
+    /// <summary>
+    /// Where a stream starts: after the later of ?after= and Last-Event-ID. A browser that
+    /// reconnects by itself repeats the original URL, so its ?after= is where it first started
+    /// and its header is where it actually got to; taking the later one replays nothing twice.
+    /// </summary>
+    internal static long StartCursor(long? after, string? lastEventId) =>
+        Math.Max(after ?? 0, long.TryParse(lastEventId, out var lastSeen) ? lastSeen : 0);
 
     /// <summary>One event in SSE framing. The payload is a single line of JSON.</summary>
     internal static string Format(OutboxEvent evt) => new StringBuilder()

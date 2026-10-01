@@ -392,3 +392,6 @@ Litos-Agent-Prompt-Construction.png
 
 # Software factory: private host and database settings (see .env.factory.example)
 .env.factory
+
+# The software factory web app is built into the host's wwwroot (npm run build in src/Litos.SoftwareFactory.Web)
+src/Litos.SoftwareFactory.Host/wwwroot/

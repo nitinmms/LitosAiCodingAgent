@@ -166,12 +166,13 @@ The completion tools call the host **from inside `ITool.InvokeAsync`**. That mak
 - **Endpoints (M1):**
   - `POST /api/projects` (register: GitHub URL, default branch, profile preset, coverage threshold) and `GET /api/projects`;
   - `POST /api/threads` and `GET /api/threads`;
-  - `GET /api/threads/{id}`, plus `POST /api/threads/{id}/messages` (`@factory` dispatch with a message-ID idempotency key);
+  - `GET /api/threads/{id}` (the snapshot carries an `eventCursor`: where to start the event stream so nothing after the snapshot is missed), plus `POST /api/threads/{id}/messages` (`@factory` dispatch with a message-ID idempotency key);
+  - `GET /api/threads/{id}/usage`: the task's model calls, with what each reserved and was charged;
   - `POST /api/decisions/{id}/answer`;
   - `POST /api/threads/{id}/budget`;
   - `POST /api/threads/{id}/accept`;
   - `POST /api/threads/{id}/cancel` and `.../pause` and `.../resume`;
-  - `GET /api/threads/{id}/events?after=<seq>`: SSE backed by `OutboxEvent`, with `Last-Event-ID` replay.
+  - `GET /api/threads/{id}/events?after=<seq>`: SSE backed by `OutboxEvent`, with `Last-Event-ID` replay. The stream starts after the later of `after` and `Last-Event-ID`, because a browser that reconnects by itself repeats its original URL.
 - **`ModelGateway`:**
   - builds the real `IChatProvider`s through `Litos.Host`'s `AddLitosAgent` with a `LitosConfig` constructed from host settings, never from `~/.litos/config.json`;
   - admits and reserves inside a short transaction;
@@ -184,7 +185,10 @@ The completion tools call the host **from inside `ITool.InvokeAsync`**. That mak
 
 - **Screens:** sign-in; project registration; thread list; thread view with the stage rail, conversation and events, decision card, handoff card and budget panel; composer with `@factory`.
 - **Design:** visual tokens and components follow the prototype (`docs/software-factory/prototype`).
-- **Build:** output goes to `Host/wwwroot`, and the dev server proxies `/api` to the host.
+- **Build:** output goes to `Host/wwwroot` (not committed; run `npm run build` before publishing the host), and the dev server proxies `/api` to the host.
+- **Routing:** routes live in the URL fragment, so the host serves only `index.html` and needs no fallback route.
+- **Live updates:** `state` and `usage` events are applied directly; a `message` event or a change of state refetches the thread. The server's `revision` decides which copy of a thread is newer.
+- **Details:** `src/Litos.SoftwareFactory.Web/README.md`.
 
 ## 7. M1 schema
 

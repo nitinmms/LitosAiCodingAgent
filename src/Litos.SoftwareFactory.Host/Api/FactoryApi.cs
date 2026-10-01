@@ -74,6 +74,7 @@ public static class FactoryApi
             options.Provider,
             options.Model,
             options.DefaultBudget,
+            options.PtcEnabled,
             Presets = VerificationPresets.Names,
             TaskTypes,
             PromptRevision = Core.Briefs.BriefComposer.Revision,
@@ -168,7 +169,36 @@ public static class FactoryApi
         });
 
         api.MapGet("/threads/{id:guid}", async (Guid id, IFactoryStore store, CancellationToken ct) =>
-            await store.GetThreadAsync(id, ct) is { } details ? Results.Ok(DetailsView(details)) : Results.NotFound());
+        {
+            // Read before the thread itself: anything written in between is then replayed by the
+            // event stream, never missed.
+            var cursor = await store.LastEventSequenceAsync(id, ct);
+            return await store.GetThreadAsync(id, ct) is { } details ? Results.Ok(DetailsView(details, cursor)) : Results.NotFound();
+        });
+
+        // The task's model calls, oldest first: what each reserved and what it was charged (§9).
+        api.MapGet("/threads/{id:guid}/usage", async (Guid id, IFactoryStore store, CancellationToken ct) =>
+        {
+            if (await store.GetThreadAsync(id, ct) is null)
+                return Results.NotFound();
+
+            return Results.Ok((await store.ListUsageAsync(id, ct)).Select(u => new
+            {
+                u.Id,
+                u.RunId,
+                u.Model,
+                u.EstimatedInput,
+                u.Reserved,
+                u.ActualInput,
+                u.ActualCachedInput,
+                u.ActualOutput,
+                u.ActualReasoning,
+                u.Charged,
+                Status = u.Status.ToString(),
+                u.CreatedAt,
+                u.SettledAt,
+            }));
+        });
 
         api.MapPost("/threads/{id:guid}/messages", async (
             Guid id, PostMessageRequest request, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals,
@@ -331,8 +361,10 @@ public static class FactoryApi
         thread.UpdatedAt,
     };
 
-    private static object DetailsView(ThreadDetails details) => new
+    private static object DetailsView(ThreadDetails details, long eventCursor) => new
     {
+        // Pass to GET .../events?after= to hear everything that happened after this snapshot.
+        EventCursor = eventCursor,
         Thread = ThreadView(details.Thread),
         Project = ProjectView(details.Project),
         Messages = details.Messages.Select(m => new

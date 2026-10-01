@@ -6,6 +6,7 @@ using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Api;
 using Litos.SoftwareFactory.Host.Auth;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Litos.SoftwareFactory.Host.Tests;
 
@@ -150,6 +151,9 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal("openrouter", settings.GetProperty("provider").GetString());
         Assert.Equal("deepseek/deepseek-v4.1-flash", settings.GetProperty("model").GetString());
         Assert.Equal(["dotnet", "node-react"], settings.GetProperty("presets").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["bug", "feature", "refactor", "chore"], settings.GetProperty("taskTypes").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(300_000, settings.GetProperty("defaultBudget").GetInt64());
+        Assert.True(settings.GetProperty("ptcEnabled").GetBoolean());
     }
 
     // ---- Projects ----
@@ -452,6 +456,106 @@ public sealed class ApiTests : IAsyncLifetime
         await _host.DelegateAsync(threadId);
 
         Assert.Equal(["message", "state"], (await reading).Select(e => e.Type));
+    }
+
+    /// <summary>A browser that reconnects by itself repeats the URL it first opened, so its
+    /// ?after= is stale and its header is current. The later one wins.</summary>
+    [Theory]
+    [InlineData(null, null, 0)]
+    [InlineData(5L, null, 5)]
+    [InlineData(null, "7", 7)]
+    [InlineData(5L, "9", 9)]
+    [InlineData(9L, "5", 9)]
+    [InlineData(5L, "not a number", 5)]
+    public void StartCursor_IsTheLaterOfTheQueryAndTheHeader(long? after, string? lastEventId, long expected) =>
+        Assert.Equal(expected, EventStream.StartCursor(after, lastEventId));
+
+    [Fact]
+    public async Task Events_ReconnectWithAStaleQuery_ResumeFromTheHeader()
+    {
+        var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
+        await _host.DelegateAsync(threadId);
+        var all = await _host.Store.ReadEventsAsync(threadId, 0, 100, default);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"api/threads/{threadId}/events?after=0");
+        request.Headers.Add("Last-Event-ID", all[0].Sequence.ToString());
+        using var response = await _host.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        var events = await ReadEventsAsync(response, 1, TimeSpan.FromSeconds(10));
+
+        Assert.Equal(all[1].Sequence, Assert.Single(events).Id);
+    }
+
+    /// <summary>The thread snapshot says where to start listening, so a client that has just
+    /// loaded a thread hears what happens next without replaying its whole history.</summary>
+    [Fact]
+    public async Task GetThread_CarriesTheEventCursor_AndListeningFromItHearsOnlyWhatFollows()
+    {
+        var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
+        Assert.Equal(0, (await _host.GetAsync($"api/threads/{threadId}")).GetProperty("eventCursor").GetInt64());
+
+        await _host.DelegateAsync(threadId);
+        var all = await _host.Store.ReadEventsAsync(threadId, 0, 100, default);
+        var cursor = (await _host.GetAsync($"api/threads/{threadId}")).GetProperty("eventCursor").GetInt64();
+        Assert.Equal(all[^1].Sequence, cursor);
+        Assert.Equal(cursor, await _host.Store.LastEventSequenceAsync(threadId, default));
+
+        using var response = await _host.Client.GetAsync($"api/threads/{threadId}/events?after={cursor}", HttpCompletionOption.ResponseHeadersRead);
+        var reading = ReadEventsAsync(response, 1, TimeSpan.FromSeconds(15));
+        await Task.Delay(300);
+        await _host.PostAsync($"api/threads/{threadId}/pause", null, HttpStatusCode.OK);
+
+        var heard = Assert.Single(await reading);
+        Assert.True(heard.Id > cursor);
+    }
+
+    [Fact]
+    public async Task LastEventSequence_IsPerThread()
+    {
+        var projectId = await _host.RegisterProjectAsync();
+        var busy = await _host.CreateThreadAsync(projectId);
+        var quiet = await _host.CreateThreadAsync(projectId, "Another task");
+        await _host.DelegateAsync(busy);
+
+        Assert.True(await _host.Store.LastEventSequenceAsync(busy, default) > 0);
+        Assert.Equal(0, await _host.Store.LastEventSequenceAsync(quiet, default));
+    }
+
+    // ---- Usage ----
+
+    [Fact]
+    public async Task Usage_ListsTheThreadsModelCalls_WithWhatWasReservedAndCharged()
+    {
+        var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync(), budgetCap: 50_000);
+        Assert.Empty((await _host.GetAsync($"api/threads/{threadId}/usage")).EnumerateArray());
+
+        await _host.DelegateAsync(threadId);
+        var claimed = (await _host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
+        var run = new Runs.ActiveRun(claimed.Run.Id, threadId, claimed.Run.RequestedBy, _host.Options.Provider, _host.Options.Model);
+        _host.Provider.EnqueueReply("pong", new Litos.Agent.Streaming.UsageInfo(40, 10));
+        await _host.App.Services.GetRequiredService<Gateway.ModelGateway>().HandleAsync(
+            run,
+            new Litos.SoftwareFactory.Contracts.GatewayRequest("call-1", new Litos.Agent.Providers.ChatRequest(
+                [Litos.Agent.Messages.ChatMessage.User("ping")], [], "ignored", SessionId: "s")),
+            _ => Task.CompletedTask, default);
+
+        var call = Assert.Single((await _host.GetAsync($"api/threads/{threadId}/usage")).EnumerateArray());
+        Assert.Equal("Settled", call.GetProperty("status").GetString());
+        Assert.Equal(40, call.GetProperty("actualInput").GetInt64());
+        Assert.Equal(10, call.GetProperty("actualOutput").GetInt64());
+        Assert.Equal(50, call.GetProperty("charged").GetInt64());
+        Assert.True(call.GetProperty("reserved").GetInt64() >= 50);
+        Assert.Equal("deepseek/deepseek-v4.1-flash", call.GetProperty("model").GetString());
+        // The request key is the gateway's idempotency key, not something a browser needs.
+        Assert.False(call.TryGetProperty("requestKey", out _));
+    }
+
+    [Fact]
+    public async Task Usage_NeedsSignIn_AndAnExistingThread()
+    {
+        using var anonymous = _host.NewClient();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"api/threads/{Guid.NewGuid()}/usage")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.GetAsync($"api/threads/{Guid.NewGuid()}/usage")).StatusCode);
     }
 
     [Fact]

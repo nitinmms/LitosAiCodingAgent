@@ -171,4 +171,8 @@ public interface IFactoryStore
 
     /// <summary>Events for a thread after a sequence number, oldest first.</summary>
     Task<IReadOnlyList<OutboxEvent>> ReadEventsAsync(Guid threadId, long afterSequence, int limit, CancellationToken ct);
+
+    /// <summary>The sequence number of the thread's newest event, or 0 when it has none: where a
+    /// client that has just loaded the thread starts listening from.</summary>
+    Task<long> LastEventSequenceAsync(Guid threadId, CancellationToken ct);
 }

@@ -697,6 +697,16 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             .ToListAsync(ct);
     }
 
+    public async Task<long> LastEventSequenceAsync(Guid threadId, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Outbox.AsNoTracking()
+            .Where(e => e.ThreadId == threadId)
+            .OrderByDescending(e => e.Sequence)
+            .Select(e => e.Sequence)
+            .FirstOrDefaultAsync(ct);
+    }
+
     // ---- Shared ----
 
     private static ThreadMessage AddMessage(
