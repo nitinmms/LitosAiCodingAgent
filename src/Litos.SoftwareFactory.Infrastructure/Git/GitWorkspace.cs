@@ -114,6 +114,20 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
         return (await GitAsync(options.Path, ["rev-parse", "HEAD"], authenticated: false, ct)).Trim();
     }
 
+    public async Task<bool> SetAsideUncommittedChangesAsync(string label, CommitIdentity identity, CancellationToken ct)
+    {
+        if ((await GetStatusAsync(ct)).IsClean)
+            return false;
+
+        // A stash is a commit, so it needs an identity; --include-untracked takes new files
+        // too, and leaves ignored files (build output) where they are.
+        await GitAsync(
+            options.Path,
+            ["-c", $"user.name={identity.Name}", "-c", $"user.email={identity.Email}", "stash", "push", "--include-untracked", "-m", label],
+            authenticated: false, ct);
+        return true;
+    }
+
     public async Task DiscardUncommittedChangesAsync(string branch, string defaultBranch, CancellationToken ct)
     {
         RequireTaskBranch(branch, defaultBranch);

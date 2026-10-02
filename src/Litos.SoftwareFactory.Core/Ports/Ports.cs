@@ -71,6 +71,16 @@ public interface IWorkspace
     Task PushAsync(string branch, string defaultBranch, CancellationToken ct);
 
     /// <summary>
+    /// Moves uncommitted edits out of the way without losing them, so the working copy is clean
+    /// for another task: what a cancelled or abandoned task leaves behind. They go to the
+    /// working copy's stash under <paramref name="label"/>, where a person can still get them
+    /// back. Does nothing when the working copy is clean. Call it only while holding the
+    /// repository, so the edits cannot be a running task's.
+    /// </summary>
+    /// <returns>True when something was set aside.</returns>
+    Task<bool> SetAsideUncommittedChangesAsync(string label, CommitIdentity identity, CancellationToken ct);
+
+    /// <summary>
     /// Throws away edits that were never committed, on the task branch: what a withdrawn rework
     /// run leaves behind. Commits are untouched — the branch stays at its last handoff — and
     /// ignored files such as build output are left alone. Refuses the default branch.

@@ -369,6 +369,63 @@ public class GitWorkspaceTests : IAsyncLifetime
         Assert.True(File.Exists(InWorkspace("uncommitted.txt"))); // nothing was thrown away
     }
 
+    // ---- Setting aside what an earlier task left behind ----
+
+    [Fact]
+    public async Task SetAsideUncommittedChangesAsync_CleansTheWorkingCopy_AndKeepsTheEditsInTheStash()
+    {
+        await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        File.WriteAllText(InWorkspace("README.md"), "half an edit\n");
+        File.WriteAllText(InWorkspace("new-file.txt"), "untracked\n");
+        var head = (await _workspace.GetStatusAsync(default)).HeadCommit;
+
+        var setAside = await _workspace.SetAsideUncommittedChangesAsync("Left on factory/x by an earlier task", Factory, default);
+
+        Assert.True(setAside);
+        var status = await _workspace.GetStatusAsync(default);
+        Assert.True(status.IsClean);
+        Assert.Equal(("factory/x", head), (status.Branch, status.HeadCommit)); // no commit was added to the branch
+        Assert.False(File.Exists(InWorkspace("new-file.txt")));
+        Assert.Contains("Left on factory/x by an earlier task", await GitAsync(_workspace.Path, "stash", "list"));
+
+        // Another task can now start…
+        await _workspace.CheckoutAsync("main", default);
+        await _workspace.CreateTaskBranchAsync("factory/y", "main", default);
+
+        // …and a person can still get the edits back.
+        await _workspace.CheckoutAsync("factory/x", default);
+        await GitAsync(_workspace.Path, "stash", "pop");
+        Assert.Equal("half an edit\n", File.ReadAllText(InWorkspace("README.md")).ReplaceLineEndings("\n"));
+        Assert.Equal("untracked\n", File.ReadAllText(InWorkspace("new-file.txt")).ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public async Task SetAsideUncommittedChangesAsync_CleanWorkingCopy_DoesNothing()
+    {
+        await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+
+        Assert.False(await _workspace.SetAsideUncommittedChangesAsync("nothing to do", Factory, default));
+
+        Assert.Equal("", await GitAsync(_workspace.Path, "stash", "list"));
+    }
+
+    [Fact]
+    public async Task SetAsideUncommittedChangesAsync_LeavesIgnoredFilesAlone()
+    {
+        await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        File.WriteAllText(InWorkspace(".gitignore"), "bin/\n");
+        await _workspace.CommitAllAsync("Ignore build output", Factory, null, default);
+        Directory.CreateDirectory(InWorkspace("bin"));
+        File.WriteAllText(InWorkspace("bin/app.dll"), "built");
+        File.WriteAllText(InWorkspace("scratch.txt"), "not ignored");
+
+        await _workspace.SetAsideUncommittedChangesAsync("leftovers", Factory, default);
+
+        Assert.True(File.Exists(InWorkspace("bin/app.dll")));
+        Assert.False(File.Exists(InWorkspace("scratch.txt")));
+        Assert.True((await _workspace.GetStatusAsync(default)).IsClean);
+    }
+
     // ---- Discarding a withdrawn run's edits ----
 
     [Fact]

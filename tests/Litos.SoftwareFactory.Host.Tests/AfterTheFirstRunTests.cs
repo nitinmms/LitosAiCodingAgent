@@ -175,6 +175,90 @@ public sealed class WithdrawTests : IAsyncLifetime
     }
 }
 
+/// <summary>
+/// A project has one working copy. A task that is cancelled, or given up on after a failure,
+/// leaves its uncommitted edits there — and the second real task (F2) could not start because
+/// of one edited file the first had left behind.
+/// </summary>
+public sealed class LeftoverEditsTests : IAsyncLifetime
+{
+    private TestHost _host = null!;
+
+    public async Task InitializeAsync() => _host = await TestHost.StartAsync();
+
+    public async Task DisposeAsync() => await _host.DisposeAsync();
+
+    [Fact]
+    public async Task ATaskCancelledMidWork_DoesNotBlockTheNextTaskOnTheRepository_AndItsEditsAreSetAsideNotDeleted()
+    {
+        var projectId = await _host.RegisterProjectAsync();
+        var workspace = _host.Workspaces.Of(projectId);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _host.Workers.Script.Enqueue(async call =>
+        {
+            _host.Workers.WorkspaceOf(call.Worker).Write("README.md", "half an edit\n");
+            started.SetResult();
+            await Task.Delay(Timeout.Infinite, call.Token);
+            return FakeWorkerLauncher.Done();
+        });
+        var first = await _host.CreateThreadAsync(projectId, "Enforce size limits");
+        await _host.DelegateAsync(first);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        await _host.PostAsync($"api/threads/{first}/cancel", null, HttpStatusCode.Accepted);
+        var cancelled = await _host.WaitForStateAsync(first, LifecycleState.Cancelled);
+        Assert.False((await workspace.GetStatusAsync(default)).IsClean);
+
+        var second = await _host.CreateThreadAsync(projectId, "JSON Lines export");
+        await _host.DelegateAsync(second);
+        var handedOff = await _host.WaitForStateAsync(second, LifecycleState.AwaitingHumanTesting);
+
+        // The first task's edit was moved out of the way, with a label saying whose it was.
+        var label = Assert.Single(workspace.SetAside);
+        Assert.Contains($"Left on {cancelled.Thread.Branch} by an earlier task", label);
+        Assert.Contains("JSON Lines export", label);
+        Assert.Contains(handedOff.Messages, m => m.Text.StartsWith("Set aside 1 uncommitted path(s) an earlier task left on") && m.Text.Contains("README.md") && m.Text.Contains("not deleted"));
+        // It is not part of the second task's work.
+        Assert.Equal("readme\n", workspace.Files["README.md"]);
+        Assert.NotEqual(cancelled.Thread.Branch, handedOff.Thread.Branch);
+        Assert.Single(workspace.Commits);
+    }
+
+    /// <summary>A run's own uncommitted work, on its own branch, is exactly what a resume
+    /// continues from: it must never be set aside.</summary>
+    [Fact]
+    public async Task ARunsOwnUncommittedWork_IsLeftInPlace_WhenItResumes()
+    {
+        var projectId = await _host.RegisterProjectAsync();
+        _host.Workers.Script.Enqueue(call =>
+        {
+            _host.Workers.WorkspaceOf(call.Worker).Write("src/Orders.cs", "half done\n");
+            return Task.FromResult(new TurnStreamResult(false, 1, "The model failed."));
+        });
+        var threadId = await _host.CreateThreadAsync(projectId);
+        await _host.DelegateAsync(threadId);
+        await _host.WaitForStateAsync(threadId, LifecycleState.Blocked);
+
+        await _host.PostAsync($"api/threads/{threadId}/resume", null, HttpStatusCode.OK);
+        await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Empty(_host.Workspaces.Of(projectId).SetAside);
+        Assert.DoesNotContain(_host.Workspaces.Of(projectId).Calls, c => c.StartsWith("set aside"));
+    }
+
+    [Fact]
+    public async Task ACleanWorkingCopy_HasNothingSetAside_AndTheThreadSaysNothingAboutIt()
+    {
+        var projectId = await _host.RegisterProjectAsync();
+        var threadId = await _host.CreateThreadAsync(projectId);
+        await _host.DelegateAsync(threadId);
+
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Empty(_host.Workspaces.Of(projectId).SetAside);
+        Assert.DoesNotContain(details.Messages, m => m.Text.Contains("Set aside"));
+    }
+}
+
 /// <summary>A model call whose usage will never be reported is settled, not held for ever.</summary>
 public sealed class UsageReconciliationTests
 {

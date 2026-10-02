@@ -124,8 +124,16 @@ public sealed class FakeWorkspace : IWorkspace
         return FailFetch is null ? Task.CompletedTask : Task.FromException(FailFetch);
     }
 
+    /// <summary>As the real working copy does: it will not switch branches over uncommitted edits.</summary>
+    private void RequireClean()
+    {
+        if (Uncommitted.Count > 0)
+            throw new WorkspaceException($"The working copy has uncommitted changes on '{Branch}' ({Uncommitted.Count} path(s), first: {Uncommitted[0]}).");
+    }
+
     public Task<string> CreateTaskBranchAsync(string branch, string defaultBranch, CancellationToken ct)
     {
+        RequireClean();
         Calls.Add($"branch {branch} from {defaultBranch}");
         // A task branch always starts from the default branch's head, which no task ever moves.
         Branch = branch;
@@ -137,6 +145,7 @@ public sealed class FakeWorkspace : IWorkspace
 
     public Task CheckoutAsync(string branch, CancellationToken ct)
     {
+        RequireClean();
         Calls.Add($"checkout {branch}");
         Branch = branch;
         return Task.CompletedTask;
@@ -183,6 +192,27 @@ public sealed class FakeWorkspace : IWorkspace
             return Task.FromException(failure);
         Pushed.Add($"{branch}@{Head}");
         return Task.CompletedTask;
+    }
+
+    public List<string> SetAside { get; } = [];
+
+    public Task<bool> SetAsideUncommittedChangesAsync(string label, CommitIdentity identity, CancellationToken ct)
+    {
+        if (Uncommitted.Count == 0)
+            return Task.FromResult(false);
+
+        Calls.Add($"set aside on {Branch}");
+        SetAside.Add(label);
+        foreach (var path in Uncommitted)
+        {
+            if (_committed.TryGetValue(path, out var content))
+                Files[path] = content;
+            else
+                Files.Remove(path, out _);
+        }
+
+        Uncommitted = [];
+        return Task.FromResult(true);
     }
 
     public Exception? FailDiscard { get; set; }

@@ -145,6 +145,7 @@ public sealed class RunExecutor(
             var workspace = data.Workspace;
             await workspace.EnsureClonedAsync(ct);
             await workspace.FetchAsync(ct);
+            await SetAsideLeftoversAsync(data, ct);
 
             if (string.IsNullOrEmpty(data.Branch))
             {
@@ -173,6 +174,28 @@ public sealed class RunExecutor(
         catch (WorkspaceException ex)
         {
             return new PreflightCompleted(false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// A task that was cancelled, or abandoned after a failure, leaves its uncommitted edits in
+    /// the project's one working copy, on its own branch. They are not this run's, and this run
+    /// holds the repository, so they cannot be a running task's either: they are set aside —
+    /// kept in the stash, never deleted — rather than blocking every later task on the
+    /// repository. A run's own uncommitted work, on its own branch, is left exactly as it is.
+    /// </summary>
+    private async Task SetAsideLeftoversAsync(RunData data, CancellationToken ct)
+    {
+        var status = await data.Workspace.GetStatusAsync(ct);
+        if (status.IsClean || status.Branch == data.Branch)
+            return;
+
+        var label = $"Left on {status.Branch} by an earlier task; set aside {clock.UtcNow:yyyy-MM-dd HH:mm} UTC for \"{data.Thread.Title}\"";
+        if (await data.Workspace.SetAsideUncommittedChangesAsync(label, new CommitIdentity(options.CommitName, options.CommitEmail), ct))
+        {
+            await NoteAsync(data,
+                $"Set aside {status.ChangedPaths.Count} uncommitted path(s) an earlier task left on {status.Branch} (first: {status.ChangedPaths[0]}). " +
+                "They are kept in the working copy's stash, not deleted.");
         }
     }
 

@@ -288,7 +288,7 @@ public static class FactoryApi
                     loggers.CreateLogger("Litos.SoftwareFactory.Host.Withdraw").LogWarning(ex, "The withdrawn run's edits could not be discarded for thread {ThreadId}.", id);
                     await store.AddFactoryMessageAsync(
                         id, MessageKind.Status,
-                        $"The edits the withdrawn change request had made could not be discarded: {ex.Message} The next run on this repository will stop at preflight until the working copy is clean.",
+                        $"The edits the withdrawn change request had made could not be discarded: {ex.Message} They will be set aside, not deleted, when the next task starts on this repository.",
                         null, clock.UtcNow, CancellationToken.None);
                 }
                 finally
