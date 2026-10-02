@@ -1,6 +1,6 @@
 # Software Factory M1 evaluation results
 
-Results of running the [M1 task set](m1-task-set.md). One row per task, recorded as that file describes. Provider and model for every run: OpenRouter, `deepseek/deepseek-v4.1-flash`. Prompt revision: `m1.1` for F1 to F3, `m1.2` from F4.
+Results of running the [M1 task set](m1-task-set.md). One row per task, recorded as that file describes. Provider and model for every run: OpenRouter, `deepseek/deepseek-v4.1-flash`. Prompt revision: `m1.1` for F1 to F3, `m1.2` for F4 and F5, `m1.3` from R1.
 
 ## Summary
 
@@ -10,12 +10,15 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F2 | Yes, after one rework | 1 | 0 | 0 | 575,884 | 300,000 | No | 12 min (8 + 3 for the rework) | 0 |
 | F3 | **No: budget-paused during its rework.** All criteria met in the end | 1 | 2 (both for review findings) | 0 | 971,057 | 600,000 | No | 31 min (19 + 12 for the rework) | 0 |
 | F4 | Yes, after one rework | 1 | 0 | 0 | 401,521 | 600,000 | **Yes** | 11 min (9 + 2 for the rework) | 0 |
+| F5 | **No: criteria unmet, and the run ended Blocked once** | 0 | 1 (review finding) | 0 | 554,007 | 600,000 | Yes | 28 min of run time | 0 |
 
-**Against the M1 gate so far (4 of 12 run):**
+**Against the M1 gate so far (5 of 12 run):**
 
-- Accepted with at most one rework: 3 of 4. F3 produced code that meets every criterion after one rework, but it paused on budget during that rework, which the task set counts as a failure.
+- Accepted with at most one rework: 3 of 5.
+  - F3 produced code that meets every criterion after one rework, but it paused on budget during that rework, which the task set counts as a failure.
+  - F5 is the first task whose handoff does not do what was asked: see its section.
 - Evidence mismatches: 0.
-- **Budget overrun: F1, F2 and F3.** F4 is the first task to finish inside its cap. See "Budgets" below.
+- **Budget overrun: F1, F2 and F3.** F4 and F5 finished inside their caps. See "Budgets" below.
 - Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3, 2.3% on F4 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
 - Lock violations: 0.
 
@@ -92,6 +95,7 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 | F1 | Six gaps around the handoff | Withdraw a change request; reconcile unreported usage; reserve closer to cost; PR label from GitHub; and others | `c039d2a` |
 | F2 | F2 could not start | Uncommitted edits an earlier task left in the working copy are set aside | `d46aff6` |
 | F2, F3 | Every update of an existing pull request failed in transit | Idle connections to GitHub are dropped before GitHub closes them; a request that fails in transit is retried; a handoff keeps naming a pull request it could not update | `c5e10d8` |
+| F5 | The agent ran `taskkill /F /IM dotnet.exe /T` and stopped every dotnet process on the machine, its own worker included; the host reported its own failure | The agent's shell refuses to stop processes by name or shut the machine down; a worker that dies mid-turn is the turn's failure and the run resumes with a new worker; the briefs carry the rule (`m1.3`) | `c0408bb` |
 | F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | `c5e10d8` |
 
 ## F1 Â· Enforce size limits on keys, names and documents
@@ -142,3 +146,18 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 - **Agent review:** no blocking finding. One minor finding open at the final handoff; three at the first, including that any I/O error while opening for writing is now reported as "database locked".
 - **Evidence:** no mismatch. The rework handoff updated pull request #4 and named it: the pull request update that failed on F2 and F3 worked.
 - **Notes:** no budget pause, no repair cycle, no call charged above its reservation.
+
+## F5 · Async API with cancellation
+
+- **Outcome:** recorded as **not accepted**, on two counts: the handoff does not meet the criteria, and the run ended Blocked once, which the task set counts as failed. No rework round was sent. Pull request #5 is open as a draft and was not accepted.
+- **Baseline deviation:** as F2. F5 started from `main` with F1 merged and without F2, F3 or F4.
+- **Handoff** (commit `9e356f2`, 554,007 tokens, inside the 600,000 cap): build passed; 78 tests passed (23 new); changed-line coverage 89.2%.
+  - Met: criterion 1 (async counterparts with a cancellation token), 4 (same semantics and exceptions, tested) and 6 (synchronous API and existing tests unchanged).
+  - **Not met: criterion 2,** the centre of the task. `GetAsync` and `TryGetAsync` check the token, do an ordinary blocking read and return a completed task. Writes call `WriteAsync` on a file that is not opened for asynchronous I/O, so they block a pool thread, and the flush to disk is a plain blocking call. The result is an async-shaped API that still blocks.
+  - **Not met: criterion 5.** Synchronous and asynchronous calls are mixed only one after the other; the concurrent tests use asynchronous callers only.
+  - Partly met: criterion 3. A cancelled token throws and nothing is written, but the tests check that the document is absent, not that the file is unchanged.
+- **How criterion 2 was missed.** The first implementation had a real asynchronous read. The review found that it awaited while holding a thread-affine lock, a genuine defect. The repair removed the asynchronous read instead of correcting it. The build and every test still passed.
+- **Evidence:** no mismatch, and this is the case that shows why it matters. The handoff's known limitations say the read "cannot be interrupted once started", and the review's open findings say that an async commit still blocks on the flush and that the README overstates what is asynchronous. A reviewer reading the handoff is told the truth; a reviewer reading only "78 tests passed" is not.
+- **Decisions:** none asked, none expected.
+- **What stopped the run.** While checking its repair the agent put the defect back on purpose to prove a test would catch it; that test run deadlocked and was killed after five minutes. To clear the hung test host it ran `taskkill /F /IM dotnet.exe /T`, which stopped every dotnet process on the machine, its own worker among them. The run was Blocked with the defect still in the working copy, was resumed, and handed off with it removed. The factory now refuses that command (see the table of changes).
+- **Notes:** this is the first task the factory could not do well, and the first where a clean build and passing tests concealed a miss on the requirement.
