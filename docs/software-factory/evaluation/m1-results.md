@@ -1,4 +1,4 @@
-﻿# Software Factory M1 evaluation results
+# Software Factory M1 evaluation results
 
 Results of running the [M1 task set](m1-task-set.md). One row per task, recorded as that file describes. Provider and model for every run: OpenRouter, `deepseek/deepseek-v4.1-flash`. Prompt revision: `m1.1`.
 
