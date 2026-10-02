@@ -11,14 +11,16 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F3 | **No: budget-paused during its rework.** All criteria met in the end | 1 | 2 (both for review findings) | 0 | 971,057 | 600,000 | No | 31 min (19 + 12 for the rework) | 0 |
 | F4 | Yes, after one rework | 1 | 0 | 0 | 401,521 | 600,000 | **Yes** | 11 min (9 + 2 for the rework) | 0 |
 | F5 | **No: criteria unmet, and the run ended Blocked once** | 0 | 1 (review finding) | 0 | 554,007 | 600,000 | Yes | 28 min of run time | 0 |
+| R1 | **No: budget-paused twice, and one criterion unmet** | 0 | 0 | 0 | 437,338 | 300,000 | No | 11 min | 0 |
 
-**Against the M1 gate so far (5 of 12 run):**
+**Against the M1 gate so far (6 of 12 run):**
 
-- Accepted with at most one rework: 3 of 5.
+- Accepted with at most one rework: 3 of 6.
   - F3 produced code that meets every criterion after one rework, but it paused on budget during that rework, which the task set counts as a failure.
   - F5 is the first task whose handoff does not do what was asked: see its section.
+  - R1 paused on budget twice before its handoff, and changed something a criterion said must not change.
 - Evidence mismatches: 0.
-- **Budget overrun: F1, F2 and F3.** F4 and F5 finished inside their caps. See "Budgets" below.
+- **Budget overrun: F1, F2, F3 and R1.** F4 and F5 finished inside their caps. See "Budgets" below.
 - Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3, 2.3% on F4 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
 - Lock violations: 0.
 
@@ -161,3 +163,17 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 - **Decisions:** none asked, none expected.
 - **What stopped the run.** While checking its repair the agent put the defect back on purpose to prove a test would catch it; that test run deadlocked and was killed after five minutes. To clear the hung test host it ran `taskkill /F /IM dotnet.exe /T`, which stopped every dotnet process on the machine, its own worker among them. The run was Blocked with the defect still in the working copy, was resumed, and handed off with it removed. The factory now refuses that command (see the table of changes).
 - **Notes:** this is the first task the factory could not do well, and the first where a clean build and passing tests concealed a miss on the requirement.
+
+## R1 · Per-slide text alignment and size
+
+The first task on `insta-story-generator`, and the first real run of the Node/React verification profile. **The factory itself needed no fix:** it cloned the repository, ran `npm ci`, the typecheck and the Vitest suite on the base commit, read the JUnit and Cobertura reports, measured changed-line coverage, pushed the branch and opened the pull request.
+
+- **Outcome:** recorded as **not accepted**. It paused on budget at 300,000 and again at 400,000 before handing off at 437,338, and the task set counts a budget pause as failed. No rework round was sent. Pull request #1 on that repository is open as a draft.
+- **Handoff** (commit `b1e436e`): typecheck passed; 138 tests passed (15 new); changed-line coverage 100%.
+  - Met: criterion 1 (alignment and size on the slide model, with defaults that also apply to drafts saved before the change), 2 (labelled controls in the slide editor) and 3 (the renderer uses `textAlign`, the x-position and scaled sizes, tested with the recording context).
+  - Partly met: criterion 4. Text stays inside the safe area because the layout clamps it, and a test checks that for large text on the default slide. No test covers every size and layout with the longest allowed text.
+  - **Not met: criterion 5,** which says AI-generated slides get the defaults and the JSON schema sent to providers does not change. The change adds `align` and `textSize` to that schema as required fields and tells the model to choose them.
+- **Evidence:** no mismatch. The handoff's known limitations state that "AI-generated stories now also request align/textSize".
+- **Agent review:** 2 minor findings open, one of them real: regenerating a slide does not tell the model the slide's current alignment and size, so a user's choice can be silently reset.
+- **Decisions:** none asked. One was arguably warranted: whether the AI should choose alignment and size is a product choice the request did not make, and the agent made it without asking.
+- **Budget.** This was sized as a small task. Its implementation turn made 56 model calls on an average of 39,800 tokens of context, larger than any filedb-sharp task: 265,000 of the 437,338 tokens were cached input even at 10%. The estimator's 95th-percentile under-estimate was 7.5%, the highest so far and still inside the 10% margin.
