@@ -56,6 +56,15 @@ public sealed record BudgetPolicy
 
     /// <summary>Head-room over the estimate, covering estimator error.</summary>
     public double Margin { get; init; } = 0.10;
+
+    /// <summary>
+    /// How much of a token read from the provider's prompt cache counts against the budget. An
+    /// agent resends its whole conversation on every call, so at full weight a budget measures
+    /// how many calls a task took rather than how much work it did: the first real run spent 88%
+    /// of a million tokens re-reading its own cache. 0.10 is close to what providers charge for
+    /// a cache read. 1 counts cached input in full; tokens written to the cache always do.
+    /// </summary>
+    public double CachedInputWeight { get; init; } = 0.10;
 }
 
 /// <summary>
@@ -100,11 +109,22 @@ public static class BudgetLedger
     };
 
     /// <summary>
-    /// Task tokens for one call: provider-reported input plus output, with cached input counted
-    /// (TotalInputTokens sums input, cache creation and cache read, which providers report as
-    /// separate counts). Reasoning tokens are already inside OutputTokens and are not added again.
+    /// Task tokens for one call: provider-reported input plus output. Input is every token the
+    /// provider reports (input, cache creation and cache read are separate counts), with the
+    /// tokens read from the cache counted at <paramref name="cachedInputWeight"/> and rounded up.
+    /// Reasoning tokens are already inside OutputTokens and are not added again.
     /// </summary>
-    public static long ChargeFor(UsageInfo usage) => (long)usage.TotalInputTokens + usage.OutputTokens;
+    public static long ChargeFor(UsageInfo usage, double cachedInputWeight) =>
+        InputCharge(usage, cachedInputWeight) + usage.OutputTokens;
+
+    private static long InputCharge(UsageInfo usage, double cachedInputWeight)
+    {
+        if (cachedInputWeight is < 0 or > 1 || double.IsNaN(cachedInputWeight))
+            throw new ArgumentOutOfRangeException(nameof(cachedInputWeight), cachedInputWeight, "The weight is a fraction between 0 and 1.");
+
+        long uncached = usage.InputTokens + usage.CacheCreationInputTokens;
+        return uncached + (long)Math.Ceiling(usage.CacheReadInputTokens * cachedInputWeight);
+    }
 
     /// <summary>True when a provider reported no usage at all — which a local server does when it
     /// omits usage, and which must not be mistaken for a free call.</summary>
@@ -121,12 +141,15 @@ public static class BudgetLedger
     /// <param name="estimatedInputTokens">The pre-send estimate the call was admitted on.</param>
     /// <param name="estimatedOutputTokens">The host's estimate of the reply it relayed — see
     /// RequestEstimator.EstimateOutputTokens. Zero for a reply with no content.</param>
-    public static long SettlementCharge(UsageInfo usage, long estimatedInputTokens, long estimatedOutputTokens)
+    /// <param name="cachedInputWeight">BudgetPolicy.CachedInputWeight. It applies to reported
+    /// cache reads only: an estimate cannot know what will be served from the cache, so input
+    /// charged from the estimate is charged in full.</param>
+    public static long SettlementCharge(UsageInfo usage, long estimatedInputTokens, long estimatedOutputTokens, double cachedInputWeight)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(estimatedInputTokens);
         ArgumentOutOfRangeException.ThrowIfNegative(estimatedOutputTokens);
 
-        long input = usage.TotalInputTokens > 0 ? usage.TotalInputTokens : estimatedInputTokens;
+        long input = usage.TotalInputTokens > 0 ? InputCharge(usage, cachedInputWeight) : estimatedInputTokens;
         long output = usage.OutputTokens > 0 ? usage.OutputTokens : estimatedOutputTokens;
         return input + output;
     }

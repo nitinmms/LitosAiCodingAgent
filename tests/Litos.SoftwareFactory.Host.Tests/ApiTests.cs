@@ -155,6 +155,7 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(["bug", "feature", "refactor", "chore"], settings.GetProperty("taskTypes").EnumerateArray().Select(p => p.GetString()));
         Assert.Equal(300_000, settings.GetProperty("defaultBudget").GetInt64());
         Assert.True(settings.GetProperty("ptcEnabled").GetBoolean());
+        Assert.Equal(0.10, settings.GetProperty("cachedInputWeight").GetDouble());
     }
 
     // ---- Projects ----
@@ -638,6 +639,24 @@ public class FactoryOptionsTests
         Assert.Equal(0.10, options.Budget.Margin);
         Assert.Equal(1_000_000, options.DefaultBudget);
     }
+
+    [Theory]
+    [InlineData("1", 1.0)]
+    [InlineData("0", 0.0)]
+    [InlineData("0.25", 0.25)]
+    public void From_ReadsTheCachedInputWeight(string value, double expected) =>
+        Assert.Equal(expected, From(("FACTORY_CACHED_INPUT_WEIGHT", value)).Budget.CachedInputWeight);
+
+    [Theory]
+    [InlineData("1.5")]
+    [InlineData("-0.1")]
+    [InlineData("a tenth")]
+    public void From_AnUnusableCachedInputWeight_KeepsTheDefault(string value) =>
+        Assert.Equal(0.10, From(("FACTORY_CACHED_INPUT_WEIGHT", value)).Budget.CachedInputWeight);
+
+    [Fact]
+    public void From_NothingSet_CountsCachedInputAtATenth() =>
+        Assert.Equal(0.10, From().Budget.CachedInputWeight);
 
     [Theory]
     [InlineData("none")]

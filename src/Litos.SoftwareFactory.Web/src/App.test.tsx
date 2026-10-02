@@ -405,6 +405,7 @@ describe('live updates', () => {
 
     const budget = within(await screen.findByRole('region', { name: 'Budget' }));
     expect(await budget.findByText('reserved 14,300, used 10,600')).toBeInTheDocument();
+    expect(budget.getByText(/Input the provider serves from its cache counts at 10%./)).toBeInTheDocument();
     expect(budget.getByText('reserved 20,000, in flight')).toBeInTheDocument();
     expect(budget.getByText('reserved 9,000, usage not reported')).toBeInTheDocument();
     expect(budget.getByText('Strict')).toBeInTheDocument();

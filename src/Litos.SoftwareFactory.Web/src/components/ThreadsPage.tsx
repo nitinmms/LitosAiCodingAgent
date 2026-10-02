@@ -109,7 +109,7 @@ export function ThreadsPage({
               reload={view.reload}
               onNotice={onNotice}
             />
-            <Details details={view.details} usage={view.usage} />
+            <Details details={view.details} usage={view.usage} cachedInputWeight={settings?.cachedInputWeight} />
           </>
         ) : (
           <div className="center">

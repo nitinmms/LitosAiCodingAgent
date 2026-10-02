@@ -28,6 +28,8 @@ export interface Settings {
   model: string;
   defaultBudget: number | null;
   ptcEnabled: boolean;
+  /** The fraction of a cached input token that counts against a task's budget, 0 to 1. */
+  cachedInputWeight: number;
   presets: string[];
   taskTypes: string[];
   promptRevision: string;

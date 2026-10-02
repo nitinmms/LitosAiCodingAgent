@@ -83,6 +83,12 @@ public sealed class FactoryOptions
             options.ContextLength = contextLength;
         if (int.TryParse(configuration["FACTORY_OUTPUT_ALLOWANCE"], out var outputAllowance) && outputAllowance > 0)
             options.Budget = options.Budget with { OutputAllowanceTokens = outputAllowance };
+        if (double.TryParse(configuration["FACTORY_CACHED_INPUT_WEIGHT"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var weight)
+            && weight is >= 0 and <= 1)
+        {
+            options.Budget = options.Budget with { CachedInputWeight = weight };
+        }
+
         if (configuration["FACTORY_DEFAULT_BUDGET"] is { Length: > 0 } defaultBudget)
         {
             // "none" removes the default cap; a number replaces it.

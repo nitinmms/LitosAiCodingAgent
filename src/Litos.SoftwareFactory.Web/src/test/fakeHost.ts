@@ -93,6 +93,7 @@ export class FakeHost {
     model: 'deepseek/deepseek-v4.1-flash',
     defaultBudget: 300_000,
     ptcEnabled: true,
+    cachedInputWeight: 0.1,
     presets: ['dotnet', 'node-react'],
     taskTypes: ['bug', 'feature', 'refactor', 'chore'],
     promptRevision: 'm1.1',

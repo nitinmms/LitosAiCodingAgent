@@ -483,10 +483,13 @@ Every turn's cost includes its whole context, so context is managed deliberately
 ### 9.1 Budget contract
 
 - The optional cap belongs to the task and spans spec, planning, coding, repair, review, summarization, compaction, lesson reflection and rework. Every model request made for the task counts, including retries that incur usage.
-- Task tokens are provider-reported input plus output, including cached input and reasoning tokens where reported.
-  - Cached input is summed as `TotalInputTokens` (input + cache creation + cache read), because providers report those counts separately.
+- Task tokens are provider-reported input plus output, including reasoning tokens where reported.
+  - Input is every count the provider reports (input, cache creation and cache read), because providers report those counts separately.
+  - **Input read from the provider's prompt cache counts at a discount: 10% by default** (`FACTORY_CACHED_INPUT_WEIGHT`), rounded up. Input written to the cache, and input the host has to estimate because the provider did not report it, count in full.
   - Reported totals must not be double-counted.
-- This is a token allowance, not money or a context-window limit. Repeated prompt input consumes budget again even when cached pricing is cheaper. Tool schemas, MCP tool definitions, skill lists and retrieved lessons are part of every request's input.
+- This is a token allowance, not money or a context-window limit. Repeated prompt input consumes budget again on every call, at the cached weight. Tool schemas, MCP tool definitions, skill lists and retrieved lessons are part of every request's input.
+  - *Why the discount (decided 2026-10-02, after the first real run):* an agent resends its whole conversation on every call. Counted in full, a small task used 993,607 tokens in 44 calls, 88% of it cache reads, so a budget measured how many calls a task took rather than how much work it did. At 10% the same run is 203,451, in line with the M1 caps.
+  - A call is still **reserved** on its full estimated input, because the host cannot know in advance what the cache will serve. The discount applies when the call settles.
 - Each user also has an optional **quota** (per day or per month) covering both chat and task usage.
 - The UI shows usage by provider/model and an optional estimated cost.
 

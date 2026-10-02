@@ -75,6 +75,8 @@ public static class FactoryApi
             options.Model,
             options.DefaultBudget,
             options.PtcEnabled,
+            // What fraction of a cached input token counts against a task's budget (§9).
+            options.Budget.CachedInputWeight,
             Presets = VerificationPresets.Names,
             TaskTypes,
             PromptRevision = Core.Briefs.BriefComposer.Revision,

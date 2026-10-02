@@ -645,7 +645,7 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(20_900, (await ThreadAsync(running.Thread.Id)).TokensReserved);
 
         var usage = new UsageInfo(200, 900, 3_000, 9_000, ReasoningTokens: 640);
-        await Store.SettleAsync("key-1", usage, BudgetLedger.ChargeFor(usage), T0.AddSeconds(30), default);
+        await Store.SettleAsync("key-1", usage, BudgetLedger.ChargeFor(usage, cachedInputWeight: 1), T0.AddSeconds(30), default);
 
         var thread = await ThreadAsync(running.Thread.Id);
         Assert.Equal((13_100L, 0L), (thread.TokensUsed, thread.TokensReserved));

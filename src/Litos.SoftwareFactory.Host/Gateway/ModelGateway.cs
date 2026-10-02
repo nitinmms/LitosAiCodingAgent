@@ -188,7 +188,8 @@ public sealed class ModelGateway(
     private async Task SettleAsync(string requestKey, MessageCompleted completed, RequestEstimate estimate, CalibrationWindow calibration)
     {
         var usage = completed.Usage;
-        var charge = BudgetLedger.SettlementCharge(usage, estimate.Tokens, RequestEstimator.EstimateOutputTokens(completed.Message));
+        var charge = BudgetLedger.SettlementCharge(
+            usage, estimate.Tokens, RequestEstimator.EstimateOutputTokens(completed.Message), options.Budget.CachedInputWeight);
 
         // Settled even if the worker has gone away: the call was made and must be charged.
         await store.SettleAsync(requestKey, usage, charge, clock.UtcNow, CancellationToken.None);

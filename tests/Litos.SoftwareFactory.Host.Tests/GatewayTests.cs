@@ -132,16 +132,44 @@ public sealed class GatewayTests : IAsyncLifetime
     // ---- Settlement ----
 
     [Fact]
-    public async Task Settlement_CountsCachedInput_AndRecordsReasoningWithoutAddingItAgain()
+    public async Task Settlement_CountsCacheReadsAtATenth_AndRecordsReasoningWithoutAddingItAgain()
     {
         await StartRunAsync(cap: 100_000);
         _host.Provider.EnqueueReply("done", new UsageInfo(200, 900, 3_000, 9_000, ReasoningTokens: 640));
 
         await CallAsync(Request());
 
-        Assert.Equal(13_100, (await ThreadAsync()).TokensUsed);
+        // 200 new + 3,000 written to the cache in full, 9,000 read from it at 10%, 900 output.
+        Assert.Equal(5_000, (await ThreadAsync()).TokensUsed);
+        // What the provider reported is recorded as reported, whatever it was charged at.
         var entry = await OnlyEntryAsync();
         Assert.Equal((12_200L, 12_000L, 900L, 640L), (entry.ActualInput, entry.ActualCachedInput, entry.ActualOutput, entry.ActualReasoning));
+    }
+
+    /// <summary>The first real run's sixteenth call: 23,567 input of which 22,784 came from the
+    /// cache. Charged in full it cost 23,701; a task of 44 such calls used a million tokens.</summary>
+    [Fact]
+    public async Task Settlement_OfAMostlyCachedCall_ChargesMostlyTheNewInputAndTheOutput()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.EnqueueReply("done", new UsageInfo(783, 134, 0, 22_784, ReasoningTokens: 68));
+
+        await CallAsync(Request(inputTokens: 23_000));
+
+        Assert.Equal(783 + 2_279 + 134, (await ThreadAsync()).TokensUsed);
+        Assert.Equal(783 + 2_279 + 134, (await OnlyEntryAsync()).Charged);
+    }
+
+    [Fact]
+    public async Task Settlement_WithFullWeightConfigured_CountsCachedInputInFull()
+    {
+        _host.Options.Budget = _host.Options.Budget with { CachedInputWeight = 1 };
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.EnqueueReply("done", new UsageInfo(200, 900, 3_000, 9_000));
+
+        await CallAsync(Request());
+
+        Assert.Equal(13_100, (await ThreadAsync()).TokensUsed);
     }
 
     /// <summary>§9.4: a provider that reports no usage is charged the host's own estimate.</summary>

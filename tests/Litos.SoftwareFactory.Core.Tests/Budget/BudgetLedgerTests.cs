@@ -137,7 +137,7 @@ public class BudgetLedgerTests
         // tokens are already inside the 900.
         var usage = new UsageInfo(200, 900, 3_000, 12_000, ReasoningTokens: 640);
 
-        Assert.Equal(16_100, BudgetLedger.ChargeFor(usage));
+        Assert.Equal(16_100, BudgetLedger.ChargeFor(usage, cachedInputWeight: 1));
     }
 
     [Fact]
@@ -203,7 +203,7 @@ public class BudgetLedgerTests
     [Fact]
     public void SettlementCharge_ReportedUsage_IsChargedAsReported()
     {
-        Assert.Equal(1_500, BudgetLedger.SettlementCharge(new UsageInfo(1_000, 500), estimatedInputTokens: 9_999, estimatedOutputTokens: 7_777));
+        Assert.Equal(1_500, BudgetLedger.SettlementCharge(new UsageInfo(1_000, 500), estimatedInputTokens: 9_999, estimatedOutputTokens: 7_777, cachedInputWeight: 1));
     }
 
     [Fact]
@@ -211,7 +211,7 @@ public class BudgetLedgerTests
     {
         var usage = new UsageInfo(200, 900, 3_000, 12_000);
 
-        Assert.Equal(16_100, BudgetLedger.SettlementCharge(usage, estimatedInputTokens: 1, estimatedOutputTokens: 1));
+        Assert.Equal(16_100, BudgetLedger.SettlementCharge(usage, estimatedInputTokens: 1, estimatedOutputTokens: 1, cachedInputWeight: 1));
     }
 
     /// <summary>§9.4: a local server that reports no usage is charged the host's own estimate
@@ -222,7 +222,7 @@ public class BudgetLedgerTests
         var unreported = new UsageInfo(0, 0);
 
         Assert.True(BudgetLedger.IsUnreported(unreported));
-        Assert.Equal(9_999 + 1_200, BudgetLedger.SettlementCharge(unreported, estimatedInputTokens: 9_999, estimatedOutputTokens: 1_200));
+        Assert.Equal(9_999 + 1_200, BudgetLedger.SettlementCharge(unreported, estimatedInputTokens: 9_999, estimatedOutputTokens: 1_200, cachedInputWeight: 1));
     }
 
     /// <summary>A server that reports completion tokens but no prompt tokens must still pay for
@@ -232,7 +232,7 @@ public class BudgetLedgerTests
     {
         var outputOnly = new UsageInfo(0, 500);
 
-        Assert.Equal(9_999 + 500, BudgetLedger.SettlementCharge(outputOnly, estimatedInputTokens: 9_999, estimatedOutputTokens: 1_200));
+        Assert.Equal(9_999 + 500, BudgetLedger.SettlementCharge(outputOnly, estimatedInputTokens: 9_999, estimatedOutputTokens: 1_200, cachedInputWeight: 1));
     }
 
     [Fact]
@@ -240,7 +240,7 @@ public class BudgetLedgerTests
     {
         var inputOnly = new UsageInfo(8_000, 0);
 
-        Assert.Equal(8_000 + 1_200, BudgetLedger.SettlementCharge(inputOnly, estimatedInputTokens: 9_999, estimatedOutputTokens: 1_200));
+        Assert.Equal(8_000 + 1_200, BudgetLedger.SettlementCharge(inputOnly, estimatedInputTokens: 9_999, estimatedOutputTokens: 1_200, cachedInputWeight: 1));
     }
 
     /// <summary>A fully cached request reports zero uncached input; the cached counts are its
@@ -250,13 +250,13 @@ public class BudgetLedgerTests
     {
         var cached = new UsageInfo(0, 300, CacheReadInputTokens: 12_000);
 
-        Assert.Equal(12_300, BudgetLedger.SettlementCharge(cached, estimatedInputTokens: 99_999, estimatedOutputTokens: 1));
+        Assert.Equal(12_300, BudgetLedger.SettlementCharge(cached, estimatedInputTokens: 99_999, estimatedOutputTokens: 1, cachedInputWeight: 1));
     }
 
     [Fact]
     public void SettlementCharge_EmptyReplyAndNoReportedOutput_ChargesNoOutput()
     {
-        Assert.Equal(8_000, BudgetLedger.SettlementCharge(new UsageInfo(8_000, 0), estimatedInputTokens: 9_999, estimatedOutputTokens: 0));
+        Assert.Equal(8_000, BudgetLedger.SettlementCharge(new UsageInfo(8_000, 0), estimatedInputTokens: 9_999, estimatedOutputTokens: 0, cachedInputWeight: 1));
     }
 
     [Theory]
@@ -264,7 +264,7 @@ public class BudgetLedgerTests
     [InlineData(0, -1)]
     public void SettlementCharge_NegativeEstimate_IsRejected(long input, long output)
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => BudgetLedger.SettlementCharge(new UsageInfo(1, 1), input, output));
+        Assert.Throws<ArgumentOutOfRangeException>(() => BudgetLedger.SettlementCharge(new UsageInfo(1, 1), input, output, cachedInputWeight: 1));
     }
 
     /// <summary>The whole path a local server takes: admitted, reserved, settled with no usage
@@ -278,7 +278,7 @@ public class BudgetLedgerTests
         while (BudgetLedger.Admit(budget, 10_000, Policy) is Admitted admitted)
         {
             budget = BudgetLedger.Reserve(budget, admitted.Reserved);
-            var charge = BudgetLedger.SettlementCharge(new UsageInfo(0, 0), estimatedInputTokens: 10_000, estimatedOutputTokens: 3_000);
+            var charge = BudgetLedger.SettlementCharge(new UsageInfo(0, 0), estimatedInputTokens: 10_000, estimatedOutputTokens: 3_000, cachedInputWeight: 1);
             budget = BudgetLedger.Settle(budget, admitted.Reserved, charge);
             calls++;
         }
@@ -325,7 +325,7 @@ public class BudgetLedgerTests
         while (BudgetLedger.Admit(budget, 10_000, Policy) is Admitted admitted)
         {
             budget = BudgetLedger.Reserve(budget, admitted.Reserved);
-            budget = BudgetLedger.Settle(budget, admitted.Reserved, BudgetLedger.ChargeFor(new UsageInfo(10_000, 3_000)));
+            budget = BudgetLedger.Settle(budget, admitted.Reserved, BudgetLedger.ChargeFor(new UsageInfo(10_000, 3_000), cachedInputWeight: 1));
             calls++;
         }
 
@@ -334,12 +334,92 @@ public class BudgetLedgerTests
         Assert.True(budget.TaskUsed <= budget.TaskCap);
     }
 
+    // ---- Cached input counts at a discount ----
+
+    [Fact]
+    public void ChargeFor_CountsCacheReadsAtTheWeight_AndEverythingElseInFull()
+    {
+        // 200 new, 3,000 written to the cache, 12,000 read from it, 900 output.
+        var usage = new UsageInfo(200, 900, 3_000, 12_000);
+
+        Assert.Equal(200 + 3_000 + 1_200 + 900, BudgetLedger.ChargeFor(usage, cachedInputWeight: 0.10));
+        Assert.Equal(200 + 3_000 + 6_000 + 900, BudgetLedger.ChargeFor(usage, cachedInputWeight: 0.5));
+        Assert.Equal(200 + 3_000 + 900, BudgetLedger.ChargeFor(usage, cachedInputWeight: 0));
+        Assert.Equal(16_100, BudgetLedger.ChargeFor(usage, cachedInputWeight: 1));
+    }
+
+    [Theory]
+    [InlineData(1, 1)]      // a fraction of a token is still a token: never rounded down to free
+    [InlineData(9, 1)]
+    [InlineData(10, 1)]
+    [InlineData(11, 2)]
+    [InlineData(22_784, 2_279)]
+    public void ChargeFor_RoundsTheCachedShareUp(int cacheRead, long expected) =>
+        Assert.Equal(expected, BudgetLedger.ChargeFor(new UsageInfo(0, 0, CacheReadInputTokens: cacheRead), cachedInputWeight: 0.10));
+
+    [Fact]
+    public void ChargeFor_NoCachedInput_IsTheSameAtAnyWeight()
+    {
+        var usage = new UsageInfo(8_000, 500);
+
+        Assert.Equal(8_500, BudgetLedger.ChargeFor(usage, cachedInputWeight: 0.10));
+        Assert.Equal(8_500, BudgetLedger.ChargeFor(usage, cachedInputWeight: 1));
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(1.01)]
+    [InlineData(double.NaN)]
+    public void ChargeFor_AWeightOutsideZeroToOne_IsRejected(double weight)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => BudgetLedger.ChargeFor(new UsageInfo(1, 1), weight));
+        Assert.Throws<ArgumentOutOfRangeException>(() => BudgetLedger.SettlementCharge(new UsageInfo(1, 1), 1, 1, weight));
+    }
+
+    [Fact]
+    public void SettlementCharge_DiscountsReportedCacheReads()
+    {
+        var usage = new UsageInfo(783, 134, 0, 22_784);
+
+        Assert.Equal(783 + 2_279 + 134, BudgetLedger.SettlementCharge(usage, 23_000, 100, cachedInputWeight: 0.10));
+    }
+
+    /// <summary>A fully cached request is still reported input: it is discounted, not replaced
+    /// by the estimate.</summary>
+    [Fact]
+    public void SettlementCharge_FullyCachedInput_IsDiscounted_NotReplacedByTheEstimate()
+    {
+        var cached = new UsageInfo(0, 300, CacheReadInputTokens: 12_000);
+
+        Assert.Equal(1_200 + 300, BudgetLedger.SettlementCharge(cached, 99_999, 1, cachedInputWeight: 0.10));
+    }
+
+    /// <summary>An estimate cannot know what the cache will serve, so input the provider did not
+    /// report is charged in full.</summary>
+    [Fact]
+    public void SettlementCharge_InputChargedFromTheEstimate_IsNotDiscounted()
+    {
+        Assert.Equal(9_999 + 500, BudgetLedger.SettlementCharge(new UsageInfo(0, 500), 9_999, 1_200, cachedInputWeight: 0.10));
+    }
+
+    /// <summary>The first real run in aggregate: 60,038 new input, 877,952 read from the cache,
+    /// 55,617 output. In full that was 993,607; discounted it is about a fifth of that.</summary>
+    [Fact]
+    public void ChargeFor_TheFirstRealRunsTotals()
+    {
+        var run = new UsageInfo(60_038, 55_617, 0, 877_952);
+
+        Assert.Equal(993_607, BudgetLedger.ChargeFor(run, cachedInputWeight: 1));
+        Assert.Equal(203_451, BudgetLedger.ChargeFor(run, cachedInputWeight: 0.10));
+    }
+
     [Fact]
     public void Policy_Defaults()
     {
         var policy = new BudgetPolicy();
 
         Assert.Equal(0.10, policy.Margin);
+        Assert.Equal(0.10, policy.CachedInputWeight);
         // Room for a reasoning model's thinking and its reply: 8,192 was not enough in practice.
         Assert.Equal(32_768, policy.OutputAllowanceTokens);
     }

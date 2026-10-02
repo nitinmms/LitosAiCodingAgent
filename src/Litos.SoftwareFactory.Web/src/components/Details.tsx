@@ -8,7 +8,16 @@ function humanTesting(state: ThreadDetails['thread']['state']): { text: string; 
 }
 
 /** The gauges beside a thread: budget, verification, changed files and the run. */
-export function Details({ details, usage }: { details: ThreadDetails; usage: UsageCall[] }) {
+export function Details({
+  details,
+  usage,
+  cachedInputWeight,
+}: {
+  details: ThreadDetails;
+  usage: UsageCall[];
+  /** The fraction of a cached input token that counts against the budget; unknown until settings load. */
+  cachedInputWeight?: number;
+}) {
   const { thread, verification, findings, handoff, run } = details;
   const evidence = handoff?.evidence ?? null;
   const cap = thread.budgetCap;
@@ -88,6 +97,9 @@ export function Details({ details, usage }: { details: ThreadDetails; usage: Usa
             </div>
             <p className="small muted">
               Each call is reserved before it is sent, then settled against the provider’s reported usage.
+              {cachedInputWeight !== undefined && cachedInputWeight < 1
+                ? ` Input the provider serves from its cache counts at ${pct(cachedInputWeight * 100)}.`
+                : ''}
             </p>
           </>
         ) : null}
