@@ -31,6 +31,10 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
         _host = host;
         _builtIn = registeredTools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
 
+        // An agent gets the shell behind a guard, whether it calls it directly or from kernel code.
+        if (_builtIn.TryGetValue("shell", out var shell))
+            _builtIn["shell"] = new GuardedShellTool(shell);
+
         var missing = WorkTools.Where(name => !_builtIn.ContainsKey(name)).ToList();
         if (missing.Count > 0)
             throw new InvalidOperationException($"The factory tool set needs tools that are not registered: {string.Join(", ", missing)}.");

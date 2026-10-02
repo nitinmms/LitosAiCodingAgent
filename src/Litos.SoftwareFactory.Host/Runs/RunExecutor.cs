@@ -288,6 +288,14 @@ public sealed class RunExecutor(
         {
             result = new TurnStreamResult(false, 0, $"The worker could not be reached: {ex.Message}");
         }
+        catch (IOException ex)
+        {
+            // The turn's stream broke off: the worker process died while the turn was running.
+            // That is the turn's failure, and the run can be resumed with a new worker; it is
+            // not the host failing.
+            logger.LogWarning(ex, "The worker for run {RunId} stopped while a turn was running.", data.Run.Id);
+            result = new TurnStreamResult(false, 0, "The worker process stopped unexpectedly while the turn was running. The edits made so far are kept; resuming starts a new worker.");
+        }
 
         var submission = active.Submission;
         if (submission is ReviewSubmission review)

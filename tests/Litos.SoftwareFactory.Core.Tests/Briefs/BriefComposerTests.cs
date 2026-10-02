@@ -134,6 +134,21 @@ public class BriefComposerTests
         Assert.DoesNotContain("from the original run brief", text);
     }
 
+    /// <summary>On the fifth real task the agent ran `taskkill /F /IM dotnet.exe /T` to clear a
+    /// hung test, and stopped every dotnet process on the machine, its own worker included.</summary>
+    [Theory]
+    [InlineData(BriefKind.Run, TurnKind.Implement)]
+    [InlineData(BriefKind.Rework, TurnKind.Rework)]
+    [InlineData(BriefKind.Repair, TurnKind.Repair)]
+    public void EveryBriefThatCanRunCommands_ForbidsStoppingProcessesByName(BriefKind brief, TurnKind kind)
+    {
+        var text = Compose(brief, State() with { RepairCyclesUsed = 1 }, kind: kind);
+
+        Assert.Contains("Never stop processes by name", text);
+        Assert.Contains("`taskkill /IM`", text);
+        Assert.Contains("by its id", text);
+    }
+
     // ---- Working economically ----
     //
     // Every model call re-sends the whole conversation. In the first real runs a turn made 30 to
@@ -565,7 +580,8 @@ public class BriefComposerTests
         Assert.False(string.IsNullOrWhiteSpace(BriefComposer.Revision));
         // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
         // review of a rework scoped to the rework. Bump it with every change to a brief.
-        Assert.Equal("m1.2", BriefComposer.Revision);
+        // m1.3: never stop processes by name.
+        Assert.Equal("m1.3", BriefComposer.Revision);
     }
 
     [Theory]

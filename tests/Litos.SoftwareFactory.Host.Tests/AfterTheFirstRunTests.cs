@@ -259,6 +259,42 @@ public sealed class LeftoverEditsTests : IAsyncLifetime
     }
 }
 
+/// <summary>
+/// On the fifth real task the worker process died mid-turn (the agent had killed every dotnet
+/// process on the machine). The host reported it as its own failure.
+/// </summary>
+public sealed class WorkerDeathTests
+{
+    [Fact]
+    public async Task WorkerThatDiesMidTurn_BlocksTheRunAsATurnFailure_NotAHostFailure_AndResumingStartsANewWorker()
+    {
+        await using var host = await TestHost.StartAsync();
+        host.Workers.Script.Enqueue(call =>
+        {
+            host.Workers.WorkspaceOf(call.Worker).Write("src/Orders.cs", "half done\n");
+            // What reading the turn's stream throws when the worker's process is gone.
+            throw new IOException("Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host.");
+        });
+        var projectId = await host.RegisterProjectAsync();
+        var threadId = await host.CreateThreadAsync(projectId);
+
+        await host.DelegateAsync(threadId);
+        var blocked = await host.WaitForStateAsync(threadId, LifecycleState.Blocked);
+
+        Assert.Equal(StopReason.TurnFaulted, blocked.LatestRun!.StopReason);
+        Assert.StartsWith("The worker process stopped unexpectedly while the turn was running.", blocked.Thread.StateReason);
+        Assert.DoesNotContain("factory host failed", blocked.Thread.StateReason);
+        // What the turn had edited is still there for the resumed turn.
+        Assert.Equal("half done\n", host.Workspaces.Of(projectId).Files["src/Orders.cs"]);
+
+        await host.PostAsync($"api/threads/{threadId}/resume", null, HttpStatusCode.OK);
+        await host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Equal(2, host.Workers.Workers.Count); // a new worker, not the dead one
+        Assert.Contains("stopped and has been resumed", host.Workers.Turns.ElementAt(1).Brief);
+    }
+}
+
 /// <summary>What the third real task (F3) showed about a rework round.</summary>
 public sealed class ReworkRoundTests : IAsyncLifetime
 {

@@ -54,7 +54,7 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
 public static partial class BriefComposer
 {
     /// <summary>Bump whenever any template or any text composed here changes.</summary>
-    public const string Revision = "m1.2";
+    public const string Revision = "m1.3";
 
     private const int CharsPerToken = 4;
 
@@ -192,6 +192,7 @@ public static partial class BriefComposer
         - Do not commit, push, merge, switch branches or rewrite history. The factory commits and pushes at handoff.
         - Do not delete or weaken existing tests, and do not change the verification configuration to make your work pass.
         - Do not start the application, deploy anything, or run migrations or other commands against a database.
+        - Never stop processes by name (`taskkill /IM`, `Stop-Process -Name`, `pkill`, `killall`): that stops the factory itself and other programs on this machine. Stop only a process you started, by its id.
         - Work economically: every call re-sends this whole conversation. Read every file you need in one script, read each file once, and make related edits together.
         """;
 
