@@ -63,7 +63,10 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
 
     private static RunTransition OnResumed(RunState state, DateTimeOffset now)
     {
-        Require(state.Phase == RunPhase.Stopped && state.ResumePoint is not null, state, "resume");
+        if (state.Phase != RunPhase.Stopped)
+            return OnRecovered(state, now);
+
+        Require(state.ResumePoint is not null, state, "resume");
 
         // A blocker a person has resolved earns a fresh allowance: the run would otherwise stop
         // again at once on a limit it had already reached. Pauses keep their counts.
@@ -80,6 +83,28 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             FailuresBeforeRepair = afterBlock ? null : state.FailuresBeforeRepair,
         };
         return Preflight(resumed, state.ResumePoint!);
+    }
+
+    /// <summary>
+    /// The run was cut off mid-step — the host or its worker was lost — so its checkpoint is not
+    /// a stop with a resume point but the step that was under way. That step is done again:
+    /// nothing it produced was recorded, and each step is safe to repeat (a turn continues its
+    /// own session with a note to re-check the working copy). The run keeps its counts: being
+    /// interrupted is not a blocker someone resolved.
+    /// </summary>
+    private static RunTransition OnRecovered(RunState state, DateTimeOffset now)
+    {
+        RunStep? redo = state.Phase switch
+        {
+            RunPhase.Preflight => state.AfterPreflight,
+            RunPhase.Turn => new StartTurnStep(state.WorkTurn, BriefKind.Resume, SessionOf(state)),
+            RunPhase.Verify => new VerifyStep(),
+            RunPhase.Handoff => new HandoffStep(),
+            _ => null,
+        };
+        Require(redo is not null, state, "be recovered");
+
+        return Preflight(state with { ActiveSince = now, NudgeUsed = false }, redo!);
     }
 
     private static RunTransition OnDecisionAnswered(RunState state, DecisionAnswered answer, DateTimeOffset now)

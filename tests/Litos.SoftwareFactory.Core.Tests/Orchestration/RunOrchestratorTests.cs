@@ -819,6 +819,99 @@ public class RunOrchestratorTests
         AssertStopped(run.Report(new HandoffCompleted(true)), LifecycleTrigger.Handoff, StopReason.HandedOff);
     }
 
+    // ---- Recovering a run that was cut off mid-step ----
+    //
+    // When the host or its worker is lost, the checkpoint is the step that was under way, not a
+    // stop with a resume point. The first real run hit this: it could be marked Interrupted but
+    // recovering it failed with "A run in phase Turn cannot start".
+
+    [Fact]
+    public void Recovered_MidImplementTurn_RunsPreflight_ThenContinuesTheTurnInItsOwnSession()
+    {
+        var run = new Run().Started(); // the implement turn is in progress
+
+        Assert.IsType<PreflightStep>(run.Report(new Resumed()));
+        AssertTurn(run.Report(new PreflightCompleted(true)), TurnKind.Implement, BriefKind.Resume);
+    }
+
+    [Fact]
+    public void Recovered_MidReviewTurn_ContinuesTheReview_InTheReviewSession()
+    {
+        var run = new Run().AtReview();
+
+        Assert.IsType<PreflightStep>(run.Report(new Resumed()));
+        AssertTurn(run.Report(new PreflightCompleted(true)), TurnKind.Review, BriefKind.Resume, SessionScope.Review);
+    }
+
+    [Fact]
+    public void Recovered_MidNudge_ContinuesTheWorkTheNudgeWasFor_WithItsFollowUpAvailableAgain()
+    {
+        var run = new Run().AtReview();
+        run.Report(new TurnEnded(TurnEndReason.Completed)); // no submit_review: the nudge starts
+        Assert.Equal(TurnKind.Nudge, run.State.CurrentTurn);
+
+        run.Report(new Resumed());
+
+        AssertTurn(run.Report(new PreflightCompleted(true)), TurnKind.Review, BriefKind.Resume, SessionScope.Review);
+        Assert.False(run.State.NudgeUsed);
+    }
+
+    [Fact]
+    public void Recovered_MidVerification_VerifiesAgain()
+    {
+        var run = new Run().Started();
+        Assert.IsType<VerifyStep>(run.Submit());
+
+        Assert.IsType<PreflightStep>(run.Report(new Resumed()));
+        Assert.IsType<VerifyStep>(run.Report(new PreflightCompleted(true)));
+        // What the agent submitted before the interruption is still what gets handed off.
+        Assert.Equal("done", run.State.LastSubmission!.Summary);
+    }
+
+    [Fact]
+    public void Recovered_MidHandoff_HandsOffAgain()
+    {
+        var run = new Run().AtReview();
+        Assert.IsType<HandoffStep>(run.ReviewWith());
+
+        Assert.IsType<PreflightStep>(run.Report(new Resumed()));
+        Assert.IsType<HandoffStep>(run.Report(new PreflightCompleted(true)));
+    }
+
+    [Fact]
+    public void Recovered_MidPreflight_RunsPreflightAgain_ForTheSameNextStep()
+    {
+        var run = new Run();
+        run.Report(new RunStarted()); // preflight is in progress
+
+        Assert.IsType<PreflightStep>(run.Report(new Resumed()));
+        AssertTurn(run.Report(new PreflightCompleted(true)), TurnKind.Implement, BriefKind.Run);
+    }
+
+    /// <summary>An interruption is not a blocker somebody resolved: the run keeps the repair
+    /// cycles it has used, and its run-time limit counts from the recovery.</summary>
+    [Fact]
+    public void Recovered_KeepsItsCounts_AndRestartsItsClock()
+    {
+        var run = new Run().Started();
+        run.Submit();
+        AssertTurn(run.Verify(Failing("T.Fails")), TurnKind.Repair, BriefKind.Repair);
+        Assert.Equal(1, run.State.RepairCyclesUsed);
+
+        run.Now = T0.AddHours(30);
+        Assert.IsType<PreflightStep>(run.Report(new Resumed()));
+
+        Assert.Equal(1, run.State.RepairCyclesUsed);
+        Assert.Equal(T0.AddHours(30), run.State.ActiveSince);
+        AssertTurn(run.Report(new PreflightCompleted(true)), TurnKind.Repair, BriefKind.Resume);
+    }
+
+    [Fact]
+    public void Recovered_BeforeTheRunEverStarted_IsRejected()
+    {
+        Assert.Throws<InvalidOperationException>(() => new Run().Report(new Resumed()));
+    }
+
     // ---- Misuse by the host ----
 
     [Fact]
@@ -830,7 +923,6 @@ public class RunOrchestratorTests
         Assert.Throws<InvalidOperationException>(() => run.Report(new HandoffCompleted(true)));
         Assert.Throws<InvalidOperationException>(() => run.Report(new PreflightCompleted(true)));
         Assert.Throws<InvalidOperationException>(() => run.Report(new RunStarted()));
-        Assert.Throws<InvalidOperationException>(() => run.Report(new Resumed()));
     }
 
     [Fact]

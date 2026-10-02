@@ -53,7 +53,10 @@ public sealed class RunExecutor(
             StepOutcome outcome = run.Entry switch
             {
                 RunEntry.DecisionAnswered => new DecisionAnswered(run.EntryAnswer ?? ""),
-                RunEntry.Resume when state.Phase == RunPhase.Stopped => new Resumed(),
+                // A run that never got as far as its first checkpoint simply starts. Any other
+                // resumed run continues: from its stop, or — when it was interrupted mid-step
+                // and so has no stop — from the step that was under way.
+                RunEntry.Resume when state.Phase != RunPhase.NotStarted => new Resumed(),
                 _ => new RunStarted(),
             };
 

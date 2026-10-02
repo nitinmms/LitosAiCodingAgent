@@ -664,6 +664,63 @@ public sealed class RecoveryTests
         Assert.Equal("Queued", recovered.GetProperty("state").GetString());
     }
 
+    /// <summary>
+    /// The first real run stopped here. A run cut off mid-turn has a checkpoint that says "a turn
+    /// is in progress", not a stop with a resume point; recovering it must continue that turn
+    /// and carry the run through to a handoff.
+    /// </summary>
+    [Fact]
+    public async Task RunCutOffMidTurn_Recovered_ContinuesTheTurn_AndFinishes()
+    {
+        await using var host = await TestHost.StartAsync(startCoordinator: false);
+        var threadId = await host.CreateThreadAsync(await host.RegisterProjectAsync());
+        await host.DelegateAsync(threadId);
+        var claimed = (await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
+
+        // The checkpoint a real host leaves behind while the implement turn is running.
+        var orchestrator = new RunOrchestrator();
+        var midTurn = orchestrator.Next(RunOrchestrator.NewRun(RunKind.Implement), new RunStarted(), DateTimeOffset.UtcNow).State;
+        midTurn = orchestrator.Next(midTurn, new PreflightCompleted(true), DateTimeOffset.UtcNow).State;
+        Assert.Equal(RunPhase.Turn, midTurn.Phase);
+        await host.Store.SaveCheckpointAsync(claimed.Run.Id, RunStateJson.Serialize(midTurn), Stage.Implement, DateTimeOffset.UtcNow, default);
+        await host.Store.SetRunWorkerAsync(claimed.Run.Id, int.MaxValue - 5, DateTimeOffset.UtcNow.AddHours(-1), default);
+
+        await host.App.Services.GetRequiredService<RunCoordinator>().RecoverAsync(default);
+        Assert.Equal(LifecycleState.Interrupted, (await host.ThreadAsync(threadId)).Thread.State);
+        await host.PostAsync($"api/threads/{threadId}/resume", null, HttpStatusCode.OK);
+
+        var again = (await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
+        Assert.Equal(RunEntry.Resume, again.Run.Entry);
+        await host.App.Services.GetRequiredService<RunExecutor>().ExecuteAsync(again, default);
+
+        var details = await host.ThreadAsync(threadId);
+        Assert.Equal(LifecycleState.AwaitingHumanTesting, details.Thread.State);
+        Assert.Null(details.Thread.StateReason);
+        Assert.Equal([TurnKind.Implement, TurnKind.Review], host.Workers.Turns.Select(t => t.Kind));
+        // The continued turn is told it was interrupted and to re-check the working copy.
+        Assert.Contains("stopped and has been resumed", host.Workers.Turns.First().Brief);
+    }
+
+    /// <summary>A run that was claimed but cut off before its first checkpoint has nothing to
+    /// continue: recovering it starts it.</summary>
+    [Fact]
+    public async Task RunCutOffBeforeItsFirstCheckpoint_Recovered_Starts()
+    {
+        await using var host = await TestHost.StartAsync(startCoordinator: false);
+        var threadId = await host.CreateThreadAsync(await host.RegisterProjectAsync());
+        await host.DelegateAsync(threadId);
+        var claimed = (await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
+        await host.Store.SetRunWorkerAsync(claimed.Run.Id, int.MaxValue - 5, DateTimeOffset.UtcNow.AddHours(-1), default);
+        await host.App.Services.GetRequiredService<RunCoordinator>().RecoverAsync(default);
+        await host.PostAsync($"api/threads/{threadId}/resume", null, HttpStatusCode.OK);
+
+        var again = (await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
+        await host.App.Services.GetRequiredService<RunExecutor>().ExecuteAsync(again, default);
+
+        Assert.Equal(LifecycleState.AwaitingHumanTesting, (await host.ThreadAsync(threadId)).Thread.State);
+        Assert.DoesNotContain("has been resumed", host.Workers.Turns.First().Brief);
+    }
+
     [Fact]
     public async Task Recovery_WithNothingRunning_DoesNothing()
     {
