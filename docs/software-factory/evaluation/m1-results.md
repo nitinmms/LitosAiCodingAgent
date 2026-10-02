@@ -26,7 +26,9 @@ The task set's caps (150,000 / 300,000 / 600,000) were written before any run an
 
 On F2, 242,000 of the first handoff's 422,135 was cached input even at 10%: the agent made 72 model calls with 25,000 to 50,000 tokens of context each. The rework round, which added one test and six lines of README, cost 153,749, almost all of it re-reading context and reviewing.
 
-Both tasks are recorded as over budget against the stated caps. Recalibrating the caps is a decision to take once more tasks have run.
+Both tasks are recorded as over budget against the caps they ran under.
+
+**Recalibrated 2026-10-02:** from F3 onward the caps are 300,000 / 600,000 / 1,200,000 (small / medium / large), and the "Cap" column shows the cap each task ran under. Under the new caps F1 (about 203,000 as a small task) and F2 (575,884 as a medium task) would both have fitted.
 
 ## Changes made to the factory during the evaluation
 

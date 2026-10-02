@@ -26,7 +26,9 @@ Every task starts from the same baseline commit on a fresh `factory/*` branch, i
    - changed-line coverage meets the project threshold (80%);
    - nothing is committed to `main`, and the handoff is a `factory/*` branch.
 
-**Budgets** (initial caps, to be calibrated after the first full run): small 150,000 tokens · medium 300,000 · large 600,000.
+**Budgets:** small 300,000 tokens · medium 600,000 · large 1,200,000.
+
+These were recalibrated on 2026-10-02 after F1 and F2, as the original note allowed ("initial caps, to be calibrated after the first full run"). The initial caps were 150,000 / 300,000 / 600,000, written before any run; F1 needed about 203,000 and F2 575,884 including its rework. F1 and F2 stay recorded against the initial caps. Tokens are counted as §9.1 of the blueprint defines them, with cached input at 10%.
 
 **Recorded per run:**
 
