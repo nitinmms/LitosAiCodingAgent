@@ -269,6 +269,59 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         return thread;
     }
 
+    public async Task<WithdrawResult> WithdrawChangesAsync(Guid threadId, Guid userId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var thread = await LockThreadAsync(db, threadId, ct);
+
+        if (thread.State == LifecycleState.Running)
+            throw new StoreConflictException("The change request is being worked on. Pause the task, then withdraw it.");
+        if (!TaskLifecycle.TryApply(thread.State, LifecycleTrigger.WithdrawChanges, out var next))
+            throw new StoreConflictException($"A task that is {thread.State} has no change request to withdraw.");
+
+        // The lifecycle table allows the move from these states; only a rework run with a
+        // handoff behind it makes it mean anything.
+        var run = await ActiveRunAsync(db, threadId, ct);
+        if (run is not { Kind: RunKind.Rework })
+            throw new StoreConflictException("This task has no change request to withdraw: its run is the original work. Cancel the task to stop it.");
+        if (!await db.Handoffs.AnyAsync(h => h.ThreadId == threadId, ct))
+            throw new StoreConflictException("This task has no handoff to go back to.");
+
+        run.Status = RunStatus.Finished;
+        run.StopReason = StopReason.Withdrawn;
+        run.EndedAt = now;
+        run.WorkerProcessId = null;
+        run.WorkerStartTime = null;
+
+        // A question the withdrawn run was waiting on no longer needs an answer.
+        foreach (var decision in await db.Decisions.Where(d => d.RunId == run.Id && d.Status == DecisionStatus.Open).ToListAsync(ct))
+        {
+            decision.Status = DecisionStatus.Answered;
+            decision.Answer = "Not answered: the change request was withdrawn.";
+            decision.AnsweredBy = userId;
+            decision.AnsweredAt = now;
+        }
+
+        thread.State = next;
+        thread.Stage = Stage.Handoff;
+        thread.StateReason = null;
+
+        var heldLease = await db.Leases.AnyAsync(l => l.ThreadId == threadId, ct);
+        var project = await db.Projects.AsNoTracking().FirstAsync(p => p.Id == thread.ProjectId, ct);
+        AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Status, "Change request withdrawn. The task is back at its last handoff.", now);
+        Touch(db, thread, now);
+        await write.CommitAsync(ct);
+        return new WithdrawResult(thread, project, heldLease);
+    }
+
+    public async Task ReleaseLeaseAsync(Guid threadId, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        await ReleaseLeaseAsync(write.Db, threadId, ct);
+        await write.CommitAsync(ct);
+    }
+
     public async Task<TaskThread> SetBudgetCapAsync(Guid threadId, long? cap, DateTimeOffset now, CancellationToken ct)
     {
         if (cap is < 0)
@@ -609,7 +662,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         if (existing is not null)
             return new ReservationResult(new Admitted(existing.Reserved, policy.OutputAllowanceTokens), AlreadyKnown: true);
 
-        var decision = BudgetLedger.Admit(new BudgetSnapshot(thread.BudgetCap, thread.TokensUsed, thread.TokensReserved), command.EstimatedInput, policy);
+        var expectedInputCharge = BudgetLedger.ExpectedInputCharge(command.EstimatedInput, command.ExpectedCachedInput, policy.CachedInputWeight);
+        var decision = BudgetLedger.Admit(new BudgetSnapshot(thread.BudgetCap, thread.TokensUsed, thread.TokensReserved), expectedInputCharge, policy);
         if (decision is not Admitted admitted)
             return new ReservationResult(decision, AlreadyKnown: false);
 
@@ -678,6 +732,45 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
     public Task ReleaseReservationAsync(string requestKey, CancellationToken ct) =>
         SettleAsync(requestKey, new UsageInfo(0, 0), charge: 0, DateTimeOffset.UtcNow, ct);
+
+    public async Task<int> ReconcileUsageAsync(Guid? runId, DateTimeOffset now, CancellationToken ct)
+    {
+        // For one run: what the gateway marked Unknown. For a starting host: also what a previous
+        // host left Reserved, which it can no longer settle.
+        System.Linq.Expressions.Expression<Func<UsageEntry, bool>> unreported = runId is { } id
+            ? u => u.RunId == id && u.Status == UsageStatus.Unknown
+            : u => u.Status == UsageStatus.Unknown || u.Status == UsageStatus.Reserved;
+
+        List<Guid> threadIds;
+        await using (var db = await contextFactory.CreateDbContextAsync(ct))
+            threadIds = await db.Usage.AsNoTracking().Where(unreported).Select(u => u.ThreadId).Distinct().ToListAsync(ct);
+
+        var reconciled = 0;
+        foreach (var threadId in threadIds)
+        {
+            await using var write = await BeginWriteAsync(ct);
+            var thread = await LockThreadAsync(write.Db, threadId, ct);
+            var entries = await write.Db.Usage.Where(unreported).Where(u => u.ThreadId == threadId).ToListAsync(ct);
+            foreach (var entry in entries)
+            {
+                var charge = BudgetLedger.ReconciledCharge(entry.EstimatedInput, entry.Reserved);
+                var after = BudgetLedger.Settle(new BudgetSnapshot(thread.BudgetCap, thread.TokensUsed, thread.TokensReserved), entry.Reserved, charge);
+                thread.TokensUsed = after.TaskUsed;
+                thread.TokensReserved = after.TaskReserved;
+
+                entry.Status = UsageStatus.Estimated;
+                entry.Charged = charge;
+                entry.SettledAt = now;
+                reconciled++;
+            }
+
+            if (entries.Count > 0)
+                Touch(write.Db, thread, now, EventTypes.UsageChanged);
+            await write.CommitAsync(ct);
+        }
+
+        return reconciled;
+    }
 
     public async Task<IReadOnlyList<UsageEntry>> ListUsageAsync(Guid threadId, CancellationToken ct)
     {

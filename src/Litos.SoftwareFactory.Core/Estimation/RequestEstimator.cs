@@ -12,7 +12,24 @@ namespace Litos.SoftwareFactory.Core.Estimation;
 /// </summary>
 public sealed record SessionBaseline(int MessageCount, int TotalInputTokens)
 {
-    public static SessionBaseline From(ChatRequest request, UsageInfo usage) => new(request.Messages.Count, usage.TotalInputTokens);
+    /// <summary>How much of that request the provider served from its prompt cache. Above zero
+    /// it shows the cache works for this session.</summary>
+    public int CacheReadTokens { get; init; }
+
+    /// <summary>When the request settled; null when not recorded.</summary>
+    public DateTimeOffset? SettledAt { get; init; }
+
+    public static SessionBaseline From(ChatRequest request, UsageInfo usage, DateTimeOffset? settledAt = null) =>
+        new(request.Messages.Count, usage.TotalInputTokens) { CacheReadTokens = usage.CacheReadInputTokens, SettledAt = settledAt };
+
+    /// <summary>
+    /// How much of the next request's input the provider can be expected to serve from its
+    /// cache: all of this request's input, once the session has shown that the cache is being
+    /// hit and while it is recent enough to still be held. Otherwise nothing — a first call, a
+    /// provider that does not cache, or a session resumed after a pause is reserved in full.
+    /// </summary>
+    public long ExpectedCachedTokens(DateTimeOffset now, TimeSpan cacheWindow) =>
+        CacheReadTokens > 0 && SettledAt is { } at && now >= at && now - at <= cacheWindow ? TotalInputTokens : 0;
 }
 
 public enum EstimateBasis

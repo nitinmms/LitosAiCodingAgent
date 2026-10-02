@@ -172,6 +172,8 @@ The completion tools call the host **from inside `ITool.InvokeAsync`**. That mak
   - `POST /api/threads/{id}/budget`;
   - `POST /api/threads/{id}/accept`;
   - `POST /api/threads/{id}/cancel` and `.../pause` and `.../resume`;
+  - `POST /api/threads/{id}/withdraw`: takes back a change request made after a handoff (the rework run ends as Withdrawn, its uncommitted edits are discarded, the task returns to its last handoff);
+  - `GET /api/threads/{id}/pull-request`: where the task's pull request stands on GitHub now (Draft, Open, Merged, Closed, or Unknown), asked of GitHub and cached for a minute;
   - `GET /api/threads/{id}/events?after=<seq>`: SSE backed by `OutboxEvent`, with `Last-Event-ID` replay. The stream starts after the later of `after` and `Last-Event-ID`, because a browser that reconnects by itself repeats its original URL.
 - **`ModelGateway`:**
   - builds the real `IChatProvider`s through `Litos.Host`'s `AddLitosAgent` with a `LitosConfig` constructed from host settings, never from `~/.litos/config.json`;

@@ -114,6 +114,22 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
         return (await GitAsync(options.Path, ["rev-parse", "HEAD"], authenticated: false, ct)).Trim();
     }
 
+    public async Task DiscardUncommittedChangesAsync(string branch, string defaultBranch, CancellationToken ct)
+    {
+        RequireTaskBranch(branch, defaultBranch);
+
+        // Only ever on the branch that is checked out: this must not switch branches with edits
+        // in the tree, and must not clean a working copy that is on someone else's branch.
+        var current = (await GitAsync(options.Path, ["rev-parse", "--abbrev-ref", "HEAD"], authenticated: false, ct)).Trim();
+        if (current != branch)
+            throw new WorkspaceException($"The working copy is on '{current}', not '{branch}'; nothing was discarded.");
+
+        // HEAD, not a named commit: this drops edits, it never moves the branch.
+        await GitAsync(options.Path, ["reset", "--hard", "HEAD"], authenticated: false, ct);
+        // -d takes untracked directories too; without -x, ignored files (build output) stay.
+        await GitAsync(options.Path, ["clean", "-fd"], authenticated: false, ct);
+    }
+
     public async Task PushAsync(string branch, string defaultBranch, CancellationToken ct)
     {
         RequireTaskBranch(branch, defaultBranch);

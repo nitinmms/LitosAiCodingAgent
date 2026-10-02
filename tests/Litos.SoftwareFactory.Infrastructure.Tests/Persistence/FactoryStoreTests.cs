@@ -631,7 +631,7 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         var result = await Store.ReserveAsync(Reserve(running, "key-1"), Policy, T0, default);
 
         var refused = Assert.IsType<Refused>(result.Decision);
-        Assert.Equal((RefusalReason.TaskBudget, 20_900L, 20_000L), (refused.Reason, refused.Needed, refused.Remaining));
+        Assert.Equal((RefusalReason.TaskBudget, 20_500L, 20_000L), (refused.Reason, refused.Needed, refused.Remaining));
         Assert.Equal(0, (await ThreadAsync(running.Thread.Id)).TokensReserved);
         Assert.Empty(await Store.ListUsageAsync(running.Thread.Id, default));
     }
@@ -642,7 +642,7 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         var running = await RunningAsync(cap: 100_000);
 
         var admitted = Assert.IsType<Admitted>((await Store.ReserveAsync(Reserve(running, "key-1"), Policy, T0, default)).Decision);
-        Assert.Equal(20_900, (await ThreadAsync(running.Thread.Id)).TokensReserved);
+        Assert.Equal(20_500, (await ThreadAsync(running.Thread.Id)).TokensReserved);
 
         var usage = new UsageInfo(200, 900, 3_000, 9_000, ReasoningTokens: 640);
         await Store.SettleAsync("key-1", usage, BudgetLedger.ChargeFor(usage, cachedInputWeight: 1), T0.AddSeconds(30), default);
@@ -681,7 +681,7 @@ public abstract class FactoryStoreContract : IAsyncLifetime
 
         await Store.MarkUsageUnknownAsync("key-1", default);
 
-        Assert.Equal(20_900, (await ThreadAsync(running.Thread.Id)).TokensReserved);
+        Assert.Equal(20_500, (await ThreadAsync(running.Thread.Id)).TokensReserved);
         Assert.Equal(UsageStatus.Unknown, Assert.Single(await Store.ListUsageAsync(running.Thread.Id, default)).Status);
         Assert.IsType<Refused>((await Store.ReserveAsync(Reserve(running, "key-2"), Policy, T0, default)).Decision);
 
@@ -689,6 +689,309 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         await Store.SettleAsync("key-1", new UsageInfo(9_000, 500), 9_500, T0, default);
         var thread = await ThreadAsync(running.Thread.Id);
         Assert.Equal((9_500L, 0L), (thread.TokensUsed, thread.TokensReserved));
+    }
+
+    // ---- A call is reserved for about what it will cost ----
+
+    private static readonly BudgetPolicy Real = new() { OutputAllowanceTokens = 32_768, MinimumOutputTokens = 4_096, Margin = 0.10 };
+
+    [SkippableFact]
+    public async Task Reserve_InputExpectedFromTheCache_IsHeldAtTheCachedWeight()
+    {
+        var running = await RunningAsync(cap: 300_000);
+        var command = Reserve(running, "key-1", estimate: 23_500) with { ExpectedCachedInput = 22_800 };
+
+        var admitted = Assert.IsType<Admitted>((await Store.ReserveAsync(command, Real, T0, default)).Decision);
+
+        // 700 new + 2,280 for the cached part, plus 10%, plus the output allowance.
+        Assert.Equal(3_278 + 32_768, admitted.Reserved);
+        Assert.Equal(admitted.Reserved, (await ThreadAsync(running.Thread.Id)).TokensReserved);
+        // The ledger still records the whole estimate: that is what the estimator is judged on.
+        Assert.Equal(23_500, Assert.Single(await Store.ListUsageAsync(running.Thread.Id, default)).EstimatedInput);
+    }
+
+    [SkippableFact]
+    public async Task Reserve_NearTheCap_IsAdmittedWithItsOutputLimitedToWhatRemains_AndNeverHoldsMoreThanIsLeft()
+    {
+        var running = await RunningAsync(cap: 30_000);
+
+        var admitted = Assert.IsType<Admitted>((await Store.ReserveAsync(Reserve(running, "key-1", estimate: 10_000), Real, T0, default)).Decision);
+
+        Assert.Equal(19_000, admitted.MaxOutputTokens); // 30,000 less 11,000 for the input
+        var thread = await ThreadAsync(running.Thread.Id);
+        Assert.Equal(30_000, thread.TokensReserved);
+        // Nothing is left for a second call while this one is in flight.
+        Assert.IsType<Refused>((await Store.ReserveAsync(Reserve(running, "key-2", estimate: 10), Real, T0, default)).Decision);
+    }
+
+    // ---- Reconciling calls whose usage will never be reported ----
+
+    [SkippableFact]
+    public async Task Reconcile_ForARun_ChargesItsUnknownCallsTheirInputEstimate_AndReleasesTheRest()
+    {
+        var running = await RunningAsync(cap: 300_000);
+        await Store.ReserveAsync(Reserve(running, "cut-off", estimate: 23_900), Real, T0, default);
+        await Store.MarkUsageUnknownAsync("cut-off", default);
+        Assert.Equal(26_290 + 32_768, (await ThreadAsync(running.Thread.Id)).TokensReserved);
+        var events = (await Store.ReadEventsAsync(running.Thread.Id, 0, 500, default)).Count;
+
+        var reconciled = await Store.ReconcileUsageAsync(running.Run.Id, T0.AddMinutes(5), default);
+
+        Assert.Equal(1, reconciled);
+        var thread = await ThreadAsync(running.Thread.Id);
+        Assert.Equal((23_900L, 0L), (thread.TokensUsed, thread.TokensReserved));
+        var entry = Assert.Single(await Store.ListUsageAsync(running.Thread.Id, default));
+        Assert.Equal((UsageStatus.Estimated, 23_900L, T0.AddMinutes(5)), (entry.Status, entry.Charged, entry.SettledAt!.Value));
+        // The provider reported nothing, and nothing is recorded as if it had.
+        Assert.Equal((0L, 0L), (entry.ActualInput, entry.ActualOutput));
+        // The budget figures changed, so clients are told.
+        var after = await Store.ReadEventsAsync(running.Thread.Id, 0, 500, default);
+        Assert.Equal(events + 1, after.Count);
+        Assert.Equal(EventTypes.UsageChanged, after[^1].Type);
+    }
+
+    /// <summary>A call still in flight for a run must not be touched when the run's dead calls
+    /// are reconciled: its usage may yet be reported.</summary>
+    [SkippableFact]
+    public async Task Reconcile_ForARun_LeavesReservedAndSettledCallsAlone_AndOtherRunsToo()
+    {
+        var running = await RunningAsync(cap: 900_000);
+        var other = await RunningAsync("other-repo", cap: 900_000);
+        await Store.ReserveAsync(Reserve(running, "in-flight", estimate: 10_000), Real, T0, default);
+        await Store.ReserveAsync(Reserve(running, "settled", estimate: 10_000), Real, T0, default);
+        await Store.SettleAsync("settled", new UsageInfo(9_000, 500), 9_500, T0, default);
+        await Store.ReserveAsync(Reserve(other, "other-unknown", estimate: 10_000), Real, T0, default);
+        await Store.MarkUsageUnknownAsync("other-unknown", default);
+
+        Assert.Equal(0, await Store.ReconcileUsageAsync(running.Run.Id, T0, default));
+
+        var thread = await ThreadAsync(running.Thread.Id);
+        Assert.Equal((9_500L, 11_000L + 32_768L), (thread.TokensUsed, thread.TokensReserved));
+        Assert.Equal(UsageStatus.Unknown, Assert.Single(await Store.ListUsageAsync(other.Thread.Id, default)).Status);
+    }
+
+    /// <summary>What a starting host does. The first real run left a call Reserved for ever when
+    /// its host was stopped mid-call: 52,577 tokens of the task's budget that nothing would
+    /// ever release.</summary>
+    [SkippableFact]
+    public async Task Reconcile_AtStartup_AlsoTakesCallsAPreviousHostLeftReserved_OnEveryThread()
+    {
+        var first = await RunningAsync(cap: 900_000);
+        var second = await RunningAsync("other-repo", cap: 900_000);
+        await Store.ReserveAsync(Reserve(first, "left-reserved", estimate: 23_900), Real, T0, default);
+        await Store.ReserveAsync(Reserve(first, "left-unknown", estimate: 5_000), Real, T0, default);
+        await Store.MarkUsageUnknownAsync("left-unknown", default);
+        await Store.ReserveAsync(Reserve(first, "fine", estimate: 10_000), Real, T0, default);
+        await Store.SettleAsync("fine", new UsageInfo(9_000, 500), 9_500, T0, default);
+        await Store.ReserveAsync(Reserve(second, "elsewhere", estimate: 7_000), Real, T0, default);
+
+        Assert.Equal(3, await Store.ReconcileUsageAsync(runId: null, T0.AddHours(1), default));
+
+        var one = await ThreadAsync(first.Thread.Id);
+        Assert.Equal((9_500L + 23_900L + 5_000L, 0L), (one.TokensUsed, one.TokensReserved));
+        var two = await ThreadAsync(second.Thread.Id);
+        Assert.Equal((7_000L, 0L), (two.TokensUsed, two.TokensReserved));
+        Assert.Equal(
+            [UsageStatus.Settled, UsageStatus.Estimated, UsageStatus.Estimated],
+            (await Store.ListUsageAsync(first.Thread.Id, default)).Select(u => u.Status).Order());
+        // Doing it again finds nothing: a call is reconciled once.
+        Assert.Equal(0, await Store.ReconcileUsageAsync(null, T0.AddHours(2), default));
+        Assert.Equal(one.TokensUsed, (await ThreadAsync(first.Thread.Id)).TokensUsed);
+    }
+
+    /// <summary>A call reserved at the cached rate held less than its full input estimate; it
+    /// is charged what was held, never more.</summary>
+    [SkippableFact]
+    public async Task Reconcile_NeverChargesMoreThanWasReserved()
+    {
+        var running = await RunningAsync(cap: 5_000);
+        var command = Reserve(running, "cached", estimate: 23_500) with { ExpectedCachedInput = 22_800 };
+        var admitted = Assert.IsType<Admitted>((await Store.ReserveAsync(command, Real with { MinimumOutputTokens = 1_000 }, T0, default)).Decision);
+        Assert.Equal(5_000, admitted.Reserved);
+        await Store.MarkUsageUnknownAsync("cached", default);
+
+        await Store.ReconcileUsageAsync(running.Run.Id, T0, default);
+
+        var thread = await ThreadAsync(running.Thread.Id);
+        Assert.Equal((5_000L, 0L), (thread.TokensUsed, thread.TokensReserved));
+    }
+
+    [SkippableFact]
+    public async Task Reconcile_WithNothingToDo_ChangesNothing()
+    {
+        var running = await RunningAsync(cap: 100_000);
+        var revision = (await ThreadAsync(running.Thread.Id)).Revision;
+
+        Assert.Equal(0, await Store.ReconcileUsageAsync(null, T0, default));
+        Assert.Equal(0, await Store.ReconcileUsageAsync(Guid.NewGuid(), T0, default));
+
+        Assert.Equal(revision, (await ThreadAsync(running.Thread.Id)).Revision);
+    }
+
+    // ---- Withdrawing a change request ----
+
+    /// <summary>A task that has been handed off and then asked for changes: a queued rework run.</summary>
+    private async Task<(ClaimedRun First, Guid ReworkRunId)> ReworkQueuedAsync()
+    {
+        var running = await RunningAsync();
+        await Store.SetThreadBranchAsync(running.Thread.Id, "factory/1a2b-add-csv-export", "base000", default);
+        await Store.SaveHandoffAsync(new HandoffRecord
+        {
+            RunId = running.Run.Id, ThreadId = running.Thread.Id, Branch = "factory/1a2b-add-csv-export", CommitSha = "1c9e2b4",
+            PullRequestNumber = 12, PullRequestUrl = "https://github.com/acme/salesapp/pull/12", EvidenceJson = "{}", CreatedAt = T0,
+        }, default);
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff, "Ready for human testing.") with { Stage = Stage.Handoff, MessageKind = MessageKind.Handoff }, T0, default);
+        var rework = await Store.DispatchAsync(running.Thread.Id, Admin, Guid.NewGuid().ToString(), "How do I set up manual tests?", T0.AddMinutes(1), default);
+        Assert.Equal(DispatchOutcome.Queued, rework.Outcome);
+        return (running, rework.RunId!.Value);
+    }
+
+    private async Task<int> LeasesAsync(Guid threadId)
+    {
+        await using var db = await Contexts.CreateDbContextAsync();
+        return await db.Leases.CountAsync(l => l.ThreadId == threadId);
+    }
+
+    /// <summary>The first real run's dead end: a question sent with @factory became a rework run,
+    /// and there was no way back to the handoff it had interrupted.</summary>
+    [SkippableFact]
+    public async Task Withdraw_AQueuedChangeRequest_EndsItsRun_AndReturnsTheTaskToItsHandoff()
+    {
+        var (first, reworkRunId) = await ReworkQueuedAsync();
+
+        var result = await Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(2), default);
+
+        Assert.Equal((LifecycleState.AwaitingHumanTesting, Stage.Handoff), (result.Thread.State, result.Thread.Stage));
+        Assert.Null(result.Thread.StateReason);
+        Assert.Equal("salesapp", result.Project.GitHubRepository);
+        // Never claimed, so it never held the repository or touched the working copy.
+        Assert.False(result.HeldLease);
+
+        var run = (await Store.GetRunAsync(reworkRunId, default))!;
+        Assert.Equal((RunStatus.Finished, StopReason.Withdrawn, T0.AddMinutes(2)), (run.Status, run.StopReason!.Value, run.EndedAt!.Value));
+        var details = (await Store.GetThreadAsync(first.Thread.Id, default))!;
+        Assert.Equal("Change request withdrawn. The task is back at its last handoff.", details.Messages[^1].Text);
+        Assert.Equal((MessageAuthor.User, MessageKind.Status), (details.Messages[^1].Author, details.Messages[^1].Kind));
+        // The handoff it returns to is still the first run's.
+        Assert.Equal("1c9e2b4", details.LatestHandoff!.CommitSha);
+        // Nothing is left for the coordinator to pick up.
+        Assert.Null(await Store.ClaimNextRunAsync(5, T0.AddMinutes(3), default));
+    }
+
+    [SkippableFact]
+    public async Task Withdraw_ThenAccept_Works_AndSoDoesAskingForChangesAgain()
+    {
+        var (first, _) = await ReworkQueuedAsync();
+        await Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(2), default);
+
+        var again = await Store.DispatchAsync(first.Thread.Id, Admin, Guid.NewGuid().ToString(), "Quote fields with commas.", T0.AddMinutes(3), default);
+        Assert.Equal(DispatchOutcome.Queued, again.Outcome);
+        await Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(4), default);
+
+        var accepted = await Store.ApplyUserActionAsync(first.Thread.Id, Admin, LifecycleTrigger.Accept, T0.AddMinutes(5), default);
+        Assert.Equal(LifecycleState.Accepted, accepted.State);
+    }
+
+    /// <summary>A rework run that has started holds the repository and has edits in the working
+    /// copy. The lease is kept so the caller can discard them before anyone else gets in.</summary>
+    [SkippableFact]
+    public async Task Withdraw_ASuspendedChangeRequest_KeepsTheLease_UntilItIsReleased()
+    {
+        var (first, reworkRunId) = await ReworkQueuedAsync();
+        var claimed = (await Store.ClaimNextRunAsync(5, T0.AddMinutes(2), default))!;
+        Assert.Equal(reworkRunId, claimed.Run.Id);
+        await Store.StopRunAsync(Stop(reworkRunId, LifecycleTrigger.Block, StopReason.TurnFaulted, "A run in phase Turn cannot start.") with { Stage = Stage.Implement }, T0.AddMinutes(3), default);
+
+        var result = await Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(4), default);
+
+        Assert.True(result.HeldLease);
+        Assert.Equal(LifecycleState.AwaitingHumanTesting, result.Thread.State);
+        Assert.Equal(1, await LeasesAsync(first.Thread.Id));
+
+        await Store.ReleaseLeaseAsync(first.Thread.Id, default);
+        Assert.Equal(0, await LeasesAsync(first.Thread.Id));
+        // Releasing again, or for a thread with no lease, is harmless.
+        await Store.ReleaseLeaseAsync(first.Thread.Id, default);
+        await Store.ReleaseLeaseAsync(Guid.NewGuid(), default);
+    }
+
+    [SkippableTheory]
+    [InlineData(LifecycleTrigger.ExhaustBudget, StopReason.BudgetExhausted)]
+    [InlineData(LifecycleTrigger.Pause, StopReason.PausedByUser)]
+    [InlineData(LifecycleTrigger.Interrupt, StopReason.Interrupted)]
+    [InlineData(LifecycleTrigger.Block, StopReason.NoProgress)]
+    public async Task Withdraw_WorksFromEveryStoppedState(LifecycleTrigger stoppedBy, StopReason reason)
+    {
+        var (first, reworkRunId) = await ReworkQueuedAsync();
+        await Store.ClaimNextRunAsync(5, T0.AddMinutes(2), default);
+        await Store.StopRunAsync(Stop(reworkRunId, stoppedBy, reason) with { Stage = Stage.Implement }, T0.AddMinutes(3), default);
+
+        var result = await Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(4), default);
+
+        Assert.Equal(LifecycleState.AwaitingHumanTesting, result.Thread.State);
+        Assert.Equal(StopReason.Withdrawn, (await Store.GetRunAsync(reworkRunId, default))!.StopReason);
+    }
+
+    [SkippableFact]
+    public async Task Withdraw_WhileWaitingForADecision_ClosesTheQuestion()
+    {
+        var (first, reworkRunId) = await ReworkQueuedAsync();
+        await Store.ClaimNextRunAsync(5, T0.AddMinutes(2), default);
+        var decision = await Store.OpenDecisionAsync(
+            reworkRunId, new Litos.SoftwareFactory.Contracts.DecisionSubmission("Which tests?", "Not stated.", ["Unit", "Manual"]), T0.AddMinutes(3), default);
+        await Store.StopRunAsync(
+            Stop(reworkRunId, LifecycleTrigger.RequestDecision, StopReason.DecisionNeeded, "Which tests?") with { Stage = Stage.Implement, DecisionId = decision.Id, MessageKind = MessageKind.Decision },
+            T0.AddMinutes(3), default);
+
+        await Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(4), default);
+
+        var closed = Assert.Single((await Store.GetThreadAsync(first.Thread.Id, default))!.Decisions);
+        Assert.Equal(DecisionStatus.Answered, closed.Status);
+        Assert.Equal("Not answered: the change request was withdrawn.", closed.Answer);
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.AnswerDecisionAsync(decision.Id, Admin, "Unit", T0.AddMinutes(5), default));
+    }
+
+    [SkippableFact]
+    public async Task Withdraw_ARunningChangeRequest_IsRefused_UntilItIsPaused()
+    {
+        var (first, _) = await ReworkQueuedAsync();
+        await Store.ClaimNextRunAsync(5, T0.AddMinutes(2), default);
+
+        var refusal = await Assert.ThrowsAsync<StoreConflictException>(() => Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(3), default));
+
+        Assert.Contains("Pause the task, then withdraw it", refusal.Message);
+        Assert.Equal(LifecycleState.Running, (await ThreadAsync(first.Thread.Id)).State);
+    }
+
+    /// <summary>The original work is not a change request: there is no handoff to go back to,
+    /// and stopping it is what Cancel is for.</summary>
+    [SkippableFact]
+    public async Task Withdraw_TheOriginalRun_IsRefused()
+    {
+        var (_, thread, runId) = await QueuedAsync();
+
+        var queued = await Assert.ThrowsAsync<StoreConflictException>(() => Store.WithdrawChangesAsync(thread.Id, Admin, T0, default));
+        Assert.Contains("no change request to withdraw", queued.Message);
+
+        await Store.ClaimNextRunAsync(5, T0, default);
+        await Store.StopRunAsync(Stop(runId, LifecycleTrigger.Block, StopReason.TurnFaulted) with { Stage = Stage.Implement }, T0, default);
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.WithdrawChangesAsync(thread.Id, Admin, T0, default));
+        Assert.Equal(LifecycleState.Blocked, (await ThreadAsync(thread.Id)).State);
+        Assert.Equal(RunStatus.Suspended, (await Store.GetRunAsync(runId, default))!.Status);
+    }
+
+    [SkippableFact]
+    public async Task Withdraw_WhenNothingWasRequested_OrTheTaskIsClosed_IsRefused()
+    {
+        var running = await RunningAsync();
+        await Store.SaveHandoffAsync(new HandoffRecord { RunId = running.Run.Id, ThreadId = running.Thread.Id, Branch = "factory/x", EvidenceJson = "{}", CreatedAt = T0 }, default);
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
+
+        // Waiting for testing, with no change request made.
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.WithdrawChangesAsync(running.Thread.Id, Admin, T0, default));
+        await Store.ApplyUserActionAsync(running.Thread.Id, Admin, LifecycleTrigger.Accept, T0, default);
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.WithdrawChangesAsync(running.Thread.Id, Admin, T0, default));
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.WithdrawChangesAsync(Guid.NewGuid(), Admin, T0, default));
     }
 
     [SkippableFact]
@@ -731,13 +1034,13 @@ public abstract class FactoryStoreContract : IAsyncLifetime
     [SkippableFact]
     public async Task ConcurrentReservations_NeverAdmitMoreThanFits()
     {
-        var running = await RunningAsync(cap: 50_000); // each call reserves 20,900: two fit, a third does not
+        var running = await RunningAsync(cap: 50_000); // each call reserves 20,500: two fit, a third does not
 
         var results = await Task.WhenAll(Enumerable.Range(0, 6).Select(i =>
             Task.Run(() => Store.ReserveAsync(Reserve(running, $"key-{i}"), Policy, T0, default))));
 
         Assert.Equal(2, results.Count(r => r.Decision is Admitted));
-        Assert.Equal(41_800, (await ThreadAsync(running.Thread.Id)).TokensReserved);
+        Assert.Equal(41_000, (await ThreadAsync(running.Thread.Id)).TokensReserved);
     }
 
     [SkippableFact]

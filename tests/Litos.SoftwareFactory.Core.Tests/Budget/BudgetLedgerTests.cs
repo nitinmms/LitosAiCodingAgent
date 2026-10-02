@@ -13,19 +13,164 @@ public class BudgetLedgerTests
     {
         var budget = new BudgetSnapshot(TaskCap: 100_000, TaskUsed: 80_000, TaskReserved: 0);
 
-        var decision = BudgetLedger.Admit(budget, estimatedInputTokens: 15_000, Policy);
+        var decision = BudgetLedger.Admit(budget, expectedInputCharge: 15_000, Policy);
 
         var refused = Assert.IsType<Refused>(decision);
         Assert.Equal(RefusalReason.TaskBudget, refused.Reason);
-        Assert.Equal(20_900, refused.Needed);   // (15,000 + 4,000) + 10%
+        Assert.Equal(20_500, refused.Needed);   // 15,000 + 10%, and 4,000 of output
         Assert.Equal(20_000, refused.Remaining);
     }
 
     [Fact]
-    public void ReservationFor_IsInputPlusOutputAllowancePlusMargin()
+    public void ReservationFor_IsInputPlusItsMargin_PlusTheOutputAllowance()
     {
-        Assert.Equal(20_900, BudgetLedger.ReservationFor(15_000, Policy));
+        // The margin covers estimator error, so it is on the input only: the output limit is
+        // enforced by the provider and cannot be exceeded.
+        Assert.Equal(16_500, BudgetLedger.InputReservation(15_000, Policy));
+        Assert.Equal(20_500, BudgetLedger.ReservationFor(15_000, Policy));
     }
+
+    // ---- A call is reserved for about what it will cost ----
+    //
+    // In the first real run a call that cost about 6,000 tokens held 55,000: its input was
+    // reserved in full although nine tenths of it came from the cache at a tenth of the price,
+    // and the whole output allowance had to fit although replies were a few hundred tokens.
+
+    private static readonly BudgetPolicy Real = new() { OutputAllowanceTokens = 32_768, MinimumOutputTokens = 4_096, Margin = 0.10 };
+
+    [Fact]
+    public void ExpectedInputCharge_CountsTheExpectedCachedPartAtTheWeight()
+    {
+        // 24,000 estimated, of which the previous call's 23,000 should come from the cache.
+        Assert.Equal(1_000 + 2_300, BudgetLedger.ExpectedInputCharge(24_000, 23_000, 0.10));
+        Assert.Equal(24_000, BudgetLedger.ExpectedInputCharge(24_000, 0, 0.10));
+        Assert.Equal(24_000, BudgetLedger.ExpectedInputCharge(24_000, 23_000, 1));
+        Assert.Equal(1_000, BudgetLedger.ExpectedInputCharge(24_000, 23_000, 0));
+    }
+
+    [Theory]
+    [InlineData(24_000, 30_000, 2_400)]   // cannot expect more from the cache than the request holds
+    [InlineData(24_000, -5, 24_000)]
+    [InlineData(0, 100, 0)]
+    [InlineData(11, 11, 2)]               // the cached share rounds up
+    public void ExpectedInputCharge_ClampsTheCachedPartToTheEstimate(long estimate, long cached, long expected) =>
+        Assert.Equal(expected, BudgetLedger.ExpectedInputCharge(estimate, cached, 0.10));
+
+    [Fact]
+    public void ExpectedInputCharge_BadArguments_AreRejected()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => BudgetLedger.ExpectedInputCharge(-1, 0, 0.10));
+        Assert.Throws<ArgumentOutOfRangeException>(() => BudgetLedger.ExpectedInputCharge(1, 0, 1.5));
+        Assert.Throws<ArgumentOutOfRangeException>(() => BudgetLedger.ExpectedInputCharge(1, 0, -0.1));
+    }
+
+    [Fact]
+    public void Admit_WithRoomToSpare_ReservesTheInputAndTheWholeOutputAllowance()
+    {
+        var budget = new BudgetSnapshot(TaskCap: 300_000, TaskUsed: 100_000, TaskReserved: 0);
+
+        var admitted = Assert.IsType<Admitted>(BudgetLedger.Admit(budget, 10_000, Real));
+
+        Assert.Equal(32_768, admitted.MaxOutputTokens);
+        Assert.Equal(11_000 + 32_768, admitted.Reserved);
+    }
+
+    /// <summary>The call does not need room for the whole output allowance: it is sent with its
+    /// output limited to what remains, so it still cannot spend past the cap.</summary>
+    [Fact]
+    public void Admit_WithLessThanTheOutputAllowanceLeft_IsStillAdmitted_WithItsOutputLimitedToWhatRemains()
+    {
+        var budget = new BudgetSnapshot(TaskCap: 300_000, TaskUsed: 280_000, TaskReserved: 0);
+
+        var admitted = Assert.IsType<Admitted>(BudgetLedger.Admit(budget, 10_000, Real));
+
+        Assert.Equal(9_000, admitted.MaxOutputTokens);     // 20,000 left less 11,000 for the input
+        Assert.Equal(20_000, admitted.Reserved);           // everything that remains, and no more
+        Assert.Equal(0, BudgetLedger.Reserve(budget, admitted.Reserved).TaskRemaining);
+    }
+
+    [Fact]
+    public void Admit_NeedsRoomForTheInputAndTheMinimumOutput()
+    {
+        // 11,000 for the input and 4,096 of output: 15,096.
+        var enough = new BudgetSnapshot(TaskCap: 15_096, TaskUsed: 0, TaskReserved: 0);
+        var short1 = new BudgetSnapshot(TaskCap: 15_095, TaskUsed: 0, TaskReserved: 0);
+
+        Assert.Equal(4_096, Assert.IsType<Admitted>(BudgetLedger.Admit(enough, 10_000, Real)).MaxOutputTokens);
+        var refused = Assert.IsType<Refused>(BudgetLedger.Admit(short1, 10_000, Real));
+        Assert.Equal((15_096L, 15_095L), (refused.Needed, refused.Remaining));
+    }
+
+    [Fact]
+    public void Admit_TheTighterOfTheTaskAndTheQuota_LimitsTheOutput()
+    {
+        var budget = new BudgetSnapshot(
+            TaskCap: 300_000, TaskUsed: 0, TaskReserved: 0, QuotaCap: 1_000_000, QuotaUsed: 975_000, QuotaReserved: 0);
+
+        var admitted = Assert.IsType<Admitted>(BudgetLedger.Admit(budget, 10_000, Real));
+
+        Assert.Equal(14_000, admitted.MaxOutputTokens); // the quota has 25,000 left
+        Assert.Equal(25_000, admitted.Reserved);
+    }
+
+    [Fact]
+    public void Admit_NoCap_GetsTheWholeOutputAllowance()
+    {
+        var admitted = Assert.IsType<Admitted>(BudgetLedger.Admit(new BudgetSnapshot(null, 9_000_000, 0), 10_000, Real));
+
+        Assert.Equal(32_768, admitted.MaxOutputTokens);
+    }
+
+    /// <summary>The first real run's call 83: 23,500 estimated, 22,800 of it expected from the
+    /// cache. It reserved 58,689 and cost 6,505.</summary>
+    [Fact]
+    public void Admit_AMostlyCachedCall_HoldsItsLikelyCost_NotTenTimesIt()
+    {
+        var input = BudgetLedger.ExpectedInputCharge(23_500, 22_800, 0.10);
+
+        Assert.Equal(700 + 2_280, input);
+        Assert.Equal(3_278, BudgetLedger.InputReservation(input, Real));
+        // With 10,000 left the old rule paused the task; now the call goes ahead.
+        var admitted = Assert.IsType<Admitted>(BudgetLedger.Admit(new BudgetSnapshot(300_000, 290_000, 0), input, Real));
+        Assert.Equal(10_000 - 3_278, admitted.MaxOutputTokens);
+    }
+
+    [Fact]
+    public void Policy_MinimumOutputAboveTheAllowance_UsesTheAllowance()
+    {
+        var policy = new BudgetPolicy { OutputAllowanceTokens = 1_000, MinimumOutputTokens = 4_096, Margin = 0 };
+
+        var admitted = Assert.IsType<Admitted>(BudgetLedger.Admit(new BudgetSnapshot(1_100, 0, 0), 100, policy));
+
+        Assert.Equal(1_000, admitted.MaxOutputTokens);
+    }
+
+    // ---- Reconciling a call whose usage will never be reported ----
+
+    [Fact]
+    public void ReconciledCharge_IsTheInputEstimate_AndReleasesTheOutputItNeverSaw()
+    {
+        // The stuck call of the first real run: 23,900 estimated input, 52,577 reserved.
+        Assert.Equal(23_900, BudgetLedger.ReconciledCharge(estimatedInputTokens: 23_900, reserved: 52_577));
+
+        var budget = BudgetLedger.Reserve(new BudgetSnapshot(1_400_000, 1_283_335, 0), 52_577);
+        var after = BudgetLedger.Settle(budget, 52_577, BudgetLedger.ReconciledCharge(23_900, 52_577));
+        Assert.Equal((1_307_235L, 0L), (after.TaskUsed, after.TaskReserved));
+    }
+
+    [Fact]
+    public void ReconciledCharge_IsNeverMoreThanWasReserved()
+    {
+        // Input reserved at the cached rate: the full estimate is more than was ever held.
+        Assert.Equal(3_278, BudgetLedger.ReconciledCharge(estimatedInputTokens: 23_500, reserved: 3_278));
+        Assert.Equal(0, BudgetLedger.ReconciledCharge(0, 500));
+    }
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(0, -1)]
+    public void ReconciledCharge_NegativeFigures_AreRejected(long estimate, long reserved) =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => BudgetLedger.ReconciledCharge(estimate, reserved));
 
     [Fact]
     public void ReservationFor_RoundsUp_SoAFractionalTokenIsNeverUnderReserved()
@@ -44,18 +189,18 @@ public class BudgetLedgerTests
     [Fact]
     public void Admit_ExactlyFits_IsAdmitted()
     {
-        var budget = new BudgetSnapshot(TaskCap: 100_900, TaskUsed: 80_000, TaskReserved: 0);
+        var budget = new BudgetSnapshot(TaskCap: 100_500, TaskUsed: 80_000, TaskReserved: 0);
 
         var admitted = Assert.IsType<Admitted>(BudgetLedger.Admit(budget, 15_000, Policy));
 
-        Assert.Equal(20_900, admitted.Reserved);
+        Assert.Equal(20_500, admitted.Reserved);
         Assert.Equal(4_000, admitted.MaxOutputTokens); // the output cap the call is sent with
     }
 
     [Fact]
     public void Admit_OneTokenShort_IsRefused()
     {
-        var budget = new BudgetSnapshot(TaskCap: 100_899, TaskUsed: 80_000, TaskReserved: 0);
+        var budget = new BudgetSnapshot(TaskCap: 100_499, TaskUsed: 80_000, TaskReserved: 0);
 
         Assert.IsType<Refused>(BudgetLedger.Admit(budget, 15_000, Policy));
     }
@@ -420,13 +565,16 @@ public class BudgetLedgerTests
 
         Assert.Equal(0.10, policy.Margin);
         Assert.Equal(0.10, policy.CachedInputWeight);
+        Assert.Equal(4_096, policy.MinimumOutputTokens);
+        Assert.Equal(TimeSpan.FromMinutes(4), policy.CacheWindow);
         // Room for a reasoning model's thinking and its reply: 8,192 was not enough in practice.
         Assert.Equal(32_768, policy.OutputAllowanceTokens);
     }
 
     [Fact]
-    public void UsageStatus_HasTheThreeLedgerStates()
+    public void UsageStatus_HasTheLedgerStates_InAnOrderThatMustNotChange()
     {
-        Assert.Equal([UsageStatus.Reserved, UsageStatus.Settled, UsageStatus.Unknown], Enum.GetValues<UsageStatus>());
+        // Stored by number: a new state goes at the end.
+        Assert.Equal([UsageStatus.Reserved, UsageStatus.Settled, UsageStatus.Unknown, UsageStatus.Estimated], Enum.GetValues<UsageStatus>());
     }
 }

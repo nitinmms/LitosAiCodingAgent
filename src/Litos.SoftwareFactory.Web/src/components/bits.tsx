@@ -48,13 +48,15 @@ export function Rail({ stage, state }: { stage: Stage; state: LifecycleState }) 
   const index = STAGES.indexOf(stage);
   const you = turnLabel(state).cls === 'you';
   const finished = state === 'Accepted';
+  // A cancelled task is not at any station: the rail shows how far it got, and nothing as current.
+  const abandoned = state === 'Cancelled';
 
   return (
     <div className="rail" role="list" aria-label="Stage">
       {STAGES.map((name, i) => {
         const past = i < index || (finished && i === index);
         const skipped = past && name === 'Spec';
-        const now = i === index && !finished;
+        const now = i === index && !finished && !abandoned;
         const classes = ['st'];
         if (past) classes.push(skipped ? 'skip' : 'done');
         if (now) {

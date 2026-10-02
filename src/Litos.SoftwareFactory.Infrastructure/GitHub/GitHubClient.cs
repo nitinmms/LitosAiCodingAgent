@@ -80,6 +80,22 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
         return ToRef(await createResponse.Content.ReadFromJsonAsync<PullRequestResponse>(JsonOptions, ct));
     }
 
+    public async Task<PullRequestState> GetPullRequestStateAsync(string owner, string repository, int number, CancellationToken ct)
+    {
+        using var response = await http.GetAsync(
+            $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repository)}/pulls/{number}", ct);
+        await EnsureSuccessAsync(response, "read the pull request", ct);
+        var pull = await response.Content.ReadFromJsonAsync<PullRequestResponse>(JsonOptions, ct)
+            ?? throw new GitHubException("GitHub's response did not describe a pull request.");
+
+        // GitHub's "state" is only open or closed; merged and draft are separate flags.
+        if (pull.Merged == true)
+            return PullRequestState.Merged;
+        if (pull.State == "closed")
+            return PullRequestState.Closed;
+        return pull.Draft == true ? PullRequestState.Draft : PullRequestState.Open;
+    }
+
     private static PullRequestRef ToRef(PullRequestResponse? response) =>
         response is { Number: > 0, HtmlUrl: { Length: > 0 } url }
             ? new PullRequestRef(response.Number, url)
@@ -110,7 +126,7 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
 
     private sealed record UpdatePullRequest(string Title, string Body);
 
-    private sealed record PullRequestResponse(int Number, string? HtmlUrl);
+    private sealed record PullRequestResponse(int Number, string? HtmlUrl, string? State = null, bool? Draft = null, bool? Merged = null);
 
     private sealed record ErrorResponse(string? Message);
 }

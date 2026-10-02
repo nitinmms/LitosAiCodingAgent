@@ -83,7 +83,7 @@ public sealed class GatewayTests : IAsyncLifetime
         var thread = await ThreadAsync();
         Assert.Equal((15_000L, 0L), (thread.TokensUsed, thread.TokensReserved));
         var entry = await OnlyEntryAsync();
-        Assert.Equal((UsageStatus.Settled, 15_000L, 20_900L, 15_000L), (entry.Status, entry.EstimatedInputRaw, entry.Reserved, entry.Charged));
+        Assert.Equal((UsageStatus.Settled, 15_000L, 20_500L, 15_000L), (entry.Status, entry.EstimatedInputRaw, entry.Reserved, entry.Charged));
         Assert.Equal(_run.UserId, entry.UserId);
     }
 
@@ -97,7 +97,7 @@ public sealed class GatewayTests : IAsyncLifetime
 
         var error = Assert.IsType<GatewayError>(Assert.Single(events));
         Assert.Equal(GatewayErrorCodes.BudgetExhausted, error.Code);
-        Assert.Contains("20,900", error.Message);
+        Assert.Contains("20,500", error.Message);
         Assert.Contains("20,000", error.Message);
         Assert.Empty(_host.Provider.Requests);                       // nothing was spent
         Assert.Equal(error.Message, _run.BudgetRefusal);            // the coordinator turns this into PausedBudget
@@ -212,7 +212,103 @@ public sealed class GatewayTests : IAsyncLifetime
         Assert.Equal(15_000, entries[0].EstimatedInputRaw);
         // Baseline 22,000 + ("first" = 5 chars → 2 tokens) + (4,000 chars → 1,000 tokens).
         Assert.Equal(23_002, entries[1].EstimatedInputRaw);
-        Assert.Equal(new SessionBaseline(3, 23_000), _run.Baselines["session-1"]);
+        var baseline = _run.Baselines["session-1"];
+        Assert.Equal((3, 23_000), (baseline.MessageCount, baseline.TotalInputTokens));
+        Assert.NotNull(baseline.SettledAt);
+    }
+
+    // ---- A call is reserved for about what it will cost ----
+
+    /// <summary>
+    /// The gap the first real run showed: calls that cost about 6,000 tokens each held 55,000,
+    /// because the whole input was reserved in full although the cache served nine tenths of it.
+    /// Once a session has been served from the cache, the repeated part is reserved at the
+    /// cached weight.
+    /// </summary>
+    [Fact]
+    public async Task AfterACacheHit_TheNextCallInTheSession_ReservesItsRepeatedInputAtTheCachedWeight()
+    {
+        await StartRunAsync(cap: 500_000);
+        _host.Provider.EnqueueReply("first", new UsageInfo(15_000, 300));                 // nothing cached yet
+        _host.Provider.EnqueueReply("second", new UsageInfo(1_000, 300, 0, 15_000));     // the cache is hit
+        _host.Provider.EnqueueReply("third", new UsageInfo(1_100, 300, 0, 16_000));
+        ChatMessage[] turn2 = [ChatMessage.Assistant([new TextBlock("first")]), ChatMessage.User(new string('y', 4_000))];
+        ChatMessage[] turn3 = [.. turn2, ChatMessage.Assistant([new TextBlock("second")]), ChatMessage.User(new string('z', 4_000))];
+
+        await CallAsync(Request());
+        await CallAsync(Request(more: turn2));
+        await CallAsync(Request(more: turn3));
+
+        var entries = await _host.Store.ListUsageAsync(_threadId, default);
+        // First call: no baseline. Second: a baseline, but the cache has not been seen to work.
+        Assert.Equal(16_500 + 4_000, entries[0].Reserved);
+        Assert.Equal((long)Math.Ceiling(entries[1].EstimatedInput * 1.1m) + 4_000, entries[1].Reserved);
+        // Third: the second call's 16,000 input is expected from the cache, at a tenth.
+        var appended = entries[2].EstimatedInput - 16_000;
+        Assert.Equal((long)Math.Ceiling((appended + 1_600) * 1.1m) + 4_000, entries[2].Reserved);
+        Assert.True(entries[2].Reserved < entries[1].Reserved / 2, "The cached call should hold far less than the uncached one.");
+        // And what each was charged: cache reads at a tenth.
+        Assert.Equal(new[] { 15_300L, 1_000 + 1_500 + 300, 1_100 + 1_600 + 300 }, entries.Select(e => e.Charged));
+    }
+
+    [Fact]
+    public async Task ACacheHitTooLongAgo_IsNotCountedOn_AndTheCallIsReservedInFull()
+    {
+        _host.Options.Budget = _host.Options.Budget with { CacheWindow = TimeSpan.Zero };
+        await StartRunAsync(cap: 500_000);
+        _host.Provider.EnqueueReply("first", new UsageInfo(1_000, 300, 0, 14_000));
+        _host.Provider.EnqueueReply("second", new UsageInfo(1_000, 300, 0, 15_000));
+
+        await CallAsync(Request());
+        await Task.Delay(30);
+        await CallAsync(Request(more: [ChatMessage.Assistant([new TextBlock("first")]), ChatMessage.User(new string('y', 4_000))]));
+
+        var entries = await _host.Store.ListUsageAsync(_threadId, default);
+        Assert.Equal((long)Math.Ceiling(entries[1].EstimatedInput * 1.1m) + 4_000, entries[1].Reserved);
+    }
+
+    /// <summary>With less than the output allowance left, the old rule paused the task. Now the
+    /// call is sent with its output limited to what remains, so it still cannot pass the cap.</summary>
+    [Fact]
+    public async Task NearTheCap_TheCallIsSentWithItsOutputLimitedToWhatRemains()
+    {
+        _host.Options.Budget = _host.Options.Budget with { MinimumOutputTokens = 1_000 };
+        await StartRunAsync(cap: 18_500);
+        _host.Provider.EnqueueReply("done", new UsageInfo(15_000, 800));
+
+        var events = await CallAsync(Request());
+
+        Assert.IsType<GatewayMessageCompleted>(events[^1]);
+        Assert.Equal(2_000, Assert.Single(_host.Provider.Requests).MaxOutputTokens);   // 18,500 less 16,500 for the input
+        Assert.Equal(18_500, (await OnlyEntryAsync()).Reserved);
+        Assert.Equal((15_800L, 0L), ((await ThreadAsync()).TokensUsed, (await ThreadAsync()).TokensReserved));
+    }
+
+    [Fact]
+    public async Task WithoutRoomForTheMinimumOutput_TheCallIsRefused()
+    {
+        _host.Options.Budget = _host.Options.Budget with { MinimumOutputTokens = 1_000 };
+        await StartRunAsync(cap: 17_499);
+
+        var error = Assert.IsType<GatewayError>(Assert.Single(await CallAsync(Request())));
+
+        Assert.Equal(GatewayErrorCodes.BudgetExhausted, error.Code);
+        Assert.Contains("17,500", error.Message);
+        Assert.Empty(_host.Provider.Requests);
+    }
+
+    /// <summary>A reply cut off by a limit the budget imposed says so in the same way: the
+    /// message names the limit the call was actually sent with.</summary>
+    [Fact]
+    public async Task ReplyCutOffAtALimitTheBudgetImposed_NamesThatLimit()
+    {
+        _host.Options.Budget = _host.Options.Budget with { MinimumOutputTokens = 1_000 };
+        await StartRunAsync(cap: 18_500);
+        _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(Completed(new UsageInfo(15_000, 2_000, ReasoningTokens: 2_000))));
+
+        var error = Assert.IsType<GatewayError>(Assert.Single(await CallAsync(Request())));
+
+        Assert.StartsWith("The model reached the output limit of 2,000 tokens without producing a reply", error.Message);
     }
 
     [Fact]
@@ -251,7 +347,7 @@ public sealed class GatewayTests : IAsyncLifetime
         Assert.Contains(events, e => e is GatewayHeartbeat);          // the worker's watchdog stays quiet during the wait
         Assert.IsType<GatewayMessageCompleted>(events[^1]);
         Assert.DoesNotContain(events, e => e is GatewayError);
-        Assert.Equal(20_900, reservedDuringRetry);
+        Assert.Equal(20_500, reservedDuringRetry);
         Assert.Equal(2, _host.Provider.Requests.Count);
         Assert.Single(await _host.Store.ListUsageAsync(_threadId, default));
         Assert.Equal(14_500, (await ThreadAsync()).TokensUsed);
@@ -308,7 +404,7 @@ public sealed class GatewayTests : IAsyncLifetime
 
         Assert.IsType<GatewayTextDelta>(events[0]);
         Assert.Equal("The connection was reset.", Assert.IsType<GatewayError>(events[^1]).Message);
-        Assert.Equal(20_900, (await ThreadAsync()).TokensReserved);
+        Assert.Equal(20_500, (await ThreadAsync()).TokensReserved);
         Assert.Equal(UsageStatus.Unknown, (await OnlyEntryAsync()).Status);
     }
 
@@ -412,7 +508,7 @@ public sealed class GatewayTests : IAsyncLifetime
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CallAsync(Request(), cts.Token));
 
         Assert.Equal(UsageStatus.Unknown, (await OnlyEntryAsync()).Status);
-        Assert.Equal(20_900, (await ThreadAsync()).TokensReserved);
+        Assert.Equal(20_500, (await ThreadAsync()).TokensReserved);
     }
 
     private static async IAsyncEnumerable<AgentEvent> SlowAsync(

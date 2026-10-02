@@ -14,6 +14,10 @@ public enum UsageStatus
     /// <summary>The call ended without reported usage (timeout, cancellation, provider omitted
     /// it). The reservation stays charged until reconciled — it is never silently refunded.</summary>
     Unknown,
+
+    /// <summary>An Unknown call, reconciled once nothing could report its usage any more: it was
+    /// charged the host's own input estimate and the rest of its reservation was released.</summary>
+    Estimated,
 }
 
 /// <summary>
@@ -65,6 +69,17 @@ public sealed record BudgetPolicy
     /// a cache read. 1 counts cached input in full; tokens written to the cache always do.
     /// </summary>
     public double CachedInputWeight { get; init; } = 0.10;
+
+    /// <summary>
+    /// The least output room a call must be left with to be worth sending. A call is admitted
+    /// when its input and this much output fit; its output limit is then whatever remains, up
+    /// to the allowance. Below this a reply would be cut off before it said anything.
+    /// </summary>
+    public int MinimumOutputTokens { get; init; } = 4_096;
+
+    /// <summary>How long after a call the provider's prompt cache is assumed to still hold that
+    /// call's input. Providers keep it for about five minutes.</summary>
+    public TimeSpan CacheWindow { get; init; } = TimeSpan.FromMinutes(4);
 }
 
 /// <summary>
@@ -75,30 +90,65 @@ public sealed record BudgetPolicy
 public static class BudgetLedger
 {
     /// <summary>
-    /// What a call must reserve: the estimated input plus the output allowance, plus the margin
-    /// on both, rounded up so a fractional token is never under-reserved.
+    /// What a call's input is expected to be charged: the part of the estimate the provider is
+    /// expected to serve from its cache at the cached weight, the rest in full. This is what a
+    /// reservation is built on, so that a call is reserved for about what it will cost — at full
+    /// weight a call that cost 6,000 tokens was holding 55,000.
     /// </summary>
-    public static long ReservationFor(long estimatedInputTokens, BudgetPolicy policy)
+    public static long ExpectedInputCharge(long estimatedInputTokens, long expectedCachedTokens, double cachedInputWeight)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(estimatedInputTokens);
-        return (long)Math.Ceiling((estimatedInputTokens + policy.OutputAllowanceTokens) * (1 + policy.Margin));
+        if (cachedInputWeight is < 0 or > 1 || double.IsNaN(cachedInputWeight))
+            throw new ArgumentOutOfRangeException(nameof(cachedInputWeight), cachedInputWeight, "The weight is a fraction between 0 and 1.");
+
+        var cached = Math.Clamp(expectedCachedTokens, 0, estimatedInputTokens);
+        return estimatedInputTokens - cached + Scale(cached, cachedInputWeight);
     }
+
+    /// <summary>Tokens times a factor, rounded up. In decimal: in binary floating point 2,980 × 1.1
+    /// comes out a hair above 3,278 and would round up to 3,279.</summary>
+    private static long Scale(long tokens, double factor) => (long)Math.Ceiling(tokens * (decimal)factor);
+
+    /// <summary>What is held for a call's input: its expected charge plus the margin for
+    /// estimator error, rounded up so a fractional token is never under-reserved.</summary>
+    public static long InputReservation(long expectedInputCharge, BudgetPolicy policy)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(expectedInputCharge);
+        return Scale(expectedInputCharge, 1 + policy.Margin);
+    }
+
+    /// <summary>
+    /// The most a call can reserve: its input reservation plus the whole output allowance. The
+    /// output limit is exact — the provider enforces it — so it carries no margin.
+    /// </summary>
+    public static long ReservationFor(long expectedInputCharge, BudgetPolicy policy) =>
+        InputReservation(expectedInputCharge, policy) + policy.OutputAllowanceTokens;
 
     /// <summary>
     /// Decides whether a call may be sent. The task's allowance is checked before the user's
     /// quota, so a call that fits neither is reported against the task — the cap the user can
     /// raise from the thread.
     /// </summary>
-    public static AdmissionDecision Admit(BudgetSnapshot budget, long estimatedInputTokens, BudgetPolicy policy)
+    public static AdmissionDecision Admit(BudgetSnapshot budget, long expectedInputCharge, BudgetPolicy policy)
     {
-        var needed = ReservationFor(estimatedInputTokens, policy);
+        // A call is worth sending when its input and a minimum of output fit. It need not have
+        // room for the whole output allowance: its output limit is set to what remains, so it
+        // cannot spend past the cap either way.
+        var input = InputReservation(expectedInputCharge, policy);
+        var needed = input + Math.Min(policy.MinimumOutputTokens, policy.OutputAllowanceTokens);
 
         if (budget.TaskRemaining is { } taskRemaining && needed > taskRemaining)
             return new Refused(RefusalReason.TaskBudget, needed, taskRemaining);
         if (budget.QuotaRemaining is { } quotaRemaining && needed > quotaRemaining)
             return new Refused(RefusalReason.UserQuota, needed, quotaRemaining);
 
-        return new Admitted(needed, policy.OutputAllowanceTokens);
+        long output = policy.OutputAllowanceTokens;
+        if (budget.TaskRemaining is { } task)
+            output = Math.Min(output, task - input);
+        if (budget.QuotaRemaining is { } quota)
+            output = Math.Min(output, quota - input);
+
+        return new Admitted(input + output, (int)output);
     }
 
     /// <summary>The snapshot once an admitted call's reservation is recorded.</summary>
@@ -123,7 +173,7 @@ public static class BudgetLedger
             throw new ArgumentOutOfRangeException(nameof(cachedInputWeight), cachedInputWeight, "The weight is a fraction between 0 and 1.");
 
         long uncached = usage.InputTokens + usage.CacheCreationInputTokens;
-        return uncached + (long)Math.Ceiling(usage.CacheReadInputTokens * cachedInputWeight);
+        return uncached + Scale(usage.CacheReadInputTokens, cachedInputWeight);
     }
 
     /// <summary>True when a provider reported no usage at all — which a local server does when it
@@ -168,6 +218,20 @@ public static class BudgetLedger
     /// stays charged until it is reconciled.
     /// </summary>
     public static BudgetSnapshot KeepUnknown(BudgetSnapshot budget) => budget;
+
+    /// <summary>
+    /// What a call with unknown usage is charged when it is reconciled — once the run that made
+    /// it has stopped, so nothing can report its usage any more. The request was sent, so its
+    /// input is charged, in full, from the estimate it was admitted on (the host cannot know
+    /// what the cache served). Its output never reached the host and cannot be estimated, so
+    /// the output allowance and the margin are released. Never more than was reserved.
+    /// </summary>
+    public static long ReconciledCharge(long estimatedInputTokens, long reserved)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(estimatedInputTokens);
+        ArgumentOutOfRangeException.ThrowIfNegative(reserved);
+        return Math.Min(estimatedInputTokens, reserved);
+    }
 
     /// <summary>
     /// The call was never sent (refused upstream, or failed before the request left the host), so

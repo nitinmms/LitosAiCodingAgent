@@ -208,9 +208,19 @@ export interface UsageCall {
   actualOutput: number;
   actualReasoning: number;
   charged: number;
-  status: 'Reserved' | 'Settled' | 'Unknown';
+  /** Estimated: the provider never reported usage, so the call was charged the host's input estimate. */
+  status: 'Reserved' | 'Settled' | 'Unknown' | 'Estimated';
   createdAt: string;
   settledAt: string | null;
+}
+
+/** Where a task's pull request stands on GitHub now. Unknown: GitHub could not be asked. */
+export type PullRequestState = 'Draft' | 'Open' | 'Merged' | 'Closed' | 'Unknown';
+
+export interface PullRequestInfo {
+  number: number;
+  url: string | null;
+  state: PullRequestState;
 }
 
 export type DispatchOutcome = 'Queued' | 'FollowUp' | 'Duplicate' | 'Rejected';

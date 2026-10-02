@@ -65,6 +65,41 @@ public class GitHubClientTests
         Assert.False(body.RootElement.TryGetProperty("base", out _)); // an update never retargets the PR
     }
 
+    // ---- Where a pull request stands ----
+
+    /// <summary>GitHub's "state" is only open or closed; draft and merged are separate flags.</summary>
+    [Theory]
+    [InlineData("""{"number":1,"state":"open","draft":true,"merged":false}""", PullRequestState.Draft)]
+    [InlineData("""{"number":1,"state":"open","draft":false,"merged":false}""", PullRequestState.Open)]
+    [InlineData("""{"number":1,"state":"closed","draft":false,"merged":true}""", PullRequestState.Merged)]
+    [InlineData("""{"number":1,"state":"closed","draft":false,"merged":false}""", PullRequestState.Closed)]
+    [InlineData("""{"number":1,"state":"closed","draft":true,"merged":false}""", PullRequestState.Closed)]   // a draft that was closed
+    [InlineData("""{"number":1,"state":"open"}""", PullRequestState.Open)]                                    // flags missing
+    public async Task GetPullRequestState_ReadsGitHubsFlags(string response, PullRequestState expected)
+    {
+        var (client, handler) = Create();
+        handler.Enqueue(HttpStatusCode.OK, response);
+
+        Assert.Equal(expected, await client.GetPullRequestStateAsync("acme", "salesapp", 1, default));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("/repos/acme/salesapp/pulls/1", request.Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task GetPullRequestState_GitHubRefuses_SaysWhy()
+    {
+        var (client, handler) = Create();
+        handler.Enqueue(HttpStatusCode.NotFound, """{"message":"Not Found"}""");
+
+        var failure = await Assert.ThrowsAsync<GitHubException>(() => client.GetPullRequestStateAsync("acme", "salesapp", 99, default));
+
+        Assert.Equal(404, failure.StatusCode);
+        Assert.Contains("read the pull request", failure.Message);
+        Assert.DoesNotContain("ghp_token", failure.Message);
+    }
+
     [Fact]
     public async Task Requests_CarryTheTokenAndGitHubsHeaders()
     {

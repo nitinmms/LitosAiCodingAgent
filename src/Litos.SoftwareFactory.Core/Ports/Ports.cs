@@ -69,6 +69,13 @@ public interface IWorkspace
 
     /// <summary>Pushes the task branch. Refuses the default branch.</summary>
     Task PushAsync(string branch, string defaultBranch, CancellationToken ct);
+
+    /// <summary>
+    /// Throws away edits that were never committed, on the task branch: what a withdrawn rework
+    /// run leaves behind. Commits are untouched — the branch stays at its last handoff — and
+    /// ignored files such as build output are left alone. Refuses the default branch.
+    /// </summary>
+    Task DiscardUncommittedChangesAsync(string branch, string defaultBranch, CancellationToken ct);
 }
 
 // ---- GitHub ----
@@ -82,6 +89,20 @@ public interface IGitHub
     /// <summary>Creates the draft PR for a task branch, or updates its title and body when one
     /// is already open for that branch.</summary>
     Task<PullRequestRef> CreateOrUpdateDraftPullRequestAsync(PullRequestDraft draft, CancellationToken ct);
+
+    /// <summary>Where a pull request stands on GitHub now. People merge and close there, not in
+    /// the factory, so this is asked rather than remembered.</summary>
+    Task<PullRequestState> GetPullRequestStateAsync(string owner, string repository, int number, CancellationToken ct);
+}
+
+public enum PullRequestState
+{
+    Draft,
+    Open,
+    Merged,
+
+    /// <summary>Closed without being merged.</summary>
+    Closed,
 }
 
 // ---- Verification ----

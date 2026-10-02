@@ -7,6 +7,7 @@ import type {
   LifecycleState,
   Message,
   Project,
+  PullRequestState,
   Settings,
   Thread,
   ThreadDetails,
@@ -101,6 +102,8 @@ export class FakeHost {
   projects: Project[] = [];
   readonly threads = new Map<string, ThreadDetails>();
   readonly usage = new Map<string, UsageCall[]>();
+  /** Where each thread's pull request stands "on GitHub"; a draft unless a test says otherwise. */
+  readonly pullRequestStates = new Map<string, PullRequestState>();
   readonly requests: RecordedRequest[] = [];
   readonly sources: FakeEventSource[] = [];
   /** Answers the next matching request with this instead of handling it. */
@@ -213,6 +216,15 @@ export class FakeHost {
     const details = this.details(threadId);
     details.thread = { ...details.thread, ...patch, revision: details.thread.revision + 1 };
     const t = details.thread;
+    // The run follows the task: queued, running, stopped where it can continue, or over.
+    if (details.run && patch.state) {
+      const status =
+        patch.state === 'Queued' ? 'Queued'
+        : patch.state === 'Running' ? 'Running'
+        : patch.state === 'AwaitingHumanTesting' || patch.state === 'Accepted' || patch.state === 'Cancelled' ? 'Finished'
+        : 'Suspended';
+      details.run = { ...details.run, status };
+    }
     this.emit(threadId, eventType, {
       state: t.state,
       stage: t.stage,
@@ -390,7 +402,7 @@ export class FakeHost {
     const decision = /^\/api\/decisions\/([^/]+)\/answer$/.exec(path);
     if (decision && method === 'POST') return this.answer(decision[1]!, String(data.answer ?? ''));
 
-    const route = /^\/api\/threads\/([^/?]+)(?:\/(\w+))?$/.exec(path);
+    const route = /^\/api\/threads\/([^/?]+)(?:\/([\w-]+))?$/.exec(path);
     if (!route) return [404];
     const details = this.threads.get(route[1]!);
     if (!details) return [404];
@@ -421,6 +433,25 @@ export class FakeHost {
         if (state === 'Running') return [202, { thread: details.thread, stopping: true }];
         if (state === 'Accepted' || state === 'Cancelled' || state === 'Draft') return conflict('Cancel');
         return [200, this.change(id, { state: 'Cancelled' })];
+      case 'POST withdraw': {
+        if (state === 'Running') return [409, { error: 'The change request is being worked on. Pause the task, then withdraw it.' }];
+        const stopped: LifecycleState[] = ['Queued', 'AwaitingDecision', 'PausedBudget', 'PausedUser', 'Blocked', 'Interrupted'];
+        if (!stopped.includes(state)) return [409, { error: `A task that is ${state} has no change request to withdraw.` }];
+        if (details.run?.kind !== 'Rework' || details.run.status === 'Finished' || !details.handoff)
+          return [409, { error: 'This task has no change request to withdraw: its run is the original work. Cancel the task to stop it.' }];
+        details.run = { ...details.run, stopReason: 'Withdrawn' };
+        details.decisions = details.decisions.map((d) =>
+          d.status === 'Open' ? { ...d, status: 'Answered', answer: 'Not answered: the change request was withdrawn.', answeredAt: NOW } : d,
+        );
+        this.say(id, { author: 'User', text: 'Change request withdrawn. The task is back at its last handoff.' });
+        return [200, this.change(id, { state: 'AwaitingHumanTesting', stage: 'Handoff', stateReason: null })];
+      }
+      case 'GET pull-request':
+        if (details.thread.pullRequestNumber === null) return [404, { error: 'This task has no pull request.' }];
+        return [
+          200,
+          { number: details.thread.pullRequestNumber, url: details.thread.pullRequestUrl, state: this.pullRequestStates.get(id) ?? 'Draft' },
+        ];
       case 'POST resume': {
         const resumable: LifecycleState[] = ['PausedUser', 'PausedBudget', 'Blocked', 'Interrupted'];
         if (!resumable.includes(state)) return [409, { error: `A task that is ${state} has nothing to resume.` }];
@@ -447,6 +478,18 @@ export class FakeHost {
       return [409, { error: `A task that is ${state} cannot take new work.`, thread: details.thread }];
 
     this.dispatched.add(messageId);
+    // A draft starts the original work; after a handoff the same message is a change request.
+    if (queues) {
+      details.run = {
+        id: this.nextId('r'),
+        kind: state === 'Draft' ? 'Implement' : 'Rework',
+        status: 'Queued',
+        stopReason: null,
+        baselineCommit: null,
+        headCommit: null,
+        promptRevision: this.settings.promptRevision,
+      };
+    }
     this.say(threadId, { author: 'User', kind: 'Text', text: match[1]!.trim() });
     const thread = queues ? this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: null }) : details.thread;
     return [202, { outcome: queues ? 'Queued' : 'FollowUp', runId: 'r-1', thread }];

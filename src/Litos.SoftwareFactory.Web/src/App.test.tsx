@@ -401,13 +401,16 @@ describe('live updates', () => {
     host.addCall(thread.id, { reserved: 14_300, charged: 10_600 });
     host.addCall(thread.id, { reserved: 20_000, charged: 0, status: 'Reserved' });
     host.addCall(thread.id, { reserved: 9_000, charged: 9_000, status: 'Unknown' });
+    host.addCall(thread.id, { reserved: 58_689, charged: 23_900, status: 'Estimated' });
     start(host);
 
     const budget = within(await screen.findByRole('region', { name: 'Budget' }));
-    expect(await budget.findByText('reserved 14,300, used 10,600')).toBeInTheDocument();
+    expect(await budget.findByText('up to 14,300, used 10,600')).toBeInTheDocument();
     expect(budget.getByText(/Input the provider serves from its cache counts at 10%./)).toBeInTheDocument();
-    expect(budget.getByText('reserved 20,000, in flight')).toBeInTheDocument();
-    expect(budget.getByText('reserved 9,000, usage not reported')).toBeInTheDocument();
+    expect(budget.getByText('up to 20,000, in flight')).toBeInTheDocument();
+    expect(budget.getByText('up to 9,000, usage not reported')).toBeInTheDocument();
+    expect(budget.getByText('up to 58,689, charged 23,900 (estimate)')).toBeInTheDocument();
+    expect(budget.getByText(/the most it could cost is set aside/)).toBeInTheDocument();
     expect(budget.getByText('Strict')).toBeInTheDocument();
   });
 });
@@ -472,7 +475,7 @@ describe('a handoff', () => {
     expect(card.getByText('Added CSV export for Orders.')).toBeInTheDocument();
     expect(card.getByText('factory/add-csv-export-1a2b')).toBeInTheDocument();
     expect(card.getByText('9f8e7d6')).toBeInTheDocument();
-    expect(card.getByRole('link', { name: 'Draft PR #12' })).toHaveAttribute('href', 'https://github.com/harbor-tools/salesapp/pull/12');
+    expect(await card.findByRole('link', { name: 'Draft PR #12' })).toHaveAttribute('href', 'https://github.com/harbor-tools/salesapp/pull/12');
     expect(card.getByText('Passed (142 passed, 6 new)')).toBeInTheDocument();
     expect(card.getByText('91.4% (threshold 80%)')).toBeInTheDocument();
     expect(card.getByText('Clean')).toBeInTheDocument();
@@ -571,8 +574,160 @@ describe('a handoff', () => {
   it('does not link to an address that is not https', async () => {
     const { card } = await handedOff({ pullRequestUrl: 'javascript:alert(1)' });
 
-    expect(card.getByText('Draft PR #12')).toBeInTheDocument();
+    expect(await card.findByText('Draft PR #12')).toBeInTheDocument();
     expect(card.queryByRole('link')).not.toBeInTheDocument();
+  });
+});
+
+describe('after a handoff, @factory is a change request', () => {
+  async function handedOff() {
+    const context = await withThread();
+    await context.user.type(composer(), '@factory Add CSV export for Orders{Enter}');
+    await waitFor(() => expect(context.host.details(context.thread.id).thread.state).toBe('Queued'));
+    act(() => void context.host.change(context.thread.id, { state: 'Running', branch: 'factory/add-csv-export-1a2b' }));
+    act(() => void context.host.handOff(context.thread.id));
+    await screen.findByRole('group', { name: 'Handoff' });
+    return context;
+  }
+
+  /** The first real task's mistake: a question, sent with @factory, became a rework run. */
+  it('says so before anything is sent', async () => {
+    await handedOff();
+
+    expect(screen.getByText(/asks for changes: it starts a rework run on this branch/)).toBeInTheDocument();
+    expect(screen.getByText(/It cannot answer questions yet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send change request' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
+  });
+
+  it('a draft does not talk about change requests', async () => {
+    await withThread();
+
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+    expect(screen.queryByText(/asks for changes/)).not.toBeInTheDocument();
+  });
+
+  it('a change request can be withdrawn, which brings back the handoff and its Accept button', async () => {
+    const { host, thread, user } = await handedOff();
+    expect(screen.queryByRole('button', { name: 'Withdraw change request' })).not.toBeInTheDocument();
+
+    await user.type(composer(), '@factory How do I set up manual tests?');
+    await user.click(screen.getByRole('button', { name: 'Send change request' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('You can withdraw it if that is not what you meant.');
+    expect(screen.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
+
+    await user.click(await screen.findByRole('button', { name: 'Withdraw change request' }));
+
+    expect(await screen.findByRole('button', { name: 'Accept' })).toBeEnabled();
+    expect(host.sent('POST', `/api/threads/${thread.id}/withdraw`)).toHaveLength(1);
+    expect(host.details(thread.id).thread.state).toBe('AwaitingHumanTesting');
+    expect(screen.getByText('Change request withdrawn. The task is back at its last handoff.', { selector: '.ev span' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Withdraw change request' })).not.toBeInTheDocument();
+    expect(stageNow()).toContain('Handoff');
+  });
+
+  it.each(['Blocked', 'PausedBudget', 'PausedUser', 'Interrupted'] as const)('can be withdrawn while the rework is %s', async (state) => {
+    const { host, thread, user } = await handedOff();
+    await user.type(composer(), '@factory How do I set up manual tests?{Enter}');
+    await screen.findByRole('button', { name: 'Withdraw change request' });
+    act(() => void host.change(thread.id, { state: 'Running' }));
+    act(() => void host.change(thread.id, { state, stateReason: 'Stopped.' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Withdraw change request' }));
+
+    await waitFor(() => expect(host.details(thread.id).thread.state).toBe('AwaitingHumanTesting'));
+    expect(await screen.findByRole('button', { name: 'Accept' })).toBeEnabled();
+  });
+
+  it('a change request that is being worked on must be paused first, and the screen says so', async () => {
+    const { host, thread, user } = await handedOff();
+    await user.type(composer(), '@factory How do I set up manual tests?{Enter}');
+    await screen.findByRole('button', { name: 'Withdraw change request' });
+
+    act(() => void host.change(thread.id, { state: 'Running' }));
+
+    expect(await screen.findByText(/Pause it if you want to withdraw it/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Withdraw change request' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeInTheDocument();
+  });
+
+  it('the original work cannot be withdrawn: only cancelled', async () => {
+    const { host, thread, user } = await withThread();
+    await user.type(composer(), '@factory Add CSV export for Orders{Enter}');
+    await waitFor(() => expect(host.details(thread.id).thread.state).toBe('Queued'));
+    act(() => void host.change(thread.id, { state: 'Running' }));
+    act(() => void host.change(thread.id, { state: 'Blocked', stateReason: 'The build could not be started.' }));
+
+    await screen.findByRole('group', { name: 'Blocked' });
+    expect(screen.queryByRole('button', { name: 'Withdraw change request' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel task' })).toBeInTheDocument();
+  });
+
+  it("shows the host's reason when the withdrawal is refused", async () => {
+    const { host, thread, user } = await handedOff();
+    await user.type(composer(), '@factory How do I set up manual tests?{Enter}');
+    const button = await screen.findByRole('button', { name: 'Withdraw change request' });
+    // The agent picked it up a moment ago; this tab has not heard yet.
+    host.details(thread.id).thread = { ...host.details(thread.id).thread, state: 'Running', revision: 99 };
+
+    await user.click(button);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Pause the task, then withdraw it.');
+  });
+});
+
+describe('the pull request label follows GitHub', () => {
+  async function withPullRequest(state: 'Draft' | 'Open' | 'Merged' | 'Closed' | 'Unknown') {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Running', stage: 'Review', branch: 'factory/add-csv-export-1a2b' });
+    host.handOff(thread.id);
+    host.pullRequestStates.set(thread.id, state);
+    start(host);
+    await screen.findByRole('group', { name: 'Handoff' });
+    return { host, thread };
+  }
+
+  it.each([
+    ['Draft', 'Draft PR #12'],
+    ['Open', 'PR #12'],
+    ['Merged', 'PR #12 merged'],
+    ['Closed', 'PR #12 closed'],
+    ['Unknown', 'PR #12'],
+  ] as const)('%s on GitHub is shown as "%s", in the header and on the handoff', async (state, label) => {
+    await withPullRequest(state);
+
+    await waitFor(() => expect(screen.getAllByRole('link', { name: label })).toHaveLength(2));
+    for (const link of screen.getAllByRole('link', { name: label }))
+      expect(link).toHaveAttribute('href', 'https://github.com/harbor-tools/salesapp/pull/12');
+  });
+
+  /** The first real task was merged on GitHub and the factory went on calling it a draft. */
+  it('a merged pull request is never called a draft', async () => {
+    await withPullRequest('Merged');
+
+    await screen.findAllByRole('link', { name: 'PR #12 merged' });
+    expect(screen.queryByText(/Draft PR/)).not.toBeInTheDocument();
+  });
+
+  it('when GitHub cannot be asked, the label says only what is certain', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Running', stage: 'Review' });
+    host.handOff(thread.id);
+    host.failNext('GET', '/pull-request', 500);
+    start(host);
+
+    await screen.findByRole('group', { name: 'Handoff' });
+    await waitFor(() => expect(host.sent('GET', '/pull-request')).toHaveLength(1));
+    expect(screen.getAllByRole('link', { name: 'PR #12' })).toHaveLength(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('a task with no pull request asks GitHub nothing', async () => {
+    const { host } = await withThread({ state: 'Running', stage: 'Implement' });
+
+    expect(host.sent('GET', '/pull-request')).toHaveLength(0);
   });
 });
 

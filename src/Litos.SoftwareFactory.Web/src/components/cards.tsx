@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { Decision, HandoffEvidence, Message, Thread } from '../api/types';
+import type { Decision, HandoffEvidence, Message, PullRequestState, Thread } from '../api/types';
 import { fmt, pct, shortSha, words } from '../domain/format';
+import { pullRequestLabel } from '../domain/task';
 import { SafeLink } from './bits';
 
 interface DecisionPayload {
@@ -116,6 +117,7 @@ export function HandoffCard({
   message,
   thread,
   latest,
+  pullRequestState,
   busy,
   onAccept,
   onRequestChanges,
@@ -123,6 +125,8 @@ export function HandoffCard({
   message: Message;
   thread: Thread;
   latest: boolean;
+  /** Where the pull request stands on GitHub now; undefined until that is known. */
+  pullRequestState?: PullRequestState;
   busy: boolean;
   onAccept: () => void;
   onRequestChanges: () => void;
@@ -165,7 +169,8 @@ export function HandoffCard({
           <>
             <dt>Pull request</dt>
             <dd>
-              <SafeLink href={e.pullRequestUrl}>Draft PR #{e.pullRequestNumber}</SafeLink>
+              {/* A handoff records the draft it opened; what became of it since is GitHub's to say. */}
+              <SafeLink href={e.pullRequestUrl}>{pullRequestLabel(e.pullRequestNumber, pullRequestState)}</SafeLink>
             </dd>
           </>
         ) : null}

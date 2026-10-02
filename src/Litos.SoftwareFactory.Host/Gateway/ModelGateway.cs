@@ -15,11 +15,12 @@ namespace Litos.SoftwareFactory.Host.Gateway;
 /// makes — turns and compaction alike — arrives here, because the host holds the provider keys
 /// and the worker holds none.
 ///
-/// Each call is admitted before it is sent: its input is estimated, and the estimate plus a
-/// bounded output allowance plus a margin is reserved against the task's allowance. A call that
-/// does not fit is refused before anything is spent. An admitted call is sent with the
-/// provider's output limit set so it cannot exceed its reservation, then settled against what
-/// the provider reports.
+/// Each call is admitted before it is sent: its input is estimated — the part the provider's
+/// cache is expected to serve counted at the cached weight — and that, with a margin, plus the
+/// call's output limit is reserved against the task's allowance. A call whose input and a
+/// minimum of output do not fit is refused before anything is spent. An admitted call is sent
+/// with the provider's output limit set to what remains, up to the output allowance, so it
+/// cannot exceed its reservation; it is then settled against what the provider reports.
 /// </summary>
 public sealed class ModelGateway(
     IFactoryStore store, IChatProviderFactory providers, FactoryOptions options, FactorySignals signals, IClock clock,
@@ -43,10 +44,18 @@ public sealed class ModelGateway(
         var chat = request.ChatRequest with { Model = run.Model };
         var sessionKey = chat.SessionId ?? "";
         var calibration = CalibrationFor(run.Provider, run.Model);
-        var estimate = RequestEstimator.Estimate(chat, run.Baselines.GetValueOrDefault(sessionKey), calibration.Ratio);
+        var baseline = run.Baselines.GetValueOrDefault(sessionKey);
+        var estimate = RequestEstimator.Estimate(chat, baseline, calibration.Ratio);
+        // Only a request that continues the baseline's conversation repeats its input.
+        var expectedCached = estimate.Basis == EstimateBasis.BaselinePlusDelta
+            ? baseline!.ExpectedCachedTokens(clock.UtcNow, options.Budget.CacheWindow)
+            : 0;
 
         var reservation = await store.ReserveAsync(
-            new ReserveCommand(request.RequestKey, run.ThreadId, run.RunId, run.UserId, run.Provider, run.Model, estimate.RawTokens, estimate.Tokens),
+            new ReserveCommand(request.RequestKey, run.ThreadId, run.RunId, run.UserId, run.Provider, run.Model, estimate.RawTokens, estimate.Tokens)
+            {
+                ExpectedCachedInput = expectedCached,
+            },
             options.Budget, clock.UtcNow, ct);
         signals.EventsWritten();
 
@@ -139,7 +148,7 @@ public sealed class ModelGateway(
                             return;
                         }
 
-                        run.Baselines[sessionKey] = SessionBaseline.From(chat, completed.Usage);
+                        run.Baselines[sessionKey] = SessionBaseline.From(chat, completed.Usage, clock.UtcNow);
                     }
 
                     if (GatewayEvent.FromAgentEvent(evt) is { } wire)

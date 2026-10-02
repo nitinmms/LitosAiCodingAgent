@@ -121,6 +121,9 @@ public enum StopReason
 
     /// <summary>The host or the worker was lost while the run was in progress.</summary>
     Interrupted,
+
+    /// <summary>A rework run whose change request the tester withdrew.</summary>
+    Withdrawn,
 }
 
 // ---- Outcomes: what happened when the host did it ----

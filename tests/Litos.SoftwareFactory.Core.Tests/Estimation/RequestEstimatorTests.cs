@@ -128,7 +128,49 @@ public class RequestEstimatorTests
 
         var baseline = SessionBaseline.From(request, usage);
 
-        Assert.Equal(new SessionBaseline(3, 43_200), baseline);
+        Assert.Equal((3, 43_200), (baseline.MessageCount, baseline.TotalInputTokens));
+        Assert.Equal(40_000, baseline.CacheReadTokens);
+        Assert.Null(baseline.SettledAt);
+    }
+
+    // ---- What the next call can expect from the provider's cache ----
+
+    private static readonly DateTimeOffset Now = new(2026, 10, 2, 9, 0, 0, TimeSpan.Zero);
+    private static readonly TimeSpan Window = TimeSpan.FromMinutes(4);
+
+    private static SessionBaseline Baseline(int cacheRead, DateTimeOffset? settledAt) =>
+        new(3, 23_000) { CacheReadTokens = cacheRead, SettledAt = settledAt };
+
+    [Fact]
+    public void ExpectedCachedTokens_OnceTheCacheHasBeenHit_IsTheWholePreviousInput()
+    {
+        Assert.Equal(23_000, Baseline(22_000, Now.AddSeconds(-20)).ExpectedCachedTokens(Now, Window));
+        Assert.Equal(23_000, Baseline(1, Now).ExpectedCachedTokens(Now, Window));
+        Assert.Equal(23_000, Baseline(22_000, Now - Window).ExpectedCachedTokens(Now, Window));
+    }
+
+    /// <summary>Anything that makes a cache hit doubtful is reserved in full: better to hold
+    /// too much than to let a call spend more than was reserved for it.</summary>
+    [Fact]
+    public void ExpectedCachedTokens_IsNothing_WhenAHitIsNotAssured()
+    {
+        // The session has never been served from the cache.
+        Assert.Equal(0, Baseline(0, Now.AddSeconds(-20)).ExpectedCachedTokens(Now, Window));
+        // The last call was too long ago: the provider will have dropped it.
+        Assert.Equal(0, Baseline(22_000, Now - Window - TimeSpan.FromSeconds(1)).ExpectedCachedTokens(Now, Window));
+        // When it settled was not recorded.
+        Assert.Equal(0, Baseline(22_000, null).ExpectedCachedTokens(Now, Window));
+        // A clock that went backwards.
+        Assert.Equal(0, Baseline(22_000, Now.AddMinutes(1)).ExpectedCachedTokens(Now, Window));
+    }
+
+    [Fact]
+    public void SessionBaseline_From_RecordsWhenItSettled()
+    {
+        var baseline = SessionBaseline.From(Request([UserText(10)]), new UsageInfo(700, 100, 0, 22_000), Now);
+
+        Assert.Equal(Now, baseline.SettledAt);
+        Assert.Equal(22_700, baseline.ExpectedCachedTokens(Now.AddMinutes(1), Window));
     }
 
     [Fact]

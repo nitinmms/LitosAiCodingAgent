@@ -8,9 +8,11 @@ import {
   canMessage,
   canPause,
   canResume,
+  canWithdraw,
   isClosed,
   newer,
   parseMention,
+  pullRequestLabel,
   stateName,
   turnLabel,
   withMention,
@@ -128,6 +130,19 @@ describe('what each state allows matches the host', () => {
       'Interrupted',
     ]));
   it('closed: accepted or cancelled', () => expect(allowed(isClosed)).toEqual(['Accepted', 'Cancelled']));
+  it('withdraw a change request: whenever its run is not executing', () =>
+    expect(allowed(canWithdraw)).toEqual(['Queued', 'AwaitingDecision', 'PausedBudget', 'PausedUser', 'Blocked', 'Interrupted']));
+});
+
+describe('pullRequestLabel', () => {
+  it.each([
+    ['Draft', 'Draft PR #7'],
+    ['Open', 'PR #7'],
+    ['Merged', 'PR #7 merged'],
+    ['Closed', 'PR #7 closed'],
+    ['Unknown', 'PR #7'],
+    [undefined, 'PR #7'],
+  ] as const)('%s is "%s"', (state, label) => expect(pullRequestLabel(7, state)).toBe(label));
 });
 
 describe('applyChange', () => {

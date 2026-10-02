@@ -100,6 +100,18 @@ public sealed class RunExecutor(
         {
             await session.DisposeAsync();
             registry.Remove(run.Id);
+
+            // The worker is gone, so a call of this run whose usage was never reported never
+            // will be. Its reservation is settled now rather than held against the task.
+            try
+            {
+                await store.ReconcileUsageAsync(run.Id, clock.UtcNow, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Unreported usage of run {RunId} could not be reconciled.", run.Id);
+            }
+
             signals.EventsWritten();
             signals.WorkQueued();
         }

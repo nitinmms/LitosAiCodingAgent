@@ -52,10 +52,19 @@ public sealed record StopRunCommand(Guid RunId, LifecycleTrigger Trigger, StopRe
 
 public sealed record ReserveCommand(
     string RequestKey, Guid ThreadId, Guid? RunId, Guid UserId, string Provider, string Model,
-    long EstimatedInputRaw, long EstimatedInput);
+    long EstimatedInputRaw, long EstimatedInput)
+{
+    /// <summary>How much of EstimatedInput the provider is expected to serve from its cache;
+    /// that part is reserved at the cached weight.</summary>
+    public long ExpectedCachedInput { get; init; }
+}
 
 /// <summary>The outcome of asking to send one model call.</summary>
 public sealed record ReservationResult(AdmissionDecision Decision, bool AlreadyKnown);
+
+/// <param name="HeldLease">The thread still holds its repository: the withdrawn run's edits are
+/// in the working copy and no other thread can have touched it.</param>
+public sealed record WithdrawResult(TaskThread Thread, Project Project, bool HeldLease);
 
 public sealed record ThreadDetails(
     TaskThread Thread, Project Project, IReadOnlyList<ThreadMessage> Messages, IReadOnlyList<Decision> Decisions,
@@ -99,6 +108,18 @@ public interface IFactoryStore
     /// a transition a person asked for. Throws <see cref="StoreConflictException"/> when it is
     /// not legal from the thread's state.</summary>
     Task<TaskThread> ApplyUserActionAsync(Guid threadId, Guid userId, LifecycleTrigger trigger, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// Takes back a change request: the thread's unfinished rework run is ended as Withdrawn and
+    /// the thread returns to awaiting human testing on its last handoff. Throws
+    /// <see cref="StoreConflictException"/> when the run is executing, when the thread's run is
+    /// not a rework run, or when there is no handoff to return to. The repository lease, if the
+    /// thread holds one, is kept so the caller can clean the working copy before releasing it.
+    /// </summary>
+    Task<WithdrawResult> WithdrawChangesAsync(Guid threadId, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Lets another thread use the repository. Does nothing when the thread holds no lease.</summary>
+    Task ReleaseLeaseAsync(Guid threadId, CancellationToken ct);
 
     /// <summary>Changes the task's cap. Raising a cap changes the maximum, not the accounting history.</summary>
     Task<TaskThread> SetBudgetCapAsync(Guid threadId, long? cap, DateTimeOffset now, CancellationToken ct);
@@ -164,6 +185,16 @@ public interface IFactoryStore
 
     /// <summary>The call was never sent: the reservation is returned in full.</summary>
     Task ReleaseReservationAsync(string requestKey, CancellationToken ct);
+
+    /// <summary>
+    /// Reconciles calls whose usage will never be reported: each is charged
+    /// <see cref="BudgetLedger.ReconciledCharge"/> and the rest of its reservation is released.
+    /// Call it only when the calls cannot still be in flight. With a run id, that run's Unknown
+    /// calls — for when the run has stopped. With none, every Unknown call and every call still
+    /// marked Reserved — for host startup, when no call from a previous host can be in flight.
+    /// Returns the number of calls reconciled.
+    /// </summary>
+    Task<int> ReconcileUsageAsync(Guid? runId, DateTimeOffset now, CancellationToken ct);
 
     Task<IReadOnlyList<UsageEntry>> ListUsageAsync(Guid threadId, CancellationToken ct);
 

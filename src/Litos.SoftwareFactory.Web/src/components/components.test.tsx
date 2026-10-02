@@ -35,6 +35,21 @@ describe('the stage rail', () => {
     expect(stations()[5]).toBe('now you|6Handoff');
   });
 
+  /** A cancelled task used to show the stage it stopped in as if it were still under way. */
+  it('a cancelled task shows how far it got, and no station as current', () => {
+    rail('Review', 'Cancelled');
+    expect(stations()).toEqual([
+      'done|\u2713Discuss',
+      'skip|\u2013Spec (skipped)',
+      'done|\u2713Implement',
+      'done|\u2713Verify',
+      '-|5Review',
+      '-|6Handoff',
+      '-|7Done',
+    ]);
+    expect(screen.getAllByRole('listitem').some((item) => item.getAttribute('aria-current'))).toBe(false);
+  });
+
   it('an accepted task has every station behind it', () => {
     rail('Done', 'Accepted');
     expect(stations()[6]).toBe('done|✓Done');

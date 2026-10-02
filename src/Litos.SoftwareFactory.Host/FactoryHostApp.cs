@@ -64,6 +64,9 @@ public static class FactoryHostApp
         if (!string.IsNullOrWhiteSpace(options.GitHubToken))
             services.AddSingleton<IGitHub>(_ => new GitHubClient(GitHubClient.CreateHttpClient(options.GitHubToken)));
 
+        services.AddSingleton<PullRequestStatus>(sp => new PullRequestStatus(
+            sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILogger<PullRequestStatus>>(), sp.GetService<IGitHub>()));
+
         services.AddSingleton<RunCoordinator>();
         services.AddSingleton<IRunControl>(sp => sp.GetRequiredService<RunCoordinator>());
         services.AddHostedService(sp => sp.GetRequiredService<RunCoordinator>());

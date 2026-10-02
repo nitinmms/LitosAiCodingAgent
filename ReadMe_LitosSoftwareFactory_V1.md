@@ -240,6 +240,7 @@ stateDiagram-v2
 ```
 
 - Pause and cancel also apply to waiting states.
+- **Withdrawing a change request.** After a handoff, an `@factory` message is a change request and starts a rework run. Until that run produces its own handoff, the tester can withdraw it from any state in which it is not executing (a running one is paused first): the rework run ends as `Withdrawn`, its uncommitted edits are discarded from the working copy, and the task returns to `AwaitingHumanTesting` on its last handoff. The original run cannot be withdrawn, only cancelled.
 - Cancellation preserves edits, branches and evidence; it never reverts files or deletes branches.
 - Acceptance never merges.
 - Verification is tracked separately from lifecycle:
@@ -489,7 +490,7 @@ Every turn's cost includes its whole context, so context is managed deliberately
   - Reported totals must not be double-counted.
 - This is a token allowance, not money or a context-window limit. Repeated prompt input consumes budget again on every call, at the cached weight. Tool schemas, MCP tool definitions, skill lists and retrieved lessons are part of every request's input.
   - *Why the discount (decided 2026-10-02, after the first real run):* an agent resends its whole conversation on every call. Counted in full, a small task used 993,607 tokens in 44 calls, 88% of it cache reads, so a budget measured how many calls a task took rather than how much work it did. At 10% the same run is 203,451, in line with the M1 caps.
-  - A call is still **reserved** on its full estimated input, because the host cannot know in advance what the cache will serve. The discount applies when the call settles.
+  - A call is **reserved** on what its input is expected to be charged (§9.2): the discount is assumed in advance only for input the session's previous call shows the cache is serving, and is otherwise applied when the call settles.
 - Each user also has an optional **quota** (per day or per month) covering both chat and task usage.
 - The UI shows usage by provider/model and an optional estimated cost.
 
@@ -498,14 +499,18 @@ Every turn's cost includes its whole context, so context is managed deliberately
 Every model call is admitted by the host before it is sent:
 
 1. Atomically read the task's used tokens, open reservations and the user's quota, under the thread's budget-row lock.
-2. Estimate the complete request input: system prompt, tool schemas and messages.
-3. Reserve that estimate plus a bounded output allowance plus a configurable margin (default 10%).
-4. If the reservation does not fit the remaining task allowance or the user's quota, refuse **before sending**. The run moves to `PausedBudget` with changes and checkpoint preserved.
-5. Otherwise send the call with the provider's output limit (`ChatRequest.MaxOutputTokens`) set so it cannot exceed the reservation.
+2. Estimate the complete request input: system prompt, tool schemas and messages. Work out what that input is expected to be charged: the part the provider's cache is expected to serve counts at the cached weight (§9.1), the rest in full.
+   - Input is expected from the cache only when the session's previous call was itself served from the cache and settled within the cache window (4 minutes). Then all of that call's input is expected to be cached. A first call, a provider that does not cache, or a session resumed after a pause is reserved in full.
+3. The input reservation is that expected charge plus a configurable margin (default 10%) for estimator error.
+4. If the input reservation plus a **minimum output** (4,096 tokens) does not fit the remaining task allowance or the user's quota, refuse **before sending**. The run moves to `PausedBudget` with changes and checkpoint preserved.
+5. Otherwise send the call with the provider's output limit (`ChatRequest.MaxOutputTokens`) set to what remains after the input reservation, up to the output allowance (32,768). The reservation is the input reservation plus that output limit, so the call cannot exceed it. The output limit carries no margin: the provider enforces it.
 6. Settle against reported usage (`UsageInfo` on `MessageCompleted`) and release the unused reservation.
 7. If usage is unknown (timeout, cancellation, provider omitted usage), keep the reservation charged until reconciled. Never silently refund it.
+   - **Reconciliation** happens when nothing can report the call's usage any more: when the run that made the call has stopped, and at host startup for calls a previous host left in flight. The call is charged the input estimate it was admitted on, in full and never more than was reserved, and the rest of its reservation is released. It is recorded as `Estimated`, distinct from `Settled`.
 
-Example: cap 100,000; used 80,000. The next request is estimated at 15,000 input + 4,000 output + 10% = 20,900. That exceeds the 20,000 remaining, so the host pauses before spending anything.
+Example: cap 100,000; used 80,000. The next request is estimated at 15,000 input, none of it expected from the cache. Its input reservation is 15,000 + 10% = 16,500, and with the 4,096 minimum output that is 20,596. That exceeds the 20,000 remaining, so the host pauses before spending anything. With 21,000 remaining the call would be sent with an output limit of 4,500.
+
+*Why (decided 2026-10-02, after the first real run):* reserving the whole input in full and the whole output allowance held about 55,000 tokens for calls that cost about 6,000, so a task paused with most of a call's worth of budget unused nine times over. Reserving input at its expected charge, and limiting output to what remains instead of requiring room for all of it, keeps the guarantee (a call cannot spend past the cap) without holding ten times a call's cost.
 
 A unique request key per call prevents double-charging on repeated callbacks.
 

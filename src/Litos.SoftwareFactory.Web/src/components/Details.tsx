@@ -85,18 +85,21 @@ export function Details({
                   <div key={call.id}>
                     <span>Call {n}</span>
                     <span className="num">
-                      reserved {fmt(call.reserved)},{' '}
+                      up to {fmt(call.reserved)},{' '}
                       {call.status === 'Settled'
                         ? `used ${fmt(call.charged)}`
-                        : call.status === 'Reserved'
-                          ? 'in flight'
-                          : 'usage not reported'}
+                        : call.status === 'Estimated'
+                          ? `charged ${fmt(call.charged)} (estimate)`
+                          : call.status === 'Reserved'
+                            ? 'in flight'
+                            : 'usage not reported'}
                     </span>
                   </div>
                 ))}
             </div>
             <p className="small muted">
-              Each call is reserved before it is sent, then settled against the provider’s reported usage.
+              Before a call is sent, the most it could cost is set aside: its input and its output limit. It is then
+              charged what the provider reports, which is usually far less.
               {cachedInputWeight !== undefined && cachedInputWeight < 1
                 ? ` Input the provider serves from its cache counts at ${pct(cachedInputWeight * 100)}.`
                 : ''}

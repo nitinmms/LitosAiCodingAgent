@@ -60,11 +60,19 @@ describe('the API client', () => {
     ['pause', '/api/threads/t/pause'],
     ['cancel', '/api/threads/t/cancel'],
     ['resume', '/api/threads/t/resume'],
+    ['withdraw', '/api/threads/t/withdraw'],
   ] as const)('%s posts with no body', async (name, path) => {
     const { fetcher, calls } = fetchReturning(202, { stopping: true });
     await createApi(fetcher)[name]('t');
     expect(calls[0]!.path).toBe(path);
     expect(calls[0]!.init.body).toBeUndefined();
+  });
+
+  it('asks where the pull request stands with a read', async () => {
+    const { fetcher, calls } = fetchReturning(200, { number: 12, url: 'https://github.com/a/b/pull/12', state: 'Merged' });
+
+    expect(await createApi(fetcher).pullRequest('t')).toEqual({ number: 12, url: 'https://github.com/a/b/pull/12', state: 'Merged' });
+    expect([calls[0]!.init.method, calls[0]!.path]).toEqual(['GET', '/api/threads/t/pull-request']);
   });
 
   it("raises the host's own reason", async () => {

@@ -33,7 +33,26 @@ public class TaskLifecycleTests
         (LifecycleState.Blocked, LifecycleTrigger.Cancel, LifecycleState.Cancelled),
         (LifecycleState.Interrupted, LifecycleTrigger.Cancel, LifecycleState.Cancelled),
         (LifecycleState.AwaitingHumanTesting, LifecycleTrigger.Cancel, LifecycleState.Cancelled),
+
+        // A change request can be withdrawn whenever its rework run is not executing.
+        (LifecycleState.Queued, LifecycleTrigger.WithdrawChanges, LifecycleState.AwaitingHumanTesting),
+        (LifecycleState.AwaitingDecision, LifecycleTrigger.WithdrawChanges, LifecycleState.AwaitingHumanTesting),
+        (LifecycleState.PausedBudget, LifecycleTrigger.WithdrawChanges, LifecycleState.AwaitingHumanTesting),
+        (LifecycleState.PausedUser, LifecycleTrigger.WithdrawChanges, LifecycleState.AwaitingHumanTesting),
+        (LifecycleState.Blocked, LifecycleTrigger.WithdrawChanges, LifecycleState.AwaitingHumanTesting),
+        (LifecycleState.Interrupted, LifecycleTrigger.WithdrawChanges, LifecycleState.AwaitingHumanTesting),
     ];
+
+    /// <summary>A running change request is paused first; a draft, a handoff that is already
+    /// waiting, and a closed task have nothing to withdraw.</summary>
+    [Theory]
+    [InlineData(LifecycleState.Running)]
+    [InlineData(LifecycleState.Draft)]
+    [InlineData(LifecycleState.AwaitingHumanTesting)]
+    [InlineData(LifecycleState.Accepted)]
+    [InlineData(LifecycleState.Cancelled)]
+    public void WithdrawChanges_IsNotLegalFrom(LifecycleState state) =>
+        Assert.False(TaskLifecycle.CanApply(state, LifecycleTrigger.WithdrawChanges));
 
     public static TheoryData<LifecycleState, LifecycleTrigger, LifecycleState> LegalTransitions()
     {
@@ -125,14 +144,18 @@ public class TaskLifecycleTests
         Assert.Equal([(LifecycleState.AwaitingHumanTesting, LifecycleTrigger.Accept, LifecycleState.Accepted)], into);
     }
 
-    /// <summary>Budget exhaustion cannot be bypassed by delegating again: the only way out of
-    /// PausedBudget is raising the cap, or cancelling.</summary>
+    /// <summary>Budget exhaustion cannot be bypassed by delegating again: the only way to do
+    /// more work from PausedBudget is raising the cap. The other ways out stop the work:
+    /// cancelling, or withdrawing the change request that ran out.</summary>
     [Fact]
-    public void PausedBudget_LeavesOnlyByRaisingTheCapOrCancelling()
+    public void PausedBudget_ContinuesOnlyByRaisingTheCap()
     {
-        var outOf = TaskLifecycle.All.Where(t => t.From == LifecycleState.PausedBudget).Select(t => t.Trigger).Order();
+        var outOf = TaskLifecycle.All.Where(t => t.From == LifecycleState.PausedBudget).ToList();
 
-        Assert.Equal(new[] { LifecycleTrigger.RaiseBudgetAndResume, LifecycleTrigger.Cancel }.Order(), outOf);
+        Assert.Equal(
+            new[] { LifecycleTrigger.RaiseBudgetAndResume, LifecycleTrigger.Cancel, LifecycleTrigger.WithdrawChanges }.Order(),
+            outOf.Select(t => t.Trigger).Order());
+        Assert.Equal(LifecycleTrigger.RaiseBudgetAndResume, Assert.Single(outOf, t => t.To == LifecycleState.Queued).Trigger);
     }
 
     /// <summary>Running is entered only by a claim, so no path skips the lock, slot and worker.</summary>

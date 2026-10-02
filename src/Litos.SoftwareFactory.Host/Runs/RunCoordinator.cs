@@ -103,6 +103,12 @@ public sealed class RunCoordinator(
             }
         }
 
+        // Model calls a previous host had in flight can never report their usage now. Left
+        // alone, their reservations would hold part of each task's budget for ever.
+        var reconciled = await store.ReconcileUsageAsync(runId: null, clock.UtcNow, ct);
+        if (reconciled > 0)
+            logger.LogWarning("{Count} model call(s) left without reported usage were charged their input estimate.", reconciled);
+
         signals.EventsWritten();
     }
 

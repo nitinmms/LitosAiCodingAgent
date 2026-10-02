@@ -1,10 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
-import type { CurrentUser, Message, Settings, ThreadDetails } from '../api/types';
+import type { CurrentUser, Message, PullRequestState, Settings, ThreadDetails } from '../api/types';
 import { initials } from '../domain/format';
-import { canCancel, canMessage, canPause, isClosed, parseMention, stateName, withMention } from '../domain/task';
+import {
+  canCancel,
+  canMessage,
+  canPause,
+  canWithdraw,
+  isClosed,
+  parseMention,
+  pullRequestLabel,
+  stateName,
+  withMention,
+} from '../domain/task';
 import { Rail, Rich, SafeLink, TurnPill } from './bits';
 import { DecisionCard, HandoffCard, StopPanel } from './cards';
+
+/** How often GitHub is asked where the task's pull request stands; the host caches the answer too. */
+const PULL_REQUEST_REFRESH_MS = 60_000;
 
 /** A fresh id per message: the host uses it to make a retried send safe. */
 const newMessageId = (): string =>
@@ -28,7 +41,7 @@ export function ThreadMain({
   /** Tells the user something happened, or went wrong, outside the conversation. */
   onNotice: (text: string) => void;
 }) {
-  const { thread, project, messages, decisions } = details;
+  const { thread, project, messages, decisions, run, handoff } = details;
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
@@ -45,6 +58,32 @@ export function ThreadMain({
 
   useEffect(() => setConfirmingCancel(false), [thread.state]);
 
+  // The factory opens the draft; marking it ready, merging and closing happen on GitHub. So the
+  // label comes from GitHub, asked again whenever the task changes state and once a minute.
+  const [pullRequestState, setPullRequestState] = useState<PullRequestState | undefined>(undefined);
+  const hasPullRequest = thread.pullRequestNumber !== null;
+  useEffect(() => {
+    if (!hasPullRequest) {
+      setPullRequestState(undefined);
+      return;
+    }
+
+    let stopped = false;
+    const ask = () => {
+      api
+        .pullRequest(thread.id)
+        .then((info) => !stopped && setPullRequestState(info.state))
+        // Not knowing is fine: the label then says only "PR #n".
+        .catch(() => {});
+    };
+    ask();
+    const timer = setInterval(ask, PULL_REQUEST_REFRESH_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [api, thread.id, thread.state, hasPullRequest]);
+
   const openDecision = thread.state === 'AwaitingDecision' ? decisions.find((d) => d.status === 'Open') : undefined;
   const lastHandoff = [...messages].reverse().find((m) => m.kind === 'Handoff');
   const closed = isClosed(thread.state);
@@ -52,6 +91,10 @@ export function ThreadMain({
   const acceptsText = answering || canMessage(thread.state);
   const request = parseMention(draft);
   const sendable = answering ? draft.trim().length > 0 : request !== null;
+  // After a handoff an @factory message is a change request: it starts a rework run.
+  const requestingChanges = !answering && thread.state === 'AwaitingHumanTesting';
+  // A rework run that has not produced its own handoff yet can be taken back.
+  const reworkUnderWay = run?.kind === 'Rework' && run.status !== 'Finished' && handoff !== null;
   const userName = user.displayName || user.userName;
 
   /** Runs one action against the host, then shows whatever it changed. */
@@ -87,6 +130,8 @@ export function ThreadMain({
     const sent = await act(async () => {
       const result = await api.postMessage(thread.id, id, text);
       if (result.outcome === 'FollowUp') onNotice('Sent to the agent. It reads the message at its next safe point.');
+      else if (requestingChanges && result.outcome === 'Queued')
+        onNotice('Change request sent: a rework run starts on the same branch. You can withdraw it if that is not what you meant.');
     });
     if (sent) {
       sending.current = null;
@@ -118,6 +163,7 @@ export function ThreadMain({
             message={m}
             thread={thread}
             latest={m === lastHandoff}
+            pullRequestState={pullRequestState}
             busy={busy}
             onAccept={() => void act(() => api.accept(thread.id), 'Accepted. The branch is yours to merge.')}
             onRequestChanges={startRequest}
@@ -181,7 +227,7 @@ export function ThreadMain({
           {thread.branch ? <span className="mono">{thread.branch}</span> : <span>Branch created on delegation</span>}
           {thread.pullRequestNumber !== null ? (
             <span>
-              <SafeLink href={thread.pullRequestUrl}>Draft PR #{thread.pullRequestNumber}</SafeLink>
+              <SafeLink href={thread.pullRequestUrl}>{pullRequestLabel(thread.pullRequestNumber, pullRequestState)}</SafeLink>
             </span>
           ) : null}
           <span>{stateName(thread.state)}</span>
@@ -233,6 +279,16 @@ export function ThreadMain({
               Request changes
             </button>
           ) : null}
+          {reworkUnderWay && canWithdraw(thread.state) ? (
+            <button
+              className="btn"
+              onClick={() => void act(() => api.withdraw(thread.id), 'Change request withdrawn. The task is back at its last handoff.')}
+              disabled={busy}
+              title="Drop this change request, discard what it had edited, and go back to the last handoff"
+            >
+              Withdraw change request
+            </button>
+          ) : null}
           {canCancel(thread.state) ? (
             confirmingCancel ? (
               <>
@@ -254,7 +310,11 @@ export function ThreadMain({
               </button>
             )
           ) : null}
-          {confirmingCancel ? null : <StateHint state={thread.state} branch={thread.branch} />}
+          {confirmingCancel ? null : reworkUnderWay && thread.state === 'Running' ? (
+            <span className="small muted">Litos is working on your change request. Pause it if you want to withdraw it.</span>
+          ) : (
+            <StateHint state={thread.state} branch={thread.branch} />
+          )}
         </div>
 
         {closed ? null : (
@@ -286,14 +346,24 @@ export function ThreadMain({
                 }}
               />
               <button className="btn primary" onClick={() => void send()} disabled={!sendable || busy}>
-                {answering ? 'Answer' : 'Send'}
+                {answering ? 'Answer' : requestingChanges ? 'Send change request' : 'Send'}
               </button>
             </div>
             <p className="compose-hint">
               {!answering && draft.trim() && request === null ? (
                 <span className="warn">Start the message with @factory followed by what you want done. </span>
               ) : null}
-              <b>@factory</b> delegates within the task budget. Model: <span className="mono">{thread.model}</span> on{' '}
+              {requestingChanges ? (
+                <>
+                  After a handoff, <b>@factory</b> asks for changes: it starts a rework run on this branch. It cannot
+                  answer questions yet; the handoff above lists what to test and how.{' '}
+                </>
+              ) : (
+                <>
+                  <b>@factory</b> delegates within the task budget.{' '}
+                </>
+              )}
+              Model: <span className="mono">{thread.model}</span> on{' '}
               {thread.provider}
               {settings ? `. PTC ${settings.ptcEnabled ? 'on' : 'off'}` : ''}.
             </p>

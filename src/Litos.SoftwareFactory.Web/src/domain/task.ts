@@ -1,4 +1,4 @@
-import type { LifecycleState, Stage, Thread, ThreadChange } from '../api/types';
+import type { LifecycleState, PullRequestState, Stage, Thread, ThreadChange } from '../api/types';
 
 export const STAGES: readonly Stage[] = ['Discuss', 'Spec', 'Implement', 'Verify', 'Review', 'Handoff', 'Done'];
 
@@ -62,7 +62,34 @@ export const canPause = (state: LifecycleState): boolean => state === 'Running' 
 export const canMessage = (state: LifecycleState): boolean =>
   state === 'Draft' || state === 'AwaitingHumanTesting' || state === 'Queued' || state === 'Running';
 
-export const canCancel =(state: LifecycleState): boolean => !isClosed(state) && state !== 'Draft';
+export const canCancel = (state: LifecycleState): boolean => !isClosed(state) && state !== 'Draft';
+
+/**
+ * The states from which a change request can be taken back (TaskLifecycle's WithdrawChanges):
+ * every state in which its rework run is not executing. A running one is paused first.
+ */
+export const canWithdraw = (state: LifecycleState): boolean =>
+  state === 'Queued' ||
+  state === 'AwaitingDecision' ||
+  state === 'PausedBudget' ||
+  state === 'PausedUser' ||
+  state === 'Blocked' ||
+  state === 'Interrupted';
+
+/** "Draft PR #12", "PR #12 merged": the factory opens the draft, and people take it from there on GitHub. */
+export function pullRequestLabel(number: number, state: PullRequestState | undefined): string {
+  switch (state) {
+    case 'Merged':
+      return `PR #${number} merged`;
+    case 'Closed':
+      return `PR #${number} closed`;
+    case 'Draft':
+      return `Draft PR #${number}`;
+    default:
+      // Open, or not known: say only what is certain.
+      return `PR #${number}`;
+  }
+}
 
 /**
  * Applies a `state` or `usage` event to a thread. Events can arrive out of order across a

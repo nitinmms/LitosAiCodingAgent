@@ -253,6 +253,73 @@ public static class FactoryApi
         api.MapPost("/threads/{id:guid}/cancel", (Guid id, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals, IClock clock, CancellationToken ct) =>
             StopAsync(id, user, store, runs, signals, clock, StopRequest.Cancel, LifecycleTrigger.Cancel, ct));
 
+        // Takes back a change request made after a handoff: the rework run is dropped, what it
+        // had edited is discarded, and the task waits for testing on its last handoff again.
+        api.MapPost("/threads/{id:guid}/withdraw", async (
+            Guid id, ClaimsPrincipal user, IFactoryStore store, IWorkspaceProvider workspaces, FactorySignals signals, IClock clock,
+            ILoggerFactory loggers, CancellationToken ct) =>
+        {
+            WithdrawResult result;
+            try
+            {
+                result = await store.WithdrawChangesAsync(id, user.UserId(), clock.UtcNow, ct);
+            }
+            catch (StoreNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (StoreConflictException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+
+            // Only while this thread still holds the repository: then the edits in the working
+            // copy are the withdrawn run's, and no other task can be using it.
+            if (result is { HeldLease: true, Thread.Branch: { Length: > 0 } branch })
+            {
+                try
+                {
+                    // Not the request's token: a browser that goes away must not leave the
+                    // working copy half cleaned with the lease still held.
+                    await workspaces.For(result.Project).DiscardUncommittedChangesAsync(branch, result.Project.DefaultBranch, CancellationToken.None);
+                }
+                catch (Exception ex) when (ex is WorkspaceException or InvalidOperationException or IOException)
+                {
+                    loggers.CreateLogger("Litos.SoftwareFactory.Host.Withdraw").LogWarning(ex, "The withdrawn run's edits could not be discarded for thread {ThreadId}.", id);
+                    await store.AddFactoryMessageAsync(
+                        id, MessageKind.Status,
+                        $"The edits the withdrawn change request had made could not be discarded: {ex.Message} The next run on this repository will stop at preflight until the working copy is clean.",
+                        null, clock.UtcNow, CancellationToken.None);
+                }
+                finally
+                {
+                    await store.ReleaseLeaseAsync(id, CancellationToken.None);
+                }
+            }
+
+            signals.EventsWritten();
+            signals.WorkQueued(); // the repository is free for a task that was waiting on it
+            return Results.Ok(ThreadView(result.Thread));
+        });
+
+        // Where the task's pull request stands on GitHub now: merging and closing happen there.
+        api.MapGet("/threads/{id:guid}/pull-request", async (Guid id, IFactoryStore store, PullRequestStatus status, CancellationToken ct) =>
+        {
+            if (await store.GetThreadAsync(id, ct) is not { } details)
+                return Results.NotFound();
+            if (details.Thread.PullRequestNumber is not { } number)
+                return Results.NotFound(new { error = "This task has no pull request." });
+
+            var state = await status.GetAsync(details.Project.GitHubOwner, details.Project.GitHubRepository, number, ct);
+            return Results.Ok(new
+            {
+                Number = number,
+                Url = details.Thread.PullRequestUrl,
+                // "Unknown" when the host has no GitHub token or GitHub did not answer.
+                State = state?.ToString() ?? "Unknown",
+            });
+        });
+
         api.MapPost("/threads/{id:guid}/resume", async (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
         {
             if (await store.GetThreadAsync(id, ct) is not { } details)

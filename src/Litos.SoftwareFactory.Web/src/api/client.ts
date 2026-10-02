@@ -3,6 +3,7 @@ import type {
   CurrentUser,
   DispatchResult,
   Project,
+  PullRequestInfo,
   RegisterProject,
   Settings,
   Thread,
@@ -51,6 +52,9 @@ export interface FactoryApi {
   pause(id: string): Promise<void>;
   cancel(id: string): Promise<void>;
   resume(id: string): Promise<Thread>;
+  /** Takes back a change request made after a handoff. */
+  withdraw(id: string): Promise<Thread>;
+  pullRequest(id: string): Promise<PullRequestInfo>;
   answerDecision(decisionId: string, answer: string): Promise<Thread>;
 }
 
@@ -127,6 +131,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     pause: async (id) => void (await send<unknown>('POST', `${thread(id)}/pause`)),
     cancel: async (id) => void (await send<unknown>('POST', `${thread(id)}/cancel`)),
     resume: (id) => send<Thread>('POST', `${thread(id)}/resume`),
+    withdraw: (id) => send<Thread>('POST', `${thread(id)}/withdraw`),
+    pullRequest: (id) => send<PullRequestInfo>('GET', `${thread(id)}/pull-request`),
     answerDecision: (decisionId, answer) =>
       send<Thread>('POST', `/api/decisions/${encodeURIComponent(decisionId)}/answer`, { answer }),
   };

@@ -44,9 +44,11 @@ The tests run the whole app against `src/test/fakeHost.ts`, an in-memory host wi
 - `state` and `usage` events carry the thread's state and budget figures and are applied directly. A `message` event, or a change of state, makes the app fetch the thread again.
 - Every thread copy carries the server's `revision`; the app always keeps the newer one, so a late response can never undo a live event.
 - Only the open thread has a stream. The thread list is refreshed every 15 seconds.
+- The pull request label ("Draft PR #12", "PR #12 merged") comes from `GET /api/threads/{id}/pull-request`, asked when the task changes state and once a minute: merging and closing happen on GitHub, not in the factory.
 
 ## Things to know
 
+- After a handoff, an `@factory` message is a **change request** and starts a rework run; the composer says so and its button reads "Send change request". The factory cannot answer questions in M1. A change request can be taken back with "Withdraw change request" whenever its run is not executing.
 - Routes live in the URL fragment (`#/threads/<id>`, `#/projects`), so the host only ever serves `index.html`.
 - The session is an HTTP-only, same-site cookie; the app holds no token. Every state-changing request sends the `X-Factory-Request` header the host requires.
 - `parseMention` in `src/domain/task.ts` mirrors the host's `FactoryMention.TryParse`, and the rules for what each state allows mirror `TaskLifecycle` and the host's dispatch. The tests on both sides pin the same cases; change them together.

@@ -92,6 +92,7 @@ public sealed class ScriptedProvider : IChatProvider, IChatProviderFactory
 public sealed class FakeWorkspace : IWorkspace
 {
     private Dictionary<string, string> _base = new();
+    private Dictionary<string, string> _committed = new() { ["README.md"] = "readme\n" };
 
     public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"litos-fake-workspace-{Guid.NewGuid():n}");
 
@@ -130,6 +131,7 @@ public sealed class FakeWorkspace : IWorkspace
         Branch = branch;
         Head = "base000";
         _base = new Dictionary<string, string>(Files);
+        _committed = new Dictionary<string, string>(Files);
         return Task.FromResult(Head);
     }
 
@@ -169,6 +171,7 @@ public sealed class FakeWorkspace : IWorkspace
             return Task.FromResult<string?>(null);
 
         Commits.Add((message, author, coAuthoredBy));
+        _committed = new Dictionary<string, string>(Files);
         Uncommitted = [];
         Head = $"commit{Commits.Count:000}";
         return Task.FromResult<string?>(Head);
@@ -179,6 +182,27 @@ public sealed class FakeWorkspace : IWorkspace
         if (FailPush.TryDequeue(out var failure))
             return Task.FromException(failure);
         Pushed.Add($"{branch}@{Head}");
+        return Task.CompletedTask;
+    }
+
+    public Exception? FailDiscard { get; set; }
+
+    public Task DiscardUncommittedChangesAsync(string branch, string defaultBranch, CancellationToken ct)
+    {
+        Calls.Add($"discard {branch}");
+        if (FailDiscard is not null)
+            return Task.FromException(FailDiscard);
+
+        // Back to what the last commit held: here, whatever was there before the uncommitted edits.
+        foreach (var path in Uncommitted)
+        {
+            if (_committed.TryGetValue(path, out var content))
+                Files[path] = content;
+            else
+                Files.Remove(path, out _);
+        }
+
+        Uncommitted = [];
         return Task.CompletedTask;
     }
 }
@@ -231,6 +255,18 @@ public sealed class FakeGitHub : IGitHub
         return Fail is null
             ? Task.FromResult(new PullRequestRef(212, $"https://github.com/{draft.Owner}/{draft.Repository}/pull/212"))
             : Task.FromException<PullRequestRef>(Fail);
+    }
+
+    public PullRequestState State { get; set; } = PullRequestState.Draft;
+
+    public Exception? FailState { get; set; }
+
+    public List<string> StateRequests { get; } = [];
+
+    public Task<PullRequestState> GetPullRequestStateAsync(string owner, string repository, int number, CancellationToken ct)
+    {
+        StateRequests.Add($"{owner}/{repository}#{number}");
+        return FailState is null ? Task.FromResult(State) : Task.FromException<PullRequestState>(FailState);
     }
 }
 

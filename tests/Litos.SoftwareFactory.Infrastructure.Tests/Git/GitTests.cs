@@ -369,6 +369,89 @@ public class GitWorkspaceTests : IAsyncLifetime
         Assert.True(File.Exists(InWorkspace("uncommitted.txt"))); // nothing was thrown away
     }
 
+    // ---- Discarding a withdrawn run's edits ----
+
+    [Fact]
+    public async Task DiscardUncommittedChangesAsync_DropsEditsNewFilesAndDeletions_AndKeepsTheCommits()
+    {
+        await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        File.WriteAllText(InWorkspace("work.txt"), "handed off\n");
+        var handoff = await _workspace.CommitAllAsync("Work", Factory, null, default);
+
+        // What a withdrawn rework run leaves: an edit, a new file in a new folder, a staged
+        // file, and a deletion.
+        File.WriteAllText(InWorkspace("work.txt"), "half reworked\n");
+        Directory.CreateDirectory(InWorkspace("src/new"));
+        File.WriteAllText(InWorkspace("src/new/Added.cs"), "class Added { }\n");
+        File.WriteAllText(InWorkspace("staged.txt"), "staged\n");
+        await GitAsync(_workspace.Path, "add", "staged.txt");
+        File.Delete(InWorkspace("README.md"));
+
+        await _workspace.DiscardUncommittedChangesAsync("factory/x", "main", default);
+
+        var status = await _workspace.GetStatusAsync(default);
+        Assert.True(status.IsClean);
+        Assert.Equal(("factory/x", handoff), (status.Branch, status.HeadCommit));   // the branch did not move
+        Assert.Equal("handed off\n", File.ReadAllText(InWorkspace("work.txt")).ReplaceLineEndings("\n"));
+        Assert.False(Directory.Exists(InWorkspace("src/new")));
+        Assert.False(File.Exists(InWorkspace("staged.txt")));
+        Assert.True(File.Exists(InWorkspace("README.md")));
+    }
+
+    /// <summary>Build output is ignored by the repository and is not the run's work; cleaning it
+    /// would only force the next build to start from nothing.</summary>
+    [Fact]
+    public async Task DiscardUncommittedChangesAsync_LeavesIgnoredFilesAlone()
+    {
+        await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        File.WriteAllText(InWorkspace(".gitignore"), "bin/\n");
+        await _workspace.CommitAllAsync("Ignore build output", Factory, null, default);
+        Directory.CreateDirectory(InWorkspace("bin"));
+        File.WriteAllText(InWorkspace("bin/app.dll"), "built");
+        File.WriteAllText(InWorkspace("scratch.txt"), "not ignored");
+
+        await _workspace.DiscardUncommittedChangesAsync("factory/x", "main", default);
+
+        Assert.True(File.Exists(InWorkspace("bin/app.dll")));
+        Assert.False(File.Exists(InWorkspace("scratch.txt")));
+    }
+
+    [Fact]
+    public async Task DiscardUncommittedChangesAsync_WithNothingToDiscard_DoesNothing()
+    {
+        await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        var before = await _workspace.GetStatusAsync(default);
+
+        await _workspace.DiscardUncommittedChangesAsync("factory/x", "main", default);
+
+        Assert.Equal(before.HeadCommit, (await _workspace.GetStatusAsync(default)).HeadCommit);
+    }
+
+    /// <summary>If the working copy is on another branch, the edits in it are not this task's.</summary>
+    [Fact]
+    public async Task DiscardUncommittedChangesAsync_WhenAnotherBranchIsCheckedOut_DiscardsNothing()
+    {
+        await _workspace.CreateTaskBranchAsync("factory/x", "main", default);
+        await _workspace.CheckoutAsync("main", default);
+        await _workspace.CreateTaskBranchAsync("factory/y", "main", default);
+        File.WriteAllText(InWorkspace("theirs.txt"), "another task's work");
+
+        var refusal = await Assert.ThrowsAsync<WorkspaceException>(() => _workspace.DiscardUncommittedChangesAsync("factory/x", "main", default));
+
+        Assert.Contains("is on 'factory/y', not 'factory/x'", refusal.Message);
+        Assert.True(File.Exists(InWorkspace("theirs.txt")));
+    }
+
+    [Fact]
+    public async Task DiscardUncommittedChangesAsync_OnTheDefaultBranch_IsRefused()
+    {
+        File.WriteAllText(InWorkspace("edit.txt"), "on main");
+
+        await Assert.ThrowsAnyAsync<Exception>(() => _workspace.DiscardUncommittedChangesAsync("main", "main", default));
+
+        Assert.True(File.Exists(InWorkspace("edit.txt")));
+    }
+
     // ---- Status ----
 
     [Fact]

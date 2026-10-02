@@ -77,6 +77,10 @@ public enum LifecycleTrigger
     Recover,
 
     Cancel,
+
+    /// <summary>The tester took back a change request before it produced a new handoff: the
+    /// rework run is dropped and the task waits for testing on its last handoff again.</summary>
+    WithdrawChanges,
 }
 
 public sealed class InvalidLifecycleTransitionException(LifecycleState from, LifecycleTrigger trigger)
@@ -130,6 +134,16 @@ public static class TaskLifecycle
         [(LifecycleState.Blocked, LifecycleTrigger.Cancel)] = LifecycleState.Cancelled,
         [(LifecycleState.Interrupted, LifecycleTrigger.Cancel)] = LifecycleState.Cancelled,
         [(LifecycleState.AwaitingHumanTesting, LifecycleTrigger.Cancel)] = LifecycleState.Cancelled,
+
+        // A change request can be withdrawn from any state in which its rework run is not
+        // executing; a running one is paused first. The table cannot see what kind of run the
+        // task has — the store checks that it is a rework run with a handoff to go back to.
+        [(LifecycleState.Queued, LifecycleTrigger.WithdrawChanges)] = LifecycleState.AwaitingHumanTesting,
+        [(LifecycleState.AwaitingDecision, LifecycleTrigger.WithdrawChanges)] = LifecycleState.AwaitingHumanTesting,
+        [(LifecycleState.PausedBudget, LifecycleTrigger.WithdrawChanges)] = LifecycleState.AwaitingHumanTesting,
+        [(LifecycleState.PausedUser, LifecycleTrigger.WithdrawChanges)] = LifecycleState.AwaitingHumanTesting,
+        [(LifecycleState.Blocked, LifecycleTrigger.WithdrawChanges)] = LifecycleState.AwaitingHumanTesting,
+        [(LifecycleState.Interrupted, LifecycleTrigger.WithdrawChanges)] = LifecycleState.AwaitingHumanTesting,
     };
 
     public static bool CanApply(LifecycleState from, LifecycleTrigger trigger) => Transitions.ContainsKey((from, trigger));
