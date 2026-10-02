@@ -1,6 +1,6 @@
 # Software Factory M1 evaluation results
 
-Results of running the [M1 task set](m1-task-set.md). One row per task, recorded as that file describes. Provider and model for every run: OpenRouter, `deepseek/deepseek-v4.1-flash`. Prompt revision: `m1.1`.
+Results of running the [M1 task set](m1-task-set.md). One row per task, recorded as that file describes. Provider and model for every run: OpenRouter, `deepseek/deepseek-v4.1-flash`. Prompt revision: `m1.1` for F1 to F3, `m1.2` from F4.
 
 ## Summary
 
@@ -9,13 +9,14 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F1 | Yes, first handoff | 0 | 0 | 0 | 993,607 (old rule; about 203,000 under the current one) | 150,000 | No | about 15 min of run time | 0 |
 | F2 | Yes, after one rework | 1 | 0 | 0 | 575,884 | 300,000 | No | 12 min (8 + 3 for the rework) | 0 |
 | F3 | **No: budget-paused during its rework.** All criteria met in the end | 1 | 2 (both for review findings) | 0 | 971,057 | 600,000 | No | 31 min (19 + 12 for the rework) | 0 |
+| F4 | Yes, after one rework | 1 | 0 | 0 | 401,521 | 600,000 | **Yes** | 11 min (9 + 2 for the rework) | 0 |
 
-**Against the M1 gate so far (3 of 12 run):**
+**Against the M1 gate so far (4 of 12 run):**
 
-- Accepted with at most one rework: 2 of 3. F3 produced code that meets every criterion after one rework, but it paused on budget during that rework, which the task set counts as a failure.
+- Accepted with at most one rework: 3 of 4. F3 produced code that meets every criterion after one rework, but it paused on budget during that rework, which the task set counts as a failure.
 - Evidence mismatches: 0.
-- **Budget overrun: all three tasks.** See "Budgets" below.
-- Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
+- **Budget overrun: F1, F2 and F3.** F4 is the first task to finish inside its cap. See "Budgets" below.
+- Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3, 2.3% on F4 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
 - Lock violations: 0.
 
 ## Budgets
@@ -60,7 +61,23 @@ What this shows:
 - **Compaction is not the lever.** These contexts are far below the size at which compaction pays for itself (see the blueprint, Â§8.6), so the factory leaves them alone.
 - **Reasoning is a large share of output**, up to 92% in the rework's review. The engine has no setting to limit it yet.
 
-From F4 onward the briefs (revision `m1.2`) ask for fewer, larger steps, and a rework's review is given only the rework. The effect is to be measured on F4, not assumed.
+From F4 onward the briefs (revision `m1.2`) ask for fewer, larger steps, and a rework's review is given only the rework.
+
+### The effect, measured on F4
+
+| | F3 (`m1.1`) | F4 (`m1.2`) |
+| --- | --- | --- |
+| First run, implement: model calls | 62 (with one repair) | 32 (no repair) |
+| First run, review: model calls | 37 | 10 |
+| Tokens to the first handoff | 556,150 | 333,285 |
+| Rework: implement, model calls | 34 (with one repair) | 16 |
+| Rework: review, model calls | 22 | 8 |
+| Rework: review, output tokens | 71,500 | 5,000 |
+| Tokens for the rework round | 414,900 | 68,236 |
+
+The two tasks are not the same work: F3's rework was a real fix with a second review finding and repair, and F4's was a one-line change of an exception's base type. So the rework figures show the direction, not the size, of the improvement. The first-run figures are the fairer comparison, and there the calls fell by about half in implementation and by nearly three quarters in review.
+
+What remains is reasoning. F4's first review made 10 calls and produced 60,700 output tokens, 58,100 of them reasoning, so it still cost about 164,000 tokens: half of the first handoff.
 
 ## Changes made to the factory during the evaluation
 
@@ -114,3 +131,14 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 - **Notes:**
   - The review turn is meant to be read-only, but with programmatic tool calling the reviewer ran its own C# to benchmark the change. The result was useful; the restriction is weaker than designed.
   - While that benchmark ran for four and a half minutes, nothing on the task's page changed, and nothing in the conversation says that a review found problems and a repair started.
+
+## F4 · Read-only open mode
+
+- **Outcome:** accepted after one rework round, inside the 600,000 cap. Pull request #4 is open as a draft.
+- **Baseline deviation:** as F2. F4 started from `main` with F1 merged and without F2 or F3.
+- **First handoff** (commit `6325e50`, 333,285 tokens): build passed; 64 tests passed (9 new); changed-line coverage 86.6%. Criteria 1, 2, 3, 5, 6 and 7 met. Not met: criterion 4. Every write on a read-only instance threw, with a clear message, but as a new `ReadOnlyDatabaseException` that did not derive from `InvalidOperationException`.
+- **Rework** (commit `9e56779`, 68,236 tokens, 2 minutes): one message naming criterion 4. The exception now derives from `InvalidOperationException`, and the tests assert it. 65 tests passed (10 new). All seven criteria met.
+- **Decisions:** none asked, none expected.
+- **Agent review:** no blocking finding. One minor finding open at the final handoff; three at the first, including that any I/O error while opening for writing is now reported as "database locked".
+- **Evidence:** no mismatch. The rework handoff updated pull request #4 and named it: the pull request update that failed on F2 and F3 worked.
+- **Notes:** no budget pause, no repair cycle, no call charged above its reservation.
