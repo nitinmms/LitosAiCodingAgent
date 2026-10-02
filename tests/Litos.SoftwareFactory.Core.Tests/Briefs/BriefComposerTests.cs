@@ -115,6 +115,101 @@ public class BriefComposerTests
         Assert.Contains("`submit_work`", brief);
     }
 
+    /// <summary>
+    /// A rework or repair turn can follow a compaction, whose summary keeps the request and the
+    /// decisions but not the rules. So those briefs state the rules themselves rather than
+    /// pointing back at a run brief that may no longer be in the conversation.
+    /// </summary>
+    [Theory]
+    [InlineData(BriefKind.Rework, TurnKind.Rework)]
+    [InlineData(BriefKind.Repair, TurnKind.Repair)]
+    public void ReworkAndRepairBriefs_RestateTheExecutionContract(BriefKind brief, TurnKind kind)
+    {
+        var text = Compose(brief, State(RunKind.Rework) with { RepairCyclesUsed = 1 }, kind: kind);
+
+        Assert.Contains("The execution contract still applies:", text);
+        Assert.Contains("Do not commit, push, merge, switch branches or rewrite history.", text);
+        Assert.Contains("Do not delete or weaken existing tests", text);
+        Assert.Contains("Do not start the application", text);
+        Assert.DoesNotContain("from the original run brief", text);
+    }
+
+    // ---- Working economically ----
+    //
+    // Every model call re-sends the whole conversation. In the first real runs a turn made 30 to
+    // 60 calls, mostly one small step each, and that count was what the tokens were spent on.
+
+    [Theory]
+    [InlineData(BriefKind.Run, TurnKind.Implement)]
+    [InlineData(BriefKind.Rework, TurnKind.Rework)]
+    [InlineData(BriefKind.Repair, TurnKind.Repair)]
+    [InlineData(BriefKind.Review, TurnKind.Review)]
+    public void EveryWorkBrief_SaysThatCallsAreWhatCosts_AndToReadFilesTogether(BriefKind brief, TurnKind kind)
+    {
+        var text = Compose(brief, State() with { RepairCyclesUsed = 1 }, kind: kind);
+
+        Assert.Contains("re-sends this whole conversation", text);
+        Assert.Matches("(?i)in (one|a single) (script|call)", text);
+    }
+
+    [Fact]
+    public void ReviewBrief_SaysNotToRepeatTheFactorysVerification_ButAllowsRunningCodeForASpecificConcern()
+    {
+        var brief = Compose(BriefKind.Review, State(), kind: TurnKind.Review);
+
+        Assert.Contains("The factory has already built the change and run its tests", brief);
+        Assert.Contains("Run code of your own only when a specific concern cannot be settled by reading", brief);
+        Assert.Contains("A review is not a second implementation.", brief);
+    }
+
+    // ---- The review of a rework covers the rework ----
+
+    private static readonly RunContext ReworkReview = Context with
+    {
+        Diff = "+public string Quote(string v) => v;",
+        ChangedLineCount = 1,
+        ChangedFiles = ["src/OrdersCsvExporter.cs"],
+        ReviewedThroughCommit = "1c9e2b4a77f0d3e5b6a8c9d0e1f2a3b4c5d6e7f8",
+        TesterFeedback = "CSV values containing commas are incorrect.\nFix this.",
+    };
+
+    /// <summary>On the first real tasks, the review after a rework re-reviewed the whole task
+    /// and cost more than the task's first implementation.</summary>
+    [Fact]
+    public void ReviewBrief_ForARework_SaysWhatWasAlreadyReviewed_AndWhatTheTesterAskedFor()
+    {
+        var brief = Compose(BriefKind.Review, State(RunKind.Rework), ReworkReview, kind: TurnKind.Review);
+
+        Assert.Contains("## Scope: a rework", brief);
+        Assert.Contains("reviewed and handed off at commit `1c9e2b4`", brief);
+        Assert.Contains("> CSV values containing commas are incorrect.\n> Fix this.", brief);
+        Assert.Contains("Raise something in the earlier work only if the rework breaks it.", brief);
+        Assert.Contains("```diff\n+public string Quote(string v) => v;\n```", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void ReviewBrief_ForAFirstRun_HasNoReworkScope()
+    {
+        var brief = Compose(BriefKind.Review, State(), Context with { Diff = "+x", ChangedLineCount = 1 }, kind: TurnKind.Review);
+
+        Assert.DoesNotContain("Scope: a rework", brief);
+        Assert.DoesNotContain("handed off at commit", brief);
+    }
+
+    [Fact]
+    public void ReviewBrief_ForALargeRework_PointsAtTheHandoffCommit_NotTheBaseBranch()
+    {
+        var limits = new RunLimits { InlineReviewMaxChangedLines = 10 };
+
+        var rework = Compose(BriefKind.Review, State(RunKind.Rework), ReworkReview with { ChangedLineCount = 11 }, limits, TurnKind.Review);
+        var first = Compose(BriefKind.Review, State(), Context with { Diff = "+x", ChangedLineCount = 11, ChangedFiles = ["a.cs"] }, limits, TurnKind.Review);
+
+        Assert.Contains("compare them with commit `1c9e2b4`", rework);
+        Assert.Contains("- `src/OrdersCsvExporter.cs`", rework);
+        Assert.Contains("compare them with `main`", first);
+    }
+
     [Fact]
     public void ReworkBrief_MissingInputs_SayNoneRatherThanLeavingGaps()
     {
@@ -468,6 +563,9 @@ public class BriefComposerTests
     public void Revision_IsSet_SoARunCanRecordWhichPromptsItUsed()
     {
         Assert.False(string.IsNullOrWhiteSpace(BriefComposer.Revision));
+        // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
+        // review of a rework scoped to the rework. Bump it with every change to a brief.
+        Assert.Equal("m1.2", BriefComposer.Revision);
     }
 
     [Theory]

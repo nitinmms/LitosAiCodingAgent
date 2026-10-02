@@ -259,6 +259,94 @@ public sealed class LeftoverEditsTests : IAsyncLifetime
     }
 }
 
+/// <summary>What the third real task (F3) showed about a rework round.</summary>
+public sealed class ReworkRoundTests : IAsyncLifetime
+{
+    private TestHost _host = null!;
+
+    public async Task InitializeAsync() => _host = await TestHost.StartAsync();
+
+    public async Task DisposeAsync() => await _host.DisposeAsync();
+
+    private async Task<(Guid ProjectId, Guid ThreadId, ThreadDetails First)> HandedOffAsync()
+    {
+        var projectId = await _host.RegisterProjectAsync();
+        var threadId = await _host.CreateThreadAsync(projectId);
+        await _host.DelegateAsync(threadId);
+        return (projectId, threadId, await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting));
+    }
+
+    /// <summary>
+    /// The review after a rework re-reviewed the whole task, and cost more than the task's first
+    /// implementation. It now gets only what the rework changed, with what the tester asked for.
+    /// </summary>
+    [Fact]
+    public async Task TheReviewOfARework_GetsOnlyTheReworksDiff_AndWhatTheTesterAsked()
+    {
+        var (_, threadId, first) = await HandedOffAsync();
+        _host.Workers.Script.Enqueue(async call =>
+        {
+            _host.Workers.WorkspaceOf(call.Worker).Write("src/Quoting.cs", "quote fields\n");
+            await call.Worker.SubmitAsync(call.SessionId, FakeWorkerLauncher.Work("Quoted fields that contain commas."));
+            return FakeWorkerLauncher.Done();
+        });
+
+        await _host.DelegateAsync(threadId, "@factory CSV values containing commas are incorrect. Fix this.");
+        await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        var reviews = _host.Workers.Turns.Where(t => t.Kind == TurnKind.Review).ToList();
+        Assert.Equal(2, reviews.Count);
+
+        // The first review saw the whole change against the base branch, and nothing about a rework.
+        Assert.Contains("src/Orders.cs", reviews[0].Brief);
+        Assert.DoesNotContain("Scope: a rework", reviews[0].Brief);
+
+        // The second saw the rework: its own file, the handoff it follows, and the tester's words.
+        Assert.Contains("## Scope: a rework", reviews[1].Brief);
+        Assert.Contains($"handed off at commit `{first.LatestHandoff!.CommitSha![..7]}`", reviews[1].Brief);
+        Assert.Contains("> CSV values containing commas are incorrect. Fix this.", reviews[1].Brief);
+        Assert.Contains("src/Quoting.cs", reviews[1].Brief);
+        Assert.DoesNotContain("src/Orders.cs", reviews[1].Brief);
+    }
+
+    /// <summary>
+    /// Both rework handoffs on the first real tasks failed to update the pull request, and each
+    /// time the handoff lost its link to a pull request that was still there.
+    /// </summary>
+    [Fact]
+    public async Task WhenThePullRequestCannotBeUpdated_TheHandoffStillNamesIt_AndSaysWhatFailed()
+    {
+        var (_, threadId, first) = await HandedOffAsync();
+        Assert.Equal(212, first.LatestHandoff!.PullRequestNumber);
+        _host.GitHub.Fail = new HttpRequestException("An error occurred while sending the request.");
+
+        await _host.DelegateAsync(threadId, "@factory Quote fields that contain commas.");
+        var second = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.NotEqual(first.LatestHandoff.CommitSha, second.LatestHandoff!.CommitSha);
+        Assert.Equal((212, "https://github.com/acme/salesapp/pull/212"), (second.LatestHandoff.PullRequestNumber, second.LatestHandoff.PullRequestUrl));
+        var evidence = JsonSerializer.Deserialize<HandoffEvidence>(second.LatestHandoff.EvidenceJson, FactoryWire.Json)!;
+        Assert.Equal(212, evidence.PullRequestNumber);
+        Assert.Contains(evidence.KnownLimitations, l => l == "The pull request's description could not be updated: An error occurred while sending the request.");
+        Assert.DoesNotContain(evidence.KnownLimitations, l => l.Contains("could not be opened"));
+        Assert.Contains("draft PR #212", second.Messages[^1].Text);
+    }
+
+    [Fact]
+    public async Task WhenTheFirstPullRequestCannotBeOpened_TheHandoffSaysSo_AndNamesNone()
+    {
+        _host.GitHub.Fail = new HttpRequestException("api.github.com could not be reached.");
+        var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
+        await _host.DelegateAsync(threadId);
+
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Null(details.LatestHandoff!.PullRequestNumber);
+        var evidence = JsonSerializer.Deserialize<HandoffEvidence>(details.LatestHandoff.EvidenceJson, FactoryWire.Json)!;
+        Assert.Contains(evidence.KnownLimitations, l => l == "The draft PR could not be opened: api.github.com could not be reached.");
+    }
+}
+
 /// <summary>A model call whose usage will never be reported is settled, not held for ever.</summary>
 public sealed class UsageReconciliationTests
 {

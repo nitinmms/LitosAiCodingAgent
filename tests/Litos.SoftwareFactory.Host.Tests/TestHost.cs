@@ -151,7 +151,14 @@ public sealed class FakeWorkspace : IWorkspace
         return Task.CompletedTask;
     }
 
-    private List<string> Changed() => [.. Files.Where(f => !_base.TryGetValue(f.Key, out var original) || original != f.Value).Select(f => f.Key).Order()];
+    /// <summary>What the working copy held at each commit, so a diff can be taken from any of them.</summary>
+    private readonly Dictionary<string, Dictionary<string, string>> _snapshots = new();
+
+    private List<string> Changed(string? since = null)
+    {
+        var from = since is not null && _snapshots.TryGetValue(since, out var snapshot) ? snapshot : _base;
+        return [.. Files.Where(f => !from.TryGetValue(f.Key, out var original) || original != f.Value).Select(f => f.Key).Order()];
+    }
 
     public Task<WorkspaceStatus> GetStatusAsync(CancellationToken ct) =>
         Task.FromResult(new WorkspaceStatus(Branch, Head, Uncommitted.Count == 0, Uncommitted));
@@ -168,7 +175,7 @@ public sealed class FakeWorkspace : IWorkspace
 
     public Task<WorkspaceDiff> DiffAsync(string baseCommit, CancellationToken ct)
     {
-        var changed = Changed();
+        var changed = Changed(baseCommit);
         var patch = string.Concat(changed.Select(f => $"+++ b/{f}\n+{Files[f]}"));
         return Task.FromResult(new WorkspaceDiff(
             baseCommit, patch, [.. changed.Select(f => new FileChange(f, [new LineRange(1, Math.Max(1, Files[f].Split('\n').Length - 1))]))]));
@@ -183,6 +190,7 @@ public sealed class FakeWorkspace : IWorkspace
         _committed = new Dictionary<string, string>(Files);
         Uncommitted = [];
         Head = $"commit{Commits.Count:000}";
+        _snapshots[Head] = new Dictionary<string, string>(Files);
         return Task.FromResult<string?>(Head);
     }
 

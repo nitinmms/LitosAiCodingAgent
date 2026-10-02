@@ -36,6 +36,13 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
     // Review turns.
     public string? Diff { get; init; }
 
+    /// <summary>
+    /// For the review of a rework run: the commit that was last reviewed and handed off. The
+    /// diff is then only what changed since, so the reviewer does not review the whole task
+    /// again. Null for a first run, whose diff is against the base branch.
+    /// </summary>
+    public string? ReviewedThroughCommit { get; init; }
+
     public int ChangedLineCount { get; init; }
 }
 
@@ -47,7 +54,7 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
 public static partial class BriefComposer
 {
     /// <summary>Bump whenever any template or any text composed here changes.</summary>
-    public const string Revision = "m1.1";
+    public const string Revision = "m1.2";
 
     private const int CharsPerToken = 4;
 
@@ -87,6 +94,7 @@ public static partial class BriefComposer
         ["baseBranch"] = context.BaseBranch,
         ["feedback"] = OrNone(context.TesterFeedback),
         ["previousHandoff"] = OrNone(context.PreviousHandoffSummary),
+        ["contract"] = Contract,
         ["changedFiles"] = context.ChangedFiles.Count == 0 ? "(none)" : Bullets(context.ChangedFiles.Select(f => $"`{f}`")),
         ["decisions"] = Decisions(state),
     });
@@ -128,6 +136,7 @@ public static partial class BriefComposer
 
         return Render("repair", new()
         {
+            ["contract"] = Contract,
             ["cycle"] = state.RepairCyclesUsed.ToString(),
             ["maxCycles"] = limits.MaxRepairCycles.ToString(),
             ["failingTests"] = failures.ToString().TrimEnd(),
@@ -143,10 +152,20 @@ public static partial class BriefComposer
     {
         // Above the inline limit the reviewer reads the files itself, which keeps the review
         // turn's context small however large the change is.
+        var rework = context.ReviewedThroughCommit is { Length: > 0 } commit ? commit[..Math.Min(7, commit.Length)] : null;
+        var comparedWith = rework is null ? $"`{context.BaseBranch}`" : $"commit `{rework}`";
         var change = context.Diff is { Length: > 0 } diff && context.ChangedLineCount <= limits.InlineReviewMaxChangedLines
             ? "```diff\n" + diff.TrimEnd() + "\n```"
-            : $"The change is {context.ChangedLineCount} lines, too large to include here. Read these files and compare them with `{context.BaseBranch}`:\n\n"
+            : $"The change is {context.ChangedLineCount} lines, too large to include here. Read these files and compare them with {comparedWith}:\n\n"
               + (context.ChangedFiles.Count == 0 ? "(none)" : Bullets(context.ChangedFiles.Select(f => $"`{f}`")));
+
+        // A rework is reviewed on its own: what was handed off before has been reviewed already.
+        var scope = rework is null
+            ? ""
+            : "## Scope: a rework\n\n"
+              + $"This task was reviewed and handed off at commit `{rework}`. The tester then asked for changes, and the change shown below is only what was done since, in answer to this:\n\n"
+              + "> " + Quote(context.TesterFeedback ?? "") + "\n\n"
+              + "Review that rework, and whether it does what the tester asked. Raise something in the earlier work only if the rework breaks it.";
 
         return Render("review", new()
         {
@@ -157,8 +176,24 @@ public static partial class BriefComposer
             ["specification"] = Specification(context),
             ["verification"] = VerificationResult(state),
             ["change"] = change,
+            ["scope"] = scope,
         });
     }
+
+    /// <summary>
+    /// The execution contract, restated in every brief that can follow a compaction: the summary
+    /// that replaces the conversation keeps the request and the decisions, not the rules.
+    /// </summary>
+    private const string Contract =
+        """
+        The execution contract still applies:
+
+        - Stay within what is asked. Write or update unit tests for every behaviour you change.
+        - Do not commit, push, merge, switch branches or rewrite history. The factory commits and pushes at handoff.
+        - Do not delete or weaken existing tests, and do not change the verification configuration to make your work pass.
+        - Do not start the application, deploy anything, or run migrations or other commands against a database.
+        - Work economically: every call re-sends this whole conversation. Read every file you need in one script, read each file once, and make related edits together.
+        """;
 
     private static string Nudge(RunState state)
     {

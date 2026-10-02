@@ -65,6 +65,97 @@ public class GitHubClientTests
         Assert.False(body.RootElement.TryGetProperty("base", out _)); // an update never retargets the PR
     }
 
+    // ---- A request that fails in transit ----
+    //
+    // Every pull request update in the first real runs failed with "An error occurred while
+    // sending the request": the host reused a connection GitHub had just closed.
+
+    private static (GitHubClient Client, FakeHttpMessageHandler Handler) CreateRetrying(int attempts = 3)
+    {
+        var handler = new FakeHttpMessageHandler();
+        return (new GitHubClient(GitHubClient.CreateHttpClient("ghp_token", handler)) { Attempts = attempts, RetryDelay = TimeSpan.FromMilliseconds(1) }, handler);
+    }
+
+    [Fact]
+    public async Task Update_ThatFailsInTransit_IsTriedAgainFromTheLookup_AndSucceeds()
+    {
+        var (client, handler) = CreateRetrying();
+        handler.EnqueueFailure();                                                                                   // the lookup hits a closed connection
+        handler.Enqueue(HttpStatusCode.OK, """[{"number":3,"html_url":"https://github.com/acme/salesapp/pull/3"}]""");
+        handler.Enqueue(HttpStatusCode.OK, """{"number":3,"html_url":"https://github.com/acme/salesapp/pull/3"}""");
+
+        var pr = await client.CreateOrUpdateDraftPullRequestAsync(Draft, default);
+
+        Assert.Equal(3, pr.Number);
+        Assert.Equal([HttpMethod.Get, HttpMethod.Get, HttpMethod.Patch], handler.Requests.Select(r => r.Method));
+    }
+
+    /// <summary>If the create reached GitHub and only its answer was lost, starting again from
+    /// the lookup finds the pull request and updates it: there is never a second one.</summary>
+    [Fact]
+    public async Task Create_WhoseAnswerWasLost_IsNotCreatedTwice()
+    {
+        var (client, handler) = CreateRetrying();
+        handler.Enqueue(HttpStatusCode.OK, "[]");
+        handler.EnqueueFailure();                                                                                   // the POST's answer never arrives
+        handler.Enqueue(HttpStatusCode.OK, """[{"number":7,"html_url":"https://github.com/acme/salesapp/pull/7"}]""");
+        handler.Enqueue(HttpStatusCode.OK, """{"number":7,"html_url":"https://github.com/acme/salesapp/pull/7"}""");
+
+        var pr = await client.CreateOrUpdateDraftPullRequestAsync(Draft, default);
+
+        Assert.Equal(7, pr.Number);
+        Assert.Equal([HttpMethod.Get, HttpMethod.Post, HttpMethod.Get, HttpMethod.Patch], handler.Requests.Select(r => r.Method));
+    }
+
+    [Fact]
+    public async Task Request_ThatKeepsFailingInTransit_GivesUpAfterTheConfiguredAttempts()
+    {
+        var (client, handler) = CreateRetrying(attempts: 3);
+        handler.EnqueueFailure();
+        handler.EnqueueFailure();
+        handler.EnqueueFailure();
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.GetPullRequestStateAsync("acme", "salesapp", 3, default));
+
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task StateRead_ThatFailsInTransitOnce_Succeeds()
+    {
+        var (client, handler) = CreateRetrying();
+        handler.EnqueueFailure();
+        handler.Enqueue(HttpStatusCode.OK, """{"number":3,"state":"closed","merged":true}""");
+
+        Assert.Equal(PullRequestState.Merged, await client.GetPullRequestStateAsync("acme", "salesapp", 3, default));
+    }
+
+    /// <summary>A status code is an answer. Asking again would get the same one.</summary>
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.UnprocessableEntity)]
+    public async Task Refusal_FromGitHub_IsNotRetried(HttpStatusCode status)
+    {
+        var (client, handler) = CreateRetrying();
+        handler.Enqueue(status, """{"message":"No."}""");
+
+        await Assert.ThrowsAsync<GitHubException>(() => client.CreateOrUpdateDraftPullRequestAsync(Draft, default));
+
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ACancelledRequest_IsNotRetried()
+    {
+        var (client, handler) = CreateRetrying();
+        using var cancelled = new CancellationTokenSource();
+        handler.EnqueueFailure();
+        await cancelled.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetPullRequestStateAsync("acme", "salesapp", 3, cancelled.Token));
+    }
+
     // ---- Where a pull request stands ----
 
     /// <summary>GitHub's "state" is only open or closed; draft and merged are separate flags.</summary>

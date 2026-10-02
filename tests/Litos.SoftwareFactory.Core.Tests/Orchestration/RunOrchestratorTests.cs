@@ -1180,23 +1180,67 @@ public class RunStateJsonTests
 
 public class ContextPolicyTests
 {
+    private const int MillionTokenWindow = 1_048_576;
+
+    private static StartTurnStep Turn(TurnKind kind, SessionScope session = SessionScope.Thread) => new(kind, BriefKind.Resume, session);
+
+    /// <summary>The factory compacts where the engine does: the same trigger the agent loop and
+    /// every other Litos face use for the model's window, not a rule of its own.</summary>
     [Theory]
-    [InlineData(TurnKind.Rework, 0.61, true)]
-    [InlineData(TurnKind.Repair, 0.90, true)]
-    [InlineData(TurnKind.Rework, 0.60, false)] // above 60%, not at it
-    [InlineData(TurnKind.Repair, 0.10, false)]
-    [InlineData(TurnKind.Implement, 0.95, false)]
-    [InlineData(TurnKind.Review, 0.95, false)]
-    [InlineData(TurnKind.Nudge, 0.95, false)]
-    [InlineData(TurnKind.Chat, 0.95, false)]
-    public void ShouldCompactBefore_OnlyLargeTurnsAboveSixtyPercent(TurnKind kind, double fraction, bool expected)
+    [InlineData(8_000, 6_000)]            // a small local model: 75% of its window
+    [InlineData(200_000, 130_000)]        // 65% of the window
+    [InlineData(MillionTokenWindow, 250_000)] // capped: a million-token window compacts at 250,000
+    public void CompactionTrigger_IsTheEnginesTriggerForTheWindow(int contextLength, int expected)
     {
-        Assert.Equal(expected, ContextPolicy.ShouldCompactBefore(kind, fraction));
+        Assert.Equal(expected, ContextPolicy.CompactionTrigger(contextLength));
+        Assert.Equal(new Litos.Agent.Session.CompactionSettings().ForContextWindow(contextLength).TriggerAtTokens, ContextPolicy.CompactionTrigger(contextLength));
+    }
+
+    [Theory]
+    [InlineData(TurnKind.Rework, 250_001, true)]
+    [InlineData(TurnKind.Repair, 400_000, true)]
+    [InlineData(TurnKind.Rework, 250_000, false)] // above the trigger, not at it
+    [InlineData(TurnKind.Implement, 900_000, false)]
+    [InlineData(TurnKind.Review, 900_000, false)]
+    [InlineData(TurnKind.Nudge, 900_000, false)]
+    [InlineData(TurnKind.Chat, 900_000, false)]
+    public void ShouldCompactBefore_OnlyReworkAndRepairTurns_PastTheTrigger(TurnKind kind, int tokens, bool expected)
+    {
+        Assert.Equal(expected, ContextPolicy.ShouldCompactBefore(Turn(kind), tokens, MillionTokenWindow));
+    }
+
+    /// <summary>
+    /// What the first real runs carried into a rework or repair turn. Compacting contexts this
+    /// small costs more in re-reading what the summary dropped than it saves, and a cut keeps
+    /// far more than this verbatim, so there would be nothing to cut: they are left alone.
+    /// </summary>
+    [Theory]
+    [InlineData(25_000)]
+    [InlineData(45_000)]
+    [InlineData(120_000)]
+    public void ShouldCompactBefore_TheContextsTheFirstRealRunsHad_AreLeftAlone(int tokens)
+    {
+        Assert.False(ContextPolicy.ShouldCompactBefore(Turn(TurnKind.Rework), tokens, MillionTokenWindow));
+        Assert.False(ContextPolicy.ShouldCompactBefore(Turn(TurnKind.Repair), tokens, MillionTokenWindow));
     }
 
     [Fact]
-    public void ShouldCompactBefore_UnknownUsage_DoesNotCompact()
+    public void ShouldCompactBefore_ASmallerWindow_CompactsSooner()
     {
-        Assert.False(ContextPolicy.ShouldCompactBefore(TurnKind.Rework, null));
+        Assert.True(ContextPolicy.ShouldCompactBefore(Turn(TurnKind.Repair), 131_000, 200_000));
+        Assert.False(ContextPolicy.ShouldCompactBefore(Turn(TurnKind.Repair), 129_000, 200_000));
+    }
+
+    [Fact]
+    public void ShouldCompactBefore_UnknownUsage_OrUnknownWindow_DoesNotCompact()
+    {
+        Assert.False(ContextPolicy.ShouldCompactBefore(Turn(TurnKind.Rework), null, MillionTokenWindow));
+        Assert.False(ContextPolicy.ShouldCompactBefore(Turn(TurnKind.Rework), 900_000, 0));
+    }
+
+    [Fact]
+    public void ShouldCompactBefore_AReviewSession_IsNeverCompacted()
+    {
+        Assert.False(ContextPolicy.ShouldCompactBefore(Turn(TurnKind.Repair, SessionScope.Review), 900_000, MillionTokenWindow));
     }
 }

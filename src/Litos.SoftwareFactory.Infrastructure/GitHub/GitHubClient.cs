@@ -46,7 +46,17 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
     /// <summary>An HttpClient set up for api.github.com with the given token.</summary>
     public static HttpClient CreateHttpClient(string token, HttpMessageHandler? handler = null)
     {
-        var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        // GitHub closes a connection that has been idle for about a minute. A client that keeps
+        // one for longer sends its next request into a closed socket and fails with "An error
+        // occurred while sending the request" — which is what every pull request update did in
+        // the first real runs, because the host polls a pull request's state once a minute and
+        // so always had a connection of just that age. Dropping idle connections sooner than
+        // GitHub does avoids the race.
+        var client = new HttpClient(handler ?? new SocketsHttpHandler
+        {
+            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(20),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        });
         client.BaseAddress = new Uri("https://api.github.com/");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
@@ -55,7 +65,38 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
         return client;
     }
 
-    public async Task<PullRequestRef> CreateOrUpdateDraftPullRequestAsync(PullRequestDraft draft, CancellationToken ct)
+    /// <summary>How many times a request that failed in transit is tried in all.</summary>
+    public int Attempts { get; init; } = 3;
+
+    /// <summary>The pause before a retry, multiplied by the attempt number; tests shorten it.</summary>
+    public TimeSpan RetryDelay { get; init; } = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>
+    /// Runs one whole operation again when it failed in transit — the request never got an
+    /// answer. Both operations here are safe to repeat from the start: reading state changes
+    /// nothing, and create-or-update looks the pull request up first, so a create that did reach
+    /// GitHub is found and updated rather than created twice. A refusal from GitHub (a status
+    /// code) is an answer, and is never retried.
+    /// </summary>
+    private async Task<T> WithRetryAsync<T>(Func<Task<T>> operation, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await operation();
+            }
+            catch (HttpRequestException) when (attempt < Attempts)
+            {
+                await Task.Delay(RetryDelay * attempt, ct);
+            }
+        }
+    }
+
+    public Task<PullRequestRef> CreateOrUpdateDraftPullRequestAsync(PullRequestDraft draft, CancellationToken ct) =>
+        WithRetryAsync(() => CreateOrUpdateOnceAsync(draft, ct), ct);
+
+    private async Task<PullRequestRef> CreateOrUpdateOnceAsync(PullRequestDraft draft, CancellationToken ct)
     {
         var repository = $"repos/{Uri.EscapeDataString(draft.Owner)}/{Uri.EscapeDataString(draft.Repository)}";
 
@@ -80,7 +121,10 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
         return ToRef(await createResponse.Content.ReadFromJsonAsync<PullRequestResponse>(JsonOptions, ct));
     }
 
-    public async Task<PullRequestState> GetPullRequestStateAsync(string owner, string repository, int number, CancellationToken ct)
+    public Task<PullRequestState> GetPullRequestStateAsync(string owner, string repository, int number, CancellationToken ct) =>
+        WithRetryAsync(() => GetPullRequestStateOnceAsync(owner, repository, number, ct), ct);
+
+    private async Task<PullRequestState> GetPullRequestStateOnceAsync(string owner, string repository, int number, CancellationToken ct)
     {
         using var response = await http.GetAsync(
             $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repository)}/pulls/{number}", ct);

@@ -471,12 +471,17 @@ Every turn's cost includes its whole context, so context is managed deliberately
 
 - **Thread session.** One session per thread carries chat, spec, implement, repair and rework turns. That continuity is what lets rework understand earlier discussion.
 - **Review.** Always runs in a fresh session, for independence and a small context.
+  - **The review of a rework run covers the rework.** Its brief carries the diff since the last handoff and what the tester asked for, and says the earlier work was already reviewed. On the first real tasks a rework's review re-reviewed the whole task and cost more than the task's first implementation.
+- **Calls are what cost.** A turn's cost is its context size times the number of model calls it makes, and every brief says so: read the files you need in one script, read each once, and (for review) do not repeat the factory's verification. The first real runs made 30 to 60 calls a turn.
 - **Stable prefix.** The system prompt and tool list never change within a session; per-run material goes into user messages. That keeps provider prompt caches useful.
-- **Compaction before large turns.** Before starting a rework or repair turn, the host checks the session's context usage using the existing `ContextUsage` banding. Above 60% of the window, it compacts first with a factory-specific instruction:
+- **Compaction before large turns.** Before starting a rework or repair turn, the host checks the session's context size against **the engine's own compaction trigger** for the model's window (`CompactionSettings.ForContextWindow`: 65% of the window, capped at 250,000 tokens, which is where a million-token model lands). Past it, the host compacts first with a factory-specific instruction:
   - keep the acceptance criteria, decisions, the files changed and their purpose, and outstanding failures;
   - drop raw tool output.
 
   Compaction goes through the gateway and counts against the task budget, like any other call.
+
+  The factory deliberately has no lower trigger of its own. The engine's figure comes from cost measurements: compacting a smaller context costs more in re-reading what the summary dropped than it saves, and a cut keeps the most recent part of the conversation verbatim (about 78,000 tokens for a million-token window), so a small session has nothing old enough to cut. The sessions in the first real runs were 25,000 to 45,000 tokens, and are rightly left alone.
+- **Rules survive compaction.** A compaction summary keeps the request and the decisions, not the rules. So the rework and repair briefs restate the execution contract instead of pointing back at the run brief.
 - **Bounded tool output.** The existing shell output truncation applies. Excerpts from verification reports are bounded by the host before they enter a brief.
 
 ## 9. Token budget and the model gateway

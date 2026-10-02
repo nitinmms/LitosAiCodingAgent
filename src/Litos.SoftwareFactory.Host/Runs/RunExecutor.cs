@@ -250,9 +250,10 @@ public sealed class RunExecutor(
         var sessionId = step.Session == SessionScope.Review ? await ReviewSessionAsync(data) : data.Thread.SessionId;
 
         // Compaction before a large turn (§8.6): a repair or rework turn that would start on a
-        // nearly full context is compacted first, keeping what the task still needs.
-        if (step.Session == SessionScope.Thread && active.Baselines.TryGetValue(sessionId, out var baseline)
-            && ContextPolicy.ShouldCompactBefore(step.Kind, (double)baseline.TotalInputTokens / options.ContextLength))
+        // context past the engine's compaction trigger is compacted first, keeping what the
+        // task still needs.
+        int? sessionInput = active.Baselines.TryGetValue(sessionId, out var baseline) ? baseline.TotalInputTokens : null;
+        if (ContextPolicy.ShouldCompactBefore(step, sessionInput, options.ContextLength))
         {
             try
             {
@@ -337,12 +338,20 @@ public sealed class RunExecutor(
 
         if (step.Brief is BriefKind.Rework or BriefKind.Review)
         {
-            var diff = await data.Workspace.DiffAsync(data.BaseCommit, ct);
+            // The review of a rework run covers only the rework: what was handed off before has
+            // been reviewed, and reviewing the whole task again on every round was the largest
+            // cost of the first real runs.
+            var reviewedThrough = step.Brief == BriefKind.Review && data.Run.Kind == RunKind.Rework
+                ? details?.LatestHandoff?.CommitSha
+                : null;
+            var diff = await data.Workspace.DiffAsync(string.IsNullOrEmpty(reviewedThrough) ? data.BaseCommit : reviewedThrough, ct);
             context = context with
             {
                 ChangedFiles = [.. diff.Files.Select(f => f.Path)],
                 Diff = diff.Patch,
                 ChangedLineCount = diff.ChangedLineCount,
+                ReviewedThroughCommit = string.IsNullOrEmpty(reviewedThrough) ? null : reviewedThrough,
+                TesterFeedback = string.IsNullOrEmpty(reviewedThrough) ? null : data.Run.Request,
             };
         }
 
@@ -449,7 +458,19 @@ public sealed class RunExecutor(
                 }
                 catch (Exception ex) when (ex is HttpRequestException or Infrastructure.GitHub.GitHubException)
                 {
-                    notes.Add($"The draft PR could not be opened: {ex.Message}");
+                    logger.LogWarning(ex, "The pull request for run {RunId} could not be created or updated.", data.Run.Id);
+
+                    // A rework pushes to a branch whose pull request already exists. Failing to
+                    // refresh its description does not make it go away: the handoff still names it.
+                    if (data.Thread is { PullRequestNumber: { } number, PullRequestUrl: { Length: > 0 } url })
+                    {
+                        pullRequest = new PullRequestRef(number, url);
+                        notes.Add($"The pull request's description could not be updated: {ex.Message}");
+                    }
+                    else
+                    {
+                        notes.Add($"The draft PR could not be opened: {ex.Message}");
+                    }
                 }
             }
 
