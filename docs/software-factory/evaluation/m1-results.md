@@ -1,4 +1,4 @@
-# Software Factory M1 evaluation results
+﻿# Software Factory M1 evaluation results
 
 Results of running the [M1 task set](m1-task-set.md). One row per task, recorded as that file describes. Provider and model for every run: OpenRouter, `deepseek/deepseek-v4.1-flash`. Prompt revision: `m1.1`.
 
@@ -57,7 +57,7 @@ Measured on F3's four sessions:
 What this shows:
 
 - **The number of calls is the multiplier.** The agent took one small step per call, 22 to 62 times a turn, and each call re-reads the whole conversation.
-- **Compaction is not the lever.** These contexts are far below the size at which compaction pays for itself (see the blueprint, §8.6), so the factory leaves them alone.
+- **Compaction is not the lever.** These contexts are far below the size at which compaction pays for itself (see the blueprint, Â§8.6), so the factory leaves them alone.
 - **Reasoning is a large share of output**, up to 92% in the rework's review. The engine has no setting to limit it yet.
 
 From F4 onward the briefs (revision `m1.2`) ask for fewer, larger steps, and a rework's review is given only the rework. The effect is to be measured on F4, not assumed.
@@ -74,10 +74,10 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 | F1 | An interrupted run could not be recovered | A run cut off mid-step redoes that step | `0f92bf4` |
 | F1 | Six gaps around the handoff | Withdraw a change request; reconcile unreported usage; reserve closer to cost; PR label from GitHub; and others | `c039d2a` |
 | F2 | F2 could not start | Uncommitted edits an earlier task left in the working copy are set aside | `d46aff6` |
-| F2, F3 | Every update of an existing pull request failed in transit | Idle connections to GitHub are dropped before GitHub closes them; a request that fails in transit is retried; a handoff keeps naming a pull request it could not update | see the commit after F3 |
-| F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | see the commit after F3 |
+| F2, F3 | Every update of an existing pull request failed in transit | Idle connections to GitHub are dropped before GitHub closes them; a request that fails in transit is retried; a handoff keeps naming a pull request it could not update | `c5e10d8` |
+| F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | `c5e10d8` |
 
-## F1 · Enforce size limits on keys, names and documents
+## F1 Â· Enforce size limits on keys, names and documents
 
 - **Outcome:** accepted on the first handoff. The reviewer merged pull request #1 on GitHub; all four repository checks passed.
 - **Evidence at handoff:** build passed; 55 tests passed (15 new); changed-line coverage 100%; agent review left 3 minor findings open.
@@ -86,7 +86,7 @@ The first two tasks were also the first real end-to-end runs, and found defects 
   - The thread reads Cancelled, not Accepted. After the handoff a question sent with `@factory` started a rework run, and at that time there was no way to withdraw it and reach Accept. The change was judged and merged from the first handoff.
   - The run was resumed several times while the defects above were fixed, so its wall-clock time and token total are not representative.
 
-## F2 · JSON Lines export and import
+## F2 Â· JSON Lines export and import
 
 - **Outcome:** accepted after one rework round. Pull request #2 is open as a draft; it has not been merged.
 - **Baseline deviation:** the task set starts every task from `07fb8b8`. F2 started from `main` after F1 was merged (`1565c10`), because the factory branches from the current default branch.
@@ -99,7 +99,7 @@ The first two tasks were also the first real end-to-end runs, and found defects 
   - Criterion 2 (atomic import) is met by the implementation, which commits every line as one batch, but no test reopens the database to show it.
   - The run paused on budget at 300,000 and again at 400,000; the cap was raised each time.
 
-## F3 · Automatic compaction
+## F3 Â· Automatic compaction
 
 - **Outcome:** recorded as **not accepted**. The rework round paused on budget during its review, and the task set counts a run that ends budget-paused as failed. The cap was raised so the work could be finished, and the final handoff meets all five criteria. Pull request #3 is open as a draft.
 - **Baseline deviation:** as F2. F3 started from `main` with F1 merged and without F2.
