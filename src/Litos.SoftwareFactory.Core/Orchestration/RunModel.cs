@@ -43,8 +43,9 @@ public sealed record RunLimits
     /// <summary>A light review is asked to submit after this many model calls...</summary>
     public int LightReviewWrapUpCalls { get; init; } = 2;
 
-    /// <summary>...and is stopped after this many tool calls.</summary>
-    public int LightReviewMaxToolCalls { get; init; } = 4;
+    /// <summary>...and is stopped after this many tool calls: the two it needs, plus room for a
+    /// PTC kernel error or a rejected submission, each of which costs a call of its own.</summary>
+    public int LightReviewMaxToolCalls { get; init; } = 6;
 
     /// <summary>A full review is asked to submit after this many model calls (the first real
     /// reviews took 5 to 37)...</summary>

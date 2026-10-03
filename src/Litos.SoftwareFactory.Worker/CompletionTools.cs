@@ -61,12 +61,27 @@ public abstract class CompletionTool(FactoryHostClient host, string sessionId) :
             ? value.GetString()!.Trim()
             : null;
 
-    /// <summary>A list of non-empty strings. A missing property is an empty list; a property of
-    /// the wrong shape is null, so the caller can say so.</summary>
+    /// <summary>The first of several accepted names that holds text. From PTC kernel code the
+    /// model sees only a tool's top-level signature, never the fields of an array's items, so it
+    /// guesses them; every review's first submit_review used 'description' for 'text'. Taking the
+    /// common guesses costs nothing, and a rejected submission costs a whole model call.</summary>
+    protected static string? Text(JsonElement arguments, params string[] names)
+    {
+        foreach (var name in names)
+            if (Text(arguments, name) is { } text)
+                return text;
+        return null;
+    }
+
+    /// <summary>A list of non-empty strings. A missing property is an empty list, and a single
+    /// string is a list of one (the model often passes one test or one limitation that way); a
+    /// property of any other shape is null, so the caller can say so.</summary>
     protected static IReadOnlyList<string>? Strings(JsonElement arguments, string name)
     {
         if (!arguments.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null)
             return [];
+        if (value.ValueKind == JsonValueKind.String)
+            return string.IsNullOrWhiteSpace(value.GetString()) ? [] : [value.GetString()!.Trim()];
         if (value.ValueKind != JsonValueKind.Array)
             return null;
 
@@ -137,12 +152,16 @@ public sealed class SubmitWorkTool(FactoryHostClient host, string sessionId) : C
 
             foreach (var item in criteriaValue.EnumerateArray())
             {
-                if (item.ValueKind != JsonValueKind.Object || Text(item, "criterion") is not { } criterion)
-                    return (null, "every entry in 'criteria' needs a 'criterion'.");
-                if (Strings(item, "tests") is not { } tests)
+                // A plain string is not taken as a criterion: it would lose which tests cover it,
+                // and a criterion with no test sends the change to a full review.
+                if (item.ValueKind != JsonValueKind.Object)
+                    return (null, $"every entry in 'criteria' must be an object, not a string: {CriterionShape}.");
+                if (Text(item, "criterion", "name", "text", "description") is not { } criterion)
+                    return (null, $"every entry in 'criteria' needs a 'criterion': {CriterionShape}.");
+                if (Strings(item, item.TryGetProperty("tests", out _) ? "tests" : "testNames") is not { } tests)
                     return (null, "'tests' must be an array of test names.");
 
-                var manualOnly = item.TryGetProperty("manualOnly", out var manual) && manual.ValueKind == JsonValueKind.True;
+                var manualOnly = (item.TryGetProperty("manualOnly", out var manual) || item.TryGetProperty("manual", out manual)) && manual.ValueKind == JsonValueKind.True;
                 if (tests.Count == 0 && !manualOnly)
                     return (null, $"criterion '{criterion}' names no tests; list the tests that cover it or set 'manualOnly' to true.");
                 criteria.Add(new CriterionCoverage(criterion, tests, manualOnly));
@@ -158,6 +177,9 @@ public sealed class SubmitWorkTool(FactoryHostClient host, string sessionId) : C
 
         return (new WorkSubmission(summary, criteria, testsAdded, limitations, manualSteps), null);
     }
+
+    private const string CriterionShape =
+        "{ \"criterion\": \"Admins can export.\", \"tests\": [\"Export_Admin_Succeeds\"] }, or { \"criterion\": \"...\", \"manualOnly\": true }";
 }
 
 public sealed class RequestDecisionTool(FactoryHostClient host, string sessionId) : CompletionTool(host, sessionId)
@@ -260,16 +282,27 @@ public sealed class SubmitReviewTool(FactoryHostClient host, string sessionId) :
                     return (null, "every finding needs a 'severity' of 'blocking' or 'minor'.");
             }
 
-            if (Text(item, "file") is not { } file || Text(item, "text") is not { } text)
-                return (null, "every finding needs a 'file' and a 'text'.");
+            if (Text(item, "file", "path") is not { } file || Text(item, "text", "description", "finding", "message") is not { } text)
+                return (null, "every finding needs a 'file' and a 'text', as in { \"severity\": \"minor\", \"file\": \"src/Orders.cs\", \"line\": 42, \"text\": \"One sentence.\" }.");
 
-            int? line = item.TryGetProperty("line", out var lineValue) && lineValue.ValueKind == JsonValueKind.Number && lineValue.TryGetInt32(out var number) && number > 0
-                ? number
-                : null;
-            findings.Add(new ReviewFinding(severity, file, line, text));
+            findings.Add(new ReviewFinding(severity, file, Line(item), text));
         }
 
         return (new ReviewSubmission(findings), null);
+    }
+
+    /// <summary>A positive line number, as a number or as numeric text; anything else is no line.</summary>
+    private static int? Line(JsonElement item)
+    {
+        if (!item.TryGetProperty("line", out var value))
+            return null;
+        var number = value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetInt32(out var n) => n,
+            JsonValueKind.String when int.TryParse(value.GetString(), out var n) => n,
+            _ => 0,
+        };
+        return number > 0 ? number : null;
     }
 }
 

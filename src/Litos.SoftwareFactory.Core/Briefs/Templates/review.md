@@ -39,4 +39,4 @@ Every call you make re-sends this whole conversation, and the task has a token b
 
 ## Finishing
 
-Call `submit_review` with your findings, each with a severity, file, line and one-sentence description. An empty list means the change is clean. That call is the only way to finish this turn.
+Call `submit_review` with `findings`: a list in which each finding has exactly these fields: `severity` (`"blocking"` or `"minor"`), `file` (repository-relative path), `line` (a number, when there is one) and `text` (the finding, in one sentence). An empty list means the change is clean. That call is the only way to finish this turn.

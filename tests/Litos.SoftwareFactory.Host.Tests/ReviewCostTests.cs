@@ -229,7 +229,7 @@ public sealed class ReviewPlanningRunTests : IAsyncLifetime
 
         Assert.Contains("# Factory review brief: a light review", Review.Brief);
         Assert.Contains("## The implementing agent's account (claims to check, not facts)", Review.Brief);
-        Assert.Equal(4, Review.MaxToolCalls);
+        Assert.Equal(6, Review.MaxToolCalls);
         Assert.Contains(details.Messages, m => m.Text.StartsWith("Review: light. A small change (1 line outside tests in 1 file)"));
         // The implement turn kept the ordinary limit.
         Assert.Equal(200, _host.Workers.Turns.First().MaxToolCalls);
@@ -261,7 +261,7 @@ public sealed class ReviewPlanningRunTests : IAsyncLifetime
     public async Task AReviewThatRunsOutOfToolCalls_IsReminded_AndTheRunStillHandsOff()
     {
         _host.Workers.Script.Enqueue(_host.DefaultTurnAsync);
-        _host.Workers.Script.Enqueue(_ => Task.FromResult(new TurnStreamResult(false, 5, "The turn exceeded 4 tool calls.")));
+        _host.Workers.Script.Enqueue(_ => Task.FromResult(new TurnStreamResult(false, 5, "The turn exceeded 6 tool calls.")));
         _host.Workers.Script.Enqueue(async call =>
         {
             await call.Worker.SubmitAsync(call.SessionId, new ReviewSubmission([new ReviewFinding(FindingSeverity.Minor, "src/Orders.cs", 1, "Unconfirmed: the name is unclear.")]));
@@ -274,7 +274,7 @@ public sealed class ReviewPlanningRunTests : IAsyncLifetime
 
         var turns = _host.Workers.Turns.ToArray();
         Assert.Equal([TurnKind.Implement, TurnKind.Review, TurnKind.Nudge], turns.Select(t => t.Kind));
-        Assert.Equal(4, turns[2].MaxToolCalls);
+        Assert.Equal(6, turns[2].MaxToolCalls);
         Assert.Equal(turns[1].SessionId, turns[2].SessionId);
         Assert.Contains(details.Findings, f => f.Text == "Unconfirmed: the name is unclear.");
     }

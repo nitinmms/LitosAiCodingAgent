@@ -257,7 +257,7 @@ public class TurnAllowanceTests
     {
         var allowance = TurnAllowance.ForReview(ReviewDepth.Light, implementationTokens: 300_000, Limits);
 
-        Assert.Equal(new TurnAllowance(2, null, 4), allowance);
+        Assert.Equal(new TurnAllowance(2, null, 6), allowance);
     }
 
     [Fact]
@@ -278,7 +278,7 @@ public class TurnAllowanceTests
     [Fact]
     public void AReminderAfterAReviewRanOut_GetsLittleMore()
     {
-        Assert.Equal(new TurnAllowance(2, null, 4), TurnAllowance.ForReviewNudge(Limits));
+        Assert.Equal(new TurnAllowance(2, null, 6), TurnAllowance.ForReviewNudge(Limits));
     }
 
     [Fact]

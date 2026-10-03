@@ -277,8 +277,9 @@ public class CompletionToolTests
     [InlineData("""{"summary":"x","criteria":"all of them"}""", "'criteria' must be an array")]
     [InlineData("""{"summary":"x","criteria":[{"tests":["T"]}]}""", "needs a 'criterion'")]
     [InlineData("""{"summary":"x","criteria":[{"criterion":"Works"}]}""", "names no tests")]
-    [InlineData("""{"summary":"x","criteria":[{"criterion":"Works","tests":"T"}]}""", "'tests' must be an array")]
-    [InlineData("""{"summary":"x","testsAdded":"one"}""", "must be arrays of strings")]
+    [InlineData("""{"summary":"x","criteria":["Works: T"]}""", "must be an object, not a string")]
+    [InlineData("""{"summary":"x","criteria":[{"criterion":"Works","tests":7}]}""", "'tests' must be an array")]
+    [InlineData("""{"summary":"x","testsAdded":{"a":1}}""", "must be arrays of strings")]
     [InlineData("""{"summary":"x","knownLimitations":[1,2]}""", "must be arrays of strings")]
     public async Task SubmitWork_BadArguments_AreRejectedWithTheReason_AndNothingIsPosted(string json, string expected)
     {
@@ -291,6 +292,54 @@ public class CompletionToolTests
         Assert.Contains("Call submit_work again", result.Text);
         Assert.Empty(handler.Requests);
     }
+
+    /// <summary>From PTC kernel code the model sees only submit_work's top-level signature, so it
+    /// guesses item fields and shapes; every work session's first submission used to be rejected.
+    /// These are the guesses it made, now taken as meant.</summary>
+    [Fact]
+    public async Task SubmitWork_TakesTheShapesTheModelGuesses()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitWorkTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""
+            {
+              "summary": "Added alignment.",
+              "criteria": [
+                { "name": "Users can pick the alignment.", "tests": "SlideEditor_ChangesAlignment" },
+                { "description": "Matches the preview.", "testNames": ["Export_MatchesPreview"] },
+                { "text": "Looks right on a phone.", "manual": true }
+              ],
+              "testsAdded": "SlideEditor_ChangesAlignment",
+              "knownLimitations": "Not tried on Safari.",
+              "manualTestSteps": "   "
+            }
+            """), default);
+
+        Assert.False(result.IsError, result.Text);
+        var work = Assert.IsType<WorkSubmission>(Posted(handler).Submission);
+        Assert.Equal(new CriterionCoverage("Users can pick the alignment.", ["SlideEditor_ChangesAlignment"]), work.Criteria[0], CoverageComparer);
+        Assert.Equal(new CriterionCoverage("Matches the preview.", ["Export_MatchesPreview"]), work.Criteria[1], CoverageComparer);
+        Assert.Equal(new CriterionCoverage("Looks right on a phone.", [], ManualOnly: true), work.Criteria[2], CoverageComparer);
+        Assert.Equal(["SlideEditor_ChangesAlignment"], work.TestsAdded);
+        Assert.Equal(["Not tried on Safari."], work.KnownLimitations);
+        Assert.Empty(work.ManualTestSteps);
+    }
+
+    [Fact]
+    public async Task SubmitWork_ACriterionAsAPlainString_IsRejectedWithTheShapeToUse()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitWorkTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""{"summary":"x","criteria":["Users can pick: SlideEditor_ChangesAlignment"]}"""), default);
+
+        Assert.True(result.IsError);
+        Assert.Contains("""{ "criterion": "Admins can export.", "tests": ["Export_Admin_Succeeds"] }""", result.Text);
+        Assert.Contains("""{ "criterion": "...", "manualOnly": true }""", result.Text);
+        Assert.Empty(handler.Requests);
+    }
+
+    private static readonly IEqualityComparer<CriterionCoverage> CoverageComparer = EqualityComparer<CriterionCoverage>.Create(
+        (a, b) => a!.Criterion == b!.Criterion && a.Tests.SequenceEqual(b.Tests) && a.ManualOnly == b.ManualOnly);
 
     [Fact]
     public async Task ArgumentsThatAreNotAnObject_AreRejected()
@@ -335,7 +384,8 @@ public class CompletionToolTests
     [InlineData("""{"question":"q","whyItBlocks":"w","options":["only one"]}""", "two to four choices, but has 1")]
     [InlineData("""{"question":"q","whyItBlocks":"w"}""", "two to four choices, but has 0")]
     [InlineData("""{"question":"q","whyItBlocks":"w","options":["a","b","c","d","e"]}""", "two to four choices, but has 5")]
-    [InlineData("""{"question":"q","whyItBlocks":"w","options":"a or b"}""", "'options' must be an array")]
+    [InlineData("""{"question":"q","whyItBlocks":"w","options":"a or b"}""", "two to four choices, but has 1")]
+    [InlineData("""{"question":"q","whyItBlocks":"w","options":{"a":"b"}}""", "'options' must be an array")]
     public async Task RequestDecision_BadArguments_AreRejected(string json, string expected)
     {
         var (tool, handler) = Create((h, s) => new RequestDecisionTool(h, s));
@@ -367,6 +417,53 @@ public class CompletionToolTests
         Assert.Equal(new ReviewFinding(FindingSeverity.Minor, "src/Orders.cs", null, "Leftover debug output."), review.Findings[1]);
     }
 
+    /// <summary>Every review's first submit_review used 'description' for 'text', because from PTC
+    /// kernel code the model never sees the fields of a finding. Each rejection cost a model call.</summary>
+    [Theory]
+    [InlineData("description")]
+    [InlineData("finding")]
+    [InlineData("message")]
+    public async Task SubmitReview_TakesTheCommonNamesForTheFindingsText(string name)
+    {
+        var (tool, handler) = Create((h, s) => new SubmitReviewTool(h, s));
+
+        var result = await tool.InvokeAsync(Args($$"""{"findings":[{"severity":"minor","file":"src/Slide.ts","line":60,"{{name}}":"The fallback is untested."}]}"""), default);
+
+        Assert.False(result.IsError, result.Text);
+        var review = Assert.IsType<ReviewSubmission>(Posted(handler).Submission);
+        Assert.Equal(new ReviewFinding(FindingSeverity.Minor, "src/Slide.ts", 60, "The fallback is untested."), Assert.Single(review.Findings));
+    }
+
+    [Fact]
+    public async Task SubmitReview_TakesPathForFile_AndALineWrittenAsText()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitReviewTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""
+            {"findings":[
+              {"severity":"blocking","path":"src/A.cs","line":"12","text":"Wrong."},
+              {"severity":"minor","file":"src/B.cs","line":"near the top","text":"Odd."},
+              {"severity":"minor","file":"src/C.cs","line":0,"description":"Odd too."}
+            ]}
+            """), default);
+
+        Assert.False(result.IsError, result.Text);
+        var findings = Assert.IsType<ReviewSubmission>(Posted(handler).Submission).Findings;
+        Assert.Equal(new ReviewFinding(FindingSeverity.Blocking, "src/A.cs", 12, "Wrong."), findings[0]);
+        Assert.Equal(new ReviewFinding(FindingSeverity.Minor, "src/B.cs", null, "Odd."), findings[1]);
+        Assert.Equal(new ReviewFinding(FindingSeverity.Minor, "src/C.cs", null, "Odd too."), findings[2]);
+    }
+
+    [Fact]
+    public async Task SubmitReview_PrefersTextWhenItAndAnAliasAreBothGiven()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitReviewTool(h, s));
+
+        await tool.InvokeAsync(Args("""{"findings":[{"severity":"minor","file":"a.cs","text":"The finding.","description":"Background."}]}"""), default);
+
+        Assert.Equal("The finding.", Assert.Single(Assert.IsType<ReviewSubmission>(Posted(handler).Submission).Findings).Text);
+    }
+
     [Fact]
     public async Task SubmitReview_EmptyFindings_IsACleanReview()
     {
@@ -384,6 +481,7 @@ public class CompletionToolTests
     [InlineData("""{"findings":[{"severity":"critical","file":"a.cs","text":"t"}]}""", "'blocking' or 'minor'")]
     [InlineData("""{"findings":[{"file":"a.cs","text":"t"}]}""", "'blocking' or 'minor'")]
     [InlineData("""{"findings":[{"severity":"minor","text":"t"}]}""", "needs a 'file' and a 'text'")]
+    [InlineData("""{"findings":[{"severity":"minor","file":"a.cs","note":"t"}]}""", "\"text\": \"One sentence.\"")]
     [InlineData("""{"findings":["looks fine"]}""", "must be an object")]
     public async Task SubmitReview_BadArguments_AreRejected(string json, string expected)
     {

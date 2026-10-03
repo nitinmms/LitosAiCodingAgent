@@ -227,6 +227,34 @@ public class BriefComposerTests
         Assert.DoesNotContain("{{", brief);
     }
 
+    // ---- The briefs name the completion tools' fields ----
+    // From PTC kernel code the model sees only a tool's top-level signature, so the brief is the
+    // only place it learns what goes inside a finding or a criterion.
+
+    [Theory]
+    [InlineData(ReviewDepth.Light)]
+    [InlineData(ReviewDepth.Full)]
+    public void ReviewBriefs_NameEachFindingsFields(ReviewDepth depth)
+    {
+        var brief = Compose(BriefKind.Review, State(), Context with { Diff = "+x", ChangedLineCount = 1, ReviewDepth = depth }, kind: TurnKind.Review);
+
+        Assert.Contains("each finding has exactly these fields: `severity` (`\"blocking\"` or `\"minor\"`), `file`", brief);
+        Assert.Contains("`text` (the finding, in one sentence)", brief);
+        Assert.DoesNotContain("one-sentence description", brief);
+    }
+
+    [Fact]
+    public void TheRunBrief_NamesSubmitWorksFields()
+    {
+        var brief = Compose(BriefKind.Run, State());
+
+        Assert.Contains("using exactly these names", brief);
+        foreach (var field in new[] { "`summary`", "`criteria`", "`testsAdded`", "`knownLimitations`", "`manualTestSteps`" })
+            Assert.Contains(field, brief);
+        Assert.Contains("`{ criterion, tests }`", brief);
+        Assert.Contains("`{ criterion, manualOnly: true }`", brief);
+    }
+
     [Fact]
     public void AFullReview_KeepsTheOpenBrief()
     {
@@ -649,8 +677,8 @@ public class BriefComposerTests
         // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
-        // m1.4: light reviews, and the agent's account in the review brief.
-        Assert.Equal("m1.4", BriefComposer.Revision);
+        // m1.5: the briefs name submit_work's and submit_review's fields exactly.
+        Assert.Equal("m1.5", BriefComposer.Revision);
     }
 
     [Theory]

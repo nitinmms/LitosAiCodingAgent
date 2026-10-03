@@ -41,10 +41,12 @@ Every call you make re-sends this whole conversation, and the task has a token b
 
 ## Finishing
 
-Call `submit_work` with:
+Call `submit_work` with these fields, using exactly these names:
 
-- a short summary of what changed;
-- each acceptance criterion mapped to the unit tests that cover it, or marked manual-only;
-- the tests you added;
-- known limitations and anything left unverified;
-- manual test steps a person can follow, with expected results.
+- `summary`: a short account of what changed;
+- `criteria`: one object per acceptance criterion, each `{ criterion, tests }` where `tests` is a list of the unit test names that cover it, or `{ criterion, manualOnly: true }` when it can only be checked by hand;
+- `testsAdded`: a list of the tests you added or changed;
+- `knownLimitations`: a list of anything left undone, unverified or assumed;
+- `manualTestSteps`: a list of steps a person can follow, with expected results.
+
+Every list is a list of strings, except `criteria`.
