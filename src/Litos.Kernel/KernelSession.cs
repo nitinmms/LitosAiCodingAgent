@@ -25,6 +25,30 @@ public sealed class KernelSession : IAsyncDisposable
     private readonly Lock _processLock = new();
 
     private Process? _process;
+
+    /// <summary>
+    /// The process once its handshake and init have both succeeded: the only state in which an
+    /// eval may be sent. <see cref="_process"/> is set earlier, as soon as the process exists, so
+    /// it cannot answer "is the kernel ready?".
+    /// </summary>
+    private Process? _readyProcess;
+
+    /// <summary>
+    /// One start at a time. A model can put two run_kernel_code calls in one reply; on a session
+    /// whose kernel had not started, both used to start it at once. The second saw the half-started
+    /// process, sent its eval before init, and both evals then waited until the hard timeout
+    /// (a factory review sat silent for over ten minutes).
+    /// </summary>
+    private readonly SemaphoreSlim _startGate = new(1, 1);
+
+    /// <summary>
+    /// One eval at a time, which is the wire protocol's contract (§8.8): the subprocess ignores an
+    /// EvalRequest that arrives while another is running, so a second concurrent caller here used
+    /// to wait for a result that could never come. A model that puts two run_kernel_code calls in
+    /// one reply now has them run one after the other.
+    /// </summary>
+    private readonly SemaphoreSlim _evalGate = new(1, 1);
+
     private SemaphoreSlim? _writeLock;
     private Task? _readerLoop;
     private readonly Dictionary<string, TaskCompletionSource<EvalResult>> _pendingEvals = [];
@@ -62,6 +86,22 @@ public sealed class KernelSession : IAsyncDisposable
     /// </summary>
     public async Task<ToolResult> RunAsync(string code, CancellationToken ct)
     {
+        // Waiting here is not the eval's time: its hard timeout starts once it is the one running.
+        await _evalGate.WaitAsync(ct);
+        try
+        {
+            return await EvalOneAsync(code, ct);
+        }
+        finally
+        {
+            _evalGate.Release();
+        }
+    }
+
+    private async Task<ToolResult> EvalOneAsync(string code, CancellationToken ct)
+    {
+        // Started here, after the gate, so a kernel that died or was reset while this call waited
+        // its turn is started again.
         try
         {
             await EnsureStartedAsync(ct);
@@ -166,6 +206,7 @@ public sealed class KernelSession : IAsyncDisposable
         {
             toKill = _process;
             _process = null;
+            _readyProcess = null;
             _writeLock = null;
         }
         if (toKill is not null)
@@ -179,14 +220,34 @@ public sealed class KernelSession : IAsyncDisposable
         }
     }
 
-    private async Task EnsureStartedAsync(CancellationToken ct)
+    private bool IsReady()
     {
         lock (_processLock)
-        {
-            if (_process is { HasExited: false })
-                return;
-        }
+            return _readyProcess is { HasExited: false } ready && ReferenceEquals(ready, _process);
+    }
 
+    private async Task EnsureStartedAsync(CancellationToken ct)
+    {
+        if (IsReady())
+            return;
+
+        await _startGate.WaitAsync(ct);
+        try
+        {
+            // Another call may have started it while this one waited.
+            if (IsReady())
+                return;
+
+            await StartAsync(ct);
+        }
+        finally
+        {
+            _startGate.Release();
+        }
+    }
+
+    private async Task StartAsync(CancellationToken ct)
+    {
         Directory.CreateDirectory(_scratchDirectory);
 
         var hostPath = KernelHostLocator.Resolve();
@@ -248,6 +309,8 @@ public sealed class KernelSession : IAsyncDisposable
         AppendAudit(new { evt = "kernel_started", pid = process.Id });
 
         _readerLoop = ReadLoopAsync(process);
+        lock (_processLock)
+            _readyProcess = process;
     }
 
     private async Task ReadLoopAsync(Process process)
