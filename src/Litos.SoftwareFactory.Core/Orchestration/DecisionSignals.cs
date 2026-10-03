@@ -27,7 +27,7 @@ public static partial class DecisionSignals
     /// TTLs are rejected" and "offline mode is not supported" describe the new work, not a break.
     /// </summary>
     public static bool IsBreaking(string limitation) =>
-        Unambiguous().IsMatch(limitation) || (StopsWorking().IsMatch(limitation) && Existing().IsMatch(limitation));
+        Unambiguous().IsMatch(limitation) || ((StopsWorking().IsMatch(limitation) || Damages().IsMatch(limitation)) && Existing().IsMatch(limitation));
 
     /// <summary>What the agent is told when its submission is refused for this.</summary>
     public static string Refusal(string limitation) =>
@@ -45,9 +45,13 @@ public static partial class DecisionSignals
     private static partial Regex Unambiguous();
 
     [GeneratedRegex(
-        @"\b(cannot|can't|will not|won't|are not|is not|aren't|isn't|are|is|will be|get|gets)\b[^.;]{0,40}?\b(read|opened|loaded|parsed|supported|accepted|rejected|refused|unreadable|lost|discarded|ignored)\b",
+        @"\b(cannot|can't|will not|won't|are not|is not|aren't|isn't|are|is|will be|get|gets)\b[^.;]{0,40}?\b(read|opened|loaded|parsed|supported|accepted|rejected|refused|unreadable|lost|discarded|ignored|readable|loadable|openable|usable|compatible)\b",
         RegexOptions.IgnoreCase)]
     private static partial Regex StopsWorking();
+
+    // F6's second run: "an older reader treats the first expiry frame as a corrupted tail and truncates from there".
+    [GeneratedRegex(@"\b(truncat\w*|corrupt\w*|overwrit\w*|silently (drop|discard|delet)\w*)", RegexOptions.IgnoreCase)]
+    private static partial Regex Damages();
 
     [GeneratedRegex(
         @"\b(existing|older|old|previous|earlier|legacy|prior|pre-[\w-]+|version[- ]?\d+|v\d+)\b|\b(saved|written|created|stored|made) (before|earlier|previously)\b",

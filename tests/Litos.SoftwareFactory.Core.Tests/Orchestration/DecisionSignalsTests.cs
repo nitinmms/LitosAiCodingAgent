@@ -18,6 +18,11 @@ public sealed class DecisionSignalsTests
     [InlineData("The new format is not backward compatible.")]
     [InlineData("Existing files must be migrated by hand.")]
     [InlineData("Upgrading may cause data loss for v1 users.")]
+    // F6's second run, word for word: it kept version 1 readable but let older readers truncate.
+    [InlineData("The on-disk format stays version 1 and adds operation kind 4. Files written by this version are not readable by earlier library versions (an older reader treats the first expiry frame as a corrupted tail and truncates from there); existing version-1 files written without TTL still load unchanged.")]
+    [InlineData("Files written by this version are not readable by earlier library versions.")]
+    [InlineData("An older reader truncates the file at the first new record.")]
+    [InlineData("The new records are not compatible with previous versions of the library.")]
     public void ABreakForWhatExists_IsRecognised(string limitation) => Assert.True(DecisionSignals.IsBreaking(limitation), limitation);
 
     /// <summary>Ordinary limitations of the new work, which must not cost a refused submission.</summary>
@@ -30,6 +35,8 @@ public sealed class DecisionSignalsTests
     [InlineData("The UI test is not run in CI.")]
     [InlineData("Manual testing only for the Excel import.")]
     [InlineData("Compaction is not triggered automatically.")]
+    [InlineData("A torn final write is truncated on open, as before.")]
+    [InlineData("The export file is not readable while it is being written.")]
     public void AnOrdinaryLimitation_IsNot(string limitation) => Assert.False(DecisionSignals.IsBreaking(limitation), limitation);
 
     [Fact]
