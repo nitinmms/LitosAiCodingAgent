@@ -65,6 +65,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
         if (thread.Id == Guid.Empty)
             thread.Id = Guid.NewGuid();
+        thread.InitialBudgetCap ??= thread.BudgetCap;
         db.Threads.Add(thread);
         await db.SaveChangesAsync(ct);
         return thread;
@@ -114,7 +115,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
     // ---- Dispatch and user actions ----
 
     public async Task<DispatchResult> DispatchAsync(
-        Guid threadId, Guid userId, string dispatchKey, string text, DateTimeOffset now, CancellationToken ct)
+        Guid threadId, Guid userId, string dispatchKey, string text, DateTimeOffset now, CancellationToken ct, double reworkTopUpShare = 0)
     {
         await using var write = await BeginWriteAsync(ct);
         var db = write.Db;
@@ -126,6 +127,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
         Guid? runId;
         DispatchOutcome outcome;
+        long topUp = 0;
         switch (thread.State)
         {
             case LifecycleState.Draft:
@@ -139,6 +141,10 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 thread.State = TaskLifecycle.Apply(thread.State, LifecycleTrigger.RequestChanges);
                 runId = AddRun(db, thread, userId, RunKind.Rework, text, now);
                 outcome = DispatchOutcome.Queued;
+
+                // A change the tester asks for is new work, and gets budget of its own.
+                topUp = thread.BudgetCap is null ? 0 : BudgetLedger.ReworkTopUp(thread.InitialBudgetCap ?? thread.BudgetCap, reworkTopUpShare);
+                thread.BudgetCap += topUp;
                 break;
 
             case LifecycleState.Queued or LifecycleState.Running:
@@ -157,6 +163,16 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         }
 
         AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, text, now, dispatchKey: dispatchKey);
+        if (topUp > 0)
+        {
+            AddMessage(
+                db, thread, MessageAuthor.Factory, null, MessageKind.Status,
+                string.Create(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    $"This change request adds {topUp:N0} tokens to the budget ({reworkTopUpShare * 100:0.#}% of the original {thread.InitialBudgetCap ?? thread.BudgetCap - topUp:N0}). The cap is now {thread.BudgetCap:N0}."),
+                now);
+        }
+
         Touch(db, thread, now);
 
         try

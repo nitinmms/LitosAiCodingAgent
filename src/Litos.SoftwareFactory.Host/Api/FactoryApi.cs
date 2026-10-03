@@ -206,7 +206,7 @@ public static class FactoryApi
 
         api.MapPost("/threads/{id:guid}/messages", async (
             Guid id, PostMessageRequest request, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals,
-            IClock clock, CancellationToken ct) =>
+            IClock clock, FactoryOptions options, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.MessageId))
                 return Problem("messageId is required: it makes a retried request safe.");
@@ -217,7 +217,7 @@ public static class FactoryApi
             DispatchResult result;
             try
             {
-                result = await store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct);
+                result = await store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct, options.Budget.ReworkTopUpShare);
             }
             catch (StoreNotFoundException)
             {

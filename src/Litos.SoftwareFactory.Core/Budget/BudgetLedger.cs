@@ -80,6 +80,13 @@ public sealed record BudgetPolicy
     /// <summary>How long after a call the provider's prompt cache is assumed to still hold that
     /// call's input. Providers keep it for about five minutes.</summary>
     public TimeSpan CacheWindow { get; init; } = TimeSpan.FromMinutes(4);
+
+    /// <summary>
+    /// The share of a task's original cap that each change request after a handoff adds to its
+    /// budget (decided 2026-10-03). A change the tester asks for is new work: F3 handed off inside
+    /// its cap and then failed in the rework it was asked for. 0 turns top-ups off.
+    /// </summary>
+    public double ReworkTopUpShare { get; init; } = 0.5;
 }
 
 /// <summary>
@@ -241,4 +248,10 @@ public static class BudgetLedger
 
     /// <summary>Raising a cap changes the maximum, not the accounting history.</summary>
     public static BudgetSnapshot WithTaskCap(BudgetSnapshot budget, long? cap) => budget with { TaskCap = cap };
+
+    /// <summary>What a change request adds to a task's cap: a share of the cap the task was created
+    /// with, so that a cap raised by hand does not raise every later top-up. Nothing for a task
+    /// with no cap.</summary>
+    public static long ReworkTopUp(long? originalCap, double share) =>
+        originalCap is > 0 and var cap && share > 0 ? (long)Math.Round(cap * share, MidpointRounding.AwayFromZero) : 0;
 }

@@ -145,6 +145,24 @@ public class BudgetLedgerTests
         Assert.Equal(1_000, admitted.MaxOutputTokens);
     }
 
+    // ---- A change request's top-up ----
+
+    [Theory]
+    [InlineData(600_000L, 0.5, 300_000L)]
+    [InlineData(1_200_000L, 0.5, 600_000L)]
+    [InlineData(300_001L, 0.5, 150_001L)]
+    [InlineData(600_000L, 0.0, 0L)]
+    [InlineData(600_000L, -1.0, 0L)]
+    [InlineData(0L, 0.5, 0L)]
+    public void ReworkTopUp_IsAShareOfTheOriginalCap(long cap, double share, long expected) =>
+        Assert.Equal(expected, BudgetLedger.ReworkTopUp(cap, share));
+
+    [Fact]
+    public void ReworkTopUp_ForATaskWithNoCap_IsNothing() => Assert.Equal(0, BudgetLedger.ReworkTopUp(null, 0.5));
+
+    [Fact]
+    public void ReworkTopUp_DefaultsToHalf() => Assert.Equal(0.5, new BudgetPolicy().ReworkTopUpShare);
+
     // ---- Reconciling a call whose usage will never be reported ----
 
     [Fact]

@@ -105,7 +105,10 @@ public interface IFactoryStore
     /// a double-click or a network retry creates one assignment. One active run per thread: a
     /// mention during execution becomes a follow-up instruction, not a second run.
     /// </summary>
-    Task<DispatchResult> DispatchAsync(Guid threadId, Guid userId, string dispatchKey, string text, DateTimeOffset now, CancellationToken ct);
+    /// <param name="reworkTopUpShare">For a change request after a handoff, the share of the task's
+    /// original cap added to its budget (<see cref="Budget.BudgetPolicy.ReworkTopUpShare"/>).</param>
+    Task<DispatchResult> DispatchAsync(
+        Guid threadId, Guid userId, string dispatchKey, string text, DateTimeOffset now, CancellationToken ct, double reworkTopUpShare = 0);
 
     /// <summary>Accept, pause, resume, cancel, raise-and-resume, resolve a blocker or recover:
     /// a transition a person asked for. Throws <see cref="StoreConflictException"/> when it is

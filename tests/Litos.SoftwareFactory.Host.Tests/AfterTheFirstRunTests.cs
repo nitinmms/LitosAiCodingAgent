@@ -312,6 +312,23 @@ public sealed class ReworkRoundTests : IAsyncLifetime
         return (projectId, threadId, await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting));
     }
 
+    /// <summary>F3 handed off inside its cap and then failed in the rework it was asked for. A
+    /// change request now brings half the original cap with it, and the thread says so.</summary>
+    [Fact]
+    public async Task AChangeRequest_AddsHalfTheOriginalCap()
+    {
+        var projectId = await _host.RegisterProjectAsync();
+        var threadId = await _host.CreateThreadAsync(projectId, budgetCap: 600_000);
+        await _host.DelegateAsync(threadId);
+        await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        await _host.DelegateAsync(threadId, "@factory CSV values containing commas are incorrect. Fix this.");
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Equal(900_000, details.Thread.BudgetCap);
+        Assert.Contains(details.Messages, m => m.Text == "This change request adds 300,000 tokens to the budget (50% of the original 600,000). The cap is now 900,000.");
+    }
+
     /// <summary>
     /// The review after a rework re-reviewed the whole task, and cost more than the task's first
     /// implementation. It now gets only what the rework changed, with what the tester asked for.

@@ -89,6 +89,12 @@ public sealed class FactoryOptions
             options.Budget = options.Budget with { CachedInputWeight = weight };
         }
 
+        if (double.TryParse(configuration["FACTORY_REWORK_TOP_UP"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var topUp)
+            && topUp is >= 0 and <= 10)
+        {
+            options.Budget = options.Budget with { ReworkTopUpShare = topUp };
+        }
+
         if (configuration["FACTORY_DEFAULT_BUDGET"] is { Length: > 0 } defaultBudget)
         {
             // "none" removes the default cap; a number replaces it.

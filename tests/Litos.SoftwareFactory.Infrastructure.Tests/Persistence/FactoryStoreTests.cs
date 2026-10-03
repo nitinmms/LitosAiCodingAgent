@@ -227,6 +227,82 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(LifecycleState.Queued, (await ThreadAsync(running.Thread.Id)).State);
     }
 
+    // ---- A change request's budget top-up (decided 2026-10-03) ----
+
+    private async Task<ClaimedRun> HandedOffAsync(long? cap)
+    {
+        var running = await RunningAsync(cap: cap);
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
+        return running;
+    }
+
+    [SkippableFact]
+    public async Task ANewThread_RemembersTheCapItWasCreatedWith()
+    {
+        var running = await RunningAsync(cap: 600_000);
+
+        Assert.Equal(600_000, (await ThreadAsync(running.Thread.Id)).InitialBudgetCap);
+    }
+
+    [SkippableFact]
+    public async Task AChangeRequest_AddsAShareOfTheOriginalCap_AndTheThreadSaysSo()
+    {
+        var handedOff = await HandedOffAsync(cap: 600_000);
+
+        var result = await Store.DispatchAsync(handedOff.Thread.Id, Admin, "msg-2", "Handle a failed compaction.", T0, default, reworkTopUpShare: 0.5);
+
+        Assert.Equal(DispatchOutcome.Queued, result.Outcome);
+        var details = (await Store.GetThreadAsync(handedOff.Thread.Id, default))!;
+        Assert.Equal((900_000L, 600_000L), (details.Thread.BudgetCap!.Value, details.Thread.InitialBudgetCap!.Value));
+        var note = details.Messages.Last();
+        Assert.Equal((MessageAuthor.Factory, MessageKind.Status), (note.Author, note.Kind));
+        Assert.Contains("adds 300,000 tokens to the budget", note.Text);
+        Assert.Contains("(50% of the original 600,000)", note.Text);
+        Assert.Contains("The cap is now 900,000.", note.Text);
+    }
+
+    [SkippableFact]
+    public async Task ACapRaisedByHand_DoesNotRaiseTheTopUp()
+    {
+        var handedOff = await HandedOffAsync(cap: 600_000);
+        await Store.SetBudgetCapAsync(handedOff.Thread.Id, 1_000_000, T0, default);
+
+        await Store.DispatchAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", T0, default, reworkTopUpShare: 0.5);
+
+        Assert.Equal(1_300_000, (await ThreadAsync(handedOff.Thread.Id)).BudgetCap);
+    }
+
+    [SkippableFact]
+    public async Task WithTopUpsOff_TheBudgetIsUnchanged()
+    {
+        var handedOff = await HandedOffAsync(cap: 600_000);
+
+        await Store.DispatchAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", T0, default);
+
+        Assert.Equal(600_000, (await ThreadAsync(handedOff.Thread.Id)).BudgetCap);
+    }
+
+    [SkippableFact]
+    public async Task ATaskWithNoCap_StaysWithoutOne()
+    {
+        var handedOff = await HandedOffAsync(cap: null);
+
+        await Store.DispatchAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", T0, default, reworkTopUpShare: 0.5);
+
+        Assert.Null((await ThreadAsync(handedOff.Thread.Id)).BudgetCap);
+        Assert.DoesNotContain((await Store.GetThreadAsync(handedOff.Thread.Id, default))!.Messages, m => m.Text.Contains("to the budget"));
+    }
+
+    [SkippableFact]
+    public async Task AFirstDelegation_OrAFollowUp_GetsNoTopUp()
+    {
+        var running = await RunningAsync(cap: 600_000);
+
+        await Store.DispatchAsync(running.Thread.Id, Admin, "msg-2", "Also handle empty results.", T0, default, reworkTopUpShare: 0.5);
+
+        Assert.Equal(600_000, (await ThreadAsync(running.Thread.Id)).BudgetCap);
+    }
+
     [SkippableFact]
     public async Task Dispatch_UnknownThread_Throws()
     {

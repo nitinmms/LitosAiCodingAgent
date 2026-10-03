@@ -493,6 +493,7 @@ Every turn's cost includes its whole context, so context is managed deliberately
 ### 9.1 Budget contract
 
 - The optional cap belongs to the task and spans spec, planning, coding, repair, review, summarization, compaction, lesson reflection and rework. Every model request made for the task counts, including retries that incur usage.
+- **Each change request after a handoff adds half of the task's original cap to it** (`FACTORY_REWORK_TOP_UP`, 0 to turn off; decided 2026-10-03). A change the tester asks for is new work: F3 handed off inside its cap and then failed in the rework it was asked for. The share is of the cap the task was created with, so a cap raised by hand does not raise later top-ups, and the thread says what each request added. A task with no cap gets none.
 - Task tokens are provider-reported input plus output, including reasoning tokens where reported.
   - Input is every count the provider reports (input, cache creation and cache read), because providers report those counts separately.
   - **Input read from the provider's prompt cache counts at a discount: 10% by default** (`FACTORY_CACHED_INPUT_WEIGHT`), rounded up. Input written to the cache, and input the host has to estimate because the provider did not report it, count in full.

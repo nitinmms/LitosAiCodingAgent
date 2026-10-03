@@ -654,6 +654,16 @@ public class FactoryOptionsTests
     public void From_AnUnusableCachedInputWeight_KeepsTheDefault(string value) =>
         Assert.Equal(0.10, From(("FACTORY_CACHED_INPUT_WEIGHT", value)).Budget.CachedInputWeight);
 
+    [Theory]
+    [InlineData("0.25", 0.25)]
+    [InlineData("1", 1.0)]
+    [InlineData("0", 0.0)]
+    [InlineData("-1", 0.5)]
+    [InlineData("half", 0.5)]
+    [InlineData("", 0.5)]
+    public void From_ReadsTheReworkTopUp_OrKeepsHalf(string value, double expected) =>
+        Assert.Equal(expected, From(("FACTORY_REWORK_TOP_UP", value)).Budget.ReworkTopUpShare);
+
     [Fact]
     public void From_NothingSet_CountsCachedInputAtATenth() =>
         Assert.Equal(0.10, From().Budget.CachedInputWeight);

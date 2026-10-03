@@ -53,6 +53,10 @@ public sealed class TaskThread
     public string? StateReason { get; set; }
 
     public long? BudgetCap { get; set; }
+
+    /// <summary>The cap the task was created with. Each change request adds a share of it.</summary>
+    public long? InitialBudgetCap { get; set; }
+
     public long TokensUsed { get; set; }
     public long TokensReserved { get; set; }
     public string? Branch { get; set; }
