@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
 import type { EventSourceFactory } from '../api/events';
 import type { CurrentUser, Project, Settings, Thread } from '../api/types';
@@ -158,6 +158,10 @@ function NewThread({
   const [cap, setCap] = useState(settings?.defaultBudget ? String(settings.defaultBudget) : '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The dialog closes on a click on the backdrop only if the press began there too. A browser
+  // reports a click on the backdrop when a press inside a field ends outside it, and when an entry
+  // is picked from its autofill list over the backdrop; either closed the dialog mid-edit.
+  const pressedOnBackdrop = useRef(false);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -182,11 +186,22 @@ function NewThread({
   return (
     <div
       className="modal-bg"
+      onMouseDown={(e) => {
+        pressedOnBackdrop.current = e.target === e.currentTarget;
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) close();
+        if (e.target === e.currentTarget && pressedOnBackdrop.current) close();
+        pressedOnBackdrop.current = false;
       }}
     >
-      <form className="modal" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="nt-heading">
+      <form
+        className="modal"
+        onSubmit={submit}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="nt-heading"
+        autoComplete="off"
+      >
         <h2 id="nt-heading">New thread</h2>
         <p className="small muted">One change per thread. Nothing runs until you delegate it with @factory.</p>
         <div className="field">

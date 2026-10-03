@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { createApi } from './api/client';
@@ -198,6 +198,45 @@ describe('threads', () => {
     });
     expect(screen.getByRole('heading', { name: 'Delegate this task' })).toBeInTheDocument();
     expect(stageNow()).toContain('Discuss');
+  });
+
+  // Clicking into the budget closed the dialog: a press inside a field that ends on the backdrop,
+  // or an autofill entry picked over it, reaches the backdrop as a click.
+  it('stays open when a press inside a field ends on the backdrop', async () => {
+    const host = new FakeHost();
+    host.addProject();
+    const user = start(host);
+
+    await user.click(await screen.findByRole('button', { name: 'New thread' }));
+    const budget = within(screen.getByRole('dialog')).getByLabelText('Token budget');
+    const backdrop = screen.getByRole('dialog').parentElement!;
+    await user.click(budget);
+    await user.pointer([{ keys: '[MouseLeft>]', target: budget }, { target: backdrop }, { keys: '[/MouseLeft]', target: backdrop }]);
+    fireEvent.click(backdrop);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(budget).toHaveFocus();
+  });
+
+  it('closes on a click that starts and ends on the backdrop', async () => {
+    const host = new FakeHost();
+    host.addProject();
+    const user = start(host);
+
+    await user.click(await screen.findByRole('button', { name: 'New thread' }));
+    await user.click(screen.getByRole('dialog').parentElement!);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('turns off browser autofill in the dialog', async () => {
+    const host = new FakeHost();
+    host.addProject();
+    const user = start(host);
+
+    await user.click(await screen.findByRole('button', { name: 'New thread' }));
+
+    expect(screen.getByRole('dialog')).toHaveAttribute('autocomplete', 'off');
   });
 
   it('refuses a budget that is not a positive whole number', async () => {
