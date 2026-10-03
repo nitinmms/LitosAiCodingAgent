@@ -219,8 +219,32 @@ public sealed class RequestDecisionTool(FactoryHostClient host, string sessionId
             return (null, "'options' must be an array of strings.");
         if (options.Count is < 2 or > 4)
             return (null, $"'options' must offer two to four choices, but has {options.Count}.");
+        if (LooksLikeAProbe(question, why, options) is { } probe)
+            return (null, $"{probe} Every request_decision is shown to a person and stops the work until they answer, so call it only with the real question; never to test the tool.");
 
         return (new DecisionSubmission(question, why, options, Text(arguments, "recommendation"), Text(arguments, "impact")), null);
+    }
+
+    /// <summary>The shortest question or reason a real decision has been seen to need.</summary>
+    public const int MinimumTextLength = 20;
+
+    /// <summary>
+    /// A call that cannot be a real decision: an agent once probed the tool's parameter names with
+    /// question "Q test2", reason "w" and options "a" and "b", and the probe reached the user as a
+    /// decision while the real question was never asked. Not a quality bar: only text too short to
+    /// say anything, or options that are not choices.
+    /// </summary>
+    internal static string? LooksLikeAProbe(string question, string whyItBlocks, IReadOnlyList<string> options)
+    {
+        if (question.Length < MinimumTextLength)
+            return $"'question' is too short to be a real decision (\"{question}\"): ask it as a full sentence.";
+        if (whyItBlocks.Length < MinimumTextLength)
+            return $"'whyItBlocks' is too short to explain anything (\"{whyItBlocks}\").";
+        if (options.Distinct(StringComparer.OrdinalIgnoreCase).Count() < options.Count)
+            return "'options' repeats a choice.";
+        if (options.All(option => option.Length == 1))
+            return "'options' are single characters, not choices a person can make: describe each one.";
+        return null;
     }
 }
 

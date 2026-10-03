@@ -132,6 +132,25 @@ public class BriefComposerTests
         Assert.Contains("Do not delete or weaken existing tests", text);
         Assert.Contains("Do not start the application", text);
         Assert.DoesNotContain("from the original run brief", text);
+        // How to call the completion tools survives a compaction too.
+        Assert.Contains("never call one to test it", text);
+        Assert.Contains("`submit_work(\"summary\", \"...\", \"testsAdded\", new[] { \"...\" })`", text);
+    }
+
+    /// <summary>An agent probed request_decision's parameter names with test calls, and one reached
+    /// the user as a decision. The briefs name its fields and forbid calling a tool to test it.</summary>
+    [Theory]
+    [InlineData(BriefKind.Run, TurnKind.Implement)]
+    [InlineData(BriefKind.Review, TurnKind.Review)]
+    public void Briefs_ShowTheKernelCallingForm_AndForbidTestCalls(BriefKind brief, TurnKind kind)
+    {
+        var text = Compose(brief, State(), Context with { Diff = "+x", ChangedLineCount = 1 }, kind: kind);
+
+        Assert.Contains("never call one to test it or to find out its parameters", text);
+        Assert.Contains("pass the arguments as name and value pairs; named C# arguments", text);
+        Assert.Contains("```csharp", text);
+        if (brief == BriefKind.Run)
+            Assert.Contains("Its fields are `question`, `whyItBlocks`, `options` (two to four)", text);
     }
 
     /// <summary>On the fifth real task the agent ran `taskkill /F /IM dotnet.exe /T` to clear a
@@ -677,8 +696,8 @@ public class BriefComposerTests
         // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
-        // m1.5: the briefs name submit_work's and submit_review's fields exactly.
-        Assert.Equal("m1.5", BriefComposer.Revision);
+        // m1.6: the briefs show how to call the completion tools from kernel code.
+        Assert.Equal("m1.6", BriefComposer.Revision);
     }
 
     [Theory]

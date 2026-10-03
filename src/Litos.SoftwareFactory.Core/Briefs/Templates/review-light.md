@@ -33,3 +33,12 @@ If the change cannot be judged from this brief alone, report that as a `blocking
 ## Finishing
 
 Call `submit_review` with `findings`: a list in which each finding has exactly these fields: `severity` (`"blocking"` or `"minor"`), `file` (repository-relative path), `line` (a number, when there is one) and `text` (the finding, in one sentence). An empty list means the change is clean. That call is the only way to finish this turn.
+
+Every call to a completion tool is acted on at once: never call one to test it or to find out its parameters. From kernel code, pass the arguments as name and value pairs; named C# arguments (`findings: ...`) do not compile. For example:
+
+```csharp
+await submit_review("findings", new object[] {
+    new { severity = "minor", file = "src/Orders.cs", line = 42, text = "The empty-list case has no test." } });
+
+await submit_review("findings", new object[0]); // a clean review
+```

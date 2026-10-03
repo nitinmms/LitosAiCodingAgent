@@ -27,6 +27,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Litos.SoftwareFactory.Worker\Litos.SoftwareFactory.Worker.csproj" />
     <ProjectReference Include="..\..\src\Litos.Kernel.Host\Litos.Kernel.Host.csproj" />
+    <!-- The briefs, so their kernel-code examples can be run against the real tools. -->
+    <ProjectReference Include="..\..\src\Litos.SoftwareFactory.Core\Litos.SoftwareFactory.Core.csproj" />
   </ItemGroup>
 
 </Project>

@@ -397,6 +397,38 @@ public class CompletionToolTests
         Assert.Empty(handler.Requests);
     }
 
+    /// <summary>The probe that reached a user as a decision ("Q test2", "w", "a", "b"), and its
+    /// near relatives, are refused with the reason, and nothing reaches the host.</summary>
+    [Theory]
+    [InlineData("""{"question":"Q test2","whyItBlocks":"w","options":["a","b"]}""", "'question' is too short")]
+    [InlineData("""{"question":"Should the export include every filtered row?","whyItBlocks":"n/a","options":["Yes","No"]}""", "'whyItBlocks' is too short")]
+    [InlineData("""{"question":"Should the export include every filtered row?","whyItBlocks":"The request does not say which.","options":["a","b"]}""", "single characters")]
+    [InlineData("""{"question":"Should the export include every filtered row?","whyItBlocks":"The request does not say which.","options":["Yes","yes"]}""", "repeats a choice")]
+    public async Task RequestDecision_AProbe_IsRefused_AndNeverReachesTheUser(string json, string expected)
+    {
+        var (tool, handler) = Create((h, s) => new RequestDecisionTool(h, s));
+
+        var result = await tool.InvokeAsync(Args(json), default);
+
+        Assert.True(result.IsError);
+        Assert.Contains(expected, result.Text);
+        Assert.Contains("never to test the tool", result.Text);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task RequestDecision_AShortButRealDecision_IsRecorded()
+    {
+        var (tool, handler) = Create((h, s) => new RequestDecisionTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""
+            {"question":"Delete expired documents?","whyItBlocks":"Deleting data cannot be undone.","options":["Yes","No"]}
+            """), default);
+
+        Assert.False(result.IsError, result.Text);
+        Assert.Equal(["Yes", "No"], Assert.IsType<DecisionSubmission>(Posted(handler).Submission).Options);
+    }
+
     // ---- submit_review ----
 
     [Fact]
