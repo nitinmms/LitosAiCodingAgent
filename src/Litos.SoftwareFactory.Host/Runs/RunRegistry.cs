@@ -83,10 +83,18 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
 
     private bool _wrapUpSent;
 
+    /// <summary>Whether a submission whose limitations break something existing is sent back
+    /// once as a decision to ask (<see cref="Core.Orchestration.DecisionSignals"/>).</summary>
+    private bool _askAboutBreakingLimitations;
+
+    private bool _breakingLimitationRaised;
+
     /// <summary>Starts a turn: clears what the previous turn reported.</summary>
+    /// <param name="askAboutBreakingLimitations">False once the task has had a decision: a
+    /// limitation may then describe exactly what the person chose.</param>
     public CancellationToken BeginTurn(
         TurnKind kind, TurnKind workKind, string sessionId, CancellationToken runToken,
-        string? phase = null, Core.Orchestration.TurnAllowance? allowance = null)
+        string? phase = null, Core.Orchestration.TurnAllowance? allowance = null, bool askAboutBreakingLimitations = true)
     {
         lock (_lock)
         {
@@ -100,6 +108,8 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             TurnCalls = 0;
             TurnCharged = 0;
             _wrapUpSent = false;
+            _askAboutBreakingLimitations = askAboutBreakingLimitations;
+            _breakingLimitationRaised = false;
             _submission = null;
             BudgetRefusal = null;
             DecisionId = null;
@@ -172,6 +182,15 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             };
             if (!allowed)
                 return new SubmissionResponse(false, $"{ToolName(submission)} is not valid in a {workKind} turn.");
+
+            // A decision made alone and reported as a limitation goes back once as a question to
+            // ask; submitted again unchanged, it is recorded.
+            if (submission is WorkSubmission work && _askAboutBreakingLimitations && !_breakingLimitationRaised
+                && Core.Orchestration.DecisionSignals.BreakingLimitation(work) is { } breaking)
+            {
+                _breakingLimitationRaised = true;
+                return new SubmissionResponse(false, Core.Orchestration.DecisionSignals.Refusal(breaking));
+            }
 
             _submission = submission;
             return new SubmissionResponse(true, "");

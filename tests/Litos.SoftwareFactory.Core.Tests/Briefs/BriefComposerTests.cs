@@ -138,6 +138,27 @@ public class BriefComposerTests
         Assert.Contains("`submit_work(\"summary\", \"...\", \"testsAdded\", new[] { \"...\" })`", text);
     }
 
+    /// <summary>On F6 the agent made a file format change that left existing databases unreadable,
+    /// and reported it as a limitation. The briefs name the choices that always need a decision.</summary>
+    [Fact]
+    public void TheRunBrief_NamesTheChoicesThatAlwaysNeedADecision()
+    {
+        var brief = Compose(BriefKind.Run, State());
+
+        Assert.Contains("These are always material choices, so ask before making one:", brief);
+        Assert.Contains("existing data, files or saved state that would no longer load or would change meaning", brief);
+        Assert.Contains("removing or changing public behaviour that callers rely on", brief);
+        Assert.Contains("ask instead of reporting it", brief);
+    }
+
+    [Fact]
+    public void TheReworkBrief_AsksBeforeBreakingWhatExists()
+    {
+        var brief = Compose(BriefKind.Rework, State(RunKind.Rework), kind: TurnKind.Rework);
+
+        Assert.Contains("or addressing it would stop existing data, files or callers from working, call `request_decision` instead", brief);
+    }
+
     /// <summary>An agent probed request_decision's parameter names with test calls, and one reached
     /// the user as a decision. The briefs name its fields and forbid calling a tool to test it.</summary>
     [Theory]
@@ -699,8 +720,8 @@ public class BriefComposerTests
         // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
-        // m1.6: the briefs show how to call the completion tools from kernel code.
-        Assert.Equal("m1.6", BriefComposer.Revision);
+        // m1.7: the run brief names the choices that always need a decision.
+        Assert.Equal("m1.7", BriefComposer.Revision);
     }
 
     [Theory]

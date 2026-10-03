@@ -276,7 +276,12 @@ public sealed class RunExecutor(
 
         using var timeout = new CancellationTokenSource(options.Limits.TurnTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(hostStopping, timeout.Token);
-        var turnToken = active.BeginTurn(step.Kind, state.WorkTurn, sessionId, linked.Token, phase, allowance);
+        // Once the task has had a decision, in this run or an earlier one, a limitation may say
+        // exactly what the person chose; it is not sent back as a question.
+        var hadDecision = state.Decisions.Count > 0 || state.DecisionsAsked > 0
+            || (await store.GetThreadAsync(data.Thread.Id, hostStopping))?.Decisions.Count > 0;
+        var turnToken = active.BeginTurn(
+            step.Kind, state.WorkTurn, sessionId, linked.Token, phase, allowance, askAboutBreakingLimitations: !hadDecision);
 
         TurnStreamResult? result = null;
         try
