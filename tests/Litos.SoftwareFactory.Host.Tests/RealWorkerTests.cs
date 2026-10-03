@@ -85,34 +85,33 @@ public sealed class RealWorkerTests : IAsyncLifetime
         var workingCopy = Path.Combine(_host.Options.WorkspacesDirectory, projectId.ToString("N"));
         var newFile = Path.Combine(workingCopy, "src", "Orders.cs");
 
-        // The implement turn: write a file, submit the work, say so.
+        // The implement turn: write a file, submit the work. The call after each submission is
+        // answered by the gateway, not the provider, so nothing is scripted for it.
         _host.Provider.EnqueueToolCall("write_file", new { path = newFile, content = "public class Orders { }\n" });
         _host.Provider.EnqueueToolCall("submit_work", new { summary = "Added the Orders class.", testsAdded = new[] { "OrdersTests" } });
-        _host.Provider.EnqueueReply("The work is submitted.");
         // The review turn: a clean review.
         _host.Provider.EnqueueToolCall("submit_review", new { findings = Array.Empty<object>() });
-        _host.Provider.EnqueueReply("The change is clean.");
 
         await _host.DelegateAsync(threadId, "@factory Add an Orders class.");
         var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting, seconds: 120);
 
         // The model's calls all went through the host's gateway, with the right tools per turn.
         var requests = _host.Provider.Requests.ToArray();
-        Assert.Equal(5, requests.Length);
+        Assert.Equal(3, requests.Length); // write, submit_work, submit_review: nothing after a submission
         var implementTools = requests[0].Tools.Select(t => t.Name).ToArray();
         Assert.Contains("write_file", implementTools);
         Assert.Contains("submit_work", implementTools);
         Assert.Contains("request_decision", implementTools);
         Assert.DoesNotContain("submit_review", implementTools);
-        var reviewTools = requests[3].Tools.Select(t => t.Name).ToArray();
+        var reviewTools = requests[2].Tools.Select(t => t.Name).ToArray();
         Assert.Equal(["read_file", "list_directory", "search_code", "submit_review"], reviewTools);
         Assert.All(requests, r => Assert.Equal("deepseek/deepseek-v4.1-flash", r.Model));
         Assert.All(requests, r => Assert.Equal(4_000, r.MaxOutputTokens));
         Assert.Contains("Add an Orders class.", requests[0].Messages[0].Content.OfType<Litos.Agent.Messages.TextBlock>().First().Text);
 
         // The review ran in its own session: it starts from its brief, not from the implement turn.
-        Assert.NotEqual(requests[0].SessionId, requests[3].SessionId);
-        Assert.Single(requests[3].Messages);
+        Assert.NotEqual(requests[0].SessionId, requests[2].SessionId);
+        Assert.Single(requests[2].Messages);
 
         // The worker's tool really wrote the file, and the host really committed and pushed it.
         Assert.Equal("public class Orders { }\n", File.ReadAllText(newFile).ReplaceLineEndings("\n"));
@@ -129,9 +128,10 @@ public sealed class RealWorkerTests : IAsyncLifetime
         Assert.Contains("Ready for human testing.", handoff.Text);
         Assert.Contains("Added the Orders class.", handoff.PayloadJson);
 
-        // Every model call was charged to the task, and nothing is left reserved.
+        // Every provider call was charged to the task, and nothing is left reserved; the gateway's
+        // own replies after a submission were neither reserved nor charged.
         var usage = await _host.Store.ListUsageAsync(threadId, default);
-        Assert.Equal(5, usage.Count);
+        Assert.Equal(3, usage.Count);
         Assert.All(usage, u => Assert.Equal(Core.Budget.UsageStatus.Settled, u.Status));
         Assert.Equal(usage.Sum(u => u.Charged), details.Thread.TokensUsed);
         Assert.Equal(0, details.Thread.TokensReserved);

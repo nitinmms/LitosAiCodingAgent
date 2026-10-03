@@ -43,6 +43,20 @@ public sealed class ModelGateway(
         // The model is the task's, fixed when the thread was created: a worker cannot ask for another.
         var chat = request.ChatRequest with { Model = run.Model };
         var sessionKey = chat.SessionId ?? "";
+
+        // A turn whose result is recorded is over, but from PTC kernel code the model never sees
+        // the tool's reply unless it prints it, so it went on checking and submitting again —
+        // two to four paid calls after every submission. The turn's next call is answered here,
+        // free, with a reply that ends it. Only a turn's own calls: compaction sends no tools
+        // and no session.
+        if (chat.Tools.Count > 0 && run.HasFinished(sessionKey))
+        {
+            await write(new GatewayTextDelta(FinishedReply));
+            await write(new GatewayMessageCompleted(
+                Litos.Agent.Messages.ChatMessage.Assistant([new Litos.Agent.Messages.TextBlock(FinishedReply)]), new UsageInfo(0, 0)));
+            return;
+        }
+
         var calibration = CalibrationFor(run.Provider, run.Model);
         var baseline = run.Baselines.GetValueOrDefault(sessionKey);
         var estimate = RequestEstimator.Estimate(chat, baseline, calibration.Ratio);
@@ -103,6 +117,9 @@ public sealed class ModelGateway(
 
         await SettleUnfinishedAsync(request.RequestKey, call);
     }
+
+    /// <summary>What the gateway answers, in the model's place, once the turn's result is recorded.</summary>
+    public const string FinishedReply = "Submitted. The factory has recorded the result and ends this turn.";
 
     /// <summary>How far one call got, which decides what happens to its reservation.</summary>
     private sealed class CallState

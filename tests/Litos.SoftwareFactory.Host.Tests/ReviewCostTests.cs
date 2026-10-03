@@ -3,6 +3,7 @@ using System.Net;
 using Litos.Agent.Messages;
 using Litos.Agent.Providers;
 using Litos.Agent.Streaming;
+using Litos.Agent.Tools;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
@@ -196,6 +197,95 @@ public sealed class GatewayAllowanceTests : IAsyncLifetime
 
         await Task.Delay(100);
         Assert.Empty(_client.Steered);
+    }
+
+    // ---- After the turn's result is recorded ----
+
+    private static readonly ToolSchema KernelTool = new("run_kernel_code", "Runs C#.", System.Text.Json.JsonSerializer.SerializeToElement(new { type = "object" }));
+
+    /// <summary>A call as a turn makes it (with tools), collecting what the worker would receive.</summary>
+    private async Task<List<GatewayEvent>> TurnCallAsync(string session, bool withTools = true)
+    {
+        var events = new List<GatewayEvent>();
+        await _gateway.HandleAsync(
+            _run,
+            new GatewayRequest(Guid.NewGuid().ToString(), new ChatRequest([ChatMessage.User("go on")], withTools ? [KernelTool] : [], "m", SessionId: withTools ? session : null)),
+            e => { events.Add(e); return Task.CompletedTask; }, default);
+        return events;
+    }
+
+    private static bool IsFinishedReply(List<GatewayEvent> events) =>
+        events.OfType<GatewayMessageCompleted>().SingleOrDefault() is { } done
+        && done.Usage == new UsageInfo(0, 0)
+        && done.Message.Content.OfType<TextBlock>().Single().Text == ModelGateway.FinishedReply;
+
+    [Theory]
+    [InlineData(TurnKind.Review)]
+    [InlineData(TurnKind.Implement)]
+    public async Task OnceTheTurnHasSubmitted_ItsNextCall_IsAnsweredWithoutTheProvider_AndCostsNothing(TurnKind kind)
+    {
+        _run.BeginTurn(kind, kind, "s-1", default);
+        await TurnCallAsync("s-1");
+        Submission submission = kind == TurnKind.Review ? new ReviewSubmission([]) : new WorkSubmission("Done.", [], [], [], []);
+        Assert.True(_run.Accept("s-1", submission).Accepted);
+
+        var events = await TurnCallAsync("s-1");
+
+        Assert.True(IsFinishedReply(events));
+        Assert.Equal(ModelGateway.FinishedReply, Assert.Single(events.OfType<GatewayTextDelta>()).Text);
+        // One provider call reserved and charged, not two.
+        Assert.Single(await _host.Store.ListUsageAsync(_threadId, default));
+    }
+
+    [Fact]
+    public async Task BeforeTheTurnHasSubmitted_CallsGoToTheProvider()
+    {
+        _run.BeginTurn(TurnKind.Review, TurnKind.Review, "s-1", default);
+
+        Assert.False(IsFinishedReply(await TurnCallAsync("s-1")));
+        Assert.False(IsFinishedReply(await TurnCallAsync("s-1")));
+        Assert.Equal(2, (await _host.Store.ListUsageAsync(_threadId, default)).Count);
+    }
+
+    [Fact]
+    public async Task ACompactionCall_AfterTheSubmission_StillGoesToTheProvider()
+    {
+        _run.BeginTurn(TurnKind.Review, TurnKind.Review, "s-1", default);
+        Assert.True(_run.Accept("s-1", new ReviewSubmission([])).Accepted);
+
+        // A compaction request carries no tools and no session; answering it would replace the
+        // conversation's summary with "Submitted."
+        Assert.False(IsFinishedReply(await TurnCallAsync("s-1", withTools: false)));
+        Assert.Single(await _host.Store.ListUsageAsync(_threadId, default));
+    }
+
+    [Fact]
+    public async Task AnotherSessionsCall_IsNotAnswered_ForTheTurnThatSubmitted()
+    {
+        _run.BeginTurn(TurnKind.Review, TurnKind.Review, "s-1", default);
+        Assert.True(_run.Accept("s-1", new ReviewSubmission([])).Accepted);
+
+        Assert.False(IsFinishedReply(await TurnCallAsync("s-2")));
+    }
+
+    [Fact]
+    public async Task ANewTurn_StartsUnfinished()
+    {
+        _run.BeginTurn(TurnKind.Implement, TurnKind.Implement, "s-1", default);
+        Assert.True(_run.Accept("s-1", new WorkSubmission("Done.", [], [], [], [])).Accepted);
+        _run.BeginTurn(TurnKind.Repair, TurnKind.Repair, "s-1", default);
+
+        Assert.False(IsFinishedReply(await TurnCallAsync("s-1")));
+    }
+
+    [Fact]
+    public void ARecordedDecision_DoesNotFinishTheTurnThisWay()
+    {
+        // Its turn is cancelled once the tool has returned (WorkerCallbacks).
+        _run.BeginTurn(TurnKind.Implement, TurnKind.Implement, "s-1", default);
+        Assert.True(_run.Accept("s-1", new DecisionSubmission("Which?", "It matters.", ["A", "B"], null, null)).Accepted);
+
+        Assert.False(_run.HasFinished("s-1"));
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition) => await WaitUntilAsync(() => Task.FromResult(condition()));

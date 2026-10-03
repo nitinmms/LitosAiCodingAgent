@@ -141,6 +141,16 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
     }
 
     /// <summary>
+    /// True once the turn running in this session has recorded the result that finishes it:
+    /// work, a review or a specification. A decision is not included; its turn is cancelled.
+    /// </summary>
+    public bool HasFinished(string sessionId)
+    {
+        lock (_lock)
+            return TurnKind is not null && sessionId == SessionId && _submission is WorkSubmission or ReviewSubmission or SpecSubmission;
+    }
+
+    /// <summary>
     /// Records what a completion tool reported, if it belongs to the turn in progress. A turn
     /// can only report what its kind allows: a review turn cannot submit work, and an implement
     /// turn cannot declare its own review clean.
