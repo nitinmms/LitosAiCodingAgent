@@ -12,15 +12,18 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F4 | Yes, after one rework | 1 | 0 | 0 | 401,521 | 600,000 | **Yes** | 11 min (9 + 2 for the rework) | 0 |
 | F5 | **No: criteria unmet, and the run ended Blocked once** | 0 | 1 (review finding) | 0 | 554,007 | 600,000 | Yes | 28 min of run time | 0 |
 | R1 | **No: budget-paused twice, and one criterion unmet** | 0 | 0 | 0 | 437,338 | 300,000 | No | 11 min | 0 |
+| F6 | **No: budget-paused during its rework, and the expected decision was never asked** | 1 | 1 (review finding) | 0 of 1 expected | 1,188,184 | 1,200,000 | No | 32 min (17 + 15 for the rework) | 0 |
 
-**Against the M1 gate so far (6 of 12 run):**
+**Against the M1 gate so far (7 of 12 run):**
 
-- Accepted with at most one rework: 3 of 6.
+- Accepted with at most one rework: 3 of 7. **The gate needs 7 of 12, so it can be met only if all five remaining tasks pass.**
   - F3 produced code that meets every criterion after one rework, but it paused on budget during that rework, which the task set counts as a failure.
   - F5 is the first task whose handoff does not do what was asked: see its section.
   - R1 paused on budget twice before its handoff, and changed something a criterion said must not change.
+  - F6 paused on budget during its rework, after a first handoff that made every existing database unreadable instead of asking how to treat them.
+- **Decisions asked: 0 in 7 tasks.** One was expected (F6) and one was warranted (R1).
 - Evidence mismatches: 0.
-- **Budget overrun: F1, F2, F3 and R1.** F4 and F5 finished inside their caps. See "Budgets" below.
+- **Budget overrun: F1, F2, F3, R1 and F6.** F4 and F5 finished inside their caps. See "Budgets" below.
 - Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3, 2.3% on F4 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
 - Lock violations: 0.
 
@@ -177,3 +180,30 @@ The first task on `insta-story-generator`, and the first real run of the Node/Re
 - **Agent review:** 2 minor findings open, one of them real: regenerating a slide does not tell the model the slide's current alignment and size, so a user's choice can be silently reset.
 - **Decisions:** none asked. One was arguably warranted: whether the AI should choose alignment and size is a product choice the request did not make, and the agent made it without asking.
 - **Budget.** This was sized as a small task. Its implementation turn made 56 model calls on an average of 39,800 tokens of context, larger than any filedb-sharp task: 265,000 of the 437,338 tokens were cached input even at 10%. The estimator's 95th-percentile under-estimate was 7.5%, the highest so far and still inside the 10% margin.
+
+## F6 · Document expiry (TTL)
+
+The large task designed to make the factory stop and ask.
+
+- **Outcome:** recorded as **not accepted**. The rework paused on budget at 1,188,184 of 1,200,000 during a repair, and its work is neither committed nor pushed. Pull request #6 shows the first handoff.
+- **The missed decision.** Storing expiry times changes the on-disk format, and the request does not say what should happen to existing files. The factory did not ask. It moved the format to version 2 and made version-1 files unreadable, which would break every existing database. The handoff disclosed this ("version 1 files are rejected"), so there is no evidence mismatch, but the choice was not the agent's to make.
+- **First handoff** (commit `4128887`, 751,957 tokens, inside the cap): build passed; 70 tests passed (15 new); changed-line coverage 100%.
+  - Met: criterion 1 (write overloads taking a time-to-live; a non-positive one throws), 2 (an expired document is invisible to every read, and `Insert` of its key succeeds) and 4 (expiry survives reopening; `Compact` drops expired documents).
+  - **Not met: criterion 3** (time injectable; tests use a fake clock): it read `DateTime.UtcNow` directly, and the tests used `Thread.Sleep`.
+  - **Not met: criterion 5** (version-1 files still open and read): they were rejected.
+  - Partly met: criterion 6. The README documented version 2, with the rule that version-1 files are not read.
+- **Rework:** one message giving the task set's scripted answer for the format and naming criteria 3, 5 and 6. In the working copy, uncommitted: version-1 files are read and stay version 1 until compacted; a `TimeProvider` option with a fake clock in the tests and no real sleeps; the README states the rule. The host verified it (77 tests passed, coverage 100%). Its review then found a blocking problem, and the budget ran out in the repair.
+- **Agent review:** in the first run it found, by running the built code, that compaction dropped a live document's expiry; that was repaired before the first handoff.
+- **The shell rule held.** During the first repair the agent met a build output file locked by a process it had not started. It recorded that it did not stop that process, and moved the file aside instead.
+- **Budget:** about 752,000 for the first run and about 436,000 for the rework (268,000 implementing, 140,000 reviewing, 28,000 into the repair).
+
+## What the seven tasks show
+
+The gate cannot realistically be met: it needs all five remaining tasks to pass, and three of them are large or expect a decision. The blueprint's rule for a missed gate is to iterate on the prompts, orchestration and tools and re-run the task set before M2.
+
+Two causes account for most of the failures:
+
+1. **Rework rounds exhaust the budget.** F3 and F6 both reached their first handoff inside the cap and failed in the rework. A rework re-implements on a context of 40,000 tokens or more, then pays for a full review and often a repair.
+2. **The factory never asks.** No task has called `request_decision`, including R1 and F6, where stopping to ask was the right move. Both needed a rework that a question would have avoided, and F6's unasked choice would have made existing databases unreadable.
+
+F5 adds a third, smaller one: a repair that satisfied a review finding by removing the feature it found a defect in, with the build and every test still passing.
