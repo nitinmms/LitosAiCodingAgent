@@ -65,8 +65,28 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
     public bool HasSecret(string presented) =>
         presented.Length > 0 && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(presented), Encoding.UTF8.GetBytes(Secret));
 
+    /// <summary>
+    /// What the model calls of the turn in progress are recorded under: the turn's kind, or
+    /// "LightReview" for a light review. A nudge or a resume of a review is recorded as review,
+    /// so the review's full cost is in one place. Null outside a turn (compaction before one).
+    /// </summary>
+    public string? Phase { get; private set; }
+
+    /// <summary>The allowance of the turn in progress, if it has one (reviews do).</summary>
+    public Core.Orchestration.TurnAllowance? Allowance { get; private set; }
+
+    /// <summary>Model calls settled in the turn in progress.</summary>
+    public int TurnCalls { get; private set; }
+
+    /// <summary>Tokens charged in the turn in progress.</summary>
+    public long TurnCharged { get; private set; }
+
+    private bool _wrapUpSent;
+
     /// <summary>Starts a turn: clears what the previous turn reported.</summary>
-    public CancellationToken BeginTurn(TurnKind kind, TurnKind workKind, string sessionId, CancellationToken runToken)
+    public CancellationToken BeginTurn(
+        TurnKind kind, TurnKind workKind, string sessionId, CancellationToken runToken,
+        string? phase = null, Core.Orchestration.TurnAllowance? allowance = null)
     {
         lock (_lock)
         {
@@ -75,10 +95,43 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             TurnKind = kind;
             WorkKind = workKind;
             SessionId = sessionId;
+            Phase = phase ?? kind.ToString();
+            Allowance = allowance;
+            TurnCalls = 0;
+            TurnCharged = 0;
+            _wrapUpSent = false;
             _submission = null;
             BudgetRefusal = null;
             DecisionId = null;
             return _turn.Token;
+        }
+    }
+
+    /// <summary>
+    /// Records a settled model call of the turn in progress. Returns the message to steer the
+    /// turn with when this call takes it past its allowance — once per turn, and never after
+    /// it has already submitted — or null.
+    /// </summary>
+    public string? RecordTurnCall(long charged)
+    {
+        lock (_lock)
+        {
+            TurnCalls++;
+            TurnCharged += charged;
+            if (Allowance is not { } allowance || _wrapUpSent || _submission is not null)
+                return null;
+
+            var overCalls = TurnCalls >= allowance.WrapUpAfterCalls;
+            var overTokens = allowance.WrapUpAfterTokens is { } tokens && TurnCharged >= tokens;
+            if (!overCalls && !overTokens)
+                return null;
+
+            _wrapUpSent = true;
+            var spent = overTokens
+                ? $"{TurnCharged:N0} tokens, its allowance of {allowance.WrapUpAfterTokens:N0}"
+                : $"{TurnCalls} model calls, its allowance of {allowance.WrapUpAfterCalls}";
+            return $"This review has used {spent}. Stop investigating now and call `submit_review` with the findings you have. "
+                + "Report anything you suspect but could not confirm as a minor finding, and say that it is unconfirmed.";
         }
     }
 

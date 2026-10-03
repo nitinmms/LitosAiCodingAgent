@@ -121,7 +121,8 @@ public sealed class RunTests : IAsyncLifetime
         Assert.Contains("- dotnet: dotnet test", turns[0].Brief);
         Assert.Equal(details.Thread.SessionId, turns[0].SessionId);
 
-        Assert.Contains("You are reviewing a change made by another agent", turns[1].Brief);
+        // A one-file change with a clean verification gets a light review.
+        Assert.Contains("You are reviewing a small change made by another agent", turns[1].Brief);
         Assert.Contains("+++ b/src/Orders.cs", turns[1].Brief); // the diff
         Assert.NotEqual(details.Thread.SessionId, turns[1].SessionId);
         Assert.StartsWith("review-", turns[1].SessionId);

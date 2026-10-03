@@ -155,6 +155,10 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
                 return Stop(state, LifecycleTrigger.Cancel, StopReason.Cancelled, "Cancelled. Edits and the branch are kept.", resumePoint: null);
             case TurnEndReason.Faulted:
                 return Stop(state, LifecycleTrigger.Block, StopReason.TurnFaulted, turn.Detail ?? "The turn failed.", resumeTurn);
+            case TurnEndReason.ToolCallLimit when state.WorkTurn == TurnKind.Review:
+                // A review that used up its allowance has still looked at the change: it is asked
+                // once to submit what it found, and blocked only if it still does not.
+                return NudgeOrBlock(state, "submit_review");
             case TurnEndReason.ToolCallLimit:
                 return Stop(
                     state, LifecycleTrigger.Block, StopReason.ToolCallLimit,

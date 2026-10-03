@@ -321,6 +321,7 @@ export class FakeHost {
       actualReasoning: 300,
       charged: 10_600,
       status: 'Settled',
+      phase: 'Implement',
       createdAt: NOW,
       settledAt: NOW,
       ...overrides,

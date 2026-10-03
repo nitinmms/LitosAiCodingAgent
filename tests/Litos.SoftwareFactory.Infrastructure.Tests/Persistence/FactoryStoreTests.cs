@@ -691,6 +691,19 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal((9_500L, 0L), (thread.TokensUsed, thread.TokensReserved));
     }
 
+    /// <summary>What each call was for, so a task's cost can be split into implementation and review.</summary>
+    [SkippableFact]
+    public async Task Reserve_RecordsThePhaseOfTheCall()
+    {
+        var running = await RunningAsync(cap: 900_000);
+
+        await Store.ReserveAsync(Reserve(running, "implement") with { Phase = "Implement" }, Policy, T0, default);
+        await Store.ReserveAsync(Reserve(running, "review") with { Phase = "LightReview" }, Policy, T0.AddSeconds(1), default);
+        await Store.ReserveAsync(Reserve(running, "outside"), Policy, T0.AddSeconds(2), default);
+
+        Assert.Equal(["Implement", "LightReview", null], (await Store.ListUsageAsync(running.Thread.Id, default)).Select(u => u.Phase));
+    }
+
     // ---- A call is reserved for about what it will cost ----
 
     private static readonly BudgetPolicy Real = new() { OutputAllowanceTokens = 32_768, MinimumOutputTokens = 4_096, Margin = 0.10 };

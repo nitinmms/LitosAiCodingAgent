@@ -57,6 +57,9 @@ public sealed record ReserveCommand(
     /// <summary>How much of EstimatedInput the provider is expected to serve from its cache;
     /// that part is reserved at the cached weight.</summary>
     public long ExpectedCachedInput { get; init; }
+
+    /// <summary>The turn the call is made in; see UsageEntry.Phase.</summary>
+    public string? Phase { get; init; }
 }
 
 /// <summary>The outcome of asking to send one model call.</summary>

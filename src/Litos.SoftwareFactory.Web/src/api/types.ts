@@ -210,6 +210,8 @@ export interface UsageCall {
   charged: number;
   /** Estimated: the provider never reported usage, so the call was charged the host's input estimate. */
   status: 'Reserved' | 'Settled' | 'Unknown' | 'Estimated';
+  /** What the call was for: Implement, Rework, Repair, Review, LightReview or Nudge; null outside a turn. */
+  phase: string | null;
   createdAt: string;
   settledAt: string | null;
 }

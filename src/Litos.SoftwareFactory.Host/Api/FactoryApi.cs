@@ -197,6 +197,8 @@ public static class FactoryApi
                 u.ActualReasoning,
                 u.Charged,
                 Status = u.Status.ToString(),
+                // What the call was for: Implement, Rework, Repair, Review, LightReview, Nudge.
+                u.Phase,
                 u.CreatedAt,
                 u.SettledAt,
             }));

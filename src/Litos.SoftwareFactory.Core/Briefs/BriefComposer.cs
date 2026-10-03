@@ -36,6 +36,9 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
     // Review turns.
     public string? Diff { get; init; }
 
+    /// <summary>How deep this review goes, chosen by ReviewPlanner; Full when not set.</summary>
+    public ReviewDepth ReviewDepth { get; init; } = ReviewDepth.Full;
+
     /// <summary>
     /// For the review of a rework run: the commit that was last reviewed and handed off. The
     /// diff is then only what changed since, so the reviewer does not review the whole task
@@ -54,7 +57,7 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
 public static partial class BriefComposer
 {
     /// <summary>Bump whenever any template or any text composed here changes.</summary>
-    public const string Revision = "m1.3";
+    public const string Revision = "m1.4";
 
     private const int CharsPerToken = 4;
 
@@ -167,7 +170,7 @@ public static partial class BriefComposer
               + "> " + Quote(context.TesterFeedback ?? "") + "\n\n"
               + "Review that rework, and whether it does what the tester asked. Raise something in the earlier work only if the rework breaks it.";
 
-        return Render("review", new()
+        return Render(context.ReviewDepth == ReviewDepth.Light ? "review-light" : "review", new()
         {
             ["project"] = context.Project,
             ["branch"] = context.Branch,
@@ -175,9 +178,43 @@ public static partial class BriefComposer
             ["request"] = context.Request.Trim(),
             ["specification"] = Specification(context),
             ["verification"] = VerificationResult(state),
+            ["claims"] = Claims(state.LastSubmission),
             ["change"] = change,
             ["scope"] = scope,
         });
+    }
+
+    /// <summary>
+    /// What the implementing agent said it did (ReadMe_CodeVerifyOptimisations.md §2), for the
+    /// reviewer to check rather than rediscover. Labelled as claims: the verification result is
+    /// the host's measurement, and this is only the agent's account.
+    /// </summary>
+    private static string Claims(WorkSubmission? submission)
+    {
+        if (submission is null)
+            return "";
+
+        var text = new StringBuilder("## The implementing agent's account (claims to check, not facts)\n\n");
+        if (!string.IsNullOrWhiteSpace(submission.Summary))
+            text.AppendLine(submission.Summary.Trim()).AppendLine();
+
+        if (submission.Criteria.Count > 0)
+        {
+            text.AppendLine("Acceptance criteria and the tests it says cover them:").AppendLine();
+            foreach (var c in submission.Criteria)
+            {
+                var covered = c.Tests.Count > 0 ? string.Join(", ", c.Tests.Select(t => $"`{t}`")) : c.ManualOnly ? "manual testing only" : "**no test named**";
+                text.AppendLine($"- {c.Criterion.Trim()} — {covered}");
+            }
+
+            text.AppendLine();
+        }
+
+        if (submission.KnownLimitations.Count > 0)
+            text.AppendLine("Known limitations it reports:").AppendLine().AppendLine(Bullets(submission.KnownLimitations.Select(l => l.Trim()))).AppendLine();
+
+        text.Append("Check these against the change. A criterion it calls covered may not be, and a limitation it reports may break the request.");
+        return text.ToString().TrimEnd();
     }
 
     /// <summary>

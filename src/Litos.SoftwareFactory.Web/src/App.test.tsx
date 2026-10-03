@@ -413,6 +413,42 @@ describe('live updates', () => {
     expect(budget.getByText(/the most it could cost is set aside/)).toBeInTheDocument();
     expect(budget.getByText('Strict')).toBeInTheDocument();
   });
+
+  /** Where the tokens went: the work against its review. */
+  it('labels each call with what it was for, and totals the work against the review', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Running', stage: 'Review' });
+    host.addCall(thread.id, { charged: 100_000, phase: 'Implement' });
+    host.addCall(thread.id, { charged: 20_000, phase: 'Repair' });
+    host.addCall(thread.id, { charged: 30_000, phase: 'Review' });
+    host.addCall(thread.id, { charged: 6_000, phase: 'LightReview' });
+    host.addCall(thread.id, { charged: 1_000, phase: null });
+    start(host);
+
+    const budget = within(await screen.findByRole('region', { name: 'Budget' }));
+    const phases = within(await budget.findByLabelText('Tokens by phase'));
+    expect(phases.getByText('120,000')).toBeInTheDocument();
+    expect(phases.getByText('Review (30% of implementation)')).toBeInTheDocument();
+    expect(phases.getByText('36,000')).toBeInTheDocument();
+    expect(phases.getByText('Other')).toBeInTheDocument();
+    expect(budget.getByText('Call 1 · implement')).toBeInTheDocument();
+    expect(budget.getByText('Call 2 · repair')).toBeInTheDocument();
+    expect(budget.getByText('Call 4 · light review')).toBeInTheDocument();
+    expect(budget.getByText('Call 5 · other')).toBeInTheDocument();
+  });
+
+  it('shows no phase totals before any work has been charged', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Running', stage: 'Implement' });
+    host.addCall(thread.id, { charged: 0, status: 'Reserved', phase: 'Implement' });
+    start(host);
+
+    const budget = within(await screen.findByRole('region', { name: 'Budget' }));
+    await budget.findByText('Call 1 · implement');
+    expect(budget.queryByLabelText('Tokens by phase')).not.toBeInTheDocument();
+  });
 });
 
 describe('a decision', () => {

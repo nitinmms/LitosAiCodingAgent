@@ -31,6 +31,33 @@ public sealed record RunLimits
 
     /// <summary>Total size of the failure excerpts a repair brief may carry.</summary>
     public int RepairExcerptTokens { get; init; } = 4_000;
+
+    // ---- Review depth and allowance (ReviewPlanner, TurnAllowance) ----
+
+    /// <summary>A change with more added lines than this outside tests gets a full review.</summary>
+    public int LightReviewMaxChangedLines { get; init; } = 150;
+
+    /// <summary>A change touching more files than this gets a full review.</summary>
+    public int LightReviewMaxFiles { get; init; } = 8;
+
+    /// <summary>A light review is asked to submit after this many model calls...</summary>
+    public int LightReviewWrapUpCalls { get; init; } = 2;
+
+    /// <summary>...and is stopped after this many tool calls.</summary>
+    public int LightReviewMaxToolCalls { get; init; } = 4;
+
+    /// <summary>A full review is asked to submit after this many model calls (the first real
+    /// reviews took 5 to 37)...</summary>
+    public int FullReviewWrapUpCalls { get; init; } = 12;
+
+    /// <summary>...or once it has cost this share of what the implementation cost...</summary>
+    public double ReviewAllowanceShare { get; init; } = 0.5;
+
+    /// <summary>...but never less than this, so a cheap implementation still gets a real review...</summary>
+    public long ReviewAllowanceFloorTokens { get; init; } = 40_000;
+
+    /// <summary>...and is stopped after this many tool calls.</summary>
+    public int FullReviewMaxToolCalls { get; init; } = 24;
 }
 
 public enum RunKind

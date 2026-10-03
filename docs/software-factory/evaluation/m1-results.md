@@ -101,6 +101,7 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 | F2 | F2 could not start | Uncommitted edits an earlier task left in the working copy are set aside | `d46aff6` |
 | F2, F3 | Every update of an existing pull request failed in transit | Idle connections to GitHub are dropped before GitHub closes them; a request that fails in transit is retried; a handoff keeps naming a pull request it could not update | `c5e10d8` |
 | F5 | The agent ran `taskkill /F /IM dotnet.exe /T` and stopped every dotnet process on the machine, its own worker included; the host reported its own failure | The agent's shell refuses to stop processes by name or shut the machine down; a worker that dies mid-turn is the turn's failure and the run resumes with a new worker; the briefs carry the rule (`m1.3`) | `c0408bb` |
+| F1 to F6, R1 | Review was about a third of all tokens, and a one-line change got the same open-ended review as a file-format change | Review depth chosen by the host (light or full); a review allowance with a steer to submit and a hard tool-call limit; the agent's account given to the reviewer as claims to check; every call records its phase; prompt revision `m1.4` | see the commit after F6 |
 | F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | `c5e10d8` |
 
 ## F1 Â· Enforce size limits on keys, names and documents

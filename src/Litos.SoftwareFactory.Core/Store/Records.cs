@@ -228,6 +228,10 @@ public sealed class UsageEntry
     /// <summary>What was taken from the allowance when the call settled.</summary>
     public long Charged { get; set; }
     public UsageStatus Status { get; set; } = UsageStatus.Reserved;
+
+    /// <summary>What the call was for: the kind of turn it was made in (Implement, Repair,
+    /// Rework, Review, LightReview, Nudge), or null when it was made outside a turn.</summary>
+    public string? Phase { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? SettledAt { get; set; }
 }

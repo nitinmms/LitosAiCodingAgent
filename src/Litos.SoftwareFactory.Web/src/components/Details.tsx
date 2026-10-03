@@ -8,6 +8,30 @@ function humanTesting(state: ThreadDetails['thread']['state']): { text: string; 
 }
 
 /** The gauges beside a thread: budget, verification, changed files and the run. */
+/** How a call's phase is shown. */
+const PHASE_NAMES: Record<string, string> = {
+  Implement: 'implement',
+  Rework: 'rework',
+  Repair: 'repair',
+  Nudge: 'reminder',
+  Review: 'review',
+  LightReview: 'light review',
+};
+
+export const phaseName = (phase: string | null): string => (phase ? (PHASE_NAMES[phase] ?? phase.toLowerCase()) : 'other');
+
+/** Implementation (implement, rework, repair, reminders) against review, in tokens charged. */
+export function phaseTotals(calls: UsageCall[]): { implementation: number; review: number; other: number } {
+  const totals = { implementation: 0, review: 0, other: 0 };
+  for (const call of calls) {
+    const tokens = call.charged;
+    if (call.phase === 'Review' || call.phase === 'LightReview') totals.review += tokens;
+    else if (call.phase === 'Implement' || call.phase === 'Rework' || call.phase === 'Repair' || call.phase === 'Nudge') totals.implementation += tokens;
+    else totals.other += tokens;
+  }
+  return totals;
+}
+
 export function Details({
   details,
   usage,
@@ -75,6 +99,7 @@ export function Details({
         </div>
         {usage.length ? (
           <>
+            <PhaseSummary calls={usage} />
             <h3>Recent model calls</h3>
             <div className="ledger">
               {usage
@@ -83,7 +108,9 @@ export function Details({
                 .reverse()
                 .map(({ call, n }) => (
                   <div key={call.id}>
-                    <span>Call {n}</span>
+                    <span>
+                      Call {n} · {phaseName(call.phase)}
+                    </span>
                     <span className="num">
                       up to {fmt(call.reserved)},{' '}
                       {call.status === 'Settled'
@@ -177,5 +204,30 @@ export function Details({
         </section>
       ) : null}
     </aside>
+  );
+}
+
+/** Where the task's tokens went: the work against its review (ReadMe_CodeVerifyOptimisations.md §11). */
+function PhaseSummary({ calls }: { calls: UsageCall[] }) {
+  const totals = phaseTotals(calls);
+  if (totals.implementation === 0 && totals.review === 0) return null;
+  const ratio = totals.implementation > 0 ? Math.round((totals.review / totals.implementation) * 100) : null;
+  return (
+    <div className="ledger" aria-label="Tokens by phase">
+      <div>
+        <span>Implementation</span>
+        <span className="num">{fmt(totals.implementation)}</span>
+      </div>
+      <div>
+        <span>Review{ratio === null ? '' : ` (${ratio}% of implementation)`}</span>
+        <span className="num">{fmt(totals.review)}</span>
+      </div>
+      {totals.other > 0 ? (
+        <div>
+          <span>Other</span>
+          <span className="num">{fmt(totals.other)}</span>
+        </div>
+      ) : null}
+    </div>
   );
 }

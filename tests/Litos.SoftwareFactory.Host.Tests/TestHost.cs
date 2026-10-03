@@ -314,7 +314,11 @@ public sealed class FakeUserDirectory : IUserDirectory
 }
 
 /// <summary>One turn the host asked the fake worker to run.</summary>
-public sealed record TurnCall(FakeWorker Worker, string SessionId, TurnKind Kind, string Brief, CancellationToken Token);
+public sealed record TurnCall(FakeWorker Worker, string SessionId, TurnKind Kind, string Brief, CancellationToken Token)
+{
+    /// <summary>The tool-call limit the host started the turn with.</summary>
+    public int MaxToolCalls { get; init; }
+}
 
 /// <summary>
 /// Stands in for the worker process. Each turn is answered by the next scripted behaviour, which
@@ -377,7 +381,7 @@ public sealed class FakeWorker(WorkerLaunch launch, FakeWorkerLauncher owner) : 
 
     public async Task<TurnStreamResult> RunTurnAsync(string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct)
     {
-        var call = new TurnCall(this, sessionId, kind, brief, ct);
+        var call = new TurnCall(this, sessionId, kind, brief, ct) { MaxToolCalls = maxToolCalls };
         owner.Turns.Enqueue(call);
         var behaviour = owner.Script.TryDequeue(out var scripted) ? scripted : owner.Default;
         return await behaviour(call);

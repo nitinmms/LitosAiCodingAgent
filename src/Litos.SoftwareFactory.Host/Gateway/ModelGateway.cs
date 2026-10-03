@@ -55,6 +55,7 @@ public sealed class ModelGateway(
             new ReserveCommand(request.RequestKey, run.ThreadId, run.RunId, run.UserId, run.Provider, run.Model, estimate.RawTokens, estimate.Tokens)
             {
                 ExpectedCachedInput = expectedCached,
+                Phase = run.Phase,
             },
             options.Budget, clock.UtcNow, ct);
         signals.EventsWritten();
@@ -136,8 +137,10 @@ public sealed class ModelGateway(
 
                     if (evt is MessageCompleted completed)
                     {
-                        await SettleAsync(requestKey, completed, estimate, calibration);
+                        var charged = await SettleAsync(requestKey, completed, estimate, calibration);
                         call.Settled = true;
+                        if (run.RecordTurnCall(charged) is { } wrapUp)
+                            _ = WrapUpAsync(run, wrapUp);
 
                         // Charged, but not passed on: to the agent loop an empty reply looks like
                         // a turn that chose to stop, and the run would be blamed for not calling
@@ -194,7 +197,30 @@ public sealed class ModelGateway(
         + (usage.ReasoningTokens > 0 ? $" ({usage.ReasoningTokens:N0} of them were reasoning)" : "")
         + ". Nothing was lost; resuming tries the step again.";
 
-    private async Task SettleAsync(string requestKey, MessageCompleted completed, RequestEstimate estimate, CalibrationWindow calibration)
+    /// <summary>
+    /// Asks the turn in progress to finish: the steer reaches the agent at its next safe point,
+    /// and the thread says why. Not awaited by the call that triggered it, which has a reply to
+    /// stream; a failure to steer is logged, and the turn's hard tool-call limit still applies.
+    /// </summary>
+    private async Task WrapUpAsync(ActiveRun run, string message)
+    {
+        try
+        {
+            if (run.Client is { } client && run.SessionId is { } sessionId)
+                await client.SteerAsync(sessionId, message, CancellationToken.None);
+            await store.AddFactoryMessageAsync(
+                run.ThreadId, MessageKind.Status,
+                $"The review reached its allowance ({run.TurnCalls} model calls, {run.TurnCharged:N0} tokens) and was asked to submit its findings.",
+                null, clock.UtcNow, CancellationToken.None);
+            signals.EventsWritten();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Run {RunId}: the review could not be asked to finish.", run.RunId);
+        }
+    }
+
+    private async Task<long> SettleAsync(string requestKey, MessageCompleted completed, RequestEstimate estimate, CalibrationWindow calibration)
     {
         var usage = completed.Usage;
         var charge = BudgetLedger.SettlementCharge(
@@ -208,6 +234,7 @@ public sealed class ModelGateway(
         logger.LogInformation(
             "Model call {RequestKey}: estimated {Estimated} (raw {Raw}, x{Ratio:0.00}, {Basis}), actual input {Actual}, output {Output}, charged {Charged}.",
             requestKey, estimate.Tokens, estimate.RawTokens, estimate.CalibrationRatio, estimate.Basis, usage.TotalInputTokens, usage.OutputTokens, charge);
+        return charge;
     }
 
     /// <summary>

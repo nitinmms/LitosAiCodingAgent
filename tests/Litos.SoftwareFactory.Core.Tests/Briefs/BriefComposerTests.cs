@@ -177,6 +177,74 @@ public class BriefComposerTests
         Assert.Contains("A review is not a second implementation.", brief);
     }
 
+    // ---- The agent's account, and a light review ----
+
+    private static RunState Submitted(WorkSubmission work) => State() with { LastSubmission = work };
+
+    [Fact]
+    public void ReviewBrief_CarriesTheAgentsAccount_AsClaimsToCheck()
+    {
+        var work = new WorkSubmission(
+            "Added CSV export.",
+            [new CriterionCoverage("Admins can export.", ["Export_Admin_Succeeds", "Export_Admin_Quotes"]), new CriterionCoverage("Looks right in Excel.", [], ManualOnly: true), new CriterionCoverage("Commas are quoted.", [])],
+            ["Export_Admin_Succeeds"], ["Large exports are not streamed."], []);
+
+        var brief = Compose(BriefKind.Review, Submitted(work), Context with { Diff = "+x", ChangedLineCount = 1 }, kind: TurnKind.Review);
+
+        Assert.Contains("## The implementing agent's account (claims to check, not facts)", brief);
+        Assert.Contains("Added CSV export.", brief);
+        Assert.Contains("- Admins can export. — `Export_Admin_Succeeds`, `Export_Admin_Quotes`", brief);
+        Assert.Contains("- Looks right in Excel. — manual testing only", brief);
+        Assert.Contains("- Commas are quoted. — **no test named**", brief);
+        Assert.Contains("- Large exports are not streamed.", brief);
+        Assert.Contains("A criterion it calls covered may not be", brief);
+        // The host's measurement comes first and is not mixed with the claims.
+        Assert.True(brief.IndexOf("## Verification result", StringComparison.Ordinal) < brief.IndexOf("The implementing agent's account", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ReviewBrief_WithNoSubmission_HasNoAccountSection()
+    {
+        var brief = Compose(BriefKind.Review, State(), Context with { Diff = "+x", ChangedLineCount = 1 }, kind: TurnKind.Review);
+
+        Assert.DoesNotContain("implementing agent's account", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void ALightReview_UsesItsOwnBrief_ThatForbidsReadingAndRunning()
+    {
+        var context = Context with { Diff = "+public void Export() { }", ChangedLineCount = 1, ReviewDepth = ReviewDepth.Light };
+
+        var brief = Compose(BriefKind.Review, Submitted(new WorkSubmission("Added it.", [new("Admins can export.", ["T"])], ["T"], [], [])), context, kind: TurnKind.Review);
+
+        Assert.Contains("# Factory review brief: a light review", brief);
+        Assert.Contains("Do not read other files, list directories, search the code or run anything.", brief);
+        Assert.Contains("call `submit_review` in your first reply", brief);
+        Assert.Contains("```diff\n+public void Export() { }\n```", brief);
+        Assert.Contains("Added it.", brief);
+        Assert.Contains("## Verification result", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void AFullReview_KeepsTheOpenBrief()
+    {
+        var brief = Compose(BriefKind.Review, State(), Context with { Diff = "+x", ChangedLineCount = 1 }, kind: TurnKind.Review);
+
+        Assert.DoesNotContain("a light review", brief);
+        Assert.Contains("Run code of your own only when a specific concern cannot be settled by reading", brief);
+    }
+
+    [Fact]
+    public void ALightReviewOfARework_StillCarriesTheReworkScope()
+    {
+        var brief = Compose(BriefKind.Review, State(RunKind.Rework), ReworkReview with { ReviewDepth = ReviewDepth.Light }, kind: TurnKind.Review);
+
+        Assert.Contains("# Factory review brief: a light review", brief);
+        Assert.Contains("## Scope: a rework", brief);
+    }
+
     // ---- The review of a rework covers the rework ----
 
     private static readonly RunContext ReworkReview = Context with
@@ -581,7 +649,8 @@ public class BriefComposerTests
         // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
-        Assert.Equal("m1.3", BriefComposer.Revision);
+        // m1.4: light reviews, and the agent's account in the review brief.
+        Assert.Equal("m1.4", BriefComposer.Revision);
     }
 
     [Theory]
@@ -589,6 +658,7 @@ public class BriefComposerTests
     [InlineData("rework")]
     [InlineData("repair")]
     [InlineData("review")]
+    [InlineData("review-light")]
     [InlineData("nudge")]
     [InlineData("decision-answer")]
     [InlineData("proceed")]

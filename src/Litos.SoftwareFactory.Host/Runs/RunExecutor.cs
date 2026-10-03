@@ -266,17 +266,22 @@ public sealed class RunExecutor(
             }
         }
 
-        var brief = BriefComposer.Compose(step, await BriefContextAsync(data, step, hostStopping), state with { Baseline = data.Baseline ?? state.Baseline }, options.Limits);
+        var (context, diff) = await BriefContextAsync(data, step, hostStopping);
+        var (phase, allowance) = await ReviewAllowanceAsync(data, state, step, diff, hostStopping);
+        if (phase == "LightReview")
+            context = context with { ReviewDepth = ReviewDepth.Light };
+
+        var brief = BriefComposer.Compose(step, context, state with { Baseline = data.Baseline ?? state.Baseline }, options.Limits);
         var before = await FingerprintAsync(data, hostStopping);
 
         using var timeout = new CancellationTokenSource(options.Limits.TurnTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(hostStopping, timeout.Token);
-        var turnToken = active.BeginTurn(step.Kind, state.WorkTurn, sessionId, linked.Token);
+        var turnToken = active.BeginTurn(step.Kind, state.WorkTurn, sessionId, linked.Token, phase, allowance);
 
         TurnStreamResult? result = null;
         try
         {
-            result = await client.RunTurnAsync(sessionId, step.Kind, brief, options.Limits.MaxToolCallsPerTurn, turnToken);
+            result = await client.RunTurnAsync(sessionId, step.Kind, brief, allowance?.MaxToolCalls ?? options.Limits.MaxToolCallsPerTurn, turnToken);
         }
         catch (OperationCanceledException) when (!hostStopping.IsCancellationRequested)
         {
@@ -333,7 +338,36 @@ public sealed class RunExecutor(
         return data.ReviewSessionId;
     }
 
-    private async Task<RunContext> BriefContextAsync(RunData data, StartTurnStep step, CancellationToken ct)
+    /// <summary>
+    /// For a review turn, how deep it goes and what it may spend (ReviewPlanner, TurnAllowance);
+    /// for any other turn, its phase and no allowance. A first review is planned from the diff
+    /// and the evidence, and the thread says which it got and why. A reminder gets a small
+    /// allowance, since it has already looked; a resumed review continues as a full one.
+    /// </summary>
+    private async Task<(string Phase, TurnAllowance? Allowance)> ReviewAllowanceAsync(
+        RunData data, RunState state, StartTurnStep step, WorkspaceDiff? diff, CancellationToken ct)
+    {
+        if (state.WorkTurn != TurnKind.Review)
+            return (step.Kind.ToString(), null);
+        if (step.Brief == BriefKind.Nudge)
+            return ("Review", TurnAllowance.ForReviewNudge(options.Limits));
+
+        // What this run spent on the work under review: its implement, rework, repair and
+        // work-nudge turns. Earlier runs of the task are not this review's concern.
+        var implementation = (await store.ListUsageAsync(data.Thread.Id, ct))
+            .Where(u => u.RunId == data.Run.Id && u.Phase is nameof(TurnKind.Implement) or nameof(TurnKind.Rework) or nameof(TurnKind.Repair) or nameof(TurnKind.Nudge))
+            .Sum(u => u.Charged);
+
+        // A review resumed after a stop is not planned again: it continues, as a full review.
+        if (step.Brief != BriefKind.Review || diff is null)
+            return ("Review", TurnAllowance.ForReview(ReviewDepth.Full, implementation, options.Limits));
+
+        var plan = ReviewPlanner.Plan(new ReviewInputs(diff.Files, diff.Patch, state.LastVerification, state.LastSubmission), options.Limits);
+        await NoteAsync(data, plan.Describe());
+        return (plan.Depth == ReviewDepth.Light ? "LightReview" : "Review", TurnAllowance.ForReview(plan.Depth, implementation, options.Limits));
+    }
+
+    private async Task<(RunContext Context, WorkspaceDiff? Diff)> BriefContextAsync(RunData data, StartTurnStep step, CancellationToken ct)
     {
         var details = await store.GetThreadAsync(data.Thread.Id, ct);
         var firstRequest = details?.Messages.FirstOrDefault(m => m.Author == MessageAuthor.User && m.Kind == MessageKind.Text)?.Text ?? data.Run.Request;
@@ -344,6 +378,7 @@ public sealed class RunExecutor(
             CoverageThresholdPercent = data.Profile.Coverage?.ChangedLinesThresholdPercent,
         };
 
+        WorkspaceDiff? reviewDiff = null;
         if (step.Brief is BriefKind.Rework or BriefKind.Review)
         {
             // The review of a rework run covers only the rework: what was handed off before has
@@ -353,6 +388,8 @@ public sealed class RunExecutor(
                 ? details?.LatestHandoff?.CommitSha
                 : null;
             var diff = await data.Workspace.DiffAsync(string.IsNullOrEmpty(reviewedThrough) ? data.BaseCommit : reviewedThrough, ct);
+            if (step.Brief == BriefKind.Review)
+                reviewDiff = diff;
             context = context with
             {
                 ChangedFiles = [.. diff.Files.Select(f => f.Path)],
@@ -371,7 +408,7 @@ public sealed class RunExecutor(
             context = context with { TesterFeedback = data.Run.Request, PreviousHandoffSummary = previous };
         }
 
-        return context;
+        return (context, reviewDiff);
     }
 
     /// <summary>A hash of everything that differs from the base commit, to tell whether a turn

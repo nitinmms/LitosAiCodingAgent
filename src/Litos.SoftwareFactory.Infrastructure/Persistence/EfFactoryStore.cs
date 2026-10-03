@@ -678,6 +678,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             Provider = command.Provider,
             Model = command.Model,
             EstimatedInputRaw = command.EstimatedInputRaw,
+            Phase = command.Phase,
             EstimatedInput = command.EstimatedInput,
             Reserved = admitted.Reserved,
             CreatedAt = now,
