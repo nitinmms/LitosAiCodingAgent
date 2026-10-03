@@ -133,6 +133,9 @@ public class BriefComposerTests
         Assert.Contains("Do not start the application", text);
         Assert.DoesNotContain("from the original run brief", text);
         Assert.Contains("Work only inside the working directory", text);
+        // F6's rework sent its criteria as plain strings: the shape is restated with the contract.
+        Assert.Contains("never plain strings", text);
+        Assert.Contains("new { criterion = \"...\", tests = new[] { \"TestName\" } }", text);
         // How to call the completion tools survives a compaction too.
         Assert.Contains("never call one to test it", text);
         Assert.Contains("`submit_work(\"summary\", \"...\", \"testsAdded\", new[] { \"...\" })`", text);
@@ -720,8 +723,8 @@ public class BriefComposerTests
         // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
-        // m1.7: the run brief names the choices that always need a decision.
-        Assert.Equal("m1.7", BriefComposer.Revision);
+        // m1.8: rework and repair briefs give submit_work's criteria shape.
+        Assert.Equal("m1.8", BriefComposer.Revision);
     }
 
     [Theory]
