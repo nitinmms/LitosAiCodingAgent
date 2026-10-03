@@ -58,7 +58,7 @@ public static partial class ShellCommandGuard
 }
 
 /// <summary>The shell tool as the factory gives it to an agent: the same tool, behind <see cref="ShellCommandGuard"/>.</summary>
-public sealed class GuardedShellTool(ITool shell) : ITool
+public sealed class GuardedShellTool(ITool shell, WorkingCopyGuard? workingCopy = null) : ITool
 {
     public string Name => shell.Name;
 
@@ -72,7 +72,7 @@ public sealed class GuardedShellTool(ITool shell) : ITool
             ? value.GetString()
             : null;
 
-        return ShellCommandGuard.Refusal(command) is { } reason
+        return (ShellCommandGuard.Refusal(command) ?? workingCopy?.CommandRefusal(command)) is { } reason
             ? Task.FromResult(ToolResult.Error($"The factory refused this command: {reason}"))
             : shell.InvokeAsync(arguments, ct);
     }

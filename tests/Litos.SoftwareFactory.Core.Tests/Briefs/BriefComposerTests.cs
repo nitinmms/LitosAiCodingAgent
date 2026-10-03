@@ -132,6 +132,7 @@ public class BriefComposerTests
         Assert.Contains("Do not delete or weaken existing tests", text);
         Assert.Contains("Do not start the application", text);
         Assert.DoesNotContain("from the original run brief", text);
+        Assert.Contains("Work only inside the working directory", text);
         // How to call the completion tools survives a compaction too.
         Assert.Contains("never call one to test it", text);
         Assert.Contains("`submit_work(\"summary\", \"...\", \"testsAdded\", new[] { \"...\" })`", text);
@@ -149,6 +150,8 @@ public class BriefComposerTests
         Assert.Contains("never call one to test it or to find out its parameters", text);
         Assert.Contains("pass the arguments as name and value pairs; named C# arguments", text);
         Assert.Contains("```csharp", text);
+        if (brief == BriefKind.Run)
+            Assert.Contains("Other directories on this machine, including other tasks' working copies, are not yours", text);
         if (brief == BriefKind.Run)
             Assert.Contains("Its fields are `question`, `whyItBlocks`, `options` (two to four)", text);
     }

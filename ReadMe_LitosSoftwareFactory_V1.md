@@ -925,6 +925,7 @@ V1 assumes **every account holder is trusted**. Anyone who can delegate to the f
 - a full audit trail;
 - no database or GitHub credentials, and no provider keys, in worker environments;
 - the MCP allowlist;
+- guards against well-meant mistakes, which are not a boundary: an agent's file tools refuse paths outside its working copy, and its shell refuses commands that stop processes by name or name another task's working copy (kernel code can still reach the disk);
 - recommended: run workers under a dedicated low-privilege Windows account with access only to the factory data directory.
 
 **Tripwire:** before any untrusted or external user receives an account, per-run sandbox isolation becomes mandatory:

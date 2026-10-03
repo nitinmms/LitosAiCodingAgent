@@ -26,14 +26,25 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     private readonly FactoryHostClient _host;
     private readonly ConcurrentDictionary<string, TurnKind> _lastKind = new();
 
-    public FactoryToolSetPolicy(IEnumerable<ITool> registeredTools, FactoryHostClient host)
+    private static readonly string[] FileTools = ["read_file", "write_file", "edit_file", "list_directory", "search_code"];
+
+    /// <param name="workingCopy">The directory the agent may work in; the worker's own by default,
+    /// which the host starts it in.</param>
+    public FactoryToolSetPolicy(IEnumerable<ITool> registeredTools, FactoryHostClient host, string? workingCopy = null)
     {
         _host = host;
         _builtIn = registeredTools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
 
-        // An agent gets the shell behind a guard, whether it calls it directly or from kernel code.
+        // An agent gets the shell and the file tools behind guards, whether it calls them directly
+        // or from kernel code: no stopping processes by name, and nothing outside the working copy.
+        var guard = new WorkingCopyGuard(workingCopy ?? Directory.GetCurrentDirectory());
         if (_builtIn.TryGetValue("shell", out var shell))
-            _builtIn["shell"] = new GuardedShellTool(shell);
+            _builtIn["shell"] = new GuardedShellTool(shell, guard);
+        foreach (var name in FileTools)
+        {
+            if (_builtIn.TryGetValue(name, out var tool))
+                _builtIn[name] = new ConfinedFileTool(tool, guard);
+        }
 
         var missing = WorkTools.Where(name => !_builtIn.ContainsKey(name)).ToList();
         if (missing.Count > 0)

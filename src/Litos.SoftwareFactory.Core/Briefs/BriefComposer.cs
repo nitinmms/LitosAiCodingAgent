@@ -229,6 +229,7 @@ public static partial class BriefComposer
         - Do not commit, push, merge, switch branches or rewrite history. The factory commits and pushes at handoff.
         - Do not delete or weaken existing tests, and do not change the verification configuration to make your work pass.
         - Do not start the application, deploy anything, or run migrations or other commands against a database.
+        - Work only inside the working directory: other directories on this machine, including other tasks' working copies, are not yours to read or change.
         - Never stop processes by name (`taskkill /IM`, `Stop-Process -Name`, `pkill`, `killall`): that stops the factory itself and other programs on this machine. Stop only a process you started, by its id.
         - Work economically: every call re-sends this whole conversation. Read every file you need in one script, read each file once, and make related edits together.
         - Every call to a completion tool is acted on at once: never call one to test it or to find out its parameters. From kernel code, pass their arguments as name and value pairs (`submit_work("summary", "...", "testsAdded", new[] { "..." })`); named C# arguments do not compile.

@@ -95,7 +95,7 @@ public sealed partial class BriefExampleTests
 
         Assert.Equal(2, submissions.Count);
         var finding = Assert.Single(Assert.IsType<ReviewSubmission>(submissions[0]).Findings);
-        Assert.Equal(new ReviewFinding(FindingSeverity.Minor, "src/Orders.cs", 42, "The empty-list case has no test."), finding);
+        Assert.Equal(new ReviewFinding(FindingSeverity.Minor, "src/Invoices.cs", 42, "The empty-list case has no test."), finding);
         Assert.Empty(Assert.IsType<ReviewSubmission>(submissions[1]).Findings);
     }
 }

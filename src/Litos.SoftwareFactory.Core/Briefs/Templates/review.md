@@ -45,7 +45,7 @@ Every call to a completion tool is acted on at once: never call one to test it o
 
 ```csharp
 await submit_review("findings", new object[] {
-    new { severity = "minor", file = "src/Orders.cs", line = 42, text = "The empty-list case has no test." } });
+    new { severity = "minor", file = "src/Invoices.cs", line = 42, text = "The empty-list case has no test." } });
 
 await submit_review("findings", new object[0]); // a clean review
 ```
