@@ -13,6 +13,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F5 | **No: criteria unmet, and the run ended Blocked once** | 0 | 1 (review finding) | 0 | 554,007 | 600,000 | Yes | 28 min of run time | 0 |
 | R1 | **No: budget-paused twice, and one criterion unmet** | 0 | 0 | 0 | 437,338 | 300,000 | No | 11 min | 0 |
 | F6 | **No: budget-paused during its rework, and the expected decision was never asked** | 1 | 1 (review finding) | 0 of 1 expected | 1,188,184 | 1,200,000 | No | 32 min (17 + 15 for the rework) | 0 |
+| F6, re-run on `m1.7` | **Yes, after one rework.** The expected decision was still never asked | 1 | 0 | 0 of 1 expected | 799,093 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | 50 min of call time (13 + 37 for the rework, of which about 20 stalled on a kernel defect and paused for its fix) | 0 |
 
 **Against the M1 gate so far (7 of 12 run):**
 
@@ -26,6 +27,8 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 - **Budget overrun: F1, F2, F3, R1 and F6.** F4 and F5 finished inside their caps. See "Budgets" below.
 - Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3, 2.3% on F4 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
 - Lock violations: 0.
+
+**After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. The other failed tasks (F3, F5, R1) have not been re-run yet.
 
 ## Budgets
 
@@ -66,7 +69,7 @@ Measured on F3's four sessions:
 What this shows:
 
 - **The number of calls is the multiplier.** The agent took one small step per call, 22 to 62 times a turn, and each call re-reads the whole conversation.
-- **Compaction is not the lever.** These contexts are far below the size at which compaction pays for itself (see the blueprint, Â§8.6), so the factory leaves them alone.
+- **Compaction is not the lever.** These contexts are far below the size at which compaction pays for itself (see the blueprint, §8.6), so the factory leaves them alone.
 - **Reasoning is a large share of output**, up to 92% in the rework's review. The engine has no setting to limit it yet.
 
 From F4 onward the briefs (revision `m1.2`) ask for fewer, larger steps, and a rework's review is given only the rework.
@@ -107,10 +110,13 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 | Check (wrong project) | Named C# arguments to `request_decision` fail to compile (CS1739); the agent probed the tool with test calls, and one ("Q test2", "w", "a", "b") reached the user as a decision while the real question was never asked | The briefs show each completion tool's call in the kernel's name/value form, run in tests through a real kernel; never call a tool to test it; `request_decision` refuses text too short to be a question or reason, and options that are not choices; prompt revision `m1.6` | `fe222da` |
 | Check (wrong project) | On a task created against the wrong project, the agent listed its working copy's parent, found another project's working copy and read it | The file tools refuse paths outside the working copy, and the shell refuses commands that name another working copy beside it; the briefs say to work only in the working copy. A guard against a mistake, not a sandbox: kernel code can still reach the disk (§17) | `4e29bb5` |
 | F6, R1 | No task has called `request_decision`. On F6 the agent saw that persisting expiry changed the file format, decided alone that version-1 files would be rejected, wrote that into the README and listed it under known limitations in all five submissions; the rework it caused ran the task out of budget | The run brief names the choices that always need a decision (existing data or files that would stop loading, public behaviour removed, data deleted or migrated, a new dependency, two reasonable behaviours a user would notice); the host sends back once a submission whose known limitation says something existing stops working, telling the agent to keep it working or ask, and records it if resubmitted; not after the task has had a decision; prompt revision `m1.7` | `d40708f` |
-| F3, F6 | Both reached their first handoff inside the cap and failed in the rework the tester asked for: one budget covered the task's whole life | Each change request adds half the task's original cap (`FACTORY_REWORK_TOP_UP`), and the thread says so; a cap raised by hand does not raise later top-ups | see the commit after `d40708f` |
+| F3, F6 | Both reached their first handoff inside the cap and failed in the rework the tester asked for: one budget covered the task's whole life | Each change request adds half the task's original cap (`FACTORY_REWORK_TOP_UP`), and the thread says so; a cap raised by hand does not raise later top-ups | `2e81dad` |
+| F6 re-run | The new check missed F6's second unasked choice, worded "not readable by earlier library versions ... truncates from there" | The check also recognises "readable", "loadable", "compatible" and truncating, corrupting or silently dropping, still only when said of something existing | `eb8537e` |
+| F6 re-run | The rework's review sat silent for over ten minutes with no call in flight: two `run_kernel_code` calls in one reply, and the kernel ignores an eval that overlaps another | A kernel session runs its evals one at a time and starts its kernel once; it counts as ready only after init (an engine fix, so every face that uses kernels gets it) | `65d6b24` |
+| F6 re-run | Clicking into the token budget closed the New thread dialog | The dialog closes only when a press begins and ends on its backdrop, and its form turns browser autofill off | `66f5787` |
 | F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | `c5e10d8` |
 
-## F1 Â· Enforce size limits on keys, names and documents
+## F1 · Enforce size limits on keys, names and documents
 
 - **Outcome:** accepted on the first handoff. The reviewer merged pull request #1 on GitHub; all four repository checks passed.
 - **Evidence at handoff:** build passed; 55 tests passed (15 new); changed-line coverage 100%; agent review left 3 minor findings open.
@@ -119,7 +125,7 @@ The first two tasks were also the first real end-to-end runs, and found defects 
   - The thread reads Cancelled, not Accepted. After the handoff a question sent with `@factory` started a rework run, and at that time there was no way to withdraw it and reach Accept. The change was judged and merged from the first handoff.
   - The run was resumed several times while the defects above were fixed, so its wall-clock time and token total are not representative.
 
-## F2 Â· JSON Lines export and import
+## F2 · JSON Lines export and import
 
 - **Outcome:** accepted after one rework round. Pull request #2 is open as a draft; it has not been merged.
 - **Baseline deviation:** the task set starts every task from `07fb8b8`. F2 started from `main` after F1 was merged (`1565c10`), because the factory branches from the current default branch.
@@ -132,7 +138,7 @@ The first two tasks were also the first real end-to-end runs, and found defects 
   - Criterion 2 (atomic import) is met by the implementation, which commits every line as one batch, but no test reopens the database to show it.
   - The run paused on budget at 300,000 and again at 400,000; the cap was raised each time.
 
-## F3 Â· Automatic compaction
+## F3 · Automatic compaction
 
 - **Outcome:** recorded as **not accepted**. The rework round paused on budget during its review, and the task set counts a run that ends budget-paused as failed. The cap was raised so the work could be finished, and the final handoff meets all five criteria. Pull request #3 is open as a draft.
 - **Baseline deviation:** as F2. F3 started from `main` with F1 merged and without F2.
@@ -203,6 +209,22 @@ The large task designed to make the factory stop and ask.
 - **Agent review:** in the first run it found, by running the built code, that compaction dropped a live document's expiry; that was repaired before the first handoff.
 - **The shell rule held.** During the first repair the agent met a build output file locked by a process it had not started. It recorded that it did not stop that process, and moved the file aside instead.
 - **Budget:** about 752,000 for the first run and about 436,000 for the rework (268,000 implementing, 140,000 reviewing, 28,000 into the repair).
+
+### F6 re-run on `m1.7` (2026-10-03)
+
+The same request, with the fixes made after the first seven tasks: light or full review, completion tools that take the model's field names, a turn that ends free once its result is recorded, the briefs' list of choices that always need a decision, and a change request's budget top-up.
+
+- **Outcome:** **accepted after one rework**, inside the original 1,200,000 cap. Pull request #8, merged.
+- **First handoff** (commit `f7383fe`, 351,946 tokens: 272,542 implementing in 42 calls, 79,404 reviewing in 7): build passed; 81 tests passed (19 new); changed-line coverage 97.6%.
+  - It kept version-1 files readable this time, by keeping the format at version 1 and adding a new record kind. But it reported that "files written by this version are not readable by earlier library versions (an older reader treats the first expiry frame as a corrupted tail and truncates from there)": an older library would silently lose data. Again it was not asked, and the host's new check did not recognise "not readable" or "truncates" (fixed in `eb8537e`).
+  - Not met: criterion 3. The clock was not injectable and the tests waited on wall-clock time; the request does not mention this, so the factory could not have known.
+- **Rework:** one message giving the task set's scripted answer, a rule that an older library must never silently truncate a file, and an injectable clock. The thread recorded the top-up: 600,000 added, cap 1,800,000.
+  - Delivered: `FileDatabaseOptions.TimeProvider` used everywhere expiry is computed, tests on a fake clock with no sleeps; new and compacted files are version 2; an older library rejects a version-2 file instead of truncating it; the README states the rule.
+  - **One interpretation made alone:** a version-1 file is upgraded to version 2 in place the first time a document with an expiry is written to it, where the scripted answer says a version-1 file stays version 1 until compacted. The answer does not say what writing an expiring document to a version-1 file should do, so this was a real choice; the tester accepted it.
+  - Cost: 320,858 in 44 calls, more than the first implementation, most of it in three calls of 6,000 to 20,000 output tokens. One `submit_work` was rejected for criteria given as plain strings: the rework brief does not repeat their shape.
+- **Rework review:** full (9 files, data format), 126,289 tokens in 9 calls; three minor findings (`GetStats` counts an expired document's bytes as live until compaction; a test does not check what its name says; the README grammar marks an expiring record's value as optional).
+- **A kernel defect stalled the review.** Its first reply held two `run_kernel_code` calls. The kernel runs one eval at a time and ignored the second, which the session sent anyway, so the turn waited with no call in flight. The task was paused, the defect fixed (`65d6b24`), and the review resumed.
+- **What it shows:** the budget fixes worked (799,093 against 1,188,184, with the top-up unused), and an unasked decision now costs one rework instead of the task. The factory still does not ask: twice it made the format choice itself, the second time more carefully, and both times disclosed it honestly.
 
 ## What the seven tasks show
 
