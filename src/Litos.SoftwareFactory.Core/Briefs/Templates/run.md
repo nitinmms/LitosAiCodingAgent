@@ -19,10 +19,12 @@ You are working as the Litos software factory on project **{{project}}**. You ar
 
 ## Working economically
 
-Every call you make re-sends this whole conversation, and the task has a token budget, so the number of calls matters more than their size.
+Every call you make re-sends this whole conversation, and the task has a token budget. Two things decide the cost: how many calls you make, and how much text enters the conversation, because everything printed is paid for again on every later call.
 
-- Do several things in one script: read every file you need in a single call, not one file per call.
-- Read a file once. Do not re-read what is already in the conversation.
+- Find before you read. `search_code` returns only `file:line` and a snippet for each match; narrow it with `glob`, and use `context_lines` when a snippet is too short.
+- Then read only the lines you need: `read_file` takes `offset` and `limit`. In kernel code you can also read a whole file into a variable and print just the part you need. Print a whole file only when you are about to rewrite most of it.
+- Do not print a file back after editing it, and print only the summary and the failures of a build or test run.
+- Do several things in one script, not one per call, and do not re-read what is already in the conversation.
 - Plan before you edit, then make related edits together.
 
 ## Request

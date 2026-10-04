@@ -213,6 +213,34 @@ public class BriefComposerTests
         Assert.Matches("(?i)in (one|a single) (script|call)", text);
     }
 
+    /// <summary>R1's context reached 67,000 tokens, most of it from ten whole files printed early
+    /// and paid for again on every later call: R1 made 10 read_file calls and none used a line
+    /// range, F6 made 23 and one did. search_code and read_file's offset and limit exist for this.</summary>
+    [Theory]
+    [InlineData(BriefKind.Run, TurnKind.Implement)]
+    [InlineData(BriefKind.Rework, TurnKind.Rework)]
+    [InlineData(BriefKind.Repair, TurnKind.Repair)]
+    [InlineData(BriefKind.Review, TurnKind.Review)]
+    public void EveryWorkBrief_SaysToFindWithSearchCode_ThenReadOnlyTheLinesNeeded(BriefKind brief, TurnKind kind)
+    {
+        var text = Compose(brief, State() with { RepairCyclesUsed = 1 }, kind: kind);
+
+        Assert.Contains("`search_code`", text);
+        Assert.Contains("`read_file` takes `offset` and `limit`", text);
+        Assert.DoesNotContain("read every file you need in a single call", text);
+    }
+
+    [Theory]
+    [InlineData(BriefKind.Run, TurnKind.Implement)]
+    [InlineData(BriefKind.Rework, TurnKind.Rework)]
+    [InlineData(BriefKind.Repair, TurnKind.Repair)]
+    public void WorkBriefs_SayToPrintOnlyTheSummaryAndFailuresOfABuildOrTestRun(BriefKind brief, TurnKind kind)
+    {
+        var text = Compose(brief, State() with { RepairCyclesUsed = 1 }, kind: kind);
+
+        Assert.Contains("only the summary and the failures of a build or test run", text);
+    }
+
     [Fact]
     public void ReviewBrief_SaysNotToRepeatTheFactorysVerification_ButAllowsRunningCodeForASpecificConcern()
     {
@@ -723,8 +751,8 @@ public class BriefComposerTests
         // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
-        // m1.8: rework and repair briefs give submit_work's criteria shape.
-        Assert.Equal("m1.8", BriefComposer.Revision);
+        // m1.9: find with search_code, then read only the lines needed.
+        Assert.Equal("m1.9", BriefComposer.Revision);
     }
 
     [Theory]

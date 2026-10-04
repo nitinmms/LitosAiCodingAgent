@@ -15,7 +15,7 @@ Report only what you have checked in the code. Mark a finding `blocking` when it
 
 Every call you make re-sends this whole conversation, and the task has a token budget, so the number of calls matters more than their size.
 
-- Start from the change shown below: it is complete. Read other files only to check a specific concern, and read all of them in one script.
+- Start from the change shown below: it is complete. Read other files only to check a specific concern: find the place with `search_code`, then read just those lines (`read_file` takes `offset` and `limit`), all in one script. Everything you print is paid for again on every later call.
 - The factory has already built the change and run its tests; the result is below. Do not repeat that. Run code of your own only when a specific concern cannot be settled by reading, and say in the finding what you ran.
 - Stop when you have checked what the list above asks for. A review is not a second implementation.
 
