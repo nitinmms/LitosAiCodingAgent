@@ -14,6 +14,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | R1 | **No: budget-paused twice, and one criterion unmet** | 0 | 0 | 0 | 437,338 | 300,000 | No | 11 min | 0 |
 | R1, re-run on `m1.8` | **No: budget-paused during its implementation**, before any submission | 0 | 0 | 0 | 288,465 | 300,000 | No | 8 min | 0 |
 | R1, re-run on `m1.9` | **No: budget-paused during its implementation**, before any submission | 0 | 0 | 0 | 297,999 | 300,000 | No | about 10 min | 0 |
+| R1, re-run with the kernel output cap | **No: budget-paused during its implementation**, before any submission | 0 | 0 | 0 | 293,451 | 300,000 | No | about 15 min | 0 |
 | F6 | **No: budget-paused during its rework, and the expected decision was never asked** | 1 | 1 (review finding) | 0 of 1 expected | 1,188,184 | 1,200,000 | No | 32 min (17 + 15 for the rework) | 0 |
 | F6, re-run on `m1.7` | **Yes, after one rework.** The expected decision was still never asked | 1 | 0 | 0 of 1 expected | 799,093 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | 50 min of call time (13 + 37 for the rework, of which about 20 stalled on a kernel defect and paused for its fix) | 0 |
 
@@ -30,7 +31,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 - Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3, 2.3% on F4 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
 - Lock violations: 0.
 
-**After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run twice and paused on budget during its implementation both times, before submitting anything; see its section. F3 and F5 have not been re-run yet.
+**After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run three times and paused on budget during its implementation every time, before submitting anything; see its section. On this model a change the task set calls small costs this repository about 300,000 to 440,000 tokens. F3 and F5 have not been re-run yet.
 
 ## Budgets
 
@@ -208,6 +209,8 @@ Both paused on budget during the implementation turn, before any submission, so 
 - **Trimming old tool results was considered and rejected.** Removing a result breaks the provider's cache from that point, so the next call re-sends everything after it at full price. On this run it would have saved about 10%.
 - **On `m1.9`** (briefs: find with `search_code`, read only the lines needed, everything printed is paid for again): 48 calls, 297,999 tokens. It still began by printing 21 whole files in four scripts of 9,000 to 24,000 characters each, used `search_code` once after that, and read no line ranges. The brief changed nothing.
 - **What it shows:** for this model, advice in the brief does not change how it explores; the 300,000 cap is spent re-reading files it printed early. Enforcement followed: a factory worker's kernel now returns at most 8,000 characters per script (`49c9e91`).
+- **With the output cap:** 54 calls, 293,451 tokens. The cap did what it was built for: nine explorations were cut short, almost every later result was under 3,500 characters, and a call cost about 5,400 tokens against about 7,800 before. But the agent made more calls: 19 edits, most of them one per call; 12 test runs, six of them spent measuring coverage itself, which the factory's verification does anyway; 11 reads; 5 searches; and 15 steps that ended in an error. The context still reached 56,000 tokens, now mostly its own edit scripts.
+- **Conclusion:** three runs and three fixes each moved the cost rather than removing it. Tuning against R1 was stopped there. On this model, a small React change in this repository costs about 300,000 to 440,000 tokens; the task set's small cap of 300,000 does not fit it. Two further wastes are known and not fixed: edits made one per call, and coverage measured by the agent.
 
 ## F6 · Document expiry (TTL)
 
