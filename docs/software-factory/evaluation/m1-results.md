@@ -12,6 +12,8 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F4 | Yes, after one rework | 1 | 0 | 0 | 401,521 | 600,000 | **Yes** | 11 min (9 + 2 for the rework) | 0 |
 | F5 | **No: criteria unmet, and the run ended Blocked once** | 0 | 1 (review finding) | 0 | 554,007 | 600,000 | Yes | 28 min of run time | 0 |
 | R1 | **No: budget-paused twice, and one criterion unmet** | 0 | 0 | 0 | 437,338 | 300,000 | No | 11 min | 0 |
+| R1, re-run on `m1.8` | **No: budget-paused during its implementation**, before any submission | 0 | 0 | 0 | 288,465 | 300,000 | No | 8 min | 0 |
+| R1, re-run on `m1.9` | **No: budget-paused during its implementation**, before any submission | 0 | 0 | 0 | 297,999 | 300,000 | No | about 10 min | 0 |
 | F6 | **No: budget-paused during its rework, and the expected decision was never asked** | 1 | 1 (review finding) | 0 of 1 expected | 1,188,184 | 1,200,000 | No | 32 min (17 + 15 for the rework) | 0 |
 | F6, re-run on `m1.7` | **Yes, after one rework.** The expected decision was still never asked | 1 | 0 | 0 of 1 expected | 799,093 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | 50 min of call time (13 + 37 for the rework, of which about 20 stalled on a kernel defect and paused for its fix) | 0 |
 
@@ -28,7 +30,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 - Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3, 2.3% on F4 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
 - Lock violations: 0.
 
-**After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. The other failed tasks (F3, F5, R1) have not been re-run yet.
+**After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run twice and paused on budget during its implementation both times, before submitting anything; see its section. F3 and F5 have not been re-run yet.
 
 ## Budgets
 
@@ -114,6 +116,9 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 | F6 re-run | The new check missed F6's second unasked choice, worded "not readable by earlier library versions ... truncates from there" | The check also recognises "readable", "loadable", "compatible" and truncating, corrupting or silently dropping, still only when said of something existing | `eb8537e` |
 | F6 re-run | The rework's review sat silent for over ten minutes with no call in flight: two `run_kernel_code` calls in one reply, and the kernel ignores an eval that overlaps another | A kernel session runs its evals one at a time and starts its kernel once; it counts as ready only after init (an engine fix, so every face that uses kernels gets it) | `65d6b24` |
 | F6 re-run | Clicking into the token budget closed the New thread dialog | The dialog closes only when a press begins and ends on its backdrop, and its form turns browser autofill off | `66f5787` |
+| R1 re-runs | A rework brief never showed `submit_work`'s criteria shape, so F6's rework sent plain strings once | The contract restated in rework and repair briefs gives the shape (`m1.8`) | `feabebd` |
+| R1 re-runs | Ten whole files printed while exploring filled a 67,000-token context that every later call re-read; the briefs said to read every file in one call | The briefs say to find with `search_code` and read only the lines needed, and that everything printed is paid for again (`m1.9`). It did not change the behaviour | `79b25c3` |
+| R1 re-runs | The same, after `m1.9` | A factory worker's kernel returns at most 8,000 characters per script; the rest goes to a scratch file and the agent is told where it is and how to print less | `49c9e91` |
 | F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | `c5e10d8` |
 
 ## F1 · Enforce size limits on keys, names and documents
@@ -193,6 +198,16 @@ The first task on `insta-story-generator`, and the first real run of the Node/Re
 - **Agent review:** 2 minor findings open, one of them real: regenerating a slide does not tell the model the slide's current alignment and size, so a user's choice can be silently reset.
 - **Decisions:** none asked. One was arguably warranted: whether the AI should choose alignment and size is a product choice the request did not make, and the agent made it without asking.
 - **Budget.** This was sized as a small task. Its implementation turn made 56 model calls on an average of 39,800 tokens of context, larger than any filedb-sharp task: 265,000 of the 437,338 tokens were cached input even at 10%. The estimator's 95th-percentile under-estimate was 7.5%, the highest so far and still inside the 10% margin.
+
+### R1 re-runs on `m1.8` and `m1.9` (2026-10-03)
+
+Both paused on budget during the implementation turn, before any submission, so neither reached verification or review.
+
+- **On `m1.8`:** 37 calls, 288,465 tokens. The context grew to 67,000 tokens per call. 53% of the charge was the agent's own context re-read from the provider's cache (1.53 million cached tokens at 10%), 24% new input and 23% output (45,693 of it reasoning).
+  - The context was mostly tool output: about 137,000 characters, 125,000 of them in ten results over 4,000 characters, seven of those whole files printed with `read_file`. It made 10 `read_file` calls and none used a line range; F6's re-run made 23 and one did.
+- **Trimming old tool results was considered and rejected.** Removing a result breaks the provider's cache from that point, so the next call re-sends everything after it at full price. On this run it would have saved about 10%.
+- **On `m1.9`** (briefs: find with `search_code`, read only the lines needed, everything printed is paid for again): 48 calls, 297,999 tokens. It still began by printing 21 whole files in four scripts of 9,000 to 24,000 characters each, used `search_code` once after that, and read no line ranges. The brief changed nothing.
+- **What it shows:** for this model, advice in the brief does not change how it explores; the 300,000 cap is spent re-reading files it printed early. Enforcement followed: a factory worker's kernel now returns at most 8,000 characters per script (`49c9e91`).
 
 ## F6 · Document expiry (TTL)
 
