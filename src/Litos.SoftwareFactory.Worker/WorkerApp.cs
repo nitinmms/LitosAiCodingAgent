@@ -57,7 +57,9 @@ public static class WorkerApp
             // Kernel code can call exactly what the session's current turn may call — never the
             // whole registry, or a read-only review turn could edit files through PTC.
             var policy = sp.GetRequiredService<FactoryToolSetPolicy>();
-            var kernel = options.PtcEnabled ? KernelHosting.TryCreateSessionManager(policy.CreateForBridge) : null;
+            var kernel = options.PtcEnabled
+                ? KernelHosting.TryCreateSessionManager(policy.CreateForBridge, outputCapChars: WorkerOptions.KernelOutputCapChars)
+                : null;
             return new AgentWorker(
                 sp.GetRequiredService<IChatProviderFactory>(),
                 sp.GetRequiredService<AgentLoopFactory>(),

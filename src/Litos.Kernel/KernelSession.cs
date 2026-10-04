@@ -62,9 +62,11 @@ public sealed class KernelSession : IAsyncDisposable
         string scratchDirectory,
         Func<ToolRegistry> bridgedToolsSource,
         McpToolProvider? mcpToolProvider = null,
-        TimeSpan? hardTimeout = null)
+        TimeSpan? hardTimeout = null,
+        int? outputCapChars = null)
     {
         _sessionId = sessionId;
+        _outputCapChars = outputCapChars is > 0 ? outputCapChars : null;
         _workingDirectory = workingDirectory;
         _scratchDirectory = scratchDirectory;
         _auditLogPath = Path.Combine(Path.GetDirectoryName(scratchDirectory.TrimEnd('/', '\\'))!, "audit.jsonl");
@@ -72,6 +74,15 @@ public sealed class KernelSession : IAsyncDisposable
         _mcpToolProvider = mcpToolProvider;
         _hardTimeout = hardTimeout ?? TimeSpan.FromMinutes(5);
     }
+
+    /// <summary>
+    /// The most an eval may return to the model, in characters, or null for the protocol's own
+    /// limits only. Whatever an eval prints stays in the conversation and is paid for again on
+    /// every later call: a factory task's context reached 67,000 tokens from ten whole files
+    /// printed early, and briefs asking for less did not change the habit. Past the cap the full
+    /// text goes to a scratch file and the model sees the start with a note on where the rest is.
+    /// </summary>
+    private readonly int? _outputCapChars;
 
     /// <summary>mcp__{server}__{tool} — McpToolProxy's own naming convention (Litos.Tools.Mcp.McpToolProxy.cs).</summary>
     private const string McpToolNamePrefix = "mcp__";
@@ -134,8 +145,8 @@ public sealed class KernelSession : IAsyncDisposable
             var result = await tcs.Task.WaitAsync(linkedCts.Token);
             AppendAudit(new { evt = "eval_end", requestId, result.IsError, result.Truncated });
             return result.IsError
-                ? ToolResult.Error(Combine(result))
-                : ToolResult.Ok(Combine(result));
+                ? ToolResult.Error(Capped(Combine(result), result.RequestId))
+                : ToolResult.Ok(Capped(Combine(result), result.RequestId));
         }
         catch (KernelProcessDiedException ex)
         {
@@ -178,6 +189,25 @@ public sealed class KernelSession : IAsyncDisposable
     {
         lock (_evalTokenLock)
             return _evalToken;
+    }
+
+    /// <summary>The eval's text as the model sees it: whole, or its start and where the rest is.</summary>
+    private string Capped(string text, string requestId)
+    {
+        if (_outputCapChars is not { } cap || text.Length <= cap)
+            return text;
+
+        Directory.CreateDirectory(_scratchDirectory);
+        var path = Path.Combine(_scratchDirectory, $"eval-{requestId}-full.txt");
+        File.WriteAllText(path, text);
+        AppendAudit(new { evt = "output_capped", requestId, length = text.Length, cap });
+
+        return text[..cap]
+            + string.Create(
+                System.Globalization.CultureInfo.InvariantCulture,
+                $"\n...[This script printed {text.Length:N0} characters; only the first {cap:N0} are shown. The rest is in {path}. ")
+            + "Everything printed is paid for again on every later call, so print only what you need: find code with search_code, "
+            + "read only the lines you need with read_file's offset and limit, or filter in code before printing.]";
     }
 
     private static string Combine(EvalResult result)

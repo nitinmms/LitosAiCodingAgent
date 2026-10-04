@@ -10,7 +10,9 @@ namespace Litos.Kernel;
 /// session per window today, matching §4.4's "never shared across two different chat sessions"
 /// precisely and costing nothing extra.
 /// </summary>
-public sealed class KernelSessionManager(Func<string, ToolRegistry> bridgedToolsSourceFactory, McpToolProvider? mcpToolProvider = null)
+/// <param name="outputCapChars">The most one eval may return to the model (see KernelSession); null for no cap beyond the protocol's.</param>
+public sealed class KernelSessionManager(
+    Func<string, ToolRegistry> bridgedToolsSourceFactory, McpToolProvider? mcpToolProvider = null, int? outputCapChars = null)
 {
     private readonly ConcurrentDictionary<string, KernelSession> _sessions = new();
 
@@ -21,7 +23,8 @@ public sealed class KernelSessionManager(Func<string, ToolRegistry> bridgedTools
             workingDirectory,
             scratchDirectoryFactory(id),
             () => bridgedToolsSourceFactory(id),
-            mcpToolProvider));
+            mcpToolProvider,
+            outputCapChars: outputCapChars));
 
     public async Task ResetAsync(string sessionId, CancellationToken ct)
     {

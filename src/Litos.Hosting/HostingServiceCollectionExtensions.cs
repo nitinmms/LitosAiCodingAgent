@@ -99,8 +99,9 @@ public static class KernelHosting
     /// <param name="bridgedTools">The tools kernel code may call for a session. "Hidden from the
     /// model" (PTC on shows it run_kernel_code only) and "unavailable to the bridge" must not be
     /// conflated: this is the full set the session is allowed, whatever the model-facing toggle says.</param>
+    /// <param name="outputCapChars">The most one eval may return to the model; null leaves only the protocol's limits.</param>
     public static KernelSessionManager? TryCreateSessionManager(
-        Func<string, ToolRegistry> bridgedTools, McpToolProvider? mcpToolProvider = null)
+        Func<string, ToolRegistry> bridgedTools, McpToolProvider? mcpToolProvider = null, int? outputCapChars = null)
     {
         try
         {
@@ -112,6 +113,6 @@ public static class KernelHosting
             return null;
         }
 
-        return new KernelSessionManager(bridgedTools, mcpToolProvider);
+        return new KernelSessionManager(bridgedTools, mcpToolProvider, outputCapChars);
     }
 }

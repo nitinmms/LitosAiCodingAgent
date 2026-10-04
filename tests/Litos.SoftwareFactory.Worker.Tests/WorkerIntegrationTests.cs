@@ -286,6 +286,23 @@ public sealed class WorkerIntegrationTests : IAsyncLifetime
         Assert.Contains("Recorded.", kernelResult.Text);
     }
 
+    /// <summary>A factory worker's kernel caps what one script returns to the model: R1 printed ten
+    /// whole files while exploring and paused on budget twice.</summary>
+    [Fact]
+    public async Task PtcOn_AScriptThatPrintsTooMuch_ReturnsOnlyItsStart_AndSaysWhereTheRestIs()
+    {
+        await StartWorkerAsync(ptc: true);
+        const string code = "System.Console.Write(new string('x', 20000));";
+        _host.EnqueueGateway(FakeFactoryHost.ToolCall("run_kernel_code", new { code }));
+        _host.EnqueueGateway(FakeFactoryHost.Reply("Done."));
+
+        await RunTurnAsync("thread-cap", "Read everything.", "Implement");
+
+        var kernelResult = _host.GatewayRequests.Last().ChatRequest.Messages.SelectMany(m => m.Content).OfType<ToolResultBlock>().Single();
+        Assert.StartsWith(new string('x', WorkerOptions.KernelOutputCapChars) + "\n...[This script printed 20,000 characters", kernelResult.Text);
+        Assert.True(kernelResult.Text.Length < WorkerOptions.KernelOutputCapChars + 600, $"{kernelResult.Text.Length} characters returned.");
+    }
+
     [Fact]
     public async Task PtcOff_ModelSeesTheToolsDirectly()
     {

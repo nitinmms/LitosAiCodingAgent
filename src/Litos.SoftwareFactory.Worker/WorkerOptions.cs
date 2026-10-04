@@ -11,6 +11,13 @@ public sealed record WorkerOptions(
     string RunId, string Secret, Uri HostUrl, string Provider, string Model, int? ContextLength,
     string DataDirectory, int? ParentProcessId, bool PtcEnabled)
 {
+    /// <summary>
+    /// The most one kernel eval may return to the model, in characters (about 2,000 tokens).
+    /// R1 printed ten whole files of 9,000 to 24,000 characters while exploring and paused on
+    /// budget twice; asking for less in the brief did not change that.
+    /// </summary>
+    public const int KernelOutputCapChars = 8_000;
+
     /// <summary>Transcripts live in the factory data directory, so runs never appear in VS Code's
     /// session history.</summary>
     public string SessionsDirectory => Path.Combine(DataDirectory, "runs", RunId, "sessions");
