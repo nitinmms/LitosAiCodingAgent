@@ -9,6 +9,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F1 | Yes, first handoff | 0 | 0 | 0 | 993,607 (old rule; about 203,000 under the current one) | 150,000 | No | about 15 min of run time | 0 |
 | F2 | Yes, after one rework | 1 | 0 | 0 | 575,884 | 300,000 | No | 12 min (8 + 3 for the rework) | 0 |
 | F3 | **No: budget-paused during its rework.** All criteria met in the end | 1 | 2 (both for review findings) | 0 | 971,057 | 600,000 | No | 31 min (19 + 12 for the rework) | 0 |
+| F3, re-run with the read limits | **Yes, after one rework** | 1 | 0 | 0 | 231,807 | 600,000 (900,000 with the rework's top-up) | **Yes**, inside the original cap | 9 min of call time (5 + 4 for the rework) | 0 |
 | F4 | Yes, after one rework | 1 | 0 | 0 | 401,521 | 600,000 | **Yes** | 11 min (9 + 2 for the rework) | 0 |
 | F5 | **No: criteria unmet, and the run ended Blocked once** | 0 | 1 (review finding) | 0 | 554,007 | 600,000 | Yes | 28 min of run time | 0 |
 | R1 | **No: budget-paused twice, and one criterion unmet** | 0 | 0 | 0 | 437,338 | 300,000 | No | 11 min | 0 |
@@ -31,7 +32,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 - Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3, 2.3% on F4 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
 - Lock violations: 0.
 
-**After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run three times and paused on budget during its implementation every time, before submitting anything; see its section. On this model a change the task set calls small costs this repository about 300,000 to 440,000 tokens. F3 and F5 have not been re-run yet.
+**After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run three times and paused on budget during its implementation every time, before submitting anything; see its section. On this model a change the task set calls small costs this repository about 300,000 to 440,000 tokens. F3 was re-run and accepted after one rework at 231,807 tokens, against 971,057 and a budget pause the first time; see its section. F5 has not been re-run yet.
 
 ## Budgets
 
@@ -120,6 +121,7 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 | R1 re-runs | A rework brief never showed `submit_work`'s criteria shape, so F6's rework sent plain strings once | The contract restated in rework and repair briefs gives the shape (`m1.8`) | `feabebd` |
 | R1 re-runs | Ten whole files printed while exploring filled a 67,000-token context that every later call re-read; the briefs said to read every file in one call | The briefs say to find with `search_code` and read only the lines needed, and that everything printed is paid for again (`m1.9`). It did not change the behaviour | `79b25c3` |
 | R1 re-runs | The same, after `m1.9` | A factory worker's kernel returns at most 8,000 characters per script; the rest goes to a scratch file and the agent is told where it is and how to print less | `49c9e91` |
+| R1 re-runs | The 8,000-character cap kept only the start of a script's output: it cut five of seven files from one script and hid the summary a test run prints last, and the agent read the lost files again in extra calls | `read_file` returns at most 400 lines or 20KB unless asked for more, with a note on how to continue; the cap keeps the start and the end of a script's output and is raised to 24,000 characters, as a safety net | `9db8329` |
 | F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | `c5e10d8` |
 
 ## F1 · Enforce size limits on keys, names and documents
@@ -159,6 +161,20 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 - **Notes:**
   - The review turn is meant to be read-only, but with programmatic tool calling the reviewer ran its own C# to benchmark the change. The result was useful; the restriction is weaker than designed.
   - While that benchmark ran for four and a half minutes, nothing on the task's page changed, and nothing in the conversation says that a review found problems and a repair started.
+
+### F3 re-run (2026-10-05)
+
+Run after the per-file read limit and the output safety cap (`9db8329`), prompt revision `m1.9`, on a `main` that by then included F6's format change.
+
+- **Outcome:** **accepted after one rework**, inside the original 600,000 cap. Pull request #9, merged.
+- **First handoff** (commit `7c30d72`, 151,211 tokens: 99,633 implementing in 26 calls, 51,578 reviewing in 13): build passed; 101 tests passed (11 new); changed-line coverage 88.6%. The first attempt reached its first handoff at 556,150.
+  - Met: criteria 1 (`FileDatabaseOptions.AutoCompaction`, null by default), 2 (`MinimumFileBytes`, 1 MiB by default) and 3 (compacts once after a commit; tests for the threshold, small files, transactions and reopening).
+  - **Not met: criterion 4**, as in the first attempt: the committed data stayed, but the compaction's exception still left the commit, and nothing recorded it.
+  - Weak: criterion 5. No test compared file size with the option off against a baseline.
+  - The full review stopped at its allowance (12 calls) and was asked to submit; it found three minor issues, one a real bug (compacting a version-1 file left its upgrade flag set).
+- **Rework:** one message naming criteria 4 and 5. The thread recorded the top-up (cap 900,000). 51,958 tokens in 14 calls, then a light review of 28,638 in one call: 80,596 in all, against 414,907 for the first attempt's rework.
+  - Delivered: a failed automatic compaction no longer fails the commit; the error is kept in `LastAutoCompactionError`, and a test forces a failure and checks both. A baseline test compares file sizes with the option enabled but below its minimum; the review noted that its name says "off". Build passed; 103 tests passed (13 new); changed-line coverage 100%.
+- **What it shows:** the first task re-run that we had not tuned against cost a quarter of its first attempt (231,807 against 971,057), with the rework a fifth of what it was. The criterion the first attempt missed was missed again, so the brief does not make the agent consider failure paths a request does not mention.
 
 ## F4 · Read-only open mode
 
