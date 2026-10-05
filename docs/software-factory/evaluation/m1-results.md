@@ -219,6 +219,19 @@ Run after the per-file read limit and the output safety cap (`9db8329`), prompt 
   - At 803,108 of 900,000 a model call's stream ended after 100 seconds without producing anything; nothing was charged, but the turn failed and the task was Blocked.
 - **What it shows:** reading costs are under control (the context stayed near 20,000 to 72,000 and reads were ranged), but a hanging test sent the agent down a long wrong path, and a provider stream that produced nothing blocked a task that could have retried. Three fixes followed (see the changes table).
 
+### The decision scan, first check on F7 and R4 (2026-10-05)
+
+Two requests that expect a decision, run with the scan (prompt revision `m1.11`). Both are unrun tasks, so each continues as its real evaluation run once its questions are answered.
+
+| Task | Expected decision | Scan's first question | Questions asked | Choices assumed | Scan cost |
+| --- | --- | --- | --- | --- | --- |
+| F7 | How existing files store versions | "Existing version-1 and version-2 files hold no per-document version. What version should their documents read back as?" Its recommendation was the task set's scripted answer | 2 (the second, restart after delete, matches a criterion) | 7 | 26,771 tokens, 7 calls |
+| R4 | Generate for every slide, or only on request | "When are images generated: eagerly for all no-photo slides, or lazily per slide?" | 3 (the limit; the others: how an image is stored, whether old drafts load) | 9 | 36,012 tokens, 7 calls |
+
+- **Both expected decisions were asked**, first: the first decisions the factory asked in the evaluation.
+- **A flaw:** F7's scan marked "how the format changes, and when an existing file is upgraded" as settled by "Versions must survive reopening and compaction", which does not settle it. That is F6's failure mode, so `existing-data` choices should be asked whatever the scan says settles them.
+- **Not yet measured:** questions on requests that should ask none.
+
 ## R1 · Per-slide text alignment and size
 
 The first task on `insta-story-generator`, and the first real run of the Node/React verification profile. **The factory itself needed no fix:** it cloned the repository, ran `npm ci`, the typecheck and the Vitest suite on the base commit, read the JUnit and Cobertura reports, measured changed-line coverage, pushed the branch and opened the pull request.
