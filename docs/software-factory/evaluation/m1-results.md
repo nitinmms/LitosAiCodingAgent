@@ -19,6 +19,8 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | R1, re-run with the kernel output cap | **No: budget-paused during its implementation**, before any submission | 0 | 0 | 0 | 293,451 | 300,000 | No | about 15 min | 0 |
 | F6 | **No: budget-paused during its rework, and the expected decision was never asked** | 1 | 1 (review finding) | 0 of 1 expected | 1,188,184 | 1,200,000 | No | 32 min (17 + 15 for the rework) | 0 |
 | F6, re-run on `m1.7` | **Yes, after one rework.** The expected decision was still never asked | 1 | 0 | 0 of 1 expected | 799,093 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | 50 min of call time (13 + 37 for the rework, of which about 20 stalled on a kernel defect and paused for its fix) | 0 |
+| F7, with the decision scan (`m1.11`) | **Yes, after one rework** | 1 | 0 | **2 asked**, including the 1 expected, answered as scripted | 942,772 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | about 95 min of run time (55 + 40 for the rework), not counting time spent Blocked | 0 |
+| R4, with the decision scan (`m1.11`) | **No: budget-paused three times during its implementation**, before any submission | 0 | 0 | **3 asked**, including the 1 expected, which was answered against the script | 1,315,680 | 1,200,000 (raised to 1,400,000) | No | about 35 min of run time | 0 |
 
 **Against the M1 gate so far (7 of 12 run):**
 
@@ -34,6 +36,8 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 - Lock violations: 0.
 
 **After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run three times and paused on budget during its implementation every time, before submitting anything; see its section. On this model a change the task set calls small costs this repository about 300,000 to 440,000 tokens. F3 was re-run and accepted after one rework at 231,807 tokens, against 971,057 and a budget pause the first time; see its section. F5 was re-run and failed again: its first handoff wrapped the synchronous methods in `Task.Run`, and its rework, which did move to asynchronous file I/O, ended Blocked when a provider stream produced nothing, after spending most of its calls on a test hang it blamed on the environment. With the re-runs, 5 of the 7 tasks run are accepted.
+
+**With the decision scan (`m1.11`):** F7 and R4 each asked the decision the task set expects, first: the first decisions the factory asked in the evaluation. F7 was accepted after one rework at 942,772 tokens, inside its original cap. R4 asked its three questions for 36,012 tokens, then paused on budget three times during its implementation, its context reaching 242,000 tokens, and was cancelled at 1,315,680 before submitting anything. **6 of the 9 tasks run are accepted** (F1, F2, F3, F4, F6, F7; F3 and F6 on re-runs). The gate needs 7 of 12, so one of the three unrun tasks (R2, R3, F8) must pass.
 
 ## Budgets
 
@@ -129,7 +133,7 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 | F7, R4 | The decision scan treated an existing-data choice as settled by request text that did not settle it | Existing-data choices are always asked | `6933279` |
 | F7 | A review failed with "the process cannot access the file ... transcript.jsonl": another handle held the transcript for a moment | Transcript files are opened sharing read, write and delete, and an append retries a briefly locked file (an engine change) | `283e7c5` |
 | F7 | OpenRouter ended a stream 3,479 bytes into a tool call's arguments; the reply could not be read and the turn failed | The gateway holds a call's events until it completes, with heartbeats, and sends a call that broke part-way again, up to twice, each attempt charged on its own | `219bee8` |
-| F7 | A light review of one test file reasoned for 36,006 tokens without a reply, twice, and the task sat blocked at its last step | A review whose model reaches its output limit without replying runs once more, then the run hands off with the review not run and says so; a scan cut off this way implements without it | see the commit after `219bee8` |
+| F7 | A light review of one test file reasoned for 36,006 tokens without a reply, twice, and the task sat blocked at its last step | A review whose model reaches its output limit without replying runs once more, then the run hands off with the review not run and says so; a scan cut off this way implements without it | `efda4b5` |
 | F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | `c5e10d8` |
 
 ## F1 · Enforce size limits on keys, names and documents
@@ -235,6 +239,7 @@ Two requests that expect a decision, run with the scan (prompt revision `m1.11`)
 - **Both expected decisions were asked**, first: the first decisions the factory asked in the evaluation.
 - **A flaw:** F7's scan marked "how the format changes, and when an existing file is upgraded" as settled by "Versions must survive reopening and compaction", which does not settle it. That is F6's failure mode, so `existing-data` choices should be asked whatever the scan says settles them.
 - **Not yet measured:** questions on requests that should ask none.
+- **How the two runs ended:** F7 accepted, R4 failed on budget. See their sections.
 
 ## R1 · Per-slide text alignment and size
 
@@ -294,6 +299,45 @@ The same request, with the fixes made after the first seven tasks: light or full
 - **A kernel defect stalled the review.** Its first reply held two `run_kernel_code` calls. The kernel runs one eval at a time and ignored the second, which the session sent anyway, so the turn waited with no call in flight. The task was paused, the defect fixed (`65d6b24`), and the review resumed.
 - **What it shows:** the budget fixes worked (799,093 against 1,188,184, with the top-up unused), and an unasked decision now costs one rework instead of the task. The factory still does not ask: twice it made the format choice itself, the second time more carefully, and both times disclosed it honestly.
 
+## F7 · Optimistic concurrency with document versions
+
+Run on 2026-10-05 with the decision scan (prompt revision `m1.11`) from `main` after F3's merge.
+
+- **Outcome:** **accepted after one rework**, inside the original 1,200,000 cap. Pull request #11, merged.
+- **Decision scan** (26,771 tokens, 7 calls): 9 open choices, 2 asked, 7 assumed and stated in the brief and the handoff.
+  - "Existing version-1 and version-2 files hold no per-document version. What version should their documents read back as?" Answered "Assign version 1 to every document", the task set's scripted answer.
+  - "When a document is deleted and its key is later re-inserted, does the version continue from before or restart?" Answered "Restart from the initial version", as criterion 2 requires.
+- **First handoff** (commit `78727c7`, 800,577 tokens with the scan: 529,994 implementing in 53 calls, 243,812 reviewing in 15): build passed; 129 tests passed (33 new); changed-line coverage 94.9%. Full review (387 lines, 10 files, a data format).
+  - Criteria 1, 2, 3, 4 and 6 met. Not met: criterion 5. The concurrency test did not make two writers race.
+- **Rework:** one message asking for a real race: two writers on separate threads, released together, with the same expected version. The thread recorded the top-up: 600,000 added, cap 1,800,000.
+  - Delivered (commit `9a3f6e5`): a test that holds two dedicated threads at a `Barrier`, releases them together, and checks over 100 rounds that exactly one update wins, the other throws `VersionMismatchException`, and the version rises by one. 130 tests passed (34 new).
+  - Cost: 142,195 tokens. 37,582 reworking in 17 calls; the rest in the light review.
+- **Agent review:** clean at the final handoff.
+- **Evidence:** no mismatch.
+- **Three failures, each Blocking the task until resumed, and each fixed afterwards:**
+  - OpenRouter ended a stream 3,479 bytes into a tool call's arguments (fixed in `219bee8`).
+  - The first review could not append to its transcript while another handle held it (fixed in `283e7c5`).
+  - The rework's light review, of one test file, reached the 32,768-token output limit twice while reasoning, without replying. The third attempt replied (the rule in `efda4b5` now hands off after the second).
+- **Notes:**
+  - The exception is named `VersionMismatchException`, not `ConcurrencyConflictException`. The request did not name it, so this is not counted against criterion 3.
+  - The scan marked the format change as settled by the request when it was not. The format question was still covered by the first question asked, and the format was correct; existing-data choices are now always asked (`6933279`).
+- **What it shows:** the scan asked the expected decision, and the answer went into the work: existing files read back at version 1, with no rework spent on the format. The one rework was for a test, which the scan could not have prevented.
+
+## R4 · AI image generation for slides without a photo
+
+Run on 2026-10-05 with the decision scan (prompt revision `m1.11`), at the same time as F7, from `main` on insta-story-generator.
+
+- **Outcome:** **not accepted.** It paused on budget during its implementation three times, before submitting anything, and was cancelled at 1,315,680 tokens. The branch and its uncommitted edits are kept; no pull request was opened.
+- **Decision scan** (36,012 tokens, 7 calls): 12 open choices, 3 asked (the limit), 9 assumed.
+  - "When are images generated: eagerly for all no-photo slides as part of the story request, or lazily per slide?" This is the expected decision. It was answered "Eagerly with the story plan", **not the scripted answer** ("only on request, never automatically"). Criterion 3 could therefore not have been met.
+  - "How does the generated image reach and persist for the client?" Answered "Base64 on the slide".
+  - "Can existing saved drafts still load?" Answered "Extend Slide with an optional image field, keep old drafts loading".
+- **Implementation:** 125 calls, 1,279,668 tokens.
+  - The first pause came 17 minutes after the last answer, at about 1,194,000 of 1,200,000.
+  - The cap was raised to 1,400,000. The run paused again twice, when single calls needed about 123,000 and 140,000 tokens.
+  - The context reached 242,392 tokens. At that size each call costs over 100,000 tokens.
+- **What it shows:** the scan works on a client-and-server request too. All three questions were real and answered in about seven minutes. But the change is too large for this model at this cap: it spent the whole budget implementing, with the context growing until every call was expensive. Even so, a handoff would have failed criterion 3, because the timing answer was not the scripted one.
+
 ## What the seven tasks show
 
 The gate cannot realistically be met: it needs all five remaining tasks to pass, and three of them are large or expect a decision. The blueprint's rule for a missed gate is to iterate on the prompts, orchestration and tools and re-run the task set before M2.
@@ -304,3 +348,10 @@ Two causes account for most of the failures:
 2. **The factory never asks.** No task has called `request_decision`, including R1 and F6, where stopping to ask was the right move. Both needed a rework that a question would have avoided, and F6's unasked choice would have made existing databases unreadable.
 
 F5 adds a third, smaller one: a repair that satisfied a review finding by removing the feature it found a defect in, with the build and every test still passing.
+
+**After F7 and R4 (2026-10-05):**
+
+- **The second cause is addressed.** With the decision scan, both tasks asked their expected decision before implementing.
+- **The first cause is addressed for reworks.** F3, F6 and F7 finished their reworks well inside the top-up.
+- **What remains is the cost of a large first implementation.** R4 spent 1.28 million tokens implementing without submitting, its context reaching 242,000 tokens. R1 failed the same way at a smaller scale.
+- **Tally:** 6 of 9 tasks are accepted. One of R2, R3 and F8 must pass for the gate.
