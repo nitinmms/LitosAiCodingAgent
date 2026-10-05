@@ -703,6 +703,37 @@ public sealed class GatewayTests : IAsyncLifetime
             ModelGateway.CutOffMessage(new UsageInfo(10, 32_768), 32_768));
     }
 
+    /// <summary>R4's thread said "needs about 1,22,616 tokens": the host machine's culture is en-IN.</summary>
+    [Fact]
+    public void ThreadMessages_FormatNumbersTheSameWhateverTheMachineCulture()
+    {
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("en-IN");
+        try
+        {
+            Assert.Equal(
+                "The next model call needs about 122,616 tokens, but the task's budget has 106,294 left.",
+                ModelGateway.RefusalMessage(new Refused(RefusalReason.TaskBudget, 122_616, 106_294)));
+            Assert.Contains("(170,843 of them were reasoning)", ModelGateway.CutOffMessage(new UsageInfo(10, 170_843, ReasoningTokens: 170_843), 131_072));
+            Assert.Contains("131,072 tokens", ModelGateway.CutOffMessage(new UsageInfo(10, 1), 131_072));
+            Assert.Contains("170,843 tokens", ModelGateway.AllowanceMessage(TurnKind.Review, 12, 170_843));
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = culture;
+        }
+    }
+
+    /// <summary>R4's scan was reported as "The review reached its allowance".</summary>
+    [Fact]
+    public void AllowanceMessage_NamesTheDecisionScan_ForAScan()
+    {
+        Assert.Equal(
+            "The decision scan reached its allowance (6 model calls, 25,469 tokens) and was asked to submit the choices it found.",
+            ModelGateway.AllowanceMessage(TurnKind.Scan, 6, 25_469));
+        Assert.StartsWith("The review reached its allowance", ModelGateway.AllowanceMessage(TurnKind.Review, 6, 25_469));
+    }
+
     [Fact]
     public async Task CancelledMidResponse_UsageIsUnknown_AndTheCancellationPropagates()
     {

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Litos.SoftwareFactory.Contracts;
@@ -138,7 +139,7 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
 
             _wrapUpSent = true;
             var spent = overTokens
-                ? $"{TurnCharged:N0} tokens, its allowance of {allowance.WrapUpAfterTokens:N0}"
+                ? string.Create(CultureInfo.InvariantCulture, $"{TurnCharged:N0} tokens, its allowance of {allowance.WrapUpAfterTokens:N0}")
                 : $"{TurnCalls} model calls, its allowance of {allowance.WrapUpAfterCalls}";
             return WorkKind == Contracts.TurnKind.Scan
                 ? $"This scan has used {spent}. Stop reading now and call `submit_plan` with the choices you have found. "

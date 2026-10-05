@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using Litos.Agent.Providers;
 using Litos.Agent.Streaming;
 using Litos.SoftwareFactory.Contracts;
@@ -105,9 +106,7 @@ public sealed class ModelGateway(
 
             if (reservation.Decision is Refused refused)
             {
-                var reason = refused.Reason == RefusalReason.UserQuota
-                    ? $"The next model call needs about {refused.Needed:N0} tokens, but your quota has {refused.Remaining:N0} left."
-                    : $"The next model call needs about {refused.Needed:N0} tokens, but the task's budget has {refused.Remaining:N0} left.";
+                var reason = RefusalMessage(refused);
                 run.RefuseForBudget(reason);
                 await write(new GatewayError(
                     refused.Reason == RefusalReason.UserQuota ? GatewayErrorCodes.QuotaExhausted : GatewayErrorCodes.BudgetExhausted, reason));
@@ -309,10 +308,22 @@ public sealed class ModelGateway(
     /// as TurnEndReason.OutputLimit.</summary>
     public const string CutOffPrefix = "The model reached the output limit";
 
+    // Thread messages format numbers invariantly: the host's machine culture (en-IN on the
+    // evaluation machine) otherwise writes 122,616 as "1,22,616".
     internal static string CutOffMessage(UsageInfo usage, int maxOutputTokens) =>
-        $"{CutOffPrefix} of {maxOutputTokens:N0} tokens without producing a reply"
-        + (usage.ReasoningTokens > 0 ? $" ({usage.ReasoningTokens:N0} of them were reasoning)" : "")
+        string.Create(CultureInfo.InvariantCulture, $"{CutOffPrefix} of {maxOutputTokens:N0} tokens without producing a reply")
+        + (usage.ReasoningTokens > 0 ? string.Create(CultureInfo.InvariantCulture, $" ({usage.ReasoningTokens:N0} of them were reasoning)") : "")
         + ". Nothing was lost; resuming tries the step again.";
+
+    internal static string RefusalMessage(Refused refused) => refused.Reason == RefusalReason.UserQuota
+        ? string.Create(CultureInfo.InvariantCulture, $"The next model call needs about {refused.Needed:N0} tokens, but your quota has {refused.Remaining:N0} left.")
+        : string.Create(CultureInfo.InvariantCulture, $"The next model call needs about {refused.Needed:N0} tokens, but the task's budget has {refused.Remaining:N0} left.");
+
+    /// <summary>What a turn asked to wrap up is called in the thread.</summary>
+    internal static string AllowanceMessage(TurnKind workKind, int calls, long charged) =>
+        workKind == TurnKind.Scan
+            ? string.Create(CultureInfo.InvariantCulture, $"The decision scan reached its allowance ({calls} model calls, {charged:N0} tokens) and was asked to submit the choices it found.")
+            : string.Create(CultureInfo.InvariantCulture, $"The review reached its allowance ({calls} model calls, {charged:N0} tokens) and was asked to submit its findings.");
 
     /// <summary>
     /// Asks the turn in progress to finish: the steer reaches the agent at its next safe point,
@@ -327,7 +338,7 @@ public sealed class ModelGateway(
                 await client.SteerAsync(sessionId, message, CancellationToken.None);
             await store.AddFactoryMessageAsync(
                 run.ThreadId, MessageKind.Status,
-                $"The review reached its allowance ({run.TurnCalls} model calls, {run.TurnCharged:N0} tokens) and was asked to submit its findings.",
+                AllowanceMessage(run.WorkKind, run.TurnCalls, run.TurnCharged),
                 null, clock.UtcNow, CancellationToken.None);
             signals.EventsWritten();
         }
