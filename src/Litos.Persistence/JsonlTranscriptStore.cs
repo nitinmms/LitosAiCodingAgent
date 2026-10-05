@@ -28,7 +28,7 @@ public sealed class JsonlTranscriptStore : ITranscriptStore
         var path = ResolveWriteSessionPath(owner, sessionId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var json = JsonSerializer.Serialize(entry, TranscriptJsonContext.Default.TranscriptEntry);
-        await File.AppendAllTextAsync(path, json + Environment.NewLine, ct);
+        await SharedFile.AppendAsync(path, json + Environment.NewLine, ct);
     }
 
     public async IAsyncEnumerable<TranscriptEntry> ReadAsync(
@@ -38,7 +38,7 @@ public sealed class JsonlTranscriptStore : ITranscriptStore
         if (path is null || !File.Exists(path))
             yield break;
 
-        await foreach (var line in File.ReadLinesAsync(path, ct))
+        await foreach (var line in SharedFile.ReadLinesAsync(path, ct))
         {
             if (string.IsNullOrWhiteSpace(line))
                 continue;
@@ -68,7 +68,7 @@ public sealed class JsonlTranscriptStore : ITranscriptStore
         var summaries = new List<SessionSummary>();
         foreach (var (sessionId, file) in files)
         {
-            var lines = File.ReadAllLines(file);
+            var lines = SharedFile.ReadAllLines(file);
             var entries = lines
                 .Where(l => !string.IsNullOrWhiteSpace(l))
                 .Select(l => JsonSerializer.Deserialize(l, TranscriptJsonContext.Default.TranscriptEntry))
@@ -116,7 +116,7 @@ public sealed class JsonlTranscriptStore : ITranscriptStore
         var newPath = ResolveWriteSessionPath(owner, newSessionId);
         Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
 
-        var lines = await File.ReadAllLinesAsync(sourcePath, ct);
+        var lines = await SharedFile.ReadAllLinesAsync(sourcePath, ct);
         // Tolerates a malformed line anywhere in the file, not just blank ones: BranchAsync only
         // used to ever look at the lines it kept (a straight Take), so a corrupt line elsewhere
         // in the file — including past the eventual cut point — was never a problem. Now that
