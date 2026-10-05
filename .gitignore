@@ -395,3 +395,6 @@ Litos-Agent-Prompt-Construction.png
 
 # The software factory web app is built into the host's wwwroot (npm run build in src/Litos.SoftwareFactory.Web)
 src/Litos.SoftwareFactory.Host/wwwroot/
+
+# TypeScript incremental build info
+*.tsbuildinfo
