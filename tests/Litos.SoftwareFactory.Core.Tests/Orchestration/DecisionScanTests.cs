@@ -28,10 +28,23 @@ public class DecisionPolicyTests
     [Fact]
     public void AChoiceTheRequestSettles_IsAssumed_WithWhatSettlesIt()
     {
-        var decided = DecisionPolicy.Decide(Plan(Choice(ChoiceCategories.ExistingData, settledBy: "The request says: keep reading old files.")), 3);
+        var decided = DecisionPolicy.Decide(Plan(Choice(ChoiceCategories.Dependency, settledBy: "The request says: use the openai SDK.", question: "Which SDK?")), 3);
 
         Assert.Empty(decided.Ask);
-        Assert.Equal("What happens to version-1 files: Option 1 (The request says: keep reading old files.)", DecisionPolicy.Assumption(Assert.Single(decided.Assume)));
+        Assert.Equal("Which SDK: Option 1 (The request says: use the openai SDK.)", DecisionPolicy.Assumption(Assert.Single(decided.Assume)));
+    }
+
+    /// <summary>F7's scan marked the format-upgrade question as settled by "Versions must survive
+    /// reopening and compaction", which does not settle it: F6's failure mode.</summary>
+    [Fact]
+    public void AnExistingDataChoice_IsAskedEvenWhenTheScanSaysItIsSettled()
+    {
+        var decided = DecisionPolicy.Decide(Plan(Choice(
+            ChoiceCategories.ExistingData, settledBy: "Versions must survive reopening and compaction.",
+            question: "How is the on-disk format changed, and when does an existing file get upgraded?")), 3);
+
+        Assert.Equal("How is the on-disk format changed, and when does an existing file get upgraded?", Assert.Single(decided.Ask).Question);
+        Assert.Empty(decided.Assume);
     }
 
     [Fact]

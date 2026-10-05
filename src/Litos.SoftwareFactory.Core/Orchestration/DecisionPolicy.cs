@@ -58,9 +58,16 @@ public static class DecisionPolicy
         return new ScanDecisions(ask, assume);
     }
 
+    /// <remarks>
+    /// An existing-data choice is asked even when the scan says something settles it. On F7 the
+    /// scan marked "how the format changes, and when an existing file is upgraded" as settled by
+    /// "Versions must survive reopening and compaction", which does not settle it: the same choice
+    /// F6 made alone and that made every existing database unreadable. A missed existing-data
+    /// question costs the most, so the scan's judgement that one is settled is not trusted.
+    /// </remarks>
     public static bool NeedsAPerson(OpenChoice choice) =>
         ChoiceCategories.AlwaysAsk.Contains(choice.Category, StringComparer.OrdinalIgnoreCase)
-        && string.IsNullOrWhiteSpace(choice.SettledBy)
+        && (string.IsNullOrWhiteSpace(choice.SettledBy) || string.Equals(choice.Category, ChoiceCategories.ExistingData, StringComparison.OrdinalIgnoreCase))
         && choice.Options.Count >= 2;
 
     /// <summary>The decision card for a choice the scan raised.</summary>
