@@ -241,6 +241,20 @@ public class BriefComposerTests
         Assert.Contains("only the summary and the failures of a build or test run", text);
     }
 
+    /// <summary>On F5's re-run a test hung after a locking change, and the agent concluded the
+    /// environment could not run tests; it spent about 35 calls building a way around the runner.</summary>
+    [Theory]
+    [InlineData(BriefKind.Run, TurnKind.Implement)]
+    [InlineData(BriefKind.Rework, TurnKind.Rework)]
+    [InlineData(BriefKind.Repair, TurnKind.Repair)]
+    public void WorkBriefs_SayAHangingTestRunIsAHangingTest(BriefKind brief, TurnKind kind)
+    {
+        var text = Compose(brief, State() with { RepairCyclesUsed = 1 }, kind: kind);
+
+        Assert.Contains("If a test run hangs or times out, one of the tests is hanging, most likely on code you changed", text);
+        Assert.Contains("The test runner works in this environment, so do not build a way around it.", text);
+    }
+
     [Fact]
     public void ReviewBrief_SaysNotToRepeatTheFactorysVerification_ButAllowsRunningCodeForASpecificConcern()
     {
@@ -751,8 +765,8 @@ public class BriefComposerTests
         // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
-        // m1.9: find with search_code, then read only the lines needed.
-        Assert.Equal("m1.9", BriefComposer.Revision);
+        // m1.10: a hanging test run is a hanging test, not the environment.
+        Assert.Equal("m1.10", BriefComposer.Revision);
     }
 
     [Theory]

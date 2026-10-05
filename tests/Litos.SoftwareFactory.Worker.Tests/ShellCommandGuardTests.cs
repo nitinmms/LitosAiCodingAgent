@@ -114,10 +114,64 @@ public class ShellCommandGuardTests
         var inner = new RecordingShell();
         var guarded = new GuardedShellTool(inner);
 
-        var result = await guarded.InvokeAsync(Command("dotnet test"), default);
+        var result = await guarded.InvokeAsync(Command("dotnet build -v q"), default);
 
         Assert.False(result.IsError);
-        Assert.Equal(["dotnet test"], inner.Ran);
+        Assert.Equal(["dotnet build -v q"], inner.Ran);
+    }
+
+    // ---- A hanging test names itself ----
+    // On F5's re-run a test spun after a locking change; the run had no timeout, the kernel killed
+    // the script after five minutes, twice, and the agent blamed the environment.
+
+    [Theory]
+    [InlineData("dotnet test", "dotnet test --blame-hang-timeout 2m --blame-hang-dump-type none")]
+    [InlineData("dotnet test tests/FileDbSharp.Tests/FileDbSharp.Tests.csproj -v q --nologo 2>&1",
+        "dotnet test --blame-hang-timeout 2m --blame-hang-dump-type none tests/FileDbSharp.Tests/FileDbSharp.Tests.csproj -v q --nologo 2>&1")]
+    [InlineData("cd tests && dotnet.exe test --no-build | findstr Failed",
+        "cd tests && dotnet.exe test --blame-hang-timeout 2m --blame-hang-dump-type none --no-build | findstr Failed")]
+    [InlineData("dotnet build && dotnet test", "dotnet build && dotnet test --blame-hang-timeout 2m --blame-hang-dump-type none")]
+    public void ADotnetTestWithNoHangTimeout_GetsOne(string command, string expected) =>
+        Assert.Equal(expected, ShellCommandGuard.WithHangTimeout(command));
+
+    [Theory]
+    [InlineData("dotnet test --blame-hang-timeout 30s")]
+    [InlineData("dotnet build")]
+    [InlineData("npm test")]
+    [InlineData("npx vitest run")]
+    [InlineData("echo dotnet testing")]
+    [InlineData("")]
+    public void OtherCommands_AreLeftAlone(string command) =>
+        Assert.Equal(command, ShellCommandGuard.WithHangTimeout(command));
+
+    [Fact]
+    public async Task GuardedShell_RunsDotnetTestWithTheHangTimeout_KeepingTheOtherArguments()
+    {
+        var inner = new RecordingArgumentsShell();
+        var guarded = new GuardedShellTool(inner);
+
+        await guarded.InvokeAsync(JsonSerializer.SerializeToElement(new { command = "dotnet test", timeout_seconds = 600 }), default);
+
+        var ran = Assert.Single(inner.Ran);
+        Assert.Equal("dotnet test --blame-hang-timeout 2m --blame-hang-dump-type none", ran.GetProperty("command").GetString());
+        Assert.Equal(600, ran.GetProperty("timeout_seconds").GetInt32());
+    }
+
+    private sealed class RecordingArgumentsShell : ITool
+    {
+        public List<JsonElement> Ran { get; } = [];
+
+        public string Name => "shell";
+
+        public string Description => "Runs a shell command.";
+
+        public JsonElement ParameterSchema { get; } = JsonSerializer.SerializeToElement(new { type = "object" });
+
+        public Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
+        {
+            Ran.Add(arguments.Clone());
+            return Task.FromResult(ToolResult.Ok("ran"));
+        }
     }
 
     [Fact]

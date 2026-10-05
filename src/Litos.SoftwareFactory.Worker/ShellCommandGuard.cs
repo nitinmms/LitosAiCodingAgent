@@ -38,6 +38,26 @@ public static partial class ShellCommandGuard
         return null;
     }
 
+    /// <summary>The hang timeout added to a `dotnet test` that has none.</summary>
+    public const string HangTimeoutArguments = "--blame-hang-timeout 2m --blame-hang-dump-type none";
+
+    /// <summary>
+    /// The command with a hang timeout added to each `dotnet test` that has none. On F5's re-run a
+    /// test spun after a locking change; the run had no timeout, the kernel killed the whole
+    /// script after five minutes, twice, and the agent concluded the environment could not run
+    /// tests. With this, a hanging test stops after two minutes and the output names it. No dump
+    /// is written. JavaScript runners (Vitest, Jest) already time out each test.
+    /// </summary>
+    public static string? WithHangTimeout(string? command)
+    {
+        if (string.IsNullOrWhiteSpace(command) || command.Contains("--blame-hang", StringComparison.OrdinalIgnoreCase))
+            return command;
+        return DotnetTest().Replace(command, match => $"{match.Value} {HangTimeoutArguments}");
+    }
+
+    [GeneratedRegex(@"\bdotnet(\.exe)?\s+test\b", RegexOptions.IgnoreCase)]
+    private static partial Regex DotnetTest();
+
     // taskkill with an image name or a filter. `taskkill /PID 1234` names one process and is fine.
     [GeneratedRegex(@"\btaskkill(\.exe)?\b[^|&;\r\n]*\s[/-](im|fi)\b", RegexOptions.IgnoreCase)]
     private static partial Regex TaskkillByName();
@@ -72,8 +92,20 @@ public sealed class GuardedShellTool(ITool shell, WorkingCopyGuard? workingCopy 
             ? value.GetString()
             : null;
 
-        return (ShellCommandGuard.Refusal(command) ?? workingCopy?.CommandRefusal(command)) is { } reason
-            ? Task.FromResult(ToolResult.Error($"The factory refused this command: {reason}"))
+        if ((ShellCommandGuard.Refusal(command) ?? workingCopy?.CommandRefusal(command)) is { } reason)
+            return Task.FromResult(ToolResult.Error($"The factory refused this command: {reason}"));
+
+        return ShellCommandGuard.WithHangTimeout(command) is { } adjusted && adjusted != command
+            ? shell.InvokeAsync(WithCommand(arguments, adjusted), ct)
             : shell.InvokeAsync(arguments, ct);
+    }
+
+    private static JsonElement WithCommand(JsonElement arguments, string command)
+    {
+        var fields = new Dictionary<string, JsonElement>();
+        foreach (var property in arguments.EnumerateObject())
+            fields[property.Name] = property.Value;
+        fields["command"] = JsonSerializer.SerializeToElement(command);
+        return JsonSerializer.SerializeToElement(fields);
     }
 }

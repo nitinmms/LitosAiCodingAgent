@@ -57,7 +57,7 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
 public static partial class BriefComposer
 {
     /// <summary>Bump whenever any template or any text composed here changes.</summary>
-    public const string Revision = "m1.9";
+    public const string Revision = "m1.10";
 
     private const int CharsPerToken = 4;
 
@@ -231,6 +231,7 @@ public static partial class BriefComposer
         - Do not start the application, deploy anything, or run migrations or other commands against a database.
         - Work only inside the working directory: other directories on this machine, including other tasks' working copies, are not yours to read or change.
         - Never stop processes by name (`taskkill /IM`, `Stop-Process -Name`, `pkill`, `killall`): that stops the factory itself and other programs on this machine. Stop only a process you started, by its id.
+        - If a test run hangs or times out, one of the tests is hanging, most likely on code you changed; the test output names it. Find and fix the cause. The test runner works in this environment, so do not build a way around it.
         - Work economically: every call re-sends this whole conversation and everything printed in it. Find code with `search_code`, then read only the lines you need (`read_file` takes `offset` and `limit`) rather than whole files; print only the summary and the failures of a build or test run; do several things in one script, and make related edits together.
         - Every call to a completion tool is acted on at once: never call one to test it or to find out its parameters. From kernel code, pass their arguments as name and value pairs (`submit_work("summary", "...", "testsAdded", new[] { "..." })`); named C# arguments do not compile.
         - `submit_work` takes `summary`; `criteria`, a list of objects, each `new { criterion = "...", tests = new[] { "TestName" } }` or `new { criterion = "...", manualOnly = true }`, never plain strings; and `testsAdded`, `knownLimitations` and `manualTestSteps`, each a list of strings.
