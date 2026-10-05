@@ -12,11 +12,23 @@ public sealed record WorkerOptions(
     string DataDirectory, int? ParentProcessId, bool PtcEnabled)
 {
     /// <summary>
-    /// The most one kernel eval may return to the model, in characters (about 2,000 tokens).
-    /// R1 printed ten whole files of 9,000 to 24,000 characters while exploring and paused on
-    /// budget twice; asking for less in the brief did not change that.
+    /// How many lines a read_file with no 'limit' returns, and the most any one read returns.
+    /// R1 printed ten whole files of 9,000 to 24,000 characters while exploring, and paused on
+    /// budget three times; briefs asking for less did not change that. A limit per file keeps every
+    /// file of a many-file script visible, each as its start and a note on how to read the rest.
     /// </summary>
-    public const int KernelOutputCapChars = 8_000;
+    public const int ReadFileDefaultLines = 400;
+
+    /// <inheritdoc cref="ReadFileDefaultLines"/>
+    public const int ReadFileMaxBytes = 20 * 1024;
+
+    /// <summary>
+    /// A safety cap on what one kernel eval returns, in characters (about 6,000 tokens): its start
+    /// and its end are kept, since a test run's summary and failures come last. An 8,000-character
+    /// cap that kept only the start cut five of seven files from one script, and the agent spent
+    /// extra calls reading them again; the per-file read limit does that job now.
+    /// </summary>
+    public const int KernelOutputCapChars = 24_000;
 
     /// <summary>Transcripts live in the factory data directory, so runs never appear in VS Code's
     /// session history.</summary>

@@ -191,7 +191,12 @@ public sealed class KernelSession : IAsyncDisposable
             return _evalToken;
     }
 
-    /// <summary>The eval's text as the model sees it: whole, or its start and where the rest is.</summary>
+    /// <summary>
+    /// The eval's text as the model sees it: whole, or its start and its end with a note between
+    /// them saying how much was left out and where the whole text is. Both ends, because a test
+    /// run's summary and failures, or an edit script's confirmation, come last; a cap that kept
+    /// only the start cut five of seven files from one factory script and hid what came after.
+    /// </summary>
     private string Capped(string text, string requestId)
     {
         if (_outputCapChars is not { } cap || text.Length <= cap)
@@ -202,12 +207,15 @@ public sealed class KernelSession : IAsyncDisposable
         File.WriteAllText(path, text);
         AppendAudit(new { evt = "output_capped", requestId, length = text.Length, cap });
 
-        return text[..cap]
-            + string.Create(
+        var head = cap / 2;
+        var tail = cap - head;
+        var omitted = text.Length - head - tail;
+        var note = string.Create(
                 System.Globalization.CultureInfo.InvariantCulture,
-                $"\n...[This script printed {text.Length:N0} characters; only the first {cap:N0} are shown. The rest is in {path}. ")
+                $"\n\n...[{omitted:N0} of {text.Length:N0} characters left out here. The whole output is in {path}. ")
             + "Everything printed is paid for again on every later call, so print only what you need: find code with search_code, "
-            + "read only the lines you need with read_file's offset and limit, or filter in code before printing.]";
+            + "read only the lines you need with read_file's offset and limit, or filter in code before printing.]...\n\n";
+        return text[..head] + note + text[^tail..];
     }
 
     private static string Combine(EvalResult result)

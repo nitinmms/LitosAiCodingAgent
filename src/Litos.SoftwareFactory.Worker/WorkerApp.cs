@@ -48,7 +48,12 @@ public static class WorkerApp
         builder.Services.AddSingleton<IChatProviderFactory, GatewayChatProviderFactory>();
 
         builder.Services.AddSingleton<IModelSelection>(new FixedModelSelection(options.Provider, options.Model, options.ContextLength));
-        builder.Services.AddSingleton(sp => new FactoryToolSetPolicy(sp.GetServices<ITool>(), sp.GetRequiredService<FactoryHostClient>()));
+        // read_file with the factory's per-file limit in place of the profile's (WorkerOptions.ReadFileDefaultLines).
+        builder.Services.AddSingleton(sp => new FactoryToolSetPolicy(
+            sp.GetServices<ITool>().Select(tool => tool.Name == "read_file"
+                ? new Litos.Tools.FileSystem.ReadFileTool(WorkerOptions.ReadFileMaxBytes, WorkerOptions.ReadFileDefaultLines)
+                : tool),
+            sp.GetRequiredService<FactoryHostClient>()));
         builder.Services.AddSingleton<IToolSetPolicy>(sp => sp.GetRequiredService<FactoryToolSetPolicy>());
         builder.Services.AddSingleton<IWorkingDirectoryResolver, ProcessWorkingDirectoryResolver>();
 

@@ -286,21 +286,47 @@ public sealed class WorkerIntegrationTests : IAsyncLifetime
         Assert.Contains("Recorded.", kernelResult.Text);
     }
 
-    /// <summary>A factory worker's kernel caps what one script returns to the model: R1 printed ten
-    /// whole files while exploring and paused on budget twice.</summary>
+    /// <summary>A factory worker's kernel caps what one script returns, keeping its start and its
+    /// end: a test run's summary and failures come last.</summary>
     [Fact]
-    public async Task PtcOn_AScriptThatPrintsTooMuch_ReturnsOnlyItsStart_AndSaysWhereTheRestIs()
+    public async Task PtcOn_AScriptThatPrintsTooMuch_ReturnsItsStartAndItsEnd()
     {
         await StartWorkerAsync(ptc: true);
-        const string code = "System.Console.Write(new string('x', 20000));";
+        const string code = "System.Console.Write(\"START\" + new string('x', 60000) + \"Tests: 2 failed\");";
         _host.EnqueueGateway(FakeFactoryHost.ToolCall("run_kernel_code", new { code }));
         _host.EnqueueGateway(FakeFactoryHost.Reply("Done."));
 
-        await RunTurnAsync("thread-cap", "Read everything.", "Implement");
+        await RunTurnAsync("thread-cap", "Run the tests.", "Implement");
 
         var kernelResult = _host.GatewayRequests.Last().ChatRequest.Messages.SelectMany(m => m.Content).OfType<ToolResultBlock>().Single();
-        Assert.StartsWith(new string('x', WorkerOptions.KernelOutputCapChars) + "\n...[This script printed 20,000 characters", kernelResult.Text);
+        Assert.StartsWith("START", kernelResult.Text);
+        Assert.EndsWith("Tests: 2 failed", kernelResult.Text.TrimEnd());
+        Assert.Contains("characters left out here", kernelResult.Text);
         Assert.True(kernelResult.Text.Length < WorkerOptions.KernelOutputCapChars + 600, $"{kernelResult.Text.Length} characters returned.");
+    }
+
+    /// <summary>A factory worker's read_file returns 400 lines unless asked for more, so each file of
+    /// a many-file script arrives as its start and a note on how to read the rest.</summary>
+    [Fact]
+    public async Task AFactoryWorkersReadFile_HasThePerFileLimit()
+    {
+        await StartWorkerAsync();
+        var directory = Directory.CreateDirectory(Path.Combine(Directory.GetCurrentDirectory(), "read-limit-" + Guid.NewGuid().ToString("n")));
+        try
+        {
+            var path = Path.Combine(directory.Name, "long.ts");
+            await File.WriteAllLinesAsync(Path.Combine(directory.FullName, "long.ts"), Enumerable.Range(1, 1000).Select(i => $"const line{i} = {i};"));
+            var readFile = _worker!.Services.GetRequiredService<FactoryToolSetPolicy>().Create("s", nameof(TurnKind.Implement)).Resolve("read_file")!;
+
+            var result = await readFile.InvokeAsync(JsonSerializer.SerializeToElement(new { path }), default);
+
+            Assert.EndsWith($"[Showing lines 1-{WorkerOptions.ReadFileDefaultLines} of 1000. Use offset={WorkerOptions.ReadFileDefaultLines + 1} to continue.]", result.Text);
+            Assert.Contains($"truncated at {WorkerOptions.ReadFileDefaultLines} lines or 20KB", readFile.Description);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     [Fact]

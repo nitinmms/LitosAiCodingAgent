@@ -223,4 +223,63 @@ public class ReadFileToolTests : IDisposable
         Assert.True(result.IsError);
         Assert.Equal("'offset' must be a positive integer.", result.Text);
     }
+
+    // ---- A smaller default, for a harness that wants one (the software factory) ----
+
+    private async Task<string> LinesFileAsync(int count)
+    {
+        var path = Path.Combine(_tempDir, "long.ts");
+        await File.WriteAllLinesAsync(path, Enumerable.Range(1, count).Select(i => $"const line{i} = {i};"));
+        return path;
+    }
+
+    [Fact]
+    public async Task WithASmallerDefault_AReadWithNoLimit_ShowsTheStartAndHowToContinue()
+    {
+        var path = await LinesFileAsync(1000);
+        var tool = new ReadFileTool(defaultMaxLines: 400);
+
+        var result = await tool.InvokeAsync(Args(new { path }), CancellationToken.None);
+
+        Assert.False(result.IsError);
+        Assert.Contains("400	const line400 = 400;", result.Text);
+        Assert.DoesNotContain("const line401", result.Text);
+        Assert.EndsWith("[Showing lines 1-400 of 1000. Use offset=401 to continue.]", result.Text);
+    }
+
+    [Fact]
+    public async Task WithASmallerDefault_AnExplicitLimit_IsStillHonoured()
+    {
+        var path = await LinesFileAsync(1000);
+        var tool = new ReadFileTool(defaultMaxLines: 400);
+
+        var result = await tool.InvokeAsync(Args(new { path, offset = 401, limit = 500 }), CancellationToken.None);
+
+        Assert.Contains("900	const line900 = 900;", result.Text);
+        Assert.EndsWith("[Showing lines 401-900 of 1000. Use offset=901 to continue.]", result.Text);
+    }
+
+    [Fact]
+    public async Task WithASmallerByteLimit_AReadStopsThere_AndSaysWhereToResume()
+    {
+        var path = await LinesFileAsync(1000);
+        var tool = new ReadFileTool(maxOutputBytes: 2 * 1024, defaultMaxLines: 400);
+
+        var result = await tool.InvokeAsync(Args(new { path }), CancellationToken.None);
+
+        Assert.True(result.Text.Length < 2 * 1024 + 200, $"{result.Text.Length} characters");
+        Assert.Matches(@"[Truncated: showing lines 1-d+ of 1000 (2KB limit). Use offset=d+ to continue.]$", result.Text);
+    }
+
+    [Fact]
+    public void TheDescriptionAndSchema_StateTheLimitsInForce()
+    {
+        var factory = new ReadFileTool(maxOutputBytes: 20 * 1024, defaultMaxLines: 400);
+        var standard = new ReadFileTool();
+
+        Assert.Contains("truncated at 400 lines or 20KB", factory.Description);
+        Assert.Contains("Defaults to 400.", factory.ParameterSchema.GetRawText());
+        Assert.Contains("truncated at 2000 lines or 50KB", standard.Description);
+        Assert.Contains("Defaults to 2000.", standard.ParameterSchema.GetRawText());
+    }
 }

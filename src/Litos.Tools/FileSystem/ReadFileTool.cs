@@ -4,18 +4,22 @@ using Litos.Agent.Tools;
 
 namespace Litos.Tools.FileSystem;
 
-public sealed class ReadFileTool(int? maxOutputBytes = null) : ITool
+/// <param name="maxOutputBytes">The most one read returns; 50KB by default.</param>
+/// <param name="defaultMaxLines">How many lines a read with no 'limit' returns; 2000 by default.
+/// A smaller value keeps an agent that reads many whole files from filling its context with them:
+/// each file still arrives, as its start and a note on how to read the rest.</param>
+public sealed class ReadFileTool(int? maxOutputBytes = null, int? defaultMaxLines = null) : ITool
 {
-    private const int DefaultMaxLines = 2000;
     private const int MaxLineLength = 2000;
 
     private readonly int _maxOutputBytes = maxOutputBytes ?? OutputTruncation.DefaultMaxBytes;
+    private readonly int _defaultMaxLines = defaultMaxLines is > 0 ? defaultMaxLines.Value : 2000;
 
     public string Name => "read_file";
 
     public string Description =>
         "Read the contents of a text file at the given path, formatted with line numbers " +
-        "(like 'cat -n'). Output is truncated at 2000 lines or 50KB, whichever comes first. " +
+        $"(like 'cat -n'). Output is truncated at {_defaultMaxLines} lines or {_maxOutputBytes / 1024}KB, whichever comes first. " +
         "For larger files, use 'offset' and 'limit' to page through the rest. " +
         "The line-number prefixes are for display only — do NOT pass this output back into " +
         "write_file or otherwise write it to disk verbatim, since the prefixes ('123\\t') are not " +
@@ -29,7 +33,7 @@ public sealed class ReadFileTool(int? maxOutputBytes = null) : ITool
         {
             path = new { type = "string", description = "Path to the file to read." },
             offset = new { type = "integer", description = "1-indexed line number to start reading from. Defaults to 1." },
-            limit = new { type = "integer", description = "Maximum number of lines to read. Defaults to 2000." },
+            limit = new { type = "integer", description = $"Maximum number of lines to read. Defaults to {(defaultMaxLines is > 0 ? defaultMaxLines.Value : 2000)}." },
         },
         required = new[] { "path" },
     });
@@ -45,7 +49,7 @@ public sealed class ReadFileTool(int? maxOutputBytes = null) : ITool
 
         if (!TryGetPositiveInt(arguments, "offset", 1, out var offset, out var offsetError))
             return ToolResult.Error(offsetError);
-        if (!TryGetPositiveInt(arguments, "limit", DefaultMaxLines, out var limit, out var limitError))
+        if (!TryGetPositiveInt(arguments, "limit", _defaultMaxLines, out var limit, out var limitError))
             return ToolResult.Error(limitError);
 
         var lines = await File.ReadAllLinesAsync(path, ct);
