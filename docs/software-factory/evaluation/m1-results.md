@@ -12,6 +12,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F3, re-run with the read limits | **Yes, after one rework** | 1 | 0 | 0 | 231,807 | 600,000 (900,000 with the rework's top-up) | **Yes**, inside the original cap | 9 min of call time (5 + 4 for the rework) | 0 |
 | F4 | Yes, after one rework | 1 | 0 | 0 | 401,521 | 600,000 | **Yes** | 11 min (9 + 2 for the rework) | 0 |
 | F5 | **No: criteria unmet, and the run ended Blocked once** | 0 | 1 (review finding) | 0 | 554,007 | 600,000 | Yes | 28 min of run time | 0 |
+| F5, re-run with the read limits | **No: the rework ended Blocked** (a provider stream that produced nothing), after a first handoff that wrapped the synchronous methods in `Task.Run` | 1 | 0 | 0 | 803,108 | 600,000 (900,000 with the rework's top-up) | Yes | about 45 min of call time, 10 of it in test runs that hung | 0 |
 | R1 | **No: budget-paused twice, and one criterion unmet** | 0 | 0 | 0 | 437,338 | 300,000 | No | 11 min | 0 |
 | R1, re-run on `m1.8` | **No: budget-paused during its implementation**, before any submission | 0 | 0 | 0 | 288,465 | 300,000 | No | 8 min | 0 |
 | R1, re-run on `m1.9` | **No: budget-paused during its implementation**, before any submission | 0 | 0 | 0 | 297,999 | 300,000 | No | about 10 min | 0 |
@@ -32,7 +33,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 - Estimator 95th-percentile under-estimate: 2.3% on F2, 4.0% on F3, 2.3% on F4 (margin 10%). On F3 one call of 155 was charged more than it had reserved; the task's cap was not passed by it.
 - Lock violations: 0.
 
-**After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run three times and paused on budget during its implementation every time, before submitting anything; see its section. On this model a change the task set calls small costs this repository about 300,000 to 440,000 tokens. F3 was re-run and accepted after one rework at 231,807 tokens, against 971,057 and a budget pause the first time; see its section. F5 has not been re-run yet.
+**After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run three times and paused on budget during its implementation every time, before submitting anything; see its section. On this model a change the task set calls small costs this repository about 300,000 to 440,000 tokens. F3 was re-run and accepted after one rework at 231,807 tokens, against 971,057 and a budget pause the first time; see its section. F5 was re-run and failed again: its first handoff wrapped the synchronous methods in `Task.Run`, and its rework, which did move to asynchronous file I/O, ended Blocked when a provider stream produced nothing, after spending most of its calls on a test hang it blamed on the environment. With the re-runs, 5 of the 7 tasks run are accepted.
 
 ## Budgets
 
@@ -201,6 +202,19 @@ Run after the per-file read limit and the output safety cap (`9db8329`), prompt 
 - **Decisions:** none asked, none expected.
 - **What stopped the run.** While checking its repair the agent put the defect back on purpose to prove a test would catch it; that test run deadlocked and was killed after five minutes. To clear the hung test host it ran `taskkill /F /IM dotnet.exe /T`, which stopped every dotnet process on the machine, its own worker among them. The run was Blocked with the defect still in the working copy, was resumed, and handed off with it removed. The factory now refuses that command (see the table of changes).
 - **Notes:** this is the first task the factory could not do well, and the first where a clean build and passing tests concealed a miss on the requirement.
+
+### F5 re-run (2026-10-05)
+
+- **Outcome:** **not accepted.** The rework ended Blocked, which the task set counts as failed. Pull request #10 (the first handoff) closed unmerged.
+- **First handoff** (commit `19d44fd`, 241,256 tokens: 162,865 implementing in 23 calls, 78,391 reviewing in 10; the first attempt used 554,007): build passed; 120 tests passed (17 new); changed-line coverage 100%.
+  - Met: criteria 1 (async counterparts with a `CancellationToken`, and `CommitAsync`), 3 (an already-cancelled token writes nothing) and 6 (no existing test changed); mostly 4.
+  - **Not met: criterion 2.** Every async method ran the existing blocking method through `Task.Run`. The request says only "async versions ... for use in ASP.NET Core apps"; the criterion is stricter. Its own review raised it as minor.
+  - Not met: criterion 5 (no concurrency test mixing synchronous and asynchronous writers).
+- **Rework:** one message naming criteria 2 and 5. Real asynchronous I/O meant replacing locking a synchronous `ReaderWriterLockSlim` cannot hold across an `await`, a material design choice; the factory again did not ask. It rewrote the write and commit paths onto awaited file writes and removed the `Task.Run` helper, reading with `search_code` and line ranges throughout.
+  - **Then its test run hung.** The test host used 259 seconds of CPU in about three minutes, so a test was spinning, most likely on the new locking. The agent gave the command no timeout; the kernel killed the script after five minutes, twice.
+  - **It blamed the environment:** "the environment can't run vstest (its control channel needs a TCP socket, which the sandbox blocks)". The factory's own verification runs the same tests on every task. It spent about 35 calls working around a problem that did not exist: loading `System.Diagnostics.Process` by reflection, detached processes and log polling, and a standalone test harness.
+  - At 803,108 of 900,000 a model call's stream ended after 100 seconds without producing anything; nothing was charged, but the turn failed and the task was Blocked.
+- **What it shows:** reading costs are under control (the context stayed near 20,000 to 72,000 and reads were ranged), but a hanging test sent the agent down a long wrong path, and a provider stream that produced nothing blocked a task that could have retried. Three fixes followed (see the changes table).
 
 ## R1 · Per-slide text alignment and size
 
