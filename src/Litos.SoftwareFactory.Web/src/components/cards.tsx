@@ -33,6 +33,14 @@ export function DecisionCard({
   const impact = decision?.impact ?? payload.impact;
   const open = decision ? decision.status === 'Open' : false;
   const decisionId = decision?.id ?? message.decisionId;
+  // "Other…": an answer in the user's own words, from the card itself.
+  const [writingOther, setWritingOther] = useState(false);
+  const [other, setOther] = useState('');
+  const otherId = `other-${decisionId ?? message.id}`;
+  const submitOther = () => {
+    const text = other.trim();
+    if (text && decisionId) onAnswer(decisionId, text);
+  };
 
   return (
     <div className={`panel${open ? ' you' : ''}`} role="group" aria-label="Decision needed">
@@ -56,7 +64,54 @@ export function DecisionCard({
             {recommendation === option ? <span className="small muted">Recommended</span> : null}
           </button>
         ))}
+        {open ? (
+          <button
+            className={`opt${writingOther ? ' chosen' : ''}`}
+            aria-expanded={writingOther}
+            aria-controls={otherId}
+            disabled={busy || !decisionId}
+            onClick={() => setWritingOther((v) => !v)}
+          >
+            <span>Other…</span>
+            <span className="small muted">Answer in your own words</span>
+          </button>
+        ) : null}
       </div>
+      {open && writingOther ? (
+        <form
+          id={otherId}
+          className="other-answer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submitOther();
+          }}
+        >
+          <label htmlFor={`${otherId}-text`} className="small">
+            Your answer
+          </label>
+          <textarea
+            id={`${otherId}-text`}
+            autoFocus
+            rows={3}
+            value={other}
+            onChange={(e) => setOther(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                submitOther();
+              }
+            }}
+          />
+          <div className="btn-row">
+            <button className="btn primary" type="submit" disabled={busy || !other.trim()}>
+              Send answer
+            </button>
+            <button className="btn ghost" type="button" onClick={() => setWritingOther(false)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
       {recommendation && !options.includes(recommendation) ? (
         <p className="small">
           <b>Recommendation:</b> {recommendation}
@@ -70,7 +125,7 @@ export function DecisionCard({
       <p className="small muted">
         {impact ? `Affects ${impact.replace(/\.$/, '')}. ` : ''}
         {open
-          ? 'No further edits run until this is answered. You can also reply in your own words.'
+          ? 'No further edits run until this is answered. Pick an option, or choose Other to answer in your own words.'
           : 'The answer is part of the task and is carried into every later run.'}
       </p>
     </div>

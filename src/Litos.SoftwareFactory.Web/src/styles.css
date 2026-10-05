@@ -141,6 +141,8 @@ th{font-weight:600;color:var(--muted)}
 .diff{font-family:var(--f-code);font-size:.78rem;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px;overflow-x:auto;white-space:pre;margin:0}
 .diff .a{color:var(--ok)} .diff .d{color:var(--bad)}
 .opts{display:grid;gap:8px}
+.other-answer{display:grid;gap:6px;margin-top:4px}
+.other-answer textarea{width:100%;min-width:0;border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;background:var(--surface);color:inherit;font:inherit;resize:vertical}
 .opt{border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;background:var(--surface);text-align:left;cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center}
 .opt:hover{border-color:var(--petrol)}
 .opt.chosen{border-color:var(--petrol);background:var(--petrol-soft)}

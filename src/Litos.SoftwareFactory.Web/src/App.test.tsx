@@ -522,6 +522,44 @@ describe('a decision', () => {
     expect(screen.getByText('answered the decision')).toBeInTheDocument();
   });
 
+  it('offers Other, which opens an answer box in the card and sends the user’s own words', async () => {
+    const { host, decision, card, user } = await awaitingDecision();
+    const other = card.getByRole('button', { name: /Other…/ });
+    expect(other).toHaveAttribute('aria-expanded', 'false');
+    expect(card.getByText(/choose Other to answer in your own words/)).toBeInTheDocument();
+
+    await user.click(other);
+    expect(other).toHaveAttribute('aria-expanded', 'true');
+    const box = card.getByLabelText('Your answer');
+    expect(box).toHaveFocus();
+    expect(card.getByRole('button', { name: 'Send answer' })).toBeDisabled();
+
+    await user.type(box, 'Return base64 from the server and store it with the slide');
+    await user.click(card.getByRole('button', { name: 'Send answer' }));
+
+    expect(await card.findByText('Answered')).toBeInTheDocument();
+    expect(host.sent('POST', `/api/decisions/${decision.id}/answer`)[0]!.body).toEqual({
+      answer: 'Return base64 from the server and store it with the slide',
+    });
+    expect(card.queryByRole('button', { name: /Other…/ })).not.toBeInTheDocument();
+    expect(card.getByText('Return base64 from the server and store it with the slide')).toBeInTheDocument();
+  });
+
+  it('sends an Other answer with Ctrl+Enter, and Cancel closes the box without sending', async () => {
+    const { host, decision, card, user } = await awaitingDecision();
+
+    await user.click(card.getByRole('button', { name: /Other…/ }));
+    await user.click(card.getByRole('button', { name: 'Cancel' }));
+    expect(card.queryByLabelText('Your answer')).not.toBeInTheDocument();
+    expect(host.sent('POST', `/api/decisions/${decision.id}/answer`)).toHaveLength(0);
+
+    await user.click(card.getByRole('button', { name: /Other…/ }));
+    await user.type(card.getByLabelText('Your answer'), 'Keep reading them{Control>}{Enter}{/Control}');
+
+    expect(await card.findByText('Answered')).toBeInTheDocument();
+    expect(host.sent('POST', `/api/decisions/${decision.id}/answer`)[0]!.body).toEqual({ answer: 'Keep reading them' });
+  });
+
   it('answers in the user’s own words from the composer, with no @factory needed', async () => {
     const { host, decision, card, user } = await awaitingDecision();
     expect(composer()).toHaveAttribute('placeholder', expect.stringContaining('Answer the decision'));
