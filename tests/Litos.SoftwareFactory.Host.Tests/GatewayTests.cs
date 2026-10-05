@@ -28,6 +28,7 @@ public sealed class GatewayTests : IAsyncLifetime
         _host = await TestHost.StartAsync(startCoordinator: false);
         _gateway = _host.App.Services.GetRequiredService<ModelGateway>();
         _gateway.RateLimitBackoff = TimeSpan.FromMilliseconds(40);
+        _gateway.NothingProducedBackoff = TimeSpan.FromMilliseconds(40);
     }
 
     public async Task DisposeAsync() => await _host.DisposeAsync();
@@ -380,16 +381,119 @@ public sealed class GatewayTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ProviderFailsBeforeProducingAnything_TheReservationIsReturned()
+    public async Task ProviderFailsBeforeProducingAnything_EveryTime_GivesUp_AndTheReservationIsReturned()
     {
         await StartRunAsync(cap: 100_000);
-        _host.Provider.EnqueueThrow(new HttpRequestException("Connection refused."));
+        for (var i = 0; i < 3; i++)
+            _host.Provider.EnqueueThrow(new HttpRequestException("Connection refused."));
 
         var events = await CallAsync(Request());
 
-        var error = Assert.IsType<GatewayError>(Assert.Single(events));
+        var error = Assert.IsType<GatewayError>(events[^1]);
         Assert.Equal((GatewayErrorCodes.ProviderError, "Connection refused."), (error.Code, error.Message));
+        Assert.Equal(3, _host.Provider.Requests.Count); // the first try and two retries
         Assert.Equal(0, (await ThreadAsync()).TokensReserved);
+    }
+
+    // ---- A call that failed before producing anything is sent again ----
+    // On F5's re-run a stream ended after 100 seconds with no output; nothing was charged, but the
+    // turn failed and the task was blocked.
+
+    [Fact]
+    public async Task AStreamThatEndsEmpty_IsSentAgain_AndSettlesOnce()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.Enqueue((_, _) => ScriptedProvider.Events());
+        _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(14_000, 500))));
+
+        var events = await CallAsync(Request());
+
+        Assert.IsType<GatewayMessageCompleted>(events[^1]);
+        Assert.DoesNotContain(events, e => e is GatewayError);
+        Assert.Contains(events, e => e is GatewayHeartbeat);
+        Assert.Equal(2, _host.Provider.Requests.Count);
+        var entry = Assert.Single(await _host.Store.ListUsageAsync(_threadId, default));
+        Assert.Equal(UsageStatus.Settled, entry.Status);
+        Assert.Equal(14_500, (await ThreadAsync()).TokensUsed);
+    }
+
+    [Theory]
+    [InlineData("throws")]
+    [InlineData("error event")]
+    public async Task AConnectionFailureBeforeAnything_IsSentAgain(string how)
+    {
+        await StartRunAsync(cap: 100_000);
+        if (how == "throws")
+            _host.Provider.EnqueueThrow(new IOException("The connection was reset."));
+        else
+            _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(new ErrorOccurred(new HttpRequestException("Connection refused."))));
+        _host.Provider.EnqueueReply("done");
+
+        var events = await CallAsync(Request());
+
+        Assert.IsType<GatewayMessageCompleted>(events[^1]);
+        Assert.Equal(2, _host.Provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AStreamThatEndsEmptyEveryTime_GivesUp_AndTheReservationIsReturned()
+    {
+        await StartRunAsync(cap: 100_000);
+        for (var i = 0; i < 3; i++)
+            _host.Provider.Enqueue((_, _) => ScriptedProvider.Events());
+
+        var events = await CallAsync(Request());
+
+        Assert.Contains("ended before the message was complete", Assert.IsType<GatewayError>(events[^1]).Message);
+        Assert.Equal(3, _host.Provider.Requests.Count);
+        Assert.Equal((0L, 0L), ((await ThreadAsync()).TokensUsed, (await ThreadAsync()).TokensReserved));
+    }
+
+    /// <summary>An SDK-based provider (Anthropic, OpenAI, Gemini) raises its own exception type with
+    /// the HTTP status on it; a 429 or a 5xx from one is handled like OpenRouter's.</summary>
+    private sealed class SdkException(int status) : Exception($"HTTP {status}")
+    {
+        public int Status { get; } = status;
+    }
+
+    [Theory]
+    [InlineData(429)]
+    [InlineData(503)]
+    [InlineData(529)]
+    public async Task AnSdkProvidersRateLimitOrServerError_IsSentAgain(int status)
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.EnqueueThrow(new SdkException(status));
+        _host.Provider.EnqueueReply("done");
+
+        var events = await CallAsync(Request());
+
+        Assert.IsType<GatewayMessageCompleted>(events[^1]);
+        Assert.Equal(2, _host.Provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AnSdkProvidersRejectedRequest_IsNotSentAgain()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.EnqueueThrow(new SdkException(400));
+
+        var events = await CallAsync(Request());
+
+        Assert.Equal("HTTP 400", Assert.IsType<GatewayError>(Assert.Single(events)).Message);
+        Assert.Single(_host.Provider.Requests);
+    }
+
+    [Fact]
+    public async Task AFailureThatIsNotAConnectionFailure_IsNotSentAgain()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.EnqueueThrow(new InvalidOperationException("The model does not exist."));
+
+        var events = await CallAsync(Request());
+
+        Assert.Equal("The model does not exist.", Assert.IsType<GatewayError>(Assert.Single(events)).Message);
+        Assert.Single(_host.Provider.Requests);
     }
 
     /// <summary>Acceptance scenario 8: a call that ends with unknown usage cannot silently

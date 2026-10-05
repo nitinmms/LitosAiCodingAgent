@@ -34,6 +34,17 @@ public sealed class ModelGateway(
 
     public int RateLimitAttempts { get; set; } = 6;
 
+    /// <summary>
+    /// How many more times a call is sent after the provider failed before producing anything: a
+    /// stream that ended empty, or a connection that failed. Nothing reached the worker and nothing
+    /// was charged, so sending it again is safe. On F5's re-run a stream ended after 100 seconds
+    /// with no output, and the task was blocked instead.
+    /// </summary>
+    public int NothingProducedRetries { get; set; } = 2;
+
+    /// <summary>The pause before such a retry; tests shorten it.</summary>
+    public TimeSpan NothingProducedBackoff { get; set; } = TimeSpan.FromSeconds(5);
+
     public CalibrationWindow CalibrationFor(string provider, string model) =>
         _calibration.GetOrAdd($"{provider}\n{model}", _ => new CalibrationWindow());
 
@@ -134,16 +145,21 @@ public sealed class ModelGateway(
         IChatProvider provider, ChatRequest chat, RequestEstimate estimate, CalibrationWindow calibration, string requestKey,
         ActiveRun run, string sessionKey, CallState call, Func<GatewayEvent, Task> write, CancellationToken ct)
     {
+        var nothingProducedRetries = 0;
         for (var attempt = 1; ; attempt++)
         {
             try
             {
                 await foreach (var evt in provider.StreamAsync(chat, ct))
                 {
-                    // A provider reports a 429 either by throwing or as an error event before
-                    // anything else; both mean nothing was produced, so both are retried.
-                    if (evt is ErrorOccurred { Exception: ChatProviderRateLimitedException limited } && !call.Started)
-                        throw limited;
+                    // A provider reports a 429, or a failed connection, either by throwing or as an
+                    // error event before anything else; both mean nothing was produced, so both
+                    // are retried. ProviderFailures reads either shape from any provider.
+                    if (evt is ErrorOccurred { Exception: var failure } && !call.Started
+                        && (ProviderFailures.IsRateLimit(failure) || ProviderFailures.IsTransient(failure)))
+                    {
+                        throw failure;
+                    }
 
                     call.Started = true;
                     if (evt is ErrorOccurred error)
@@ -178,26 +194,47 @@ public sealed class ModelGateway(
                         return;
                 }
 
+                if (!call.Started && nothingProducedRetries < NothingProducedRetries)
+                {
+                    nothingProducedRetries++;
+                    logger.LogInformation("Model call {RequestKey}: the stream ended before producing anything; sending it again.", requestKey);
+                    await PauseAsync(NothingProducedBackoff, write, ct);
+                    continue;
+                }
+
                 await write(new GatewayError(GatewayErrorCodes.ProviderError, "The provider's response ended before the message was complete."));
                 return;
             }
-            catch (ChatProviderRateLimitedException ex) when (!call.Started && attempt < RateLimitAttempts)
+            catch (Exception ex) when (!call.Started && !ct.IsCancellationRequested && attempt < RateLimitAttempts && ProviderFailures.IsRateLimit(ex))
             {
                 // HTTP 429 is "wait and retry with the reservation kept", not a failed run (§9.3).
-                // Heartbeats keep the worker's stream-idle watchdog from treating the wait as a
-                // dead connection.
                 logger.LogInformation("Rate limited on attempt {Attempt}: {Message}", attempt, ex.Message);
-                var waited = TimeSpan.Zero;
-                var beat = TimeSpan.FromSeconds(Math.Min(5, Math.Max(0.02, RateLimitBackoff.TotalSeconds)));
-                do
-                {
-                    await write(new GatewayHeartbeat());
-                    await Task.Delay(beat, ct);
-                    waited += beat;
-                }
-                while (waited < RateLimitBackoff);
+                await PauseAsync(RateLimitBackoff, write, ct);
+            }
+            catch (Exception ex) when (!call.Started && !ct.IsCancellationRequested && nothingProducedRetries < NothingProducedRetries && ProviderFailures.IsTransient(ex))
+            {
+                nothingProducedRetries++;
+                logger.LogInformation("Model call {RequestKey} failed before producing anything ({Message}); sending it again.", requestKey, ex.Message);
+                await PauseAsync(NothingProducedBackoff, write, ct);
             }
         }
+    }
+
+    /// <summary>
+    /// Waits before a retry, sending heartbeats so the worker's stream-idle watchdog does not treat
+    /// the wait as a dead connection.
+    /// </summary>
+    private static async Task PauseAsync(TimeSpan wait, Func<GatewayEvent, Task> write, CancellationToken ct)
+    {
+        var waited = TimeSpan.Zero;
+        var beat = TimeSpan.FromSeconds(Math.Min(5, Math.Max(0.02, wait.TotalSeconds)));
+        do
+        {
+            await write(new GatewayHeartbeat());
+            await Task.Delay(beat, ct);
+            waited += beat;
+        }
+        while (waited < wait);
     }
 
     /// <summary>
