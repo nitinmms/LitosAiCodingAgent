@@ -433,6 +433,7 @@ public sealed class UsageReconciliationTests
     public async Task WhenARunStops_ItsCallsWithUnknownUsageAreSettled()
     {
         await using var host = await TestHost.StartAsync();
+        host.App.Services.GetRequiredService<Litos.SoftwareFactory.Host.Gateway.ModelGateway>().BrokenStreamRetries = 0;
         host.Provider.Enqueue((_, _) => ScriptedProvider.Events(new TextDelta("partial"), new ErrorOccurred(new IOException("The connection was reset."))));
         host.Workers.Script.Enqueue(async call =>
         {

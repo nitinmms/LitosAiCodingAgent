@@ -502,12 +502,13 @@ public sealed class GatewayTests : IAsyncLifetime
     public async Task ProviderFailsMidResponse_UsageIsUnknown_SoTheReservationStaysCharged()
     {
         await StartRunAsync(cap: 100_000);
+        _gateway.BrokenStreamRetries = 0;
         _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(new TextDelta("partial"), new ErrorOccurred(new IOException("The connection was reset."))));
 
         var events = await CallAsync(Request());
 
-        Assert.IsType<GatewayTextDelta>(events[0]);
-        Assert.Equal("The connection was reset.", Assert.IsType<GatewayError>(events[^1]).Message);
+        // The partial reply was held back, so the worker sees only the error.
+        Assert.Equal("The connection was reset.", Assert.IsType<GatewayError>(Assert.Single(events)).Message);
         Assert.Equal(20_500, (await ThreadAsync()).TokensReserved);
         Assert.Equal(UsageStatus.Unknown, (await OnlyEntryAsync()).Status);
     }
@@ -516,12 +517,112 @@ public sealed class GatewayTests : IAsyncLifetime
     public async Task ProviderStreamEndsWithoutAMessage_IsAnError_WithUnknownUsage()
     {
         await StartRunAsync(cap: 100_000);
+        _gateway.BrokenStreamRetries = 0;
         _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(new TextDelta("partial")));
 
         var events = await CallAsync(Request());
 
         Assert.Contains("ended before the message was complete", Assert.IsType<GatewayError>(events[^1]).Message);
         Assert.Equal(UsageStatus.Unknown, (await OnlyEntryAsync()).Status);
+    }
+
+    // ---- A stream that breaks part-way is sent again ----
+    // On F7 OpenRouter ended a stream 3,479 bytes into a tool call's arguments and the turn failed.
+    // The worker now receives a call's events only once it is complete, so a broken attempt has
+    // sent it nothing and the call is sent again, reserved afresh.
+
+    private static ToolCallStarted Started(string id = "call-1") => new(id, "run_kernel_code");
+
+    [Fact]
+    public async Task AStreamThatBreaksPartWay_IsSentAgain_AndTheWorkerSeesOnlyTheCompleteReply()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(new TextDelta("half a th"), Started(), new ErrorOccurred(new IOException("The connection was reset."))));
+        _host.Provider.EnqueueReply("the whole reply");
+
+        var events = await CallAsync(Request());
+
+        Assert.DoesNotContain(events, e => e is GatewayError);
+        Assert.DoesNotContain(events, e => e is GatewayToolCallStarted);   // the broken attempt's tool call never reached the worker
+        Assert.Equal("the whole reply", Assert.Single(events.OfType<GatewayTextDelta>()).Text);
+        Assert.IsType<GatewayMessageCompleted>(events[^1]);
+        Assert.Equal(2, _host.Provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task EachAttempt_IsReservedAndChargedOnItsOwn()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(new TextDelta("partial"), new ErrorOccurred(new IOException("reset"))));
+        _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(14_000, 500))));
+
+        await CallAsync(Request(key: "call-7"));
+
+        var entries = (await _host.Store.ListUsageAsync(_threadId, default)).OrderBy(e => e.RequestKey).ToList();
+        Assert.Equal(["call-7", "call-7~retry1"], entries.Select(e => e.RequestKey));
+        Assert.Equal((UsageStatus.Unknown, UsageStatus.Settled), (entries[0].Status, entries[1].Status));
+        var thread = await ThreadAsync();
+        Assert.Equal(14_500, thread.TokensUsed);
+        Assert.Equal(20_500, thread.TokensReserved); // the broken attempt stays held until it is reconciled
+    }
+
+    [Fact]
+    public async Task AReplyThatCannotBeRead_IsSentAgainToo()
+    {
+        await StartRunAsync(cap: 100_000);
+        _host.Provider.Enqueue((_, _) => BrokenAfter(new TextDelta("partial"), new System.Text.Json.JsonException("Expected end of string, but instead reached end of data.")));
+        _host.Provider.EnqueueReply("readable");
+
+        var events = await CallAsync(Request());
+
+        Assert.Equal("readable", Assert.Single(events.OfType<GatewayTextDelta>()).Text);
+        Assert.Equal(2, _host.Provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AStreamThatBreaksEveryTime_GivesUpAfterTheRetries()
+    {
+        await StartRunAsync(cap: 100_000);
+        for (var i = 0; i < 3; i++)
+            _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(new TextDelta("partial")));
+
+        var events = await CallAsync(Request());
+
+        Assert.Contains("ended before the message was complete", Assert.IsType<GatewayError>(Assert.Single(events, e => e is not GatewayHeartbeat)).Message);
+        Assert.Equal(3, _host.Provider.Requests.Count);
+        Assert.Equal(3, (await _host.Store.ListUsageAsync(_threadId, default)).Count(e => e.Status == UsageStatus.Unknown));
+    }
+
+    [Fact]
+    public async Task ALongCall_SendsHeartbeatsWhileItsReplyIsHeld()
+    {
+        await StartRunAsync(cap: 100_000);
+        _gateway.HeldHeartbeatInterval = TimeSpan.FromMilliseconds(30);
+        _host.Provider.Enqueue((_, _) => Slowly(
+            new TextDelta("a"), new TextDelta("b"), new TextDelta("c"),
+            new MessageCompleted(ChatMessage.Assistant([new TextBlock("abc")]), new UsageInfo(1_000, 100))));
+
+        var events = await CallAsync(Request());
+
+        var firstText = events.FindIndex(e => e is GatewayTextDelta);
+        Assert.Contains(events.Take(firstText), e => e is GatewayHeartbeat);
+        Assert.Equal(["a", "b", "c"], events.OfType<GatewayTextDelta>().Select(t => t.Text));
+    }
+
+    private static async IAsyncEnumerable<AgentEvent> BrokenAfter(AgentEvent first, Exception failure)
+    {
+        yield return first;
+        await Task.Yield();
+        throw failure;
+    }
+
+    private static async IAsyncEnumerable<AgentEvent> Slowly(params AgentEvent[] events)
+    {
+        foreach (var evt in events)
+        {
+            await Task.Delay(40);
+            yield return evt;
+        }
     }
 
     // ---- A reply cut off at the output limit ----

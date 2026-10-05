@@ -45,6 +45,19 @@ public sealed class ModelGateway(
     /// <summary>The pause before such a retry; tests shorten it.</summary>
     public TimeSpan NothingProducedBackoff { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// How many more times a call is sent after its stream broke part-way: an error mid-stream, a
+    /// stream that ended before its message was complete, or a reply that could not be read. On
+    /// F7 OpenRouter ended a stream 3,479 bytes into a tool call's arguments, and the turn failed.
+    /// The worker receives a call's events only once the call is complete, so a broken attempt has
+    /// sent it nothing and the call can be sent again. Each attempt is reserved and charged on
+    /// its own: a broken one keeps its estimate as unknown usage, as before.
+    /// </summary>
+    public int BrokenStreamRetries { get; set; } = 2;
+
+    /// <summary>How often a heartbeat goes to the worker while a call's events are held back.</summary>
+    public TimeSpan HeldHeartbeatInterval { get; set; } = TimeSpan.FromSeconds(5);
+
     public CalibrationWindow CalibrationFor(string provider, string model) =>
         _calibration.GetOrAdd($"{provider}\n{model}", _ => new CalibrationWindow());
 
@@ -69,64 +82,88 @@ public sealed class ModelGateway(
         }
 
         var calibration = CalibrationFor(run.Provider, run.Model);
-        var baseline = run.Baselines.GetValueOrDefault(sessionKey);
-        var estimate = RequestEstimator.Estimate(chat, baseline, calibration.Ratio);
-        // Only a request that continues the baseline's conversation repeats its input.
-        var expectedCached = estimate.Basis == EstimateBasis.BaselinePlusDelta
-            ? baseline!.ExpectedCachedTokens(clock.UtcNow, options.Budget.CacheWindow)
-            : 0;
-
-        var reservation = await store.ReserveAsync(
-            new ReserveCommand(request.RequestKey, run.ThreadId, run.RunId, run.UserId, run.Provider, run.Model, estimate.RawTokens, estimate.Tokens)
-            {
-                ExpectedCachedInput = expectedCached,
-                Phase = run.Phase,
-            },
-            options.Budget, clock.UtcNow, ct);
-        signals.EventsWritten();
-
-        if (reservation.Decision is Refused refused)
-        {
-            var reason = refused.Reason == RefusalReason.UserQuota
-                ? $"The next model call needs about {refused.Needed:N0} tokens, but your quota has {refused.Remaining:N0} left."
-                : $"The next model call needs about {refused.Needed:N0} tokens, but the task's budget has {refused.Remaining:N0} left.";
-            run.RefuseForBudget(reason);
-            await write(new GatewayError(
-                refused.Reason == RefusalReason.UserQuota ? GatewayErrorCodes.QuotaExhausted : GatewayErrorCodes.BudgetExhausted, reason));
-            return;
-        }
-
-        // A request key the store has seen before is the same call arriving twice. It was
-        // reserved once; sending it again would spend twice.
-        if (reservation.AlreadyKnown)
-        {
-            await write(new GatewayError(GatewayErrorCodes.ProviderError, "This model call was already submitted."));
-            return;
-        }
-
-        var admitted = (Admitted)reservation.Decision;
-        chat = chat with { MaxOutputTokens = admitted.MaxOutputTokens };
         var provider = providers.Resolve(run.Provider);
+        var requestKey = request.RequestKey;
 
-        var call = new CallState();
-        try
+        for (var broken = 0; ; broken++)
         {
-            await SendAsync(provider, chat, estimate, calibration, request.RequestKey, run, sessionKey, call, write, ct);
-        }
-        catch (OperationCanceledException)
-        {
-            await SettleUnfinishedAsync(request.RequestKey, call);
-            throw;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Model call {RequestKey} failed.", request.RequestKey);
-            await SettleUnfinishedAsync(request.RequestKey, call);
-            await write(new GatewayError(GatewayErrorCodes.ProviderError, ex.Message));
-            return;
-        }
+            var baseline = run.Baselines.GetValueOrDefault(sessionKey);
+            var estimate = RequestEstimator.Estimate(chat, baseline, calibration.Ratio);
+            // Only a request that continues the baseline's conversation repeats its input.
+            var expectedCached = estimate.Basis == EstimateBasis.BaselinePlusDelta
+                ? baseline!.ExpectedCachedTokens(clock.UtcNow, options.Budget.CacheWindow)
+                : 0;
 
-        await SettleUnfinishedAsync(request.RequestKey, call);
+            var reservation = await store.ReserveAsync(
+                new ReserveCommand(requestKey, run.ThreadId, run.RunId, run.UserId, run.Provider, run.Model, estimate.RawTokens, estimate.Tokens)
+                {
+                    ExpectedCachedInput = expectedCached,
+                    Phase = run.Phase,
+                },
+                options.Budget, clock.UtcNow, ct);
+            signals.EventsWritten();
+
+            if (reservation.Decision is Refused refused)
+            {
+                var reason = refused.Reason == RefusalReason.UserQuota
+                    ? $"The next model call needs about {refused.Needed:N0} tokens, but your quota has {refused.Remaining:N0} left."
+                    : $"The next model call needs about {refused.Needed:N0} tokens, but the task's budget has {refused.Remaining:N0} left.";
+                run.RefuseForBudget(reason);
+                await write(new GatewayError(
+                    refused.Reason == RefusalReason.UserQuota ? GatewayErrorCodes.QuotaExhausted : GatewayErrorCodes.BudgetExhausted, reason));
+                return;
+            }
+
+            // A request key the store has seen before is the same call arriving twice. It was
+            // reserved once; sending it again would spend twice.
+            if (reservation.AlreadyKnown)
+            {
+                await write(new GatewayError(GatewayErrorCodes.ProviderError, "This model call was already submitted."));
+                return;
+            }
+
+            var admitted = (Admitted)reservation.Decision;
+            var sent = chat with { MaxOutputTokens = admitted.MaxOutputTokens };
+
+            var call = new CallState();
+            string? brokenBecause;
+            try
+            {
+                brokenBecause = await SendAsync(provider, sent, estimate, calibration, requestKey, run, sessionKey, call, write, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                await SettleUnfinishedAsync(requestKey, call);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Model call {RequestKey} failed.", requestKey);
+                await SettleUnfinishedAsync(requestKey, call);
+                if (!call.Started)
+                {
+                    await write(new GatewayError(GatewayErrorCodes.ProviderError, ex.Message));
+                    return;
+                }
+
+                brokenBecause = ex.Message;
+            }
+
+            await SettleUnfinishedAsync(requestKey, call);
+            if (brokenBecause is null)
+                return;
+
+            if (broken >= BrokenStreamRetries || ct.IsCancellationRequested)
+            {
+                await write(new GatewayError(GatewayErrorCodes.ProviderError, brokenBecause));
+                return;
+            }
+
+            // Nothing reached the worker, so the call is sent again, reserved afresh.
+            logger.LogInformation("Model call {RequestKey} broke part-way ({Reason}); sending it again.", requestKey, brokenBecause);
+            await PauseAsync(NothingProducedBackoff, write, ct);
+            requestKey = $"{request.RequestKey}~retry{broken + 1}";
+        }
     }
 
     /// <summary>What the gateway answers, in the model's place, once the turn's result is recorded.</summary>
@@ -141,13 +178,22 @@ public sealed class ModelGateway(
         public bool Settled { get; set; }
     }
 
-    private async Task SendAsync(
+    /// <summary>
+    /// Sends the call and, once its message is complete, writes its events to the worker. Returns
+    /// null when the call ended (completed, or with an error already written), or why it broke
+    /// part-way, when nothing has been written and the call can be sent again.
+    /// </summary>
+    private async Task<string?> SendAsync(
         IChatProvider provider, ChatRequest chat, RequestEstimate estimate, CalibrationWindow calibration, string requestKey,
         ActiveRun run, string sessionKey, CallState call, Func<GatewayEvent, Task> write, CancellationToken ct)
     {
         var nothingProducedRetries = 0;
         for (var attempt = 1; ; attempt++)
         {
+            // Held until the message is complete, so a stream that breaks part-way has sent the
+            // worker nothing: its agent loop acts on each tool call as soon as it arrives.
+            var held = new List<GatewayEvent>();
+            var lastWrite = DateTimeOffset.UtcNow;
             try
             {
                 await foreach (var evt in provider.StreamAsync(chat, ct))
@@ -163,10 +209,7 @@ public sealed class ModelGateway(
 
                     call.Started = true;
                     if (evt is ErrorOccurred error)
-                    {
-                        await write(new GatewayError(GatewayErrorCodes.ProviderError, error.Exception.Message));
-                        return;
-                    }
+                        return error.Exception.Message;
 
                     if (evt is MessageCompleted completed)
                     {
@@ -181,17 +224,28 @@ public sealed class ModelGateway(
                         if (CutOffBeforeReplying(completed, chat.MaxOutputTokens))
                         {
                             await write(new GatewayError(GatewayErrorCodes.ProviderError, CutOffMessage(completed.Usage, chat.MaxOutputTokens!.Value)));
-                            return;
+                            return null;
                         }
 
                         run.Baselines[sessionKey] = SessionBaseline.From(chat, completed.Usage, clock.UtcNow);
                     }
 
-                    if (GatewayEvent.FromAgentEvent(evt) is { } wire)
-                        await write(wire);
+                    if (GatewayEvent.FromAgentEvent(evt) is { } wire and not GatewayHeartbeat)
+                        held.Add(wire);
 
                     if (call.Settled)
-                        return;
+                    {
+                        foreach (var ready in held)
+                            await write(ready);
+                        return null;
+                    }
+
+                    // The worker's stream-idle watchdog still hears from a long call.
+                    if (DateTimeOffset.UtcNow - lastWrite >= HeldHeartbeatInterval)
+                    {
+                        await write(new GatewayHeartbeat());
+                        lastWrite = DateTimeOffset.UtcNow;
+                    }
                 }
 
                 if (!call.Started && nothingProducedRetries < NothingProducedRetries)
@@ -202,8 +256,13 @@ public sealed class ModelGateway(
                     continue;
                 }
 
-                await write(new GatewayError(GatewayErrorCodes.ProviderError, "The provider's response ended before the message was complete."));
-                return;
+                if (!call.Started)
+                {
+                    await write(new GatewayError(GatewayErrorCodes.ProviderError, "The provider's response ended before the message was complete."));
+                    return null;
+                }
+
+                return "The provider's response ended before the message was complete.";
             }
             catch (Exception ex) when (!call.Started && !ct.IsCancellationRequested && attempt < RateLimitAttempts && ProviderFailures.IsRateLimit(ex))
             {
