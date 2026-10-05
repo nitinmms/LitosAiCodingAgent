@@ -37,7 +37,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 
 **After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run three times and paused on budget during its implementation every time, before submitting anything; see its section. On this model a change the task set calls small costs this repository about 300,000 to 440,000 tokens. F3 was re-run and accepted after one rework at 231,807 tokens, against 971,057 and a budget pause the first time; see its section. F5 was re-run and failed again: its first handoff wrapped the synchronous methods in `Task.Run`, and its rework, which did move to asynchronous file I/O, ended Blocked when a provider stream produced nothing, after spending most of its calls on a test hang it blamed on the environment. With the re-runs, 5 of the 7 tasks run are accepted.
 
-**With the decision scan (`m1.11`):** F7 and R4 each asked the decision the task set expects, first: the first decisions the factory asked in the evaluation. F7 was accepted after one rework at 942,772 tokens, inside its original cap. R4 asked its three questions for 36,012 tokens, then paused on budget three times during its implementation, its context reaching 242,000 tokens, and was cancelled at 1,315,680 before submitting anything. **6 of the 9 tasks run are accepted** (F1, F2, F3, F4, F6, F7; F3 and F6 on re-runs). The gate needs 7 of 12, so one of the three unrun tasks (R2, R3, F8) must pass.
+**With the decision scan (`m1.11`):** F7 and R4 each asked the decision the task set expects, first: the first decisions the factory asked in the evaluation. F7 was accepted after one rework at 942,772 tokens, inside its original cap. R4 asked its three questions for 36,012 tokens, then paused on budget three times during its implementation, in 125 calls on a context of up to 122,000 tokens, and was cancelled at 1,315,680 before submitting anything. **6 of the 9 tasks run are accepted** (F1, F2, F3, F4, F6, F7; F3 and F6 on re-runs). The gate needs 7 of 12, so one of the three unrun tasks (R2, R3, F8) must pass.
 
 ## Budgets
 
@@ -335,8 +335,8 @@ Run on 2026-10-05 with the decision scan (prompt revision `m1.11`), at the same 
 - **Implementation:** 125 calls, 1,279,668 tokens.
   - The first pause came 17 minutes after the last answer, at about 1,194,000 of 1,200,000.
   - The cap was raised to 1,400,000. The run paused again twice, when single calls needed about 123,000 and 140,000 tokens.
-  - The context reached 242,392 tokens. At that size each call costs over 100,000 tokens.
-- **What it shows:** the scan works on a client-and-server request too. All three questions were real and answered in about seven minutes. But the change is too large for this model at this cap: it spent the whole budget implementing, with the context growing until every call was expensive. Even so, a handoff would have failed criterion 3, because the timing answer was not the scripted one.
+  - The context reached 121,759 tokens. Most of the cost was that context re-read from the cache: 910,106 of the 1,279,668, at 10%, over 125 calls. The final pauses were for reservations of about 123,000 and 140,000, which assume no cache hit.
+- **What it shows:** the scan works on a client-and-server request too. All three questions were real and answered in about seven minutes. But the change is too large for this model at this cap: it spent the whole budget implementing, in 125 calls that each re-read a growing context. Even so, a handoff would have failed criterion 3, because the timing answer was not the scripted one.
 
 ## What the seven tasks show
 
@@ -353,5 +353,5 @@ F5 adds a third, smaller one: a repair that satisfied a review finding by removi
 
 - **The second cause is addressed.** With the decision scan, both tasks asked their expected decision before implementing.
 - **The first cause is addressed for reworks.** F3, F6 and F7 finished their reworks well inside the top-up.
-- **What remains is the cost of a large first implementation.** R4 spent 1.28 million tokens implementing without submitting, its context reaching 242,000 tokens. R1 failed the same way at a smaller scale.
+- **What remains is the cost of a large first implementation.** R4 spent 1.28 million tokens implementing without submitting, in 125 calls on a context of up to 122,000 tokens. R1 failed the same way at a smaller scale.
 - **Tally:** 6 of 9 tasks are accepted. One of R2, R3 and F8 must pass for the gate.
