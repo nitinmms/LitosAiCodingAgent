@@ -40,7 +40,7 @@ public sealed partial class BriefExampleTests
         foreach (var _ in examples.SelectMany(e => Regex.Matches(e, "await ").Cast<Match>()))
             handler.EnqueueJson(new SubmissionResponse(true, ""));
         var host = TestOptions.HostClient(handler);
-        CompletionTool[] tools = [new SubmitWorkTool(host, "s"), new RequestDecisionTool(host, "s"), new SubmitReviewTool(host, "s")];
+        CompletionTool[] tools = [new SubmitWorkTool(host, "s"), new RequestDecisionTool(host, "s"), new SubmitReviewTool(host, "s"), new SubmitPlanTool(host, "s")];
 
         var scratch = Path.Combine(Path.GetTempPath(), "litos-brief-examples", Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(scratch);
@@ -81,6 +81,20 @@ public sealed partial class BriefExampleTests
         var decision = Assert.IsType<DecisionSubmission>(submissions[1]);
         Assert.Equal(2, decision.Options.Count);
         Assert.StartsWith("Every filtered row", decision.Recommendation);
+    }
+
+    [Fact]
+    public async Task TheScanBriefsExample_CompilesAndIsAccepted()
+    {
+        var examples = Examples(Brief(BriefKind.Scan, TurnKind.Scan));
+        Assert.Single(examples);
+
+        var plan = Assert.IsType<PlanSubmission>(Assert.Single(await RunAsync(examples)));
+
+        Assert.Equal(2, plan.Files.Count);
+        Assert.Equal(["existing-data", "other"], plan.Choices.Select(c => c.Category));
+        Assert.Equal(["Keep reading them", "Convert them when opened", "Stop reading them"], plan.Choices[0].Options);
+        Assert.Null(plan.Choices[0].SettledBy); // empty: nothing settles it
     }
 
     [Theory]

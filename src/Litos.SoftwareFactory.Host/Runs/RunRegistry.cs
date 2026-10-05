@@ -140,8 +140,11 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             var spent = overTokens
                 ? $"{TurnCharged:N0} tokens, its allowance of {allowance.WrapUpAfterTokens:N0}"
                 : $"{TurnCalls} model calls, its allowance of {allowance.WrapUpAfterCalls}";
-            return $"This review has used {spent}. Stop investigating now and call `submit_review` with the findings you have. "
-                + "Report anything you suspect but could not confirm as a minor finding, and say that it is unconfirmed.";
+            return WorkKind == Contracts.TurnKind.Scan
+                ? $"This scan has used {spent}. Stop reading now and call `submit_plan` with the choices you have found. "
+                  + "List any choice you suspect but could not confirm, with an empty settledBy."
+                : $"This review has used {spent}. Stop investigating now and call `submit_review` with the findings you have. "
+                  + "Report anything you suspect but could not confirm as a minor finding, and say that it is unconfirmed.";
         }
     }
 
@@ -157,7 +160,7 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
     public bool HasFinished(string sessionId)
     {
         lock (_lock)
-            return TurnKind is not null && sessionId == SessionId && _submission is WorkSubmission or ReviewSubmission or SpecSubmission;
+            return TurnKind is not null && sessionId == SessionId && _submission is WorkSubmission or ReviewSubmission or SpecSubmission or PlanSubmission;
     }
 
     /// <summary>
@@ -178,6 +181,7 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
                 WorkSubmission or DecisionSubmission => workKind is Contracts.TurnKind.Implement or Contracts.TurnKind.Repair or Contracts.TurnKind.Rework,
                 ReviewSubmission => workKind == Contracts.TurnKind.Review,
                 SpecSubmission => workKind == Contracts.TurnKind.Spec,
+                PlanSubmission => workKind == Contracts.TurnKind.Scan,
                 _ => false,
             };
             if (!allowed)
@@ -203,6 +207,7 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
         DecisionSubmission => "request_decision",
         ReviewSubmission => "submit_review",
         SpecSubmission => "submit_spec",
+        PlanSubmission => "submit_plan",
         _ => "This submission",
     };
 

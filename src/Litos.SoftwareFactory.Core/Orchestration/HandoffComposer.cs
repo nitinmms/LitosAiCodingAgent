@@ -84,7 +84,8 @@ public static class HandoffComposer
             Findings: state.Findings,
             Criteria: submission?.Criteria ?? [],
             TestsAdded: submission?.TestsAdded ?? [],
-            KnownLimitations: [.. (submission?.KnownLimitations ?? []).Concat(state.Disclosures).Concat(facts.Notes)],
+            // The scan's assumptions are choices made without asking; the tester sees each one.
+            KnownLimitations: [.. (submission?.KnownLimitations ?? []).Concat(state.Assumptions.Select(a => $"Assumed, not asked: {a}")).Concat(state.Disclosures).Concat(facts.Notes)],
             ManualTestSteps: submission?.ManualTestSteps ?? [],
             Commands: [.. (verification?.Commands ?? []).Select(c => $"{c.Command} — {(c.Succeeded ? "ok" : c.TimedOut ? "timed out" : $"exit {c.ExitCode}")} in {c.Duration.TotalSeconds:0.#}s")],
             ChangedFiles: facts.ChangedFiles,

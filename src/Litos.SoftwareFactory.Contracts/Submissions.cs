@@ -12,6 +12,7 @@ namespace Litos.SoftwareFactory.Contracts;
 [JsonDerivedType(typeof(DecisionSubmission), "decision")]
 [JsonDerivedType(typeof(ReviewSubmission), "review")]
 [JsonDerivedType(typeof(SpecSubmission), "spec")]
+[JsonDerivedType(typeof(PlanSubmission), "plan")]
 public abstract record Submission;
 
 /// <summary>submit_work: an implement, repair or rework turn is finished and ready to verify.</summary>
@@ -52,6 +53,42 @@ public sealed record SpecSubmission(
     IReadOnlyList<string> AffectedAreas,
     string TestPlan,
     IReadOnlyList<string> OpenQuestions) : Submission;
+
+/// <summary>
+/// submit_plan: the decision scan's result. The approach and the files it expects to change, and
+/// every choice the request leaves open. The host, not the agent, decides which choices become a
+/// question for a person (DecisionPolicy).
+/// </summary>
+public sealed record PlanSubmission(string Approach, IReadOnlyList<string> Files, IReadOnlyList<OpenChoice> Choices) : Submission;
+
+/// <param name="Category">One of <see cref="ChoiceCategories"/>.</param>
+/// <param name="Why">What depends on the choice: who or what it affects.</param>
+/// <param name="SettledBy">What in the request, the code or an earlier decision already settles
+/// the choice, quoted; empty when nothing does.</param>
+public sealed record OpenChoice(
+    string Question,
+    string Category,
+    IReadOnlyList<string> Options,
+    string? Recommendation = null,
+    string? Why = null,
+    string? SettledBy = null);
+
+/// <summary>The kinds of choice a scan sorts into. The first five always need a person when
+/// nothing settles them; "other" is stated as an assumption.</summary>
+public static class ChoiceCategories
+{
+    public const string ExistingData = "existing-data";
+    public const string PublicBehaviour = "public-behaviour";
+    public const string DataDeletion = "data-deletion";
+    public const string Dependency = "dependency";
+    public const string UserVisible = "user-visible";
+    public const string Other = "other";
+
+    public static readonly IReadOnlyList<string> All = [ExistingData, PublicBehaviour, DataDeletion, Dependency, UserVisible, Other];
+
+    /// <summary>The categories a choice must be in to be asked.</summary>
+    public static readonly IReadOnlyList<string> AlwaysAsk = [ExistingData, PublicBehaviour, DataDeletion, Dependency, UserVisible];
+}
 
 /// <summary>Body of POST /internal/runs/{runId}/submissions.</summary>
 public sealed record SubmissionRequest(string SessionId, Submission Submission);

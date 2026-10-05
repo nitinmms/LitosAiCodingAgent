@@ -255,6 +255,60 @@ public class BriefComposerTests
         Assert.Contains("The test runner works in this environment, so do not build a way around it.", text);
     }
 
+    // ---- The decision scan ----
+
+    private static RunState Scanning() => State() with { WorkTurn = TurnKind.Scan };
+
+    [Fact]
+    public void TheScanBrief_GivesTheRequest_TheCategories_AndHowToSubmit()
+    {
+        var brief = Compose(BriefKind.Scan, Scanning(), kind: TurnKind.Scan);
+
+        Assert.StartsWith("# Factory decision scan", brief);
+        Assert.Contains("Add CSV export for Orders.", brief);
+        Assert.Contains("You do not implement it.", brief);
+        Assert.Contains("Do not edit files, and do not run builds or tests.", brief);
+        foreach (var category in ChoiceCategories.All)
+            Assert.Contains($"`{category}`", brief);
+        Assert.Contains("List every open choice in the first five categories, even when you would recommend the obvious option", brief);
+        Assert.Contains("await submit_plan(", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void TheRunBriefAfterAScan_CarriesThePlan_TheAnswers_AndTheAssumptions()
+    {
+        var state = State() with
+        {
+            Plan = new PlanSubmission("Store expiry per put record.", ["src/LogFormat.cs"], []),
+            Assumptions = ["On read or a sweep: On read"],
+            Decisions = [new AnsweredDecision("What happens to version-1 files?", "Keep reading them.")],
+        };
+
+        var brief = Compose(BriefKind.Run, state);
+
+        Assert.Contains("## The plan from the decision scan", brief);
+        Assert.Contains("Store expiry per put record.", brief);
+        Assert.Contains("- `src/LogFormat.cs`", brief);
+        Assert.Contains("- On read or a sweep: On read", brief);
+        Assert.Contains("**What happens to version-1 files?** — Keep reading them.", brief);
+    }
+
+    [Fact]
+    public void TheRunBriefWithoutAScan_HasNoPlanSection() =>
+        Assert.DoesNotContain("The plan from the decision scan", Compose(BriefKind.Run, State()));
+
+    [Fact]
+    public void TheReminderAndTheResumeOfAScan_NameSubmitPlan()
+    {
+        var nudge = Compose(BriefKind.Nudge, Scanning(), kind: TurnKind.Nudge);
+        var resume = Compose(BriefKind.Resume, Scanning(), kind: TurnKind.Scan);
+
+        Assert.Contains("You stopped without calling `submit_plan`.", nudge);
+        Assert.DoesNotContain("request_decision", nudge);
+        Assert.Contains("`submit_plan`", resume);
+    }
+
     [Fact]
     public void ReviewBrief_SaysNotToRepeatTheFactorysVerification_ButAllowsRunningCodeForASpecificConcern()
     {
@@ -765,8 +819,8 @@ public class BriefComposerTests
         // m1.2: economy guidance, the contract restated in rework and repair briefs, and the
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
-        // m1.10: a hanging test run is a hanging test, not the environment.
-        Assert.Equal("m1.10", BriefComposer.Revision);
+        // m1.11: the decision scan brief, and the plan section of the run brief.
+        Assert.Equal("m1.11", BriefComposer.Revision);
     }
 
     [Theory]
@@ -775,6 +829,7 @@ public class BriefComposerTests
     [InlineData("repair")]
     [InlineData("review")]
     [InlineData("review-light")]
+    [InlineData("scan")]
     [InlineData("nudge")]
     [InlineData("decision-answer")]
     [InlineData("proceed")]

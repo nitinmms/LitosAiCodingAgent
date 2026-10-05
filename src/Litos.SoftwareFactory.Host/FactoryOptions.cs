@@ -95,6 +95,13 @@ public sealed class FactoryOptions
             options.Budget = options.Budget with { ReworkTopUpShare = topUp };
         }
 
+        // The decision scan is on unless turned off; scan-only stops each first run after it.
+        options.Limits = options.Limits with
+        {
+            DecisionScan = !IsOff(configuration["FACTORY_DECISION_SCAN"]),
+            ScanOnly = IsOn(configuration["FACTORY_SCAN_ONLY"]),
+        };
+
         if (configuration["FACTORY_DEFAULT_BUDGET"] is { Length: > 0 } defaultBudget)
         {
             // "none" removes the default cap; a number replaces it.
@@ -126,6 +133,10 @@ public sealed class FactoryOptions
     }
 
     private static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private static bool IsOff(string? value) => value?.Trim().ToLowerInvariant() is "0" or "false" or "off" or "no";
+
+    private static bool IsOn(string? value) => value?.Trim().ToLowerInvariant() is "1" or "true" or "on" or "yes";
 }
 
 /// <summary>

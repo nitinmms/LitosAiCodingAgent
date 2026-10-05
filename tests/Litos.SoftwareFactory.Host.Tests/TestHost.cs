@@ -625,6 +625,9 @@ public sealed class TestHost : IAsyncDisposable
             case TurnKind.Review:
                 await call.Worker.SubmitAsync(call.SessionId, new ReviewSubmission([]));
                 break;
+            case TurnKind.Scan:
+                await call.Worker.SubmitAsync(call.SessionId, new PlanSubmission("Change Orders.", ["src/Orders.cs"], []));
+                break;
             default:
                 Workers.WorkspaceOf(call.Worker).Write("src/Orders.cs", $"edit {Interlocked.Increment(ref _edits)}\n");
                 await call.Worker.SubmitAsync(call.SessionId, FakeWorkerLauncher.Work());

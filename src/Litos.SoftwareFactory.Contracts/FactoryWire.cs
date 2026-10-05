@@ -16,6 +16,10 @@ public enum TurnKind
     Review,
     Rework,
     Nudge,
+
+    /// <summary>The decision scan before implementation: read-only, finds the choices the request
+    /// leaves open, and finishes with submit_plan.</summary>
+    Scan,
 }
 
 /// <summary>Names both sides must agree on: the secret header, the worker's environment

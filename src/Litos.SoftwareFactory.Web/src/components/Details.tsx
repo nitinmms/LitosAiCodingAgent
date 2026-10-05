@@ -16,6 +16,7 @@ const PHASE_NAMES: Record<string, string> = {
   Nudge: 'reminder',
   Review: 'review',
   LightReview: 'light review',
+  Scan: 'decision scan',
 };
 
 export const phaseName = (phase: string | null): string => (phase ? (PHASE_NAMES[phase] ?? phase.toLowerCase()) : 'other');

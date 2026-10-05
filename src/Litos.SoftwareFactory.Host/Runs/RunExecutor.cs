@@ -247,7 +247,12 @@ public sealed class RunExecutor(
         var active = session.Active;
         var client = await session.ClientAsync(hostStopping);
 
-        var sessionId = step.Session == SessionScope.Review ? await ReviewSessionAsync(data) : data.Thread.SessionId;
+        var sessionId = step.Session switch
+        {
+            SessionScope.Review => await ReviewSessionAsync(data),
+            SessionScope.Scan => ScanSession(data),
+            _ => data.Thread.SessionId,
+        };
 
         // Compaction before a large turn (§8.6): a repair or rework turn that would start on a
         // context past the engine's compaction trigger is compacted first, keeping what the
@@ -310,6 +315,8 @@ public sealed class RunExecutor(
         var submission = active.Submission;
         if (submission is ReviewSubmission review)
             await store.SaveFindingsAsync(data.Run.Id, review.Findings, CancellationToken.None);
+        if (submission is PlanSubmission plan)
+            await NoteAsync(data, DecisionPolicy.Decide(plan, Math.Max(0, options.Limits.MaxDecisions - state.DecisionsAsked)).Describe());
 
         if (active.StopRequest == StopRequest.Cancel)
             return new TurnEnded(TurnEndReason.Cancelled);
@@ -330,6 +337,10 @@ public sealed class RunExecutor(
 
         return new TurnEnded(TurnEndReason.Completed, submission, filesChanged);
     }
+
+    /// <summary>The run's decision-scan session: fresh, and the same for a nudge or a resume of the
+    /// scan, so it needs no record of its own.</summary>
+    private static string ScanSession(RunData data) => $"scan-{data.Run.Id:N}";
 
     private async Task<string> ReviewSessionAsync(RunData data)
     {
@@ -352,6 +363,8 @@ public sealed class RunExecutor(
     private async Task<(string Phase, TurnAllowance? Allowance)> ReviewAllowanceAsync(
         RunData data, RunState state, StartTurnStep step, WorkspaceDiff? diff, CancellationToken ct)
     {
+        if (state.WorkTurn == TurnKind.Scan)
+            return ("Scan", step.Brief == BriefKind.Nudge ? TurnAllowance.ForScanNudge(options.Limits) : TurnAllowance.ForScan(options.Limits));
         if (state.WorkTurn != TurnKind.Review)
             return (step.Kind.ToString(), null);
         if (step.Brief == BriefKind.Nudge)

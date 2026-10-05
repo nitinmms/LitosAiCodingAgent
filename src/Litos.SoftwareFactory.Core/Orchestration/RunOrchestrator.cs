@@ -51,12 +51,14 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         return transition;
     }
 
-    private static RunTransition OnStarted(RunState state, DateTimeOffset now)
+    private RunTransition OnStarted(RunState state, DateTimeOffset now)
     {
         Require(state.Phase == RunPhase.NotStarted, state, "start");
 
-        RunStep first = state.Kind == RunKind.Rework
-            ? new StartTurnStep(TurnKind.Rework, BriefKind.Rework)
+        // A first run scans the request for choices it leaves open before implementing, when the
+        // host has the scan on. A rework answers a tester, whose message is the specification.
+        RunStep first = state.Kind == RunKind.Rework ? new StartTurnStep(TurnKind.Rework, BriefKind.Rework)
+            : Limits.DecisionScan ? new StartTurnStep(TurnKind.Scan, BriefKind.Scan, SessionScope.Scan)
             : new StartTurnStep(TurnKind.Implement, BriefKind.Run);
         return Preflight(state with { ActiveSince = now }, first);
     }
@@ -107,7 +109,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         return Preflight(state with { ActiveSince = now, NudgeUsed = false }, redo!);
     }
 
-    private static RunTransition OnDecisionAnswered(RunState state, DecisionAnswered answer, DateTimeOffset now)
+    private RunTransition OnDecisionAnswered(RunState state, DecisionAnswered answer, DateTimeOffset now)
     {
         Require(state.Phase == RunPhase.Stopped && state.OpenDecision is not null, state, "answer a decision");
 
@@ -118,7 +120,25 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             Decisions = [.. state.Decisions, new AnsweredDecision(state.OpenDecision!.Question, answer.Answer)],
             OpenDecision = null,
         };
-        return Preflight(answered, new StartTurnStep(state.WorkTurn, BriefKind.DecisionAnswer));
+
+        if (state.WorkTurn != TurnKind.Scan)
+            return Preflight(answered, new StartTurnStep(state.WorkTurn, BriefKind.DecisionAnswer));
+
+        // A question the scan raised: ask the next one, or implement once all are answered. The
+        // implement brief carries every answer, so no turn is spent between questions.
+        if (answered.PendingQuestions.Count > 0 && answered.DecisionsAsked < Limits.MaxDecisions)
+            return Ask(answered with { PendingQuestions = [.. answered.PendingQuestions.Skip(1)] }, answered.PendingQuestions[0]);
+
+        return Preflight(answered with { PendingQuestions = [] }, new StartTurnStep(TurnKind.Implement, BriefKind.Run));
+    }
+
+    /// <summary>Stops the run on a question the scan raised, which a person answers.</summary>
+    private static RunTransition Ask(RunState state, OpenChoice choice)
+    {
+        var decision = DecisionPolicy.ToDecision(choice);
+        return Stop(
+            state with { DecisionsAsked = state.DecisionsAsked + 1, OpenDecision = decision },
+            LifecycleTrigger.RequestDecision, StopReason.DecisionNeeded, decision.Question, resumePoint: null);
     }
 
     private static RunTransition Preflight(RunState state, RunStep afterPreflight) =>
@@ -159,6 +179,8 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
                 // A review that used up its allowance has still looked at the change: it is asked
                 // once to submit what it found, and blocked only if it still does not.
                 return NudgeOrBlock(state, "submit_review");
+            case TurnEndReason.ToolCallLimit when state.WorkTurn == TurnKind.Scan:
+                return OnScanTurnCompleted(state, turn with { Submission = null });
             case TurnEndReason.ToolCallLimit:
                 return Stop(
                     state, LifecycleTrigger.Block, StopReason.ToolCallLimit,
@@ -169,9 +191,46 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
                     $"The turn passed its time limit of {Describe(Limits.TurnTimeout)}.", resumeTurn);
         }
 
-        return state.WorkTurn == TurnKind.Review
-            ? OnReviewTurnCompleted(state, turn)
-            : OnWorkTurnCompleted(state, turn);
+        return state.WorkTurn switch
+        {
+            TurnKind.Review => OnReviewTurnCompleted(state, turn),
+            TurnKind.Scan => OnScanTurnCompleted(state, turn),
+            _ => OnWorkTurnCompleted(state, turn),
+        };
+    }
+
+    private RunTransition OnScanTurnCompleted(RunState state, TurnEnded turn)
+    {
+        if (turn.Submission is PlanSubmission plan)
+            return AfterScan(state with { Plan = plan }, plan);
+
+        if (!state.NudgeUsed)
+            return Enter(state, new StartTurnStep(TurnKind.Nudge, BriefKind.Nudge, SessionScope.Scan));
+
+        // The scan is a safeguard, not the work: one that does not finish never blocks the task.
+        // The run implements without it, and the handoff says so.
+        return Enter(
+            state with { Disclosures = [.. state.Disclosures, "The decision scan did not finish, so no open choices were checked before implementing."] },
+            new StartTurnStep(TurnKind.Implement, BriefKind.Run));
+    }
+
+    private RunTransition AfterScan(RunState state, PlanSubmission plan)
+    {
+        var decisions = DecisionPolicy.Decide(plan, Math.Max(0, Limits.MaxDecisions - state.DecisionsAsked));
+        var scanned = state with { Assumptions = [.. decisions.Assume.Select(DecisionPolicy.Assumption)] };
+
+        if (Limits.ScanOnly)
+        {
+            var asks = decisions.Ask.Count == 0 ? "nothing" : string.Join(" | ", decisions.Ask.Select(c => c.Question.Trim()));
+            return Stop(
+                scanned, LifecycleTrigger.Block, StopReason.ScanOnly,
+                $"Scan only. Would ask: {asks}. {decisions.Describe()}", resumePoint: null);
+        }
+
+        if (decisions.Ask.Count > 0)
+            return Ask(scanned with { PendingQuestions = [.. decisions.Ask.Skip(1)] }, decisions.Ask[0]);
+
+        return Enter(scanned, new StartTurnStep(TurnKind.Implement, BriefKind.Run));
     }
 
     private RunTransition OnWorkTurnCompleted(RunState state, TurnEnded turn)
@@ -381,8 +440,12 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
     }
 
     /// <summary>A nudge or a resume continues whichever conversation the work turn was in.</summary>
-    private static SessionScope SessionOf(RunState state) =>
-        state.WorkTurn == TurnKind.Review ? SessionScope.Review : SessionScope.Thread;
+    private static SessionScope SessionOf(RunState state) => state.WorkTurn switch
+    {
+        TurnKind.Review => SessionScope.Review,
+        TurnKind.Scan => SessionScope.Scan,
+        _ => SessionScope.Thread,
+    };
 
     private static void Require(bool condition, RunState state, string action)
     {

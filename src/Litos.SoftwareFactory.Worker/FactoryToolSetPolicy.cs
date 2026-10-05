@@ -12,6 +12,7 @@ namespace Litos.SoftwareFactory.Worker;
 /// - implement, repair and rework turns edit code and finish with submit_work or request_decision;
 /// - a review turn can only read, and finishes with submit_review;
 /// - a spec turn can only read, and finishes with submit_spec;
+/// - a decision scan can only read, and finishes with submit_plan;
 /// - a chat turn can only read.
 ///
 /// A nudge carries no kind of its own: it gets whatever the turn it follows had, so a nudged
@@ -85,6 +86,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
             new ToolRegistry([.. BuiltIn(WorkTools), new SubmitWorkTool(_host, sessionId), new RequestDecisionTool(_host, sessionId)]),
         TurnKind.Review => new ToolRegistry([.. BuiltIn(ReadOnlyTools), new SubmitReviewTool(_host, sessionId)]),
         TurnKind.Spec => new ToolRegistry([.. BuiltIn(ReadOnlyTools), new SubmitSpecTool(_host, sessionId)]),
+        TurnKind.Scan => new ToolRegistry([.. BuiltIn(ReadOnlyTools), new SubmitPlanTool(_host, sessionId)]),
         TurnKind.Chat => new ToolRegistry(BuiltIn(ReadOnlyTools)),
         _ => throw new InvalidOperationException($"No tool set is defined for a {kind} turn."),
     };

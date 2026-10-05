@@ -526,6 +526,74 @@ public class CompletionToolTests
         Assert.Empty(handler.Requests);
     }
 
+    // ---- submit_plan (the decision scan) ----
+
+    [Fact]
+    public async Task SubmitPlan_PostsTheApproach_TheFiles_AndEveryChoice()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitPlanTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""
+            {"approach":"Store expiry per put record.","files":["src/LogFormat.cs"],
+             "choices":[{"question":"What happens to version-1 files?","category":"existing-data","options":["Keep reading them","Stop reading them"],
+                         "recommendation":"Keep reading them","why":"Every database is version 1.","settledBy":""}]}
+            """), default);
+
+        Assert.False(result.IsError, result.Text);
+        Assert.StartsWith("Recorded. Stop now", result.Text);
+        var plan = Assert.IsType<PlanSubmission>(Posted(handler).Submission);
+        Assert.Equal(("Store expiry per put record.", "src/LogFormat.cs"), (plan.Approach, Assert.Single(plan.Files)));
+        Assert.Equal(new OpenChoice("What happens to version-1 files?", "existing-data", ["Keep reading them", "Stop reading them"], "Keep reading them", "Every database is version 1.", null),
+            Assert.Single(plan.Choices), ChoiceComparer);
+    }
+
+    private static readonly IEqualityComparer<OpenChoice> ChoiceComparer = EqualityComparer<OpenChoice>.Create(
+        (a, b) => a!.Question == b!.Question && a.Category == b.Category && a.Options.SequenceEqual(b.Options)
+            && a.Recommendation == b.Recommendation && a.Why == b.Why && a.SettledBy == b.SettledBy);
+
+    [Theory]
+    [InlineData("Existing Data", "existing-data")]
+    [InlineData("PUBLIC_BEHAVIOUR", "public-behaviour")]
+    [InlineData("public-behavior", "public-behaviour")]
+    [InlineData("user-visible", "user-visible")]
+    public async Task SubmitPlan_ReadsACategoryHoweverItIsWritten(string written, string expected)
+    {
+        var (tool, handler) = Create((h, s) => new SubmitPlanTool(h, s));
+
+        await tool.InvokeAsync(Args($$"""{"approach":"a","choices":[{"question":"q?","category":"{{written}}","options":["x","y"]}]}"""), default);
+
+        Assert.Equal(expected, Assert.Single(Assert.IsType<PlanSubmission>(Posted(handler).Submission).Choices).Category);
+    }
+
+    [Fact]
+    public async Task SubmitPlan_NoChoices_IsAPlanWithNothingOpen()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitPlanTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""{"approach":"Add a property.","choices":[]}"""), default);
+
+        Assert.False(result.IsError, result.Text);
+        Assert.Empty(Assert.IsType<PlanSubmission>(Posted(handler).Submission).Choices);
+    }
+
+    [Theory]
+    [InlineData("""{"choices":[]}""", "'approach' is required")]
+    [InlineData("""{"approach":"a","choices":["Keep v1 files?"]}""", "must be an object, not a string")]
+    [InlineData("""{"approach":"a","choices":[{"category":"other","options":["x","y"]}]}""", "needs a 'question'")]
+    [InlineData("""{"approach":"a","choices":[{"question":"q?","options":["x","y"]}]}""", "needs a 'category', one of: existing-data")]
+    [InlineData("""{"approach":"a","choices":[{"question":"q?","category":"format","options":["x","y"]}]}""", "needs a 'category'")]
+    [InlineData("""{"approach":"a","choices":{"question":"q?"}}""", "'choices' must be an array")]
+    public async Task SubmitPlan_BadArguments_AreRejectedWithTheReason(string json, string expected)
+    {
+        var (tool, handler) = Create((h, s) => new SubmitPlanTool(h, s));
+
+        var result = await tool.InvokeAsync(Args(json), default);
+
+        Assert.True(result.IsError);
+        Assert.Contains(expected, result.Text);
+        Assert.Empty(handler.Requests);
+    }
+
     // ---- submit_spec ----
 
     [Fact]
@@ -615,9 +683,9 @@ public class CompletionToolTests
     public void Tools_HaveTheirBlueprintNames_AndObjectSchemasWithRequiredFields()
     {
         var host = TestOptions.HostClient(new FakeHttpMessageHandler());
-        CompletionTool[] tools = [new SubmitWorkTool(host, "s"), new RequestDecisionTool(host, "s"), new SubmitReviewTool(host, "s"), new SubmitSpecTool(host, "s")];
+        CompletionTool[] tools = [new SubmitWorkTool(host, "s"), new RequestDecisionTool(host, "s"), new SubmitReviewTool(host, "s"), new SubmitSpecTool(host, "s"), new SubmitPlanTool(host, "s")];
 
-        Assert.Equal(["submit_work", "request_decision", "submit_review", "submit_spec"], tools.Select(t => t.Name));
+        Assert.Equal(["submit_work", "request_decision", "submit_review", "submit_spec", "submit_plan"], tools.Select(t => t.Name));
         Assert.All(tools, tool =>
         {
             Assert.Equal("object", tool.ParameterSchema.GetProperty("type").GetString());
@@ -662,6 +730,12 @@ public class FactoryToolSetPolicyTests
     public void ReviewTurn_IsReadOnly_AndFinishesWithSubmitReview()
     {
         Assert.Equal(["read_file", "list_directory", "search_code", "submit_review"], Names(Policy().Create("s", "Review")));
+    }
+
+    [Fact]
+    public void ScanTurn_IsReadOnly_AndFinishesWithSubmitPlan()
+    {
+        Assert.Equal(["read_file", "list_directory", "search_code", "submit_plan"], Names(Policy().Create("s", "Scan")));
     }
 
     [Fact]

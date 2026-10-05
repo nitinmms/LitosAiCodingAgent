@@ -369,3 +369,104 @@ public sealed class SubmitSpecTool(FactoryHostClient host, string sessionId) : C
         return (new SpecSubmission(summary, criteria, areas, testPlan, questions), null);
     }
 }
+
+/// <summary>
+/// submit_plan: the decision scan's result. The scan lists every choice the request leaves open;
+/// the host, not the agent, decides which become a question for a person (DecisionPolicy).
+/// </summary>
+public sealed class SubmitPlanTool(FactoryHostClient host, string sessionId) : CompletionTool(host, sessionId)
+{
+    public const string ToolName = "submit_plan";
+
+    public override string Name => ToolName;
+
+    public override string Description =>
+        "Report the decision scan's result: the approach, the files you expect to change, and every choice the request leaves open. "
+        + "This is the only way to finish a scan turn. The factory decides which choices to ask a person about.";
+
+    public override JsonElement ParameterSchema { get; } = Schema(new
+    {
+        type = "object",
+        properties = new
+        {
+            approach = new { type = "string", description = "How the task would be done, in a few sentences." },
+            files = StringArray("Files you expect to change."),
+            choices = new
+            {
+                type = "array",
+                description = "Every choice the request leaves open; empty when it leaves none.",
+                items = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        question = new { type = "string" },
+                        category = new { type = "string", @enum = ChoiceCategories.All },
+                        options = StringArray("Two to four options."),
+                        recommendation = new { type = "string" },
+                        why = new { type = "string", description = "Who or what the choice affects." },
+                        settledBy = new { type = "string", description = "What already settles it, quoted; empty when nothing does." },
+                    },
+                    required = new[] { "question", "category", "options" },
+                },
+            },
+        },
+        required = new[] { "approach", "choices" },
+    });
+
+    protected override string Recorded => "Recorded. Stop now; the factory asks a person what needs one, then implements.";
+
+    private const string ChoiceShape =
+        "{ \"question\": \"...\", \"category\": \"existing-data\", \"options\": [\"...\", \"...\"], \"recommendation\": \"...\", \"why\": \"...\", \"settledBy\": \"\" }";
+
+    protected override (Submission?, string?) Read(JsonElement arguments)
+    {
+        if (Text(arguments, "approach", "plan", "summary") is not { } approach)
+            return (null, "'approach' is required.");
+        if (Strings(arguments, arguments.TryGetProperty("files", out _) ? "files" : "filesToChange") is not { } files)
+            return (null, "'files' must be an array of paths.");
+
+        var choices = new List<OpenChoice>();
+        if (arguments.TryGetProperty("choices", out var choicesValue) && choicesValue.ValueKind != JsonValueKind.Null)
+        {
+            if (choicesValue.ValueKind != JsonValueKind.Array)
+                return (null, $"'choices' must be an array of objects such as {ChoiceShape}.");
+
+            foreach (var item in choicesValue.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                    return (null, $"every entry in 'choices' must be an object, not a string: {ChoiceShape}.");
+                if (Text(item, "question", "text") is not { } question)
+                    return (null, $"every choice needs a 'question': {ChoiceShape}.");
+
+                // An unknown category is refused, not taken as "other": quietly downgrading a
+                // file-format choice would hide exactly what the scan is for.
+                var category = Category(Text(item, "category", "kind"));
+                if (category is null)
+                    return (null, $"choice '{question}' needs a 'category', one of: {string.Join(", ", ChoiceCategories.All)}.");
+                if (Strings(item, "options") is not { } options)
+                    return (null, "'options' must be an array of strings.");
+
+                choices.Add(new OpenChoice(
+                    question, category, options,
+                    Text(item, "recommendation", "recommended"),
+                    Text(item, "why", "reason", "impact"),
+                    Text(item, "settledBy", "settled_by", "settled")));
+            }
+        }
+
+        return (new PlanSubmission(approach, files, choices), null);
+    }
+
+    /// <summary>The category as one of <see cref="ChoiceCategories.All"/>, accepting spaces,
+    /// underscores and case; null when it is none of them.</summary>
+    private static string? Category(string? value)
+    {
+        if (value is null)
+            return null;
+        var normalised = value.Trim().ToLowerInvariant().Replace('_', '-').Replace(' ', '-');
+        if (normalised == "public-behavior")
+            normalised = ChoiceCategories.PublicBehaviour;
+        return ChoiceCategories.All.FirstOrDefault(c => c == normalised);
+    }
+}

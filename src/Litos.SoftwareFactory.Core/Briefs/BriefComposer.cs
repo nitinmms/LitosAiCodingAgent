@@ -57,7 +57,7 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
 public static partial class BriefComposer
 {
     /// <summary>Bump whenever any template or any text composed here changes.</summary>
-    public const string Revision = "m1.10";
+    public const string Revision = "m1.11";
 
     private const int CharsPerToken = 4;
 
@@ -71,6 +71,7 @@ public static partial class BriefComposer
         BriefKind.DecisionAnswer => DecisionAnswer(state),
         BriefKind.ProceedOnRecommendation => Render("proceed", new() { ["maxDecisions"] = limits.MaxDecisions.ToString() }),
         BriefKind.Resume => Resume(state),
+        BriefKind.Scan => Scan(context, state),
         _ => throw new ArgumentOutOfRangeException(nameof(step), step.Brief, "Unknown brief kind."),
     };
 
@@ -85,9 +86,18 @@ public static partial class BriefComposer
         ["request"] = context.Request.Trim(),
         ["specification"] = Specification(context),
         ["decisions"] = Decisions(state),
+        ["plan"] = Plan(state),
         ["lessons"] = Section("Project lessons (guidance from earlier accepted work)", Bullets(context.Lessons)),
         ["verification"] = VerificationSummary(context),
         ["baseline"] = BaselineFailures(state),
+    });
+
+    private static string Scan(RunContext context, RunState state) => Render("scan", new()
+    {
+        ["project"] = context.Project,
+        ["request"] = context.Request.Trim(),
+        ["specification"] = Specification(context),
+        ["decisions"] = Decisions(state),
     });
 
     private static string Rework(RunContext context, RunState state) => Render("rework", new()
@@ -239,14 +249,22 @@ public static partial class BriefComposer
 
     private static string Nudge(RunState state)
     {
-        var review = state.WorkTurn == TurnKind.Review;
+        var work = state.WorkTurn is not (TurnKind.Review or TurnKind.Scan);
         return Render("nudge", new()
         {
-            ["expectedTools"] = review ? "`submit_review`" : "`submit_work` or `request_decision`",
-            ["completionTool"] = review ? "`submit_review`" : "`submit_work`",
-            ["decisionHint"] = review ? "" : "If you are blocked on a choice only a person can make, call `request_decision`. ",
+            ["expectedTools"] = work ? "`submit_work` or `request_decision`" : CompletionTool(state),
+            ["completionTool"] = CompletionTool(state),
+            ["decisionHint"] = work ? "If you are blocked on a choice only a person can make, call `request_decision`. " : "",
         });
     }
+
+    /// <summary>The tool that finishes the run's current work turn.</summary>
+    private static string CompletionTool(RunState state) => state.WorkTurn switch
+    {
+        TurnKind.Review => "`submit_review`",
+        TurnKind.Scan => "`submit_plan`",
+        _ => "`submit_work`",
+    };
 
     private static string DecisionAnswer(RunState state)
     {
@@ -258,10 +276,35 @@ public static partial class BriefComposer
     private static string Resume(RunState state) => Render("resume", new()
     {
         ["reason"] = state.LastStop is { } stop ? $"It had stopped because: {stop.Message}" : "",
-        ["completionTool"] = state.WorkTurn == TurnKind.Review ? "`submit_review`" : "`submit_work`",
+        ["completionTool"] = CompletionTool(state),
     });
 
     // ---- Sections ----
+
+    /// <summary>
+    /// What the decision scan found, for the implementer: its approach and files as a starting
+    /// point, and the choices the run proceeds on. The answered questions are in the decisions
+    /// section.
+    /// </summary>
+    private static string Plan(RunState state)
+    {
+        if (state.Plan is not { } plan)
+            return "";
+
+        var text = new StringBuilder("## The plan from the decision scan\n\n");
+        text.AppendLine("A read-only scan of the request and the code wrote this before you started. Use it as a starting point; the code is the authority.").AppendLine();
+        if (!string.IsNullOrWhiteSpace(plan.Approach))
+            text.AppendLine(plan.Approach.Trim()).AppendLine();
+        if (plan.Files.Count > 0)
+            text.AppendLine("Files it expects to change:").AppendLine().AppendLine(Bullets(plan.Files.Select(f => $"`{f}`"))).AppendLine();
+        if (state.Assumptions.Count > 0)
+        {
+            text.AppendLine("Choices the request leaves open that this task proceeds on (keep to them; the tester sees them in the handoff):").AppendLine();
+            text.AppendLine(Bullets(state.Assumptions));
+        }
+
+        return text.ToString().TrimEnd();
+    }
 
     private static string Specification(RunContext context)
     {

@@ -210,4 +210,11 @@ public sealed record TurnAllowance(int WrapUpAfterCalls, long? WrapUpAfterTokens
     /// <summary>A reminder to submit, after a review ran out: it gets very little more.</summary>
     public static TurnAllowance ForReviewNudge(RunLimits limits) =>
         new(limits.LightReviewWrapUpCalls, null, limits.LightReviewMaxToolCalls);
+
+    /// <summary>A decision scan: asked to submit after a few calls, stopped soon after. It reads
+    /// to find choices, not to understand the whole change.</summary>
+    public static TurnAllowance ForScan(RunLimits limits) => new(limits.ScanWrapUpCalls, null, limits.ScanMaxToolCalls);
+
+    /// <summary>A reminder to a scan that ran out: the same small allowance as a review's.</summary>
+    public static TurnAllowance ForScanNudge(RunLimits limits) => ForReviewNudge(limits);
 }

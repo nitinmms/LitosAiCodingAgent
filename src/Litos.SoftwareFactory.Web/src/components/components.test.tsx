@@ -5,6 +5,7 @@ import type { LifecycleState, Stage } from '../api/types';
 import { App } from '../App';
 import { FakeHost } from '../test/fakeHost';
 import { Rail, Rich, SafeLink } from './bits';
+import { phaseName, phaseTotals } from './Details';
 
 describe('the stage rail', () => {
   const stations = () =>
@@ -115,5 +116,16 @@ describe('the thread list', () => {
     expect(await screen.findByRole('button', { name: /Made in another tab/ })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: '1 awaiting you' })).toBeEnabled());
     expect(host.details(open.id).thread.state).toBe('Draft');
+  });
+});
+
+describe('model call phases', () => {
+  it('names the decision scan, and counts it apart from implementation and review', () => {
+    expect(phaseName('Scan')).toBe('decision scan');
+    expect(phaseName('LightReview')).toBe('light review');
+    expect(phaseName(null)).toBe('other');
+
+    const call = (phase: string, charged: number) => ({ phase, charged }) as Parameters<typeof phaseTotals>[0][number];
+    expect(phaseTotals([call('Scan', 30), call('Implement', 100), call('Review', 40)])).toEqual({ implementation: 100, review: 40, other: 30 });
   });
 });

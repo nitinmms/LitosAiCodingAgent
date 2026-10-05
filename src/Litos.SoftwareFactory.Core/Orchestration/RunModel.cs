@@ -59,6 +59,22 @@ public sealed record RunLimits
 
     /// <summary>...and is stopped after this many tool calls.</summary>
     public int FullReviewMaxToolCalls { get; init; } = 24;
+
+    // ---- The decision scan (DecisionPolicy) ----
+
+    /// <summary>Whether a first run starts with a decision scan. Off unless the host turns it on
+    /// (FACTORY_DECISION_SCAN), so the orchestrator's behaviour is unchanged by default.</summary>
+    public bool DecisionScan { get; init; }
+
+    /// <summary>Stop after the scan and report what it would ask and assume, without asking or
+    /// implementing: for checking the scan on requests cheaply (FACTORY_SCAN_ONLY).</summary>
+    public bool ScanOnly { get; init; }
+
+    /// <summary>A scan is asked to submit after this many model calls...</summary>
+    public int ScanWrapUpCalls { get; init; } = 6;
+
+    /// <summary>...and is stopped after this many tool calls.</summary>
+    public int ScanMaxToolCalls { get; init; } = 10;
 }
 
 public enum RunKind
@@ -81,6 +97,9 @@ public enum BriefKind
     DecisionAnswer,
     ProceedOnRecommendation,
     Resume,
+
+    /// <summary>The decision scan: list the choices the request leaves open.</summary>
+    Scan,
 }
 
 // ---- Steps: what the host should do next ----
@@ -106,6 +125,10 @@ public enum SessionScope
     /// <summary>The run's review session: created empty for the review brief, so the reviewer
     /// never sees the thread's conversation, and reused for a nudge or a resume of that review.</summary>
     Review,
+
+    /// <summary>The run's decision-scan session: fresh, so the scan looks at the request without
+    /// an implementer's commitments, and reused for a nudge or a resume of the scan.</summary>
+    Scan,
 }
 
 /// <summary>Agent turn.</summary>
@@ -152,6 +175,9 @@ public enum StopReason
 
     /// <summary>A rework run whose change request the tester withdrew.</summary>
     Withdrawn,
+
+    /// <summary>The scan-only check finished: the run reports what the scan found and stops.</summary>
+    ScanOnly,
 }
 
 // ---- Outcomes: what happened when the host did it ----
@@ -257,6 +283,16 @@ public sealed record RunState(RunKind Kind)
 
     /// <summary>Limitations the handoff must state: things that were not fixed or not asked.</summary>
     public IReadOnlyList<string> Disclosures { get; init; } = [];
+
+    /// <summary>The decision scan's result, once it has run.</summary>
+    public PlanSubmission? Plan { get; init; }
+
+    /// <summary>Choices the scan raised that are still to be asked, after the open one.</summary>
+    public IReadOnlyList<OpenChoice> PendingQuestions { get; init; } = [];
+
+    /// <summary>Choices the run proceeds on without asking, stated to the implementer and in the
+    /// handoff so the tester can see what was decided.</summary>
+    public IReadOnlyList<string> Assumptions { get; init; } = [];
 
     /// <summary>The step to take once preflight succeeds.</summary>
     public RunStep? AfterPreflight { get; init; }
