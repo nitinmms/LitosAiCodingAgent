@@ -205,6 +205,10 @@ public enum TurnEndReason
     Faulted,
     ToolCallLimit,
     TimeLimit,
+
+    /// <summary>A model call reached its output limit without replying: in practice a reasoning
+    /// model that spent the whole allowance thinking.</summary>
+    OutputLimit,
 }
 
 /// <summary>
@@ -280,6 +284,9 @@ public sealed record RunState(RunKind Kind)
 
     /// <summary>A repair for blocking review findings is under way and not yet verified.</summary>
     public bool ReviewRepairPending { get; init; }
+
+    /// <summary>How many times the review's model reached its output limit without replying.</summary>
+    public int ReviewCutOffs { get; init; }
 
     /// <summary>Limitations the handoff must state: things that were not fixed or not asked.</summary>
     public IReadOnlyList<string> Disclosures { get; init; } = [];

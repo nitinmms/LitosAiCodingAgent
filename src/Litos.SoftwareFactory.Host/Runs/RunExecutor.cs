@@ -330,8 +330,10 @@ public sealed class RunExecutor(
         var filesChanged = before != await FingerprintAsync(data, hostStopping);
         if (submission is null && result?.Error is { } error)
         {
-            return error.StartsWith("The turn exceeded", StringComparison.Ordinal)
-                ? new TurnEnded(TurnEndReason.ToolCallLimit, FilesChanged: filesChanged)
+            if (error.StartsWith("The turn exceeded", StringComparison.Ordinal))
+                return new TurnEnded(TurnEndReason.ToolCallLimit, FilesChanged: filesChanged);
+            return error.Contains(Gateway.ModelGateway.CutOffPrefix, StringComparison.Ordinal)
+                ? new TurnEnded(TurnEndReason.OutputLimit, FilesChanged: filesChanged, Detail: error)
                 : new TurnEnded(TurnEndReason.Faulted, FilesChanged: filesChanged, Detail: error);
         }
 

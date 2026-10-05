@@ -181,6 +181,15 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
                 return NudgeOrBlock(state, "submit_review");
             case TurnEndReason.ToolCallLimit when state.WorkTurn == TurnKind.Scan:
                 return OnScanTurnCompleted(state, turn with { Submission = null });
+            case TurnEndReason.OutputLimit when state.WorkTurn == TurnKind.Review:
+                return OnReviewCutOff(state, turn);
+            case TurnEndReason.OutputLimit when state.WorkTurn == TurnKind.Scan:
+                // A scan never blocks the task: implement without it, and say so.
+                return Enter(
+                    state with { Disclosures = [.. state.Disclosures, "The decision scan did not finish (its model reached the output limit without replying), so no open choices were checked before implementing."] },
+                    new StartTurnStep(TurnKind.Implement, BriefKind.Run));
+            case TurnEndReason.OutputLimit:
+                return Stop(state, LifecycleTrigger.Block, StopReason.TurnFaulted, turn.Detail ?? "The model reached its output limit without replying.", resumeTurn);
             case TurnEndReason.ToolCallLimit:
                 return Stop(
                     state, LifecycleTrigger.Block, StopReason.ToolCallLimit,
@@ -267,6 +276,26 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         }
 
         return NudgeOrBlock(state, "submit_work or request_decision");
+    }
+
+    /// <summary>
+    /// The review's model spent its whole output allowance reasoning, without replying. A review
+    /// never blocks a change the factory has already verified: the first time it runs again, the
+    /// second time the run hands off with the review not run, and the handoff says so. On F7 a
+    /// light review of one test file reasoned for 36,006 tokens without a reply, and the task sat
+    /// blocked at the last step.
+    /// </summary>
+    private static RunTransition OnReviewCutOff(RunState state, TurnEnded turn)
+    {
+        var cutOffs = state.ReviewCutOffs + 1;
+        if (cutOffs < 2)
+            return Enter(state with { ReviewCutOffs = cutOffs }, new StartTurnStep(TurnKind.Review, BriefKind.Resume, SessionScope.Review));
+
+        var disclosure = "The agent review could not complete: its model twice reached the output limit without replying. "
+            + "The factory's own verification (build, unit tests and changed-line coverage) passed; review the change yourself.";
+        return Enter(
+            state with { ReviewCutOffs = cutOffs, Review = ReviewStatus.NotRun, Disclosures = [.. state.Disclosures, disclosure] },
+            new HandoffStep());
     }
 
     private RunTransition OnReviewTurnCompleted(RunState state, TurnEnded turn)

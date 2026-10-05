@@ -305,8 +305,12 @@ public sealed class ModelGateway(
         && completed.Usage.OutputTokens >= limit
         && !completed.Message.Content.Any(block => block is not Litos.Agent.Messages.TextBlock text || !string.IsNullOrWhiteSpace(text.Text));
 
+    /// <summary>How a cut-off reply's error begins; the executor reads a turn that ended this way
+    /// as TurnEndReason.OutputLimit.</summary>
+    public const string CutOffPrefix = "The model reached the output limit";
+
     internal static string CutOffMessage(UsageInfo usage, int maxOutputTokens) =>
-        $"The model reached the output limit of {maxOutputTokens:N0} tokens without producing a reply"
+        $"{CutOffPrefix} of {maxOutputTokens:N0} tokens without producing a reply"
         + (usage.ReasoningTokens > 0 ? $" ({usage.ReasoningTokens:N0} of them were reasoning)" : "")
         + ". Nothing was lost; resuming tries the step again.";
 
