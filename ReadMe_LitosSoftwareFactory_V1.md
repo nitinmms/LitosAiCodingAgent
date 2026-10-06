@@ -112,6 +112,8 @@ There is no mandatory plan-approval pause. The factory asks only when a material
 
 **The decision scan** (decided 2026-10-05, after the M1 evaluation found the factory had never asked a decision). A first run starts with a short, read-only turn in a fresh session whose only job is to list the choices the request leaves open: each with a category, two to four options, a recommendation, why it matters, and what (if anything) in the request, the code or an earlier decision settles it. It ends with `submit_plan`. The host, not the agent, decides by rule (`DecisionPolicy`) which choices a person makes: an unsettled choice in an always-ask category (existing data or files, public behaviour, deleting or migrating data, a new dependency, two behaviours a user would notice) becomes a decision card, one at a time, within the run's three-decision limit. Everything else is an assumption, stated in the implement brief and in the handoff. With nothing to ask the run implements at once, without stopping. A scan that does not finish never blocks the task. Rework runs do not scan. Settings: `FACTORY_DECISION_SCAN` (on by default) and `FACTORY_SCAN_ONLY` (stop after the scan and report what it would ask, to check the scan cheaply on requests). Other coding agents (Claude Code, Cursor, Windsurf, Kiro) plan and ask before building, but stop for approval every time; research on coding agents found that a separate step whose only job is to find missing information does better than reminding the working agent to ask.
 
+A decision card offers the scan's options and **Other…**, for an answer in the person's own words; an answer may also correct one of the stated assumptions. An existing-data choice is asked even when the scan marks it settled, because that is where F6 broke existing databases. *Measured in M1:* every task since the scan asked the decision the task set expected, but on the three tasks that expected none (R2, R3, F8) 4 of 9 questions were unnecessary: the always-ask rule asked about existing data the request had already settled, and questions are chosen all at once, so a later one is not checked against an earlier answer. Both are open.
+
 ### Example thread
 
 User: `@factory Add CSV export for Orders. Administrator access only. Budget: 120,000 tokens.`
@@ -133,10 +135,9 @@ User: **Accept** (structured action). A normal chat message is never treated as 
 ## 5. Threads, stages and dispatch semantics
 
 - A **TaskThread** is the durable conversation and the home of one logical task inside one project. A **TaskRun** is one execution segment; several runs may belong to a thread.
-- Each thread has **one Litos session** for its whole life.
-  - Chat turns run with a read-only tool set.
-  - `@factory` turns continue the same session with the full tool set under the budget and repository lock.
-  - A run therefore starts with everything already discussed in context.
+- Each thread has **one session ID** (`TaskThread.SessionId`), but its conversation **lasts one run** (decided 2026-10-06). Transcripts are stored per run (`runs/{runId}/sessions`), so a new run (a rework) starts that session empty, and what came before reaches it through the brief: the original request, the tester's feedback, the previous handoff summary, the files changed and the decisions (§8.6).
+  - Chat turns run with a read-only tool set. M1 has no chat turns: the host starts none.
+  - `@factory` turns run with the full tool set under the budget and repository lock.
   - Chat-turn tokens are counted against the user's quota and shown separately. They are not charged to the task budget.
 - Assignment is a structured composer mention rendered as `@factory`. A leading user-authored mention may also be parsed. Quoted text, code blocks, assistant messages and tool output never trigger delegation.
 - A unique message ID is the dispatch idempotency key. Double-clicks or network retries create one assignment.
@@ -169,12 +170,14 @@ The user approves it, possibly after editing, which creates a new revision. Impl
 
 ### 5.3 Agent review stage
 
-After build and tests pass, the host starts one review turn with fresh context and read-only tools. The turn receives the diff, the approved spec and the verification results. It reports findings (bugs, unmet criteria, missing tests, leftover debug code) as structured items.
+After build and tests pass, the host decides how deep a review the change needs, from its own evidence and without a model call (§8.6): **none**, **light** or **full**. When one is needed, the host starts one review turn with fresh context and read-only tools. The turn receives the diff, the approved spec and the verification results. It reports findings (bugs, unmet criteria, missing tests, leftover debug code) as structured items.
 
 - Findings marked blocking consume one of the bounded repair cycles.
 - Everything else is listed in the handoff.
 - The review is charged to the task budget.
 - It is a single bounded pass, not an agent team.
+- A change that needs no review goes straight to handoff, and the handoff says it was not reviewed and why.
+- **Review yield** (decided 2026-10-06, after ReadM_SoftwareFactory_ReviewGuidance.md): a person can judge each finding as a real defect, not worth fixing, or wrong, from the thread's details panel. The factory reports, per task and across tasks, what review cost (tokens, calls, its share of the task) against what it found: findings, verdicts, confirmed defects per 100,000 review tokens, and the false-positive rate (`GET /api/threads/{id}/review-yield`, `GET /api/review-yield`). Without verdicts the planner's weights cannot be tuned; in M1 review was 10% to 44% of a task's tokens, about a quarter on average.
 
 ## 6. Projects, workspaces and repository ownership
 
@@ -428,7 +431,9 @@ The host decides every stage transition from its own records, never from the age
      - "repair cycle k of N".
    - The turn ends with `submit_work`, and the run returns to Verify.
 5. **Review turn (agent).**
+   - Skipped when the review planner judges none is needed (§8.6): the run goes to Handoff with the review marked not needed.
    - Runs in a **fresh session**, not the thread's session, with read-only tools.
+   - A review whose model reaches its output limit without replying is run once more. After a second cut-off the run hands off with the review not run, and the handoff says so; the factory's own verification has passed. (A scan cut off this way implements without the scan; an implementation turn cut off this way still blocks.)
    - Input: the diff (or, above 1,500 changed lines, the changed-file list for the agent to read), the acceptance criteria and the verification summary.
    - Blocking findings lead to one repair turn and one more Verify. The review is not repeated, which bounds its cost.
 6. **Handoff (host).**
@@ -471,24 +476,41 @@ Each run records the prompt revision it used, so evaluation results (§18) can b
 
 Every turn's cost includes its whole context, so context is managed deliberately:
 
-- **Thread session.** One session per thread carries chat, spec, implement, repair and rework turns. That continuity is what lets rework understand earlier discussion.
-- **Review.** Always runs in a fresh session, for independence and a small context.
-  - **Review depth is chosen by the host, without a model call** (`ReviewPlanner`, decided 2026-10-03; see ReadMe_CodeVerifyOptimisations.md). A **light review** is one look at the evidence and the diff, with no reading round the repository and no running code. A **full review** may read and run code. Any one risk signal makes it full: more than 150 changed lines outside tests or more than 8 files; paths touching auth, schema or migrations, storage or data formats, or build and dependency configuration; added code that locks, is asynchronous, writes or stores data, or runs processes or injects markup; a removed or changed public declaration; a verification that is not clean; or a submission with an acceptance criterion and no test. The thread says which review a change got and why.
+- **Thread session, one run long** (decided 2026-10-06). Within a run, one session carries the spec, implement, repair and rework turns, so a repair sees what the implement turn did and why. It does not carry over to the next run. A rework is a new run: it has a new worker and a new transcript directory (`runs/{runId}/sessions`), so it starts with an empty history, and the rework brief carries what it needs from before: the original request, the tester's feedback, the previous handoff summary, the files changed and the decisions.
+  - **Why not one conversation for the thread's whole life**, as first designed: a fresh session with a complete brief costs less, and behaves more predictably, than replaying a 25,000 to 45,000-token implement conversation on every call of the rework. Keeping the transcript per thread (`threads/{threadId}/sessions`) is a small change to `WorkerOptions.SessionsDirectory` if a rework is ever seen to fail for lack of the earlier conversation.
+- **Decision scan.** Runs in its own fresh session (`scan-{runId}`), so it looks at the request before anyone has committed to an approach. A nudge or a resume of the scan reuses it.
+- **Review.** Always runs in a fresh session (`review-{guid}`, created once per run and kept on the run), for independence and a small context. A nudge or a resume of the review reuses it.
+  - **Review depth is chosen by the host, without a model call** (`ReviewPlanner`; scored since 2026-10-06, prompt revision m1.12). Each risk signal adds to a score, and the score picks the depth: **0 is no review, 1 to 5 a light review, 6 or more a full one.**
+    - **Enough for a full review on their own (6):** paths touching auth or security, schema or migrations, storage or data formats; added code that locks or runs concurrently, or runs processes or injects markup; a verification that is not clean; a diff that could not be read; no submission.
+    - **3:** more than 150 changed lines outside tests, or more than 8 files; build, dependency or deployment configuration; code that writes or stores data; a removed or changed public declaration; acceptance criteria without a test, or none mapped.
+    - **1:** more than 40 changed lines outside tests, or more than 4 files; added asynchronous code.
+    - So a change gets **no review** only when it has at most 40 lines outside tests in at most 4 files, no signal, a clean verification and every criterion tested. `FACTORY_REVIEW_NONE=off` keeps at least a light review on every change.
+    - A **light review** is one look at the evidence and the diff, with no reading round the repository and no running code. A **full review** may read and run code. The thread says which review a change got, its score and why.
+    - *Why (decided after ReadM_SoftwareFactory_ReviewGuidance.md):* review cost 10% to 44% of a task, and a tiny check task spent 44% on a light review that found nothing. The categories the guidance lists for a deep review, which is where M1's worst defects were, stay full on their own. Open: F8's 511-line change to the database core scored 4 and got only a light review (which still found a blocking defect); size outside the named paths may need more weight.
   - **A review has an allowance.** A light review is asked to submit after 2 model calls and stopped after 6 tool calls (the 2 it needs, plus room for a kernel error or a rejected submission). A full review is asked after 12 calls, or once it has cost half of what this run's implementation cost (at least 40,000 tokens), and stopped after 24 tool calls. "Asked" is a steer at the next safe point, noted in the thread. A review stopped at its tool-call limit is reminded once to submit what it has, and blocked only if it still does not.
   - **The reviewer sees the agent's account**: its summary, its criterion-to-test mapping and its known limitations, labelled as claims to check, after the host's own verification result.
   - **Every model call records its phase** (Implement, Rework, Repair, Nudge, Review, LightReview), so the budget panel shows the review's cost against the implementation's.
   - **The review of a rework run covers the rework.** Its brief carries the diff since the last handoff and what the tester asked for, and says the earlier work was already reviewed. On the first real tasks a rework's review re-reviewed the whole task and cost more than the task's first implementation.
 - **Calls are what cost.** A turn's cost is its context size times the number of model calls it makes, and every brief says so: read the files you need in one script, read each once, and (for review) do not repeat the factory's verification. The first real runs made 30 to 60 calls a turn.
+- **Cost notes** (decided 2026-10-06, prompt revision m1.13). Brief wording alone did not change how much an implementation read or how many calls it made: on R3 the context grew from 6,000 to 115,000 tokens over 69 calls, and 61% of the implementation was that context re-read. So an implement, rework or repair turn is told its real figures while it works: when its context first passes 50,000, 80,000 and 110,000 tokens, and every 15 calls, never within 5 calls of the last note. The note gives the calls so far, the context size, what the last call cost, and what fills the context (whole files printed from kernel code, test output, file-tool results), and asks the agent to read only the lines it needs and put edits and a test run in one script. It says it is not a stop. It is appended to the conversation like any steer, so nothing earlier changes and the provider's prompt cache is unaffected; the thread notes each one. Reviews and scans get none. `FACTORY_COST_NOTES=off` turns them off. Open: a repair turn that starts past a threshold gets a note on its first call.
+- **Old tool output is never dropped or rewritten.** Removing anything earlier in a conversation changes the start of every later request, so the provider's cache misses on every call; anything that shortens the context is applied to new output only, as it is produced.
 - **Stable prefix.** The system prompt and tool list never change within a session; per-run material goes into user messages. That keeps provider prompt caches useful.
-- **Compaction before large turns.** Before starting a rework or repair turn, the host checks the session's context size against **the engine's own compaction trigger** for the model's window (`CompactionSettings.ForContextWindow`: 65% of the window, capped at 250,000 tokens, which is where a million-token model lands). Past it, the host compacts first with a factory-specific instruction:
+- **Compaction before large turns.** Before starting a rework or repair turn in the thread session, the host checks the session's context size against **the engine's own compaction trigger** for the model's window (`CompactionSettings.ForContextWindow`: 65% of the window, capped at 250,000 tokens, which is where a million-token model lands). Past it, the host compacts first with a factory-specific instruction:
   - keep the acceptance criteria, decisions, the files changed and their purpose, and outstanding failures;
   - drop raw tool output.
 
   Compaction goes through the gateway and counts against the task budget, like any other call.
 
+  Since the thread session lasts one run, this matters in practice only for a repair turn late in a long run. A rework run's first turn starts on an empty session and is never compacted.
+
   The factory deliberately has no lower trigger of its own. The engine's figure comes from cost measurements: compacting a smaller context costs more in re-reading what the summary dropped than it saves, and a cut keeps the most recent part of the conversation verbatim (about 78,000 tokens for a million-token window), so a small session has nothing old enough to cut. The sessions in the first real runs were 25,000 to 45,000 tokens, and are rightly left alone.
 - **Rules survive compaction.** A compaction summary keeps the request and the decisions, not the rules. So the rework and repair briefs restate the execution contract instead of pointing back at the run brief.
-- **Bounded tool output.** The existing shell output truncation applies. Excerpts from verification reports are bounded by the host before they enter a brief.
+- **Bounded tool output.** Everything a tool returns stays in the conversation and is paid for again on every later call, so the factory bounds it where it is produced:
+  - **A kernel script** returns at most 24,000 characters, keeping its start and its end; the rest goes to a scratch file, and the agent is told where (`outputCapChars`; an 8,000-character head-only cap hid test summaries and was replaced).
+  - **`read_file`** returns at most 400 lines or 20KB unless asked for more, with a note on how to continue.
+  - **A test run** in any common runner (dotnet test, Vitest, Jest, Mocha, npm/pnpm/yarn/bun test, pytest, go test, cargo test, Maven, Gradle) is cut to its exit line, its failures with six lines of context each (at most 150 lines) and its last 15 lines, once its output passes 4,000 characters. The whole output is saved under the run (`runs/{runId}/test-output`), outside the working copy so it is never committed, and the note says where. On R3 test output was 27% of the tool output in context.
+  - A `dotnet test` without a hang timeout gets `--blame-hang-timeout 2m --blame-hang-dump-type none`, so a hanging test stops and names itself.
+  - Excerpts from verification reports are bounded by the host before they enter a brief.
 
 ## 9. Token budget and the model gateway
 
@@ -513,6 +535,7 @@ Every model call is admitted by the host before it is sent:
 1. Atomically read the task's used tokens, open reservations and the user's quota, under the thread's budget-row lock.
 2. Estimate the complete request input: system prompt, tool schemas and messages. Work out what that input is expected to be charged: the part the provider's cache is expected to serve counts at the cached weight (§9.1), the rest in full.
    - Input is expected from the cache only when the session's previous call was itself served from the cache and settled within the cache window (4 minutes). Then all of that call's input is expected to be cached. A first call, a provider that does not cache, or a session resumed after a pause is reserved in full.
+   - Once a session's cache has been proven, a single call that misses it does not end that: the next call still expects the cache, and only two misses in a row are reserved in full. On R2 one miss made the next reservation assume no cache, about 104,000 tokens for a call that cost 8,000, and every resume paused again at once.
 3. The input reservation is that expected charge plus a configurable margin (default 10%) for estimator error.
 4. If the input reservation plus a **minimum output** (4,096 tokens) does not fit the remaining task allowance or the user's quota, refuse **before sending**. The run moves to `PausedBudget` with changes and checkpoint preserved.
 5. Otherwise send the call with the provider's output limit (`ChatRequest.MaxOutputTokens`) set to what remains after the input reservation, up to the output allowance (32,768). The reservation is the input reservation plus that output limit, so the call cannot exceed it. The output limit carries no margin: the provider enforces it.
@@ -550,6 +573,13 @@ Worker process                                 Litos.SoftwareFactory.Host
 - `GatewayChatProvider` is a small new `IChatProvider` in the worker. The agent loop already sends every call through a single `IChatProvider.StreamAsync` (`Litos.Agent/AgentLoop.cs`, `Litos.Agent/Session/Compactor.cs`), so no loop change is needed.
 - The gateway is the single place for per-provider concurrency limits. HTTP 429 (`ChatProviderRateLimitedException`) becomes "wait and retry with the reservation kept", not a failed run.
 - Provider keys belong to the host's own configuration (environment or secret store), not to the `~/.litos/config.json` of whichever account started it.
+- **Retries work the same for every provider** (`ProviderFailures` reads the whole exception chain and the HTTP status from any SDK's exception: 408, 5xx and 529 are transient, 429 is a rate limit).
+  - A call that fails before producing anything is sent again, up to twice; a 429 is waited out.
+  - A call's events are held until it completes, with heartbeats to the worker meanwhile. A stream that breaks part-way (OpenRouter once ended 3,479 bytes into a tool call's arguments) is sent again, up to twice, each attempt reserved and charged on its own.
+  - A call that reaches its output limit having produced no reply (a reasoning model that spent the whole allowance thinking) is charged and reported as an output-limit cut-off, not passed on as an empty reply (§8.5).
+- **Who served each call is recorded** (`UsageInfo.ServedBy`, kept on the usage entry): a router's upstream when the provider reports one, otherwise the provider itself. A cache lives with whoever served the call, so this is what explains a call that missed it.
+- **A routing provider is asked for the upstream that served the task last** (`ChatRequest.PreferredUpstream`, decided 2026-10-06). The gateway loads it from the store on a run's first call, so a resumed run keeps it. OpenRouter asks for that upstream first with fallbacks still allowed, so a call is never refused for it; a provider that does not route ignores it. After a two-minute pause R3's session had moved from one upstream to another, and its first call found no cache: 110,000 tokens. R2 lost about 281,000 to calls like that, a third of its cost.
+- **A turn whose result is recorded is over.** From kernel code the model never sees a completion tool's reply unless it prints it, so it used to check and submit again; the turn's next call is answered by the gateway, free, with a reply that ends it.
 
 ### 9.4 Budget precision per provider
 
@@ -675,7 +705,8 @@ The factory machine must have each stack's toolchain installed. Profile validati
 - what changed, and which acceptance criteria it addresses;
 - branch name, commit SHA, draft PR link, and the baseline-relative diff with the changed-file list;
 - exact build and test commands, results, durations, new versus pre-existing tests, and changed-line coverage against the threshold;
-- agent review findings, fixed and open;
+- agent review findings, fixed and open, or that the change needed no review and why;
+- the choices the decision scan assumed without asking ("Assumed, not asked: …");
 - pre-existing failures, unverified behavior and known limitations;
 - migration scripts, labeled `Not applied / not database-tested`;
 - manual test steps with expected results and setup, derived from the acceptance criteria;
@@ -828,10 +859,10 @@ All primary keys are UUIDs. Timestamps are `timestamptz` in UTC. Token counts an
 | Specification | Thread, revision, summary, acceptance criteria (JSONB), approved by/at |
 | TaskRun | Thread, kind (Chat/Spec/Implement/Review/Reflection), status, baseline commit, head commit, worker PID and start time, checkpoint, heartbeat, stop reason |
 | Decision | Run, question/options/recommendation, status, answer message, answered by |
-| UsageReservation / UsageEntry | Request key, run, user, provider/model, estimate, reserved, actual input/cached/output/reasoning, status (Reserved/Settled/Unknown) |
+| UsageReservation / UsageEntry | Request key, run, user, provider/model, estimate, reserved, actual input/cached/output/reasoning, status (Reserved/Settled/Unknown), phase (Scan/Implement/Rework/Repair/Nudge/Review/LightReview), who served the call (`ServedBy`) |
 | ToolExecution | Run, tool, start/end, exit code, artifact reference |
 | Verification | Run, profile revision, kind, result, counts, changed-line coverage, command, diff hash, report and log references |
-| ReviewFinding | Run, severity, file/line, text, status (Open/Fixed/Dismissed) |
+| ReviewFinding | Run, severity, file/line, text, status (Open/Fixed/Dismissed), a person's verdict (Real/NotWorthFixing/Wrong), who gave it and when |
 | ChangeSet | Baseline, file manifest, patch reference, content hashes |
 | Handoff | Run, commit SHA, branch, PR number/URL, pushed by, evidence summary |
 | WorkspaceLease | Lock identity, owning thread/run, kind (Active/ReviewHold), heartbeat, recovery-required flag |
@@ -990,6 +1021,19 @@ The implementation architecture (projects, contracts, ports, schema and build or
   - no lock violations.
 - **If the gate is missed,** iterate on the prompts, orchestration and tools, and re-run the same task set, before starting M2.
 - **Results** are recorded per run, together with the prompt revision (§8.5). The task set is kept as a regression suite for later milestones.
+
+**M1 result (2026-10-06): the gate is met.** Details, per task and per fix, are in [docs/software-factory/evaluation/m1-results.md](docs/software-factory/evaluation/m1-results.md).
+
+- **7 of 12 tasks accepted with at most one rework:** F1, F2, F3, F4, F6, F7 and F8. F3 and F6 were accepted on re-runs after the fixes their first runs led to.
+- **Not accepted:** F5 (its rework ended Blocked) and R1, R2, R3 and R4, which all paused on budget during their first implementation. R2's and R3's code met their criteria in the end.
+- **Evidence mismatches: 0. Lock violations: 0.** No call spent past a cap: the gateway paused instead, and a paused task counts as failed.
+- **The prompt revision moved from m1.1 to m1.13** as the evaluation found problems. The largest changes were the decision scan, the rework top-up, the scored review, and the three cost changes that brought F8 to 577,612 tokens against a 1,200,000 cap, where R4 spent 1,279,668 without submitting.
+- **Open going into M2:**
+  - the scan asks too often on requests that need no decision (§4);
+  - review depth for large changes outside the named risk paths (§8.6);
+  - finding verdicts are not yet being recorded, so review yield cannot be measured;
+  - the cost changes have not been run on the React repository, where R1 to R4 failed;
+  - a repair turn that starts past a threshold gets a cost note on its first call.
 
 ### M2: collaboration and concurrency
 
