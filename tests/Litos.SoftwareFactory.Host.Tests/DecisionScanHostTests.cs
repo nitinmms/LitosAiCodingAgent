@@ -174,4 +174,11 @@ public class ScanOptionsTests
 
     [Fact]
     public void ScanOnlyCanBeTurnedOn() => Assert.True(From(("FACTORY_SCAN_ONLY", "1")).Limits.ScanOnly);
+
+    [Fact]
+    public void NoReviewIsAllowedByDefault_AndCanBeTurnedOff()
+    {
+        Assert.True(From().Limits.AllowNoReview);
+        Assert.False(From(("FACTORY_REVIEW_NONE", "off")).Limits.AllowNoReview);
+    }
 }

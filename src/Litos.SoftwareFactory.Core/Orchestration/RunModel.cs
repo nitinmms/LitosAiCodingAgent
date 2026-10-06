@@ -34,11 +34,28 @@ public sealed record RunLimits
 
     // ---- Review depth and allowance (ReviewPlanner, TurnAllowance) ----
 
-    /// <summary>A change with more added lines than this outside tests gets a full review.</summary>
+    /// <summary>More added lines than this outside tests adds 3 to a change's risk score.</summary>
     public int LightReviewMaxChangedLines { get; init; } = 150;
 
-    /// <summary>A change touching more files than this gets a full review.</summary>
+    /// <summary>More files than this adds 3 to a change's risk score.</summary>
     public int LightReviewMaxFiles { get; init; } = 8;
+
+    /// <summary>More added lines than this outside tests (and no more than the light limit)
+    /// adds 1: a change past it is not small enough to go unreviewed.</summary>
+    public int NoReviewMaxChangedLines { get; init; } = 40;
+
+    /// <summary>More files than this (and no more than the light limit) adds 1.</summary>
+    public int NoReviewMaxFiles { get; init; } = 4;
+
+    /// <summary>The risk score from which a change gets a light review; below it, none. At 1,
+    /// any signal at all earns a review (ReviewPlanner).</summary>
+    public int LightReviewFromScore { get; init; } = 1;
+
+    /// <summary>The risk score from which a change gets a full review.</summary>
+    public int FullReviewFromScore { get; init; } = 6;
+
+    /// <summary>False keeps at least a light review on every change (FACTORY_REVIEW_NONE=off).</summary>
+    public bool AllowNoReview { get; init; } = true;
 
     /// <summary>A light review is asked to submit after this many model calls...</summary>
     public int LightReviewWrapUpCalls { get; init; } = 2;
@@ -219,6 +236,10 @@ public sealed record TurnEnded(
     TurnEndReason Reason, Submission? Submission = null, bool FilesChanged = false, string? Detail = null) : StepOutcome;
 
 public sealed record DecisionAnswered(string Answer) : StepOutcome;
+
+/// <summary>The host was about to start a review and its planner judged none was needed
+/// (ReviewDepth.None): no turn ran.</summary>
+public sealed record ReviewNotNeeded : StepOutcome;
 
 /// <summary>Baseline is the same profile run on the base commit, so pre-existing failures are known.</summary>
 public sealed record Verified(VerificationOutcome Outcome, VerificationOutcome? Baseline = null) : StepOutcome;

@@ -12,16 +12,25 @@ public enum ReviewDepth
 
     /// <summary>The reviewer may read files and run code, within its allowance.</summary>
     Full,
+
+    /// <summary>No agent review: a small change with no risk signal, a clean verification and
+    /// every criterion tested. The handoff says it was not reviewed, and why.</summary>
+    None,
 }
 
-/// <param name="Reasons">Why this depth: for a full review, every risk signal found; for a light
-/// one, a one-line description of the change.</param>
-public sealed record ReviewPlan(ReviewDepth Depth, IReadOnlyList<string> Reasons)
+/// <param name="Reasons">Why this depth: every risk signal found, or for a change with none, a
+/// one-line description of it.</param>
+/// <param name="Score">The risk score the depth was chosen from.</param>
+public sealed record ReviewPlan(ReviewDepth Depth, IReadOnlyList<string> Reasons, int Score = 0)
 {
-    /// <summary>The line the thread shows when the review starts.</summary>
-    public string Describe() => Depth == ReviewDepth.Light
-        ? $"Review: light. {string.Join(" ", Reasons)}"
-        : $"Review: full, because {string.Join("; ", Reasons)}.";
+    /// <summary>The line the thread shows when the review starts, or is skipped.</summary>
+    public string Describe() => Depth switch
+    {
+        ReviewDepth.None => $"Review: none needed (risk score {Score}). {string.Join(" ", Reasons)}",
+        ReviewDepth.Light when Score == 0 => $"Review: light (risk score 0). {string.Join(" ", Reasons)}",
+        ReviewDepth.Light => $"Review: light (risk score {Score}), because {string.Join("; ", Reasons)}.",
+        _ => $"Review: full (risk score {Score}), because {string.Join("; ", Reasons)}.",
+    };
 }
 
 /// <summary>What the host knows about a change when its review is about to start.</summary>
@@ -35,60 +44,75 @@ public sealed record ReviewInputs(
 
 /// <summary>
 /// Chooses how deep a review must go, from the host's own evidence, without a model call
-/// (docs/software-factory/m1-architecture.md; ReadMe_CodeVerifyOptimisations.md §9). Review was
-/// about a third of every task's tokens in the first real runs, and a small, low-risk change paid
-/// the same open-ended review as a change to the file format or the locking. A light review is
-/// one look at the evidence; a full review may read and run code.
+/// (docs/software-factory/m1-architecture.md; ReadM_SoftwareFactory_ReviewGuidance.md §7). Review
+/// was a quarter of a task's tokens on average in M1 (10% to 44%), and a small, safe change paid
+/// for a review that found nothing. A light review is one look at the evidence; a full review may
+/// read and run code; a change with nothing to say about it gets none.
 ///
-/// The rule leans to full: any one risk signal makes the review full. Signals are deliberately
-/// crude — names and keywords, not analysis — because a false "full" costs tokens while a false
-/// "light" can let a defect through.
+/// Each risk signal adds to a score, and the score picks the depth: below
+/// <see cref="RunLimits.LightReviewFromScore"/> no review, from it a light one, from
+/// <see cref="RunLimits.FullReviewFromScore"/> a full one. Signals are deliberately crude — names
+/// and keywords, not analysis. The categories the guidance lists for a deep review, where M1's
+/// worst defects were (a file format that made existing databases unreadable, a locking change
+/// that hung), weigh enough for a full review on their own; and with the default limits any
+/// signal at all earns at least a light review, because a false "none" can let a defect through.
 /// </summary>
 public static partial class ReviewPlanner
 {
+    /// <summary>Enough on its own for a full review with the default limits.</summary>
+    internal const int Severe = 6;
+
     public static ReviewPlan Plan(ReviewInputs inputs, RunLimits limits)
     {
-        var reasons = new List<string>();
+        var signals = new List<(string Reason, int Weight)>();
         var production = inputs.Files.Where(f => !IsTest(f.Path)).ToList();
         var productionLines = production.Sum(f => f.AddedLineCount);
         var removedPublic = RemovedPublicMembers(inputs.Patch);
 
         if (inputs.Files.Count == 0)
-            reasons.Add("the diff could not be read");
+            signals.Add(("the diff could not be read", Severe));
         if (productionLines > limits.LightReviewMaxChangedLines)
-            reasons.Add($"it changes {productionLines} lines outside tests (light review is for up to {limits.LightReviewMaxChangedLines})");
+            signals.Add(($"it changes {productionLines} lines outside tests (light review is for up to {limits.LightReviewMaxChangedLines})", 3));
+        else if (productionLines > limits.NoReviewMaxChangedLines)
+            signals.Add(($"it changes {productionLines} lines outside tests (no review is for up to {limits.NoReviewMaxChangedLines})", 1));
         if (inputs.Files.Count > limits.LightReviewMaxFiles)
-            reasons.Add($"it touches {inputs.Files.Count} files (light review is for up to {limits.LightReviewMaxFiles})");
+            signals.Add(($"it touches {inputs.Files.Count} files (light review is for up to {limits.LightReviewMaxFiles})", 3));
+        else if (inputs.Files.Count > limits.NoReviewMaxFiles)
+            signals.Add(($"it touches {inputs.Files.Count} files (no review is for up to {limits.NoReviewMaxFiles})", 1));
 
-        foreach (var signal in PathSignals(production.Select(f => f.Path)))
-            reasons.Add(signal);
-        foreach (var signal in CodeSignals(AddedProductionLines(inputs.Patch)))
-            reasons.Add(signal);
+        signals.AddRange(PathSignals(production.Select(f => f.Path)));
+        signals.AddRange(CodeSignals(AddedProductionLines(inputs.Patch)));
         if (removedPublic > 0)
-            reasons.Add($"it removes or changes {removedPublic} public declaration{(removedPublic == 1 ? "" : "s")}");
+            signals.Add(($"it removes or changes {removedPublic} public declaration{(removedPublic == 1 ? "" : "s")}", 3));
 
         if (VerificationConcern(inputs.Verification) is { } concern)
-            reasons.Add(concern);
+            signals.Add((concern, Severe));
 
         switch (inputs.Submission)
         {
             case null:
-                reasons.Add("there is no submission to check the change against");
+                signals.Add(("there is no submission to check the change against", Severe));
                 break;
             case { Criteria.Count: 0 }:
-                reasons.Add("the agent mapped no acceptance criterion to a test");
+                signals.Add(("the agent mapped no acceptance criterion to a test", 3));
                 break;
             case var submission when submission.Criteria.Count(c => c.Tests.Count == 0 && !c.ManualOnly) is var untested and > 0:
-                reasons.Add($"{untested} acceptance criteri{(untested == 1 ? "on has" : "a have")} no test");
+                signals.Add(($"{untested} acceptance criteri{(untested == 1 ? "on has" : "a have")} no test", 3));
                 break;
         }
 
-        if (reasons.Count > 0)
-            return new ReviewPlan(ReviewDepth.Full, reasons.Distinct().ToList());
-
+        var distinct = signals.DistinctBy(s => s.Reason).ToList();
+        var score = distinct.Sum(s => s.Weight);
+        var reasons = distinct.Select(s => s.Reason).ToList();
         var fileCount = inputs.Files.Count;
-        return new ReviewPlan(ReviewDepth.Light,
-            [$"A small change ({productionLines} line{(productionLines == 1 ? "" : "s")} outside tests in {fileCount} file{(fileCount == 1 ? "" : "s")}) with a clean verification and no risk signals."]);
+        var small = $"A small change ({productionLines} line{(productionLines == 1 ? "" : "s")} outside tests in {fileCount} file{(fileCount == 1 ? "" : "s")}) "
+            + "with a clean verification, every criterion tested and no risk signals.";
+
+        if (score >= limits.FullReviewFromScore)
+            return new ReviewPlan(ReviewDepth.Full, reasons, score);
+        if (score >= limits.LightReviewFromScore || !limits.AllowNoReview)
+            return new ReviewPlan(ReviewDepth.Light, reasons.Count > 0 ? reasons : [small], score);
+        return new ReviewPlan(ReviewDepth.None, [small], score);
     }
 
     /// <summary>Test code: a defect there fails a test, it does not ship.</summary>
@@ -101,38 +125,38 @@ public static partial class ReviewPlanner
     [GeneratedRegex(@"(^|/)(tests?|__tests__|spec|specs|test-?fixtures?)/|(\.|_|-)(test|tests|spec)\.[a-z0-9]+$|Tests?\.cs$", RegexOptions.IgnoreCase)]
     private static partial Regex TestPath();
 
-    private static readonly (Regex Pattern, string Signal)[] PathRules =
+    private static readonly (Regex Pattern, string Signal, int Weight)[] PathRules =
     [
-        (new(@"(auth|login|permission|role|password|secret|token|credential|crypt|security)", RegexOptions.IgnoreCase), "it touches authentication or security code"),
-        (new(@"(migration|schema|\.sql$)", RegexOptions.IgnoreCase), "it touches a schema or migration"),
-        (new(@"(storage|format|serializ|persist|protocol|wire)", RegexOptions.IgnoreCase), "it touches storage or a data format"),
-        (new(@"(^|/)(\.github|\.gitlab|ci|build|deploy|infra)/|(\.csproj|\.props|\.targets|\.sln|\.slnx|package\.json|package-lock\.json|global\.json|tsconfig[^/]*\.json|vite\.config\.[a-z]+|dockerfile)$", RegexOptions.IgnoreCase), "it changes build, dependency or deployment configuration"),
+        (new(@"(auth|login|permission|role|password|secret|token|credential|crypt|security)", RegexOptions.IgnoreCase), "it touches authentication or security code", Severe),
+        (new(@"(migration|schema|\.sql$)", RegexOptions.IgnoreCase), "it touches a schema or migration", Severe),
+        (new(@"(storage|format|serializ|persist|protocol|wire)", RegexOptions.IgnoreCase), "it touches storage or a data format", Severe),
+        (new(@"(^|/)(\.github|\.gitlab|ci|build|deploy|infra)/|(\.csproj|\.props|\.targets|\.sln|\.slnx|package\.json|package-lock\.json|global\.json|tsconfig[^/]*\.json|vite\.config\.[a-z]+|dockerfile)$", RegexOptions.IgnoreCase), "it changes build, dependency or deployment configuration", 3),
     ];
 
-    private static IEnumerable<string> PathSignals(IEnumerable<string> paths)
+    private static IEnumerable<(string Reason, int Weight)> PathSignals(IEnumerable<string> paths)
     {
         var list = paths.Select(p => p.Replace('\\', '/')).ToList();
-        foreach (var (pattern, signal) in PathRules)
+        foreach (var (pattern, signal, weight) in PathRules)
         {
             if (list.Any(pattern.IsMatch))
-                yield return signal;
+                yield return (signal, weight);
         }
     }
 
-    private static readonly (Regex Pattern, string Signal)[] CodeRules =
+    private static readonly (Regex Pattern, string Signal, int Weight)[] CodeRules =
     [
-        (new(@"\block\s*\(|\bMonitor\.|\bInterlocked\.|\bSemaphoreSlim\b|\bReaderWriterLock|\bMutex\b|\bvolatile\b|\bConcurrent[A-Z]\w*|\bParallel\.|\bnew Thread\b|\bTask\.Run\b|\bAtomics\.", RegexOptions.None), "it changes locking or concurrency"),
-        (new(@"\basync\b|\bawait\b|\bConfigureAwait\b|\bPromise\.(all|race|any)\b", RegexOptions.None), "it adds asynchronous code"),
-        (new(@"\bFileStream\b|\bFile\.(Write|Append|Delete|Move|Replace|Open)|\bRandomAccess\.|\bBinaryPrimitives\.|\bfs\.(write|append|unlink|rename|rm)|\blocalStorage\b|\bindexedDB\b", RegexOptions.None), "it changes how data is written or stored"),
-        (new(@"\b(Process\.Start|exec\(|spawn\(|eval\(|innerHTML|dangerouslySetInnerHTML)\b", RegexOptions.None), "it runs processes or injects code or markup"),
+        (new(@"\block\s*\(|\bMonitor\.|\bInterlocked\.|\bSemaphoreSlim\b|\bReaderWriterLock|\bMutex\b|\bvolatile\b|\bConcurrent[A-Z]\w*|\bParallel\.|\bnew Thread\b|\bTask\.Run\b|\bAtomics\.", RegexOptions.None), "it changes locking or concurrency", Severe),
+        (new(@"\basync\b|\bawait\b|\bConfigureAwait\b|\bPromise\.(all|race|any)\b", RegexOptions.None), "it adds asynchronous code", 1),
+        (new(@"\bFileStream\b|\bFile\.(Write|Append|Delete|Move|Replace|Open)|\bRandomAccess\.|\bBinaryPrimitives\.|\bfs\.(write|append|unlink|rename|rm)|\blocalStorage\b|\bindexedDB\b", RegexOptions.None), "it changes how data is written or stored", 3),
+        (new(@"\b(Process\.Start|exec\(|spawn\(|eval\(|innerHTML|dangerouslySetInnerHTML)\b", RegexOptions.None), "it runs processes or injects code or markup", Severe),
     ];
 
-    private static IEnumerable<string> CodeSignals(IReadOnlyList<string> addedLines)
+    private static IEnumerable<(string Reason, int Weight)> CodeSignals(IReadOnlyList<string> addedLines)
     {
-        foreach (var (pattern, signal) in CodeRules)
+        foreach (var (pattern, signal, weight) in CodeRules)
         {
             if (addedLines.Any(pattern.IsMatch))
-                yield return signal;
+                yield return (signal, weight);
         }
     }
 

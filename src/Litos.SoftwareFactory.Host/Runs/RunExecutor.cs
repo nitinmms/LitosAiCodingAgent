@@ -273,6 +273,8 @@ public sealed class RunExecutor(
 
         var (context, diff) = await BriefContextAsync(data, step, hostStopping);
         var (phase, allowance) = await ReviewAllowanceAsync(data, state, step, diff, hostStopping);
+        if (phase == NoReviewPhase)
+            return new ReviewNotNeeded();
         if (phase == "LightReview")
             context = context with { ReviewDepth = ReviewDepth.Light };
 
@@ -362,6 +364,9 @@ public sealed class RunExecutor(
     /// and the evidence, and the thread says which it got and why. A reminder gets a small
     /// allowance, since it has already looked; a resumed review continues as a full one.
     /// </summary>
+    /// <summary>The phase ReviewAllowanceAsync returns for a change that needs no review: no turn runs.</summary>
+    private const string NoReviewPhase = "NoReview";
+
     private async Task<(string Phase, TurnAllowance? Allowance)> ReviewAllowanceAsync(
         RunData data, RunState state, StartTurnStep step, WorkspaceDiff? diff, CancellationToken ct)
     {
@@ -384,7 +389,12 @@ public sealed class RunExecutor(
 
         var plan = ReviewPlanner.Plan(new ReviewInputs(diff.Files, diff.Patch, state.LastVerification, state.LastSubmission), options.Limits);
         await NoteAsync(data, plan.Describe());
-        return (plan.Depth == ReviewDepth.Light ? "LightReview" : "Review", TurnAllowance.ForReview(plan.Depth, implementation, options.Limits));
+        return plan.Depth switch
+        {
+            ReviewDepth.None => (NoReviewPhase, null),
+            ReviewDepth.Light => ("LightReview", TurnAllowance.ForReview(ReviewDepth.Light, implementation, options.Limits)),
+            _ => ("Review", TurnAllowance.ForReview(ReviewDepth.Full, implementation, options.Limits)),
+        };
     }
 
     private async Task<(RunContext Context, WorkspaceDiff? Diff)> BriefContextAsync(RunData data, StartTurnStep step, CancellationToken ct)

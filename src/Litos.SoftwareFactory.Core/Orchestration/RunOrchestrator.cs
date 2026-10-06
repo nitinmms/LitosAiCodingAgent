@@ -35,6 +35,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             TurnEnded turn => OnTurnEnded(state, turn),
             DecisionAnswered answer => OnDecisionAnswered(state, answer, now),
             Verified verified => OnVerified(state, verified),
+            ReviewNotNeeded => OnReviewNotNeeded(state),
             HandoffCompleted handoff => OnHandoff(state, handoff),
             _ => throw new InvalidOperationException($"Unknown step outcome {outcome.GetType().Name}."),
         };
@@ -296,6 +297,14 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         return Enter(
             state with { ReviewCutOffs = cutOffs, Review = ReviewStatus.NotRun, Disclosures = [.. state.Disclosures, disclosure] },
             new HandoffStep());
+    }
+
+    /// <summary>A change too small and safe to need an agent review goes straight to handoff,
+    /// which says it was not reviewed.</summary>
+    private static RunTransition OnReviewNotNeeded(RunState state)
+    {
+        Require(state.Phase == RunPhase.Turn && state.WorkTurn == TurnKind.Review, state, "skip a review");
+        return Enter(state with { ReviewCompleted = true, Review = ReviewStatus.NotNeeded }, new HandoffStep());
     }
 
     private RunTransition OnReviewTurnCompleted(RunState state, TurnEnded turn)

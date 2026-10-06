@@ -56,8 +56,9 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
 /// </summary>
 public static partial class BriefComposer
 {
-    /// <summary>Bump whenever any template or any text composed here changes.</summary>
-    public const string Revision = "m1.11";
+    /// <summary>Bump whenever any template or any text composed here changes, and when the turns
+    /// a run is given change (m1.12: review depth is scored, and a small safe change gets none).</summary>
+    public const string Revision = "m1.12";
 
     private const int CharsPerToken = 4;
 

@@ -99,6 +99,31 @@ public class OutputLimitTests
         Assert.Contains("The decision scan did not finish", Assert.Single(run.State.Disclosures));
     }
 
+    /// <summary>A change too small and safe for a review goes straight to handoff, and the
+    /// handoff's evidence says it was not reviewed.</summary>
+    [Fact]
+    public void AReviewNotNeeded_HandsOff_WithTheReviewMarkedNotNeeded()
+    {
+        var run = new Run();
+        run.AtReview();
+
+        var next = run.Report(new ReviewNotNeeded());
+
+        Assert.IsType<HandoffStep>(next);
+        Assert.Equal(ReviewStatus.NotNeeded, run.State.Review);
+        Assert.True(run.State.ReviewCompleted);
+        Assert.Empty(run.State.Disclosures);
+    }
+
+    [Fact]
+    public void AReviewNotNeeded_OutsideAReviewTurn_IsAHostBug()
+    {
+        var run = new Run();
+        run.Started();
+
+        Assert.Throws<InvalidOperationException>(() => run.Report(new ReviewNotNeeded()));
+    }
+
     [Fact]
     public void TheCheckpointKeepsTheReviewCutOffCount()
     {

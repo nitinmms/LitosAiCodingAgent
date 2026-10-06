@@ -494,6 +494,9 @@ public sealed class TestHost : IAsyncDisposable
             PollInterval = TimeSpan.FromMilliseconds(100),
             Budget = new BudgetPolicy { OutputAllowanceTokens = 4_000, Margin = 0.10 },
         };
+        // The scripted changes are small and clean, so the planner would skip their review; the
+        // tests of the review pipeline need one. NoReviewRunTests turns this back on.
+        Options.Limits = Options.Limits with { AllowNoReview = false };
         configure?.Invoke(Options);
 
         App = FactoryHostApp.Build(["--urls", "http://127.0.0.1:0"], Options, s =>

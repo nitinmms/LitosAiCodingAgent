@@ -635,6 +635,12 @@ describe('a handoff', () => {
     expect(card.queryByRole('link')).not.toBeInTheDocument();
   });
 
+  it('says plainly when a change was not reviewed because it did not need one', async () => {
+    const { card } = await handedOff({ review: 'NotNeeded', findings: [] });
+
+    expect(card.getByText('Not needed (a small change with no risk signals)')).toBeInTheDocument();
+  });
+
   it('fills the verification panel and the changed files', async () => {
     await handedOff();
 

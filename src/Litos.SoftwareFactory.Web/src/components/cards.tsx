@@ -159,6 +159,8 @@ function reviewLine(e: HandoffEvidence): string {
       return minor ? `${count(blocking, 'finding')} fixed, ${count(minor, 'minor finding')} open` : `${count(blocking, 'finding')} fixed`;
     case 'FindingsOpen':
       return `${count(e.findings.length, 'finding')} open`;
+    case 'NotNeeded':
+      return 'Not needed (a small change with no risk signals)';
     default:
       return 'Not run';
   }

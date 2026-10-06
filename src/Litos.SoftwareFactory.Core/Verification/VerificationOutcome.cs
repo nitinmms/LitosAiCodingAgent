@@ -40,6 +40,9 @@ public enum ReviewStatus
     Clean,
     FindingsFixed,
     FindingsOpen,
+
+    /// <summary>The review planner judged the change too small and safe to need one.</summary>
+    NotNeeded,
 }
 
 public enum HumanTestingStatus

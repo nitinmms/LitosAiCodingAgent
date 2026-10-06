@@ -320,7 +320,7 @@ public sealed class ReviewPlanningRunTests : IAsyncLifetime
         Assert.Contains("# Factory review brief: a light review", Review.Brief);
         Assert.Contains("## The implementing agent's account (claims to check, not facts)", Review.Brief);
         Assert.Equal(6, Review.MaxToolCalls);
-        Assert.Contains(details.Messages, m => m.Text.StartsWith("Review: light. A small change (1 line outside tests in 1 file)"));
+        Assert.Contains(details.Messages, m => m.Text.StartsWith("Review: light (risk score 0). A small change (1 line outside tests in 1 file)"));
         // The implement turn kept the ordinary limit.
         Assert.Equal(200, _host.Workers.Turns.First().MaxToolCalls);
     }

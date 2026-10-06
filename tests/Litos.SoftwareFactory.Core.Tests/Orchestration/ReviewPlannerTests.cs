@@ -8,9 +8,9 @@ using Litos.SoftwareFactory.Core.Verification;
 namespace Litos.SoftwareFactory.Core.Tests.Orchestration;
 
 /// <summary>
-/// Review was about a third of every task's tokens in the first real runs, and a small, safe
-/// change paid the same open-ended review as a change to a file format or to locking. The
-/// planner chooses the depth from the host's own evidence, leaning to full.
+/// Review was a quarter of a task's tokens on average in M1, and a small, safe change paid for a
+/// review that found nothing. The planner scores the host's own evidence and picks no review, a
+/// light one or a full one; anything with something to say about it is reviewed.
 /// </summary>
 public class ReviewPlannerTests
 {
@@ -36,12 +36,23 @@ public class ReviewPlannerTests
     private static ReviewPlan Plan(ReviewInputs inputs) => ReviewPlanner.Plan(inputs, Limits);
 
     [Fact]
-    public void ASmallCleanChangeWithNoRiskSignals_GetsALightReview()
+    public void ASmallCleanChangeWithNoRiskSignals_NeedsNoReview()
     {
         var plan = Plan(Small());
 
+        Assert.Equal((ReviewDepth.None, 0), (plan.Depth, plan.Score));
+        Assert.Equal(
+            "Review: none needed (risk score 0). A small change (12 lines outside tests in 2 files) with a clean verification, every criterion tested and no risk signals.",
+            plan.Describe());
+    }
+
+    [Fact]
+    public void WithNoReviewTurnedOff_ASmallCleanChange_StillGetsALightOne()
+    {
+        var plan = ReviewPlanner.Plan(Small(), Limits with { AllowNoReview = false });
+
         Assert.Equal(ReviewDepth.Light, plan.Depth);
-        Assert.Equal("Review: light. A small change (12 lines outside tests in 2 files) with a clean verification and no risk signals.", plan.Describe());
+        Assert.StartsWith("Review: light (risk score 0). A small change", plan.Describe());
     }
 
     [Fact]
@@ -49,18 +60,55 @@ public class ReviewPlannerTests
     {
         var inputs = Small() with { Files = [File("src/a.ts", 10), File("src/a.test.ts", 900), File("tests/Big/BigTests.cs", 900)] };
 
-        Assert.Equal(ReviewDepth.Light, Plan(inputs).Depth);
+        Assert.Equal(ReviewDepth.None, Plan(inputs).Depth);
+    }
+
+    /// <summary>F7's rework changed one test file; its light review reasoned for 36,006 tokens
+    /// without replying, twice.</summary>
+    [Fact]
+    public void AChangeToTestsOnly_NeedsNoReview()
+    {
+        var inputs = Small(Patch(("tests/StoreTests.cs", "Assert.Single(winners);"))) with { Files = [File("tests/StoreTests.cs", 60)] };
+
+        Assert.Equal(ReviewDepth.None, Plan(inputs).Depth);
     }
 
     [Fact]
-    public void TooManyLinesOutsideTests_MakesItFull_AndSaysHowMany()
+    public void MoreThanASmallChange_GetsALightReview_AndSaysWhy()
+    {
+        var plan = Plan(Small() with { Files = [File("src/a.ts", 41)] });
+
+        Assert.Equal((ReviewDepth.Light, 1), (plan.Depth, plan.Score));
+        Assert.Equal("Review: light (risk score 1), because it changes 41 lines outside tests (no review is for up to 40).", plan.Describe());
+    }
+
+    [Fact]
+    public void MoreThanFourFiles_GetsALightReview()
+    {
+        var files = Enumerable.Range(1, 5).Select(i => File($"src/f{i}.ts", 1)).ToList();
+
+        Assert.Equal(ReviewDepth.Light, Plan(Small() with { Files = files }).Depth);
+    }
+
+    [Fact]
+    public void TooManyLinesOutsideTests_RaisesTheScore_AndSaysHowMany()
     {
         var inputs = Small() with { Files = [File("src/a.ts", 100), File("src/b.ts", 51)] };
 
         var plan = Plan(inputs);
 
-        Assert.Equal(ReviewDepth.Full, plan.Depth);
+        Assert.Equal((ReviewDepth.Light, 3), (plan.Depth, plan.Score));
         Assert.Contains("it changes 151 lines outside tests (light review is for up to 150)", plan.Reasons);
+    }
+
+    [Fact]
+    public void ALargeChangeAcrossManyFiles_GetsAFullReview()
+    {
+        var files = Enumerable.Range(1, 9).Select(i => File($"src/f{i}.ts", 20)).ToList();
+
+        var plan = Plan(Small() with { Files = files });
+
+        Assert.Equal((ReviewDepth.Full, 6), (plan.Depth, plan.Score));
     }
 
     [Fact]
@@ -77,42 +125,54 @@ public class ReviewPlannerTests
         Assert.Contains("it touches 9 files (light review is for up to 8)", Plan(Small() with { Files = files }).Reasons);
     }
 
+    /// <summary>The categories the guidance lists for a deep review are full on their own;
+    /// build and dependency configuration earns a light one.</summary>
     [Theory]
-    [InlineData("src/Auth/LoginController.cs", "authentication or security")]
-    [InlineData("server/permissions.ts", "authentication or security")]
-    [InlineData("db/migrations/0003_add_ttl.sql", "schema or migration")]
-    [InlineData("src/FileDbSharp/Storage/LogFormat.cs", "storage or a data format")]
-    [InlineData("shared/serializer.ts", "storage or a data format")]
-    [InlineData("package.json", "build, dependency or deployment")]
-    [InlineData("src/App/App.csproj", "build, dependency or deployment")]
-    [InlineData(".github/workflows/ci.yml", "build, dependency or deployment")]
-    public void RiskyPaths_MakeItFull(string path, string signal)
+    [InlineData("src/Auth/LoginController.cs", "authentication or security", ReviewDepth.Full)]
+    [InlineData("server/permissions.ts", "authentication or security", ReviewDepth.Full)]
+    [InlineData("db/migrations/0003_add_ttl.sql", "schema or migration", ReviewDepth.Full)]
+    [InlineData("src/FileDbSharp/Storage/LogFormat.cs", "storage or a data format", ReviewDepth.Full)]
+    [InlineData("shared/serializer.ts", "storage or a data format", ReviewDepth.Full)]
+    [InlineData("package.json", "build, dependency or deployment", ReviewDepth.Light)]
+    [InlineData("src/App/App.csproj", "build, dependency or deployment", ReviewDepth.Light)]
+    [InlineData(".github/workflows/ci.yml", "build, dependency or deployment", ReviewDepth.Light)]
+    public void RiskyPaths_RaiseTheReview(string path, string signal, ReviewDepth depth)
     {
         var inputs = Small() with { Files = [File(path, 3)], Patch = Patch((path, "x = 1;")) };
 
         var plan = Plan(inputs);
 
-        Assert.Equal(ReviewDepth.Full, plan.Depth);
+        Assert.Equal(depth, plan.Depth);
         Assert.Contains(plan.Reasons, r => r.Contains(signal));
     }
 
     [Theory]
-    [InlineData("lock (_gate)", "locking or concurrency")]
-    [InlineData("_gate.EnterReadLock(); // ReaderWriterLockSlim", "locking or concurrency")]
-    [InlineData("await Task.Run(() => Work());", "locking or concurrency")]
-    [InlineData("Interlocked.Increment(ref _count);", "locking or concurrency")]
-    [InlineData("public async Task<T> GetAsync()", "asynchronous code")]
-    [InlineData("const data = await response.json();", "asynchronous code")]
-    [InlineData("using var stream = new FileStream(path, FileMode.Open);", "how data is written or stored")]
-    [InlineData("BinaryPrimitives.WriteInt64LittleEndian(span, ticks);", "how data is written or stored")]
-    [InlineData("localStorage.setItem(KEY, json);", "how data is written or stored")]
-    [InlineData("el.innerHTML = html;", "runs processes or injects code or markup")]
-    public void RiskyCode_MakesItFull(string line, string signal)
+    [InlineData("lock (_gate)", "locking or concurrency", ReviewDepth.Full)]
+    [InlineData("_gate.EnterReadLock(); // ReaderWriterLockSlim", "locking or concurrency", ReviewDepth.Full)]
+    [InlineData("await Task.Run(() => Work());", "locking or concurrency", ReviewDepth.Full)]
+    [InlineData("Interlocked.Increment(ref _count);", "locking or concurrency", ReviewDepth.Full)]
+    [InlineData("public async Task<T> GetAsync()", "asynchronous code", ReviewDepth.Light)]
+    [InlineData("const data = await response.json();", "asynchronous code", ReviewDepth.Light)]
+    [InlineData("using var stream = new FileStream(path, FileMode.Open);", "how data is written or stored", ReviewDepth.Light)]
+    [InlineData("BinaryPrimitives.WriteInt64LittleEndian(span, ticks);", "how data is written or stored", ReviewDepth.Light)]
+    [InlineData("localStorage.setItem(KEY, json);", "how data is written or stored", ReviewDepth.Light)]
+    [InlineData("el.innerHTML = html;", "runs processes or injects code or markup", ReviewDepth.Full)]
+    public void RiskyCode_RaisesTheReview(string line, string signal, ReviewDepth depth)
     {
         var plan = Plan(Small(Patch(("src/Orders/OrdersPage.tsx", line))));
 
-        Assert.Equal(ReviewDepth.Full, plan.Depth);
+        Assert.Equal(depth, plan.Depth);
         Assert.Contains(plan.Reasons, r => r.Contains(signal));
+    }
+
+    /// <summary>Signals add up: writing data asynchronously in a bigger change is more than
+    /// any one of them.</summary>
+    [Fact]
+    public void SignalsAddUp()
+    {
+        var plan = Plan(Small(Patch(("src/Orders/OrdersPage.tsx", "await fs.writeFile(path, json);"))) with { Files = [File("src/Orders/OrdersPage.tsx", 60)] });
+
+        Assert.Equal((ReviewDepth.Light, 5), (plan.Depth, plan.Score));
     }
 
     /// <summary>A test that awaits or locks is ordinary test code, not a risk in the change.</summary>
@@ -121,7 +181,7 @@ public class ReviewPlannerTests
     {
         var patch = Patch(("src/Orders/OrdersPage.tsx", "const label = 'Export';"), ("src/Orders/OrdersPage.test.tsx", "await user.click(button);"));
 
-        Assert.Equal(ReviewDepth.Light, Plan(Small(patch)).Depth);
+        Assert.Equal(ReviewDepth.None, Plan(Small(patch)).Depth);
     }
 
     [Fact]
@@ -172,18 +232,19 @@ public class ReviewPlannerTests
     [Fact]
     public void ABuildThatDoesNotApply_OrCoverageNotMeasured_IsNoConcern()
     {
-        Assert.Equal(ReviewDepth.Light, Plan(Small() with { Verification = Clean() with { Build = BuildStatus.NotApplicable } }).Depth);
-        Assert.Equal(ReviewDepth.Light, Plan(Small() with { Verification = Clean() with { Coverage = CoverageStatus.NotMeasured } }).Depth);
+        Assert.Equal(ReviewDepth.None, Plan(Small() with { Verification = Clean() with { Build = BuildStatus.NotApplicable } }).Depth);
+        Assert.Equal(ReviewDepth.None, Plan(Small() with { Verification = Clean() with { Coverage = CoverageStatus.NotMeasured } }).Depth);
     }
 
     [Fact]
-    public void ACriterionWithNoTest_MakesItFull_ButOneTestedByHandDoesNot()
+    public void ACriterionWithNoTest_EarnsAReview_ButOneTestedByHandDoesNot()
     {
         var untested = Plan(Small() with { Submission = Work(new("It exports.", ["T.Export"]), new("It quotes commas.", [])) });
         var manual = Plan(Small() with { Submission = Work(new("It exports.", ["T.Export"]), new("It looks right in Excel.", [], ManualOnly: true)) });
 
         Assert.Contains("1 acceptance criterion has no test", untested.Reasons);
-        Assert.Equal(ReviewDepth.Light, manual.Depth);
+        Assert.Equal(ReviewDepth.Light, untested.Depth);
+        Assert.Equal(ReviewDepth.None, manual.Depth);
     }
 
     [Fact]
@@ -213,7 +274,8 @@ public class ReviewPlannerTests
         Assert.Equal(
             ["it changes 200 lines outside tests (light review is for up to 150)", "it touches storage or a data format", "it changes locking or concurrency", "it adds asynchronous code", "changed-line coverage is BelowThreshold"],
             plan.Reasons);
-        Assert.StartsWith("Review: full, because it changes 200 lines outside tests", plan.Describe());
+        Assert.Equal(22, plan.Score);
+        Assert.StartsWith("Review: full (risk score 22), because it changes 200 lines outside tests", plan.Describe());
     }
 
     [Theory]
@@ -232,11 +294,18 @@ public class ReviewPlannerTests
     [Fact]
     public void TheFirstRealTasks_WouldHaveBeenPlannedAsExpected()
     {
-        // F4's rework: one exception's base type.
+        // F4's rework: one exception's base type, a changed public declaration.
         var f4Rework = new ReviewInputs(
             [File("src/FileDbSharp/Exceptions.cs", 1), File("src/FileDbSharp/FileDatabaseOptions.cs", 1), File("tests/FileDbSharp.Tests/ReadOnlyModeTests.cs", 25)],
-            Patch(("src/FileDbSharp/Exceptions.cs", "public sealed class ReadOnlyDatabaseException : InvalidOperationException")),
+            "--- a/src/FileDbSharp/Exceptions.cs\n+++ b/src/FileDbSharp/Exceptions.cs\n@@ -3 +3 @@\n"
+            + "-public sealed class ReadOnlyDatabaseException : IOException\n+public sealed class ReadOnlyDatabaseException : InvalidOperationException\n",
             Clean(), Work());
+        // F7's rework: a real race in one test file. Its light review cut off twice.
+        var f7Rework = new ReviewInputs(
+            [File("tests/FileDbSharp.Tests/ConcurrencyTests.cs", 70)],
+            Patch(("tests/FileDbSharp.Tests/ConcurrencyTests.cs", "using var barrier = new Barrier(2);")),
+            Clean(), Work());
+        Assert.Equal(ReviewDepth.None, Plan(f7Rework).Depth);
         // F6: the file format.
         var f6 = new ReviewInputs(
             [File("src/FileDbSharp/Storage/LogFormat.cs", 30), File("src/FileDbSharp/FileDatabase.cs", 90)],

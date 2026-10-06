@@ -826,6 +826,24 @@ public class HandoffComposerTests
     }
 
     [Fact]
+    public void Text_SaysAChangeWasNotReviewed_WhenItNeededNoReview()
+    {
+        var state = RunOrchestrator.NewRun(RunKind.Implement) with
+        {
+            LastVerification = ScriptedVerifier.Passing("Existing.Test", "New.A"),
+            Baseline = ScriptedVerifier.Passing("Existing.Test"),
+            LastSubmission = FakeWorkerLauncher.Work(),
+            Review = Core.Verification.ReviewStatus.NotNeeded,
+            ReviewCompleted = true,
+        };
+
+        var text = HandoffComposer.Text(Evidence(state));
+
+        Assert.Contains("Agent review: not needed for a change this small with no risk signals; the factory's own verification passed.", text);
+        Assert.DoesNotContain("Agent review: clean", text);
+    }
+
+    [Fact]
     public void Text_NeverLabelsSomethingAsPassingThatDidNotRun()
     {
         var state = RunOrchestrator.NewRun(RunKind.Implement) with
