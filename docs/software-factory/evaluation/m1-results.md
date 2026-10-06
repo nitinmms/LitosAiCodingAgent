@@ -21,6 +21,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F6, re-run on `m1.7` | **Yes, after one rework.** The expected decision was still never asked | 1 | 0 | 0 of 1 expected | 799,093 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | 50 min of call time (13 + 37 for the rework, of which about 20 stalled on a kernel defect and paused for its fix) | 0 |
 | F7, with the decision scan (`m1.11`) | **Yes, after one rework** | 1 | 0 | **2 asked**, including the 1 expected, answered as scripted | 942,772 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | about 95 min of run time (55 + 40 for the rework), not counting time spent Blocked | 0 |
 | R4, with the decision scan (`m1.11`) | **No: budget-paused three times during its implementation**, before any submission | 0 | 0 | **3 asked**, including the 1 expected, which was answered against the script | 1,315,680 | 1,200,000 (raised to 1,400,000) | No | about 35 min of run time | 0 |
+| R3, with the decision scan (`m1.12`) | **No: budget-paused twice**, once during its implementation and once at its repair. Criteria met, except that the browser-side late-answer race has no test | 0 | 1 (review finding) | **3 asked, none expected**: 2 fair, 1 unnecessary | 909,924 | 600,000 (raised to 850,000, then 1,050,000) | No | about 35 min of run time | 0 |
 | R2, with the decision scan (`m1.11`; rework on `m1.12`) | **No: budget-paused four times during its implementation.** All five criteria met after one rework | 1 | 0 | **3 asked, none expected**: 1 fair, 2 unnecessary | 1,279,785 | 600,000 (raised to 1,000,000; 1,300,000 with the rework's top-up) | No | about 45 min of run time (38 + 7 for the rework) | 0 |
 
 **Against the M1 gate so far (7 of 12 run):**
@@ -41,6 +42,8 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 **With the decision scan (`m1.11`):** F7 and R4 each asked the decision the task set expects, first: the first decisions the factory asked in the evaluation. F7 was accepted after one rework at 942,772 tokens, inside its original cap. R4 asked its three questions for 36,012 tokens, then paused on budget three times during its implementation, in 125 calls on a context of up to 122,000 tokens, and was cancelled at 1,315,680 before submitting anything. **6 of the 9 tasks run are accepted** (F1, F2, F3, F4, F6, F7; F3 and F6 on re-runs). The gate needs 7 of 12, so one of the three unrun tasks (R2, R3, F8) must pass.
 
 **R2 (2026-10-05 and 06):** paused on budget four times during its implementation, so it is recorded as failed, although its code met all five criteria after one rework. Its scan asked three questions on a task that expects none. **6 of the 10 tasks run are accepted**; the gate needs 7 of 12, so one of R3 and F8 must pass.
+
+**R3 (2026-10-06):** paused on budget during its implementation and again at its repair, so it is recorded as failed; its handoff meets the criteria except a missing client-side test of the late-answer race. **6 of the 11 tasks run are accepted, and the gate needs F8 to pass.**
 
 ## Budgets
 
@@ -366,6 +369,22 @@ Run on 2026-10-05 with the decision scan (prompt revision `m1.11`); its rework r
 - **Evidence:** no mismatch.
 - **What it shows:** the factory built a correct medium UI change, but on this repository it costs far more than the cap: 857,545 tokens to the first handoff, against 600,000. The scan's false-alarm rate on a request that needs no decision is high: two of three questions were unnecessary. The rework is the first run on the cache and review fixes, and both behaved as intended.
 
+## R3 · Cancel a running generation
+
+Run on 2026-10-06 with the decision scan, prompt revision `m1.12`. The thread title carries a stray note ("(only this goes in the title field)") from the instructions it was copied from; pull request #3 was retitled "Cancel a running generation".
+
+- **Outcome:** **not accepted.** It paused on budget at 584,011 of 600,000 during its implementation, and at 842,035 of 850,000 when its review's blocking finding sent it to repair. The final handoff was accepted and pull request #3 merged.
+- **Decision scan** (18,013 tokens, 7 calls): 9 open choices, 3 asked, 6 assumed. The task set expects no decision.
+  - "What does the user see when the work is running versus cancelled?" **Fair:** the request does not say. Answered with the Cancel button beside the progress message, the status reading "Cancelled", and nothing partial shown.
+  - "Is a partial response kept?" **Unnecessary:** the first answer settled it. The same flaw as R2: questions are chosen at once, and a later one is not checked against an earlier answer.
+  - "Should the server also abort when the client disconnects for another reason?" **Fair:** a real cost choice the request leaves open. Answered: abort on any disconnect.
+- **Implementation** (700,517 tokens in 64 calls): build passed; 164 tests passed; changed-line coverage 100%. The context grew from 6,000 to 108,000 tokens, and late calls cost 11,000 to 13,000 each with the cache working: 61% of the implementation's cost was cached context re-read, 20% new input, 19% output (87,211 of it reasoning). No call missed the cache before the pause.
+  - **After the resume, OpenRouter sent the session to a different upstream** (AtlasCloud before, Together after), and the first call found no cache: the whole 110,000-token context at full price. The new `ServedBy` record is what showed it.
+- **Review:** full (risk score 10: 172 lines, 15 files, asynchronous code, a changed public declaration), 123,505 tokens in 8 calls. 1 blocking finding, **real**: the in-progress flag cleared in a `finally` before the cancellation was recorded, so the Cancel button could vanish and the raw abort error surface. The repair (67,889 tokens, 5 calls) records "Cancelled" before the flag clears. 165 tests passed (20 new); changed-line coverage 96.5%. 2 minor findings open.
+- **Criteria:** 1, 2, 3 and 5 met. Criterion 4 is built on both sides, but only the server's late-answer race is tested; the browser discards a late answer too, but its test fakes reject on abort, so that path has no test. Criterion 5 holds in the code, without an explicit test.
+- **Scan assumption not followed:** the scan assumed both a cancel endpoint and disconnect detection; the factory built disconnect detection only, which is what criterion 3 asks for, and said so in the handoff.
+- **What it shows:** the same cost pattern as R2 and R4 without any provider fault: a correct change whose first implementation alone costs more than the medium cap, because every call re-reads a context that keeps growing. The review earned its cost here, with a real blocking defect repaired.
+
 ## What the seven tasks show
 
 The gate cannot realistically be met: it needs all five remaining tasks to pass, and three of them are large or expect a decision. The blueprint's rule for a missed gate is to iterate on the prompts, orchestration and tools and re-run the task set before M2.
@@ -390,3 +409,5 @@ F5 adds a third, smaller one: a repair that satisfied a review finding by removi
 - **A third of R2's cost was calls that missed the cache**, which the factory did not cause and could not see; it now records who served each call, and one miss no longer inflates the next reservation.
 - **The scan over-asks on a request that needs no decision:** two of R2's three questions were unnecessary.
 - **Tally:** 6 of 10 tasks are accepted. The gate needs 7 of 12, so one of R3 and F8 must pass.
+
+**After R3 (2026-10-06):** R3 failed the same way, with a clean cache until a resume moved it to another upstream. **6 of 11 tasks are accepted; the gate needs F8 to pass.**
