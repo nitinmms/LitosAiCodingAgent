@@ -21,6 +21,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F6, re-run on `m1.7` | **Yes, after one rework.** The expected decision was still never asked | 1 | 0 | 0 of 1 expected | 799,093 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | 50 min of call time (13 + 37 for the rework, of which about 20 stalled on a kernel defect and paused for its fix) | 0 |
 | F7, with the decision scan (`m1.11`) | **Yes, after one rework** | 1 | 0 | **2 asked**, including the 1 expected, answered as scripted | 942,772 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | about 95 min of run time (55 + 40 for the rework), not counting time spent Blocked | 0 |
 | R4, with the decision scan (`m1.11`) | **No: budget-paused three times during its implementation**, before any submission | 0 | 0 | **3 asked**, including the 1 expected, which was answered against the script | 1,315,680 | 1,200,000 (raised to 1,400,000) | No | about 35 min of run time | 0 |
+| F8, with the decision scan and the cost changes (`m1.13`) | **Yes, after one rework** | 1 | 1 (review finding) | **3 asked, none expected**: 2 fair, 1 unnecessary | 577,612 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | 26 min of run time (21 + 5 for the rework) | 0 |
 | R3, with the decision scan (`m1.12`) | **No: budget-paused twice**, once during its implementation and once at its repair. Criteria met, except that the browser-side late-answer race has no test | 0 | 1 (review finding) | **3 asked, none expected**: 2 fair, 1 unnecessary | 909,924 | 600,000 (raised to 850,000, then 1,050,000) | No | about 35 min of run time | 0 |
 | R2, with the decision scan (`m1.11`; rework on `m1.12`) | **No: budget-paused four times during its implementation.** All five criteria met after one rework | 1 | 0 | **3 asked, none expected**: 1 fair, 2 unnecessary | 1,279,785 | 600,000 (raised to 1,000,000; 1,300,000 with the rework's top-up) | No | about 45 min of run time (38 + 7 for the rework) | 0 |
 
@@ -44,6 +45,8 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 **R2 (2026-10-05 and 06):** paused on budget four times during its implementation, so it is recorded as failed, although its code met all five criteria after one rework. Its scan asked three questions on a task that expects none. **6 of the 10 tasks run are accepted**; the gate needs 7 of 12, so one of R3 and F8 must pass.
 
 **R3 (2026-10-06):** paused on budget during its implementation and again at its repair, so it is recorded as failed; its handoff meets the criteria except a missing client-side test of the late-answer race. **6 of the 11 tasks run are accepted, and the gate needs F8 to pass.**
+
+**F8 (2026-10-06), the last task:** accepted after one rework at 577,612 tokens, inside its original 1,200,000 cap, on the first run with the three cost changes (`0565cde`, `4ed269a`, `42ef4b2`). **7 of the 12 tasks are accepted with at most one rework (F1, F2, F3, F4, F6, F7, F8), so M1 meets its gate.** F3 and F6 were accepted on re-runs after factory fixes, as recorded in their sections.
 
 ## Budgets
 
@@ -144,6 +147,9 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 | R2 | Four calls missed the provider cache completely and cost about 281,000 of 860,000 tokens; each miss also made the next reservation assume no cache (about 104,000 for a call that cost 8,000), so every resume paused again at once | A session's cache, once proven, is still counted on after one miss (two in a row are reserved in full); every call records who served it (`ServedBy`: a router's upstream when the provider reports one, otherwise the provider), for any provider | `d368d7b` |
 | All | Review took 10% to 44% of a task's tokens, a quarter on average, and a tiny check task spent 44% on a light review that found nothing (ReadM_SoftwareFactory_ReviewGuidance.md) | Review depth is scored: weighted risk signals pick no review, light or full; deep-review categories (auth, schema, storage, locking, process or markup injection) are full on their own; no review only for at most 40 lines in 4 files with no signal, a clean verification and every criterion tested; `FACTORY_REVIEW_NONE=off` keeps at least a light one (`m1.12`) | `1480171` |
 | All | Nothing recorded whether a review finding was real, so review's value could not be measured | A person can judge each finding (real defect, not worth fixing, wrong); review yield per task and in total: review tokens, share, confirmed defects per 100,000 review tokens, false-positive rate | `76ad5b3` |
+| R3 | OpenRouter moved a session to another upstream after a two-minute pause, and the first call found no cache (110,000 tokens) | The gateway asks a routing provider for the upstream that served the task last (`ChatRequest.PreferredUpstream`, loaded from the store on a resumed run); OpenRouter asks for it first with fallbacks allowed; any other provider ignores it | `0565cde` |
+| R3 | Test-run output was 27% of the tool output in an implementation's context, mostly passing tests | A test run's output in any common runner is cut to its failures and summary as it is produced; the whole output is saved under the run, outside the working copy | `4ed269a` |
+| R1 to R4 | Every call re-read a growing context (61% of R3's implementation), and brief wording had not changed how much the agent read or how many calls it made | Implementation turns get a cost note with their real figures (calls, context, last call's cost, what fills the context) when the context passes 50,000, 80,000 and 110,000 tokens and every 15 calls; appended like any steer, so the prompt cache is unaffected (`m1.13`) | `42ef4b2` |
 | F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | `c5e10d8` |
 
 ## F1 · Enforce size limits on keys, names and documents
@@ -385,6 +391,25 @@ Run on 2026-10-06 with the decision scan, prompt revision `m1.12`. The thread ti
 - **Scan assumption not followed:** the scan assumed both a cancel endpoint and disconnect detection; the factory built disconnect detection only, which is what criterion 3 asks for, and said so in the handoff.
 - **What it shows:** the same cost pattern as R2 and R4 without any provider fault: a correct change whose first implementation alone costs more than the medium cap, because every call re-reads a context that keeps growing. The review earned its cost here, with a real blocking defect repaired.
 
+## F8 · Secondary indexes
+
+Run on 2026-10-06 with the decision scan and the three cost changes, prompt revision `m1.13`.
+
+- **Outcome:** **accepted after one rework**, inside the original 1,200,000 cap. Pull request #12, merged.
+- **Decision scan** (27,185 tokens, 7 calls): 14 open choices, 3 asked, 11 assumed. The task set expects no decision.
+  - "Are index declarations persisted, or re-declared in code each time the database opens?" **Unnecessary:** the request says indexes are kept in memory and rebuilt on open. It was asked because an existing-data choice is always asked. Answered: re-declared in code.
+  - "What does the lookup return?" **Fair:** a new public API. Answered: key-document pairs in key order, as `Find` returns.
+  - "How are values compared?" **Fair:** a case-insensitive lookup would silently miss. Answered: ordinal.
+- **First handoff** (commit `971ba03`, 471,531 tokens: 371,627 implementing in 51 calls, 36,459 for a light review, 36,260 for a repair): build passed; 156 tests passed (26 new); changed-line coverage 90.4%.
+  - Criteria 1, 2, 3, 5 and 6 met. Not met: criterion 4, no test that a lookup does not deserialize non-matching documents. Criterion 5 is met as answered: indexes are re-declared after opening and then rebuilt from the documents; the file format is untouched.
+  - **Light review** (risk score 4: 511 lines outside tests, 6 files). It found a **real blocking defect**: declaring an index inside a transaction missed the writes already staged in it. The repair fixed it, with a test. Two minor findings stayed open, both real: a null property value was indexed as the text "null", and `RebuildIndexes()` at open is dead code.
+- **Rework:** one message asking for the deserialization test and the null fix. The thread recorded the top-up: 600,000 added, cap 1,800,000.
+  - Delivered (commit `011907f`): a test that injects a counting `JsonConverter`, stores 51 documents and shows one lookup deserializes exactly one; a null property value is no longer indexed, and the test now checks the index itself. 157 tests passed (27 new).
+  - Cost: 106,081 tokens in 22 calls. **No review**: 16 lines outside tests in 4 files, risk score 0, the first change the new tier skipped.
+- **Evidence:** no mismatch.
+- **The cost changes, measured:** the largest context was 63,350 tokens (F7: 91,522; R4: 121,759), and the implementation cost 371,627 in 51 calls (F7: 529,994 in 53). Every call was served by one upstream (AtlasCloud), with no call that missed the cache. Cost notes went out after 15, 30, 35 and 50 calls of the implementation; on this repository the context was mostly `read_file` results, not whole-file prints, and `dotnet test` output is short, so the note and the test-output cut had less to act on than on R3. The repair turn got a note on its first call, because it started past a threshold: to tidy.
+- **What it shows:** a large change inside its cap with one rework, a review that earned its cost, and a rework that needed none. Two calibrations remain: a 511-line change to the database core got only a light review, so size should weigh more; and the scan's always-ask rule for existing data again asked a question the request had settled.
+
 ## What the seven tasks show
 
 The gate cannot realistically be met: it needs all five remaining tasks to pass, and three of them are large or expect a decision. The blueprint's rule for a missed gate is to iterate on the prompts, orchestration and tools and re-run the task set before M2.
@@ -411,3 +436,10 @@ F5 adds a third, smaller one: a repair that satisfied a review finding by removi
 - **Tally:** 6 of 10 tasks are accepted. The gate needs 7 of 12, so one of R3 and F8 must pass.
 
 **After R3 (2026-10-06):** R3 failed the same way, with a clean cache until a resume moved it to another upstream. **6 of 11 tasks are accepted; the gate needs F8 to pass.**
+
+**After F8 (2026-10-06): M1 meets its gate, 7 of 12.**
+
+- **Decisions:** with the scan, every task since F7 asked the expected decision where there was one, and none failed for an unasked one. The cost is over-asking: on R2, R3 and F8, which expect no decision, 4 of 9 questions were unnecessary, all from the always-ask rule or a queued question an earlier answer had settled.
+- **Cost:** reworks fit their top-up from F3's re-run on. First implementations did not, until the three cost changes: F8 finished at 577,612 against a 1,200,000 cap, where R4, the other large task, spent 1,279,668 without submitting.
+- **Review:** after the scored tiers, the reviews that ran found real defects (R3's and F8's blocking findings), and a small rework went without one.
+- **Still open:** the scan's over-asking; review depth for large changes outside the named risk paths; verdicts on findings, none of which have been recorded yet; and whether the cost changes hold on the React repository, where R1 to R4 failed.
