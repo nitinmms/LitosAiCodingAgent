@@ -820,7 +820,7 @@ public class BriefComposerTests
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
         // m1.11: the decision scan brief, and the plan section of the run brief.
-        Assert.Equal("m1.13", BriefComposer.Revision);
+        Assert.Equal("m1.14", BriefComposer.Revision);
     }
 
     [Theory]
@@ -869,5 +869,23 @@ public class BriefComposerTests
         var state = State() with { Baseline = Failing(("B.Test", "x"), ("A.Test", "y")) };
 
         Assert.Equal(Compose(BriefKind.Run, state), Compose(BriefKind.Run, state));
+    }
+
+    [Fact]
+    public void TheRecheckBrief_ListsTheAnswersAndTheQuestionsNotYetAsked_AndAsksForExactQuotes()
+    {
+        var state = RunOrchestrator.NewRun(RunKind.Implement) with
+        {
+            Decisions = [new AnsweredDecision("What does the user see?", "Nothing partial is shown.")],
+            PendingQuestions = [new OpenChoice("Is a partial response kept?", ChoiceCategories.ExistingData, ["Discard it", "Keep it"], "Discard it")],
+        };
+
+        var brief = BriefComposer.Compose(new StartTurnStep(TurnKind.Scan, BriefKind.ScanRecheck, SessionScope.Scan), new RunContext("salesapp", "factory/x", "main", "Add cancel."), state, new RunLimits());
+
+        Assert.StartsWith("# Factory decision scan: re-check the remaining questions", brief);
+        Assert.Contains("Nothing partial is shown.", brief);
+        Assert.Contains("1. Is a partial response kept? (category `existing-data`; options: Discard it / Keep it)", brief);
+        Assert.Contains("**quoted exactly**", brief);
+        Assert.Contains("Do not add new questions", brief);
     }
 }

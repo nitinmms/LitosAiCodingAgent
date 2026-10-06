@@ -102,6 +102,7 @@ public sealed class FactoryOptions
             ScanOnly = IsOn(configuration["FACTORY_SCAN_ONLY"]),
             AllowNoReview = !IsOff(configuration["FACTORY_REVIEW_NONE"]),
             CostNotes = !IsOff(configuration["FACTORY_COST_NOTES"]),
+            ScanRecheck = !IsOff(configuration["FACTORY_SCAN_RECHECK"]),
         };
 
         if (configuration["FACTORY_DEFAULT_BUDGET"] is { Length: > 0 } defaultBudget)

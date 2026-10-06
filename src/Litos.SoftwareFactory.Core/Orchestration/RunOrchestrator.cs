@@ -125,12 +125,41 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         if (state.WorkTurn != TurnKind.Scan)
             return Preflight(answered, new StartTurnStep(state.WorkTurn, BriefKind.DecisionAnswer));
 
-        // A question the scan raised: ask the next one, or implement once all are answered. The
-        // implement brief carries every answer, so no turn is spent between questions.
-        if (answered.PendingQuestions.Count > 0 && answered.DecisionsAsked < Limits.MaxDecisions)
-            return Ask(answered with { PendingQuestions = [.. answered.PendingQuestions.Skip(1)] }, answered.PendingQuestions[0]);
+        // A question the scan raised. While questions remain, the scan session first checks
+        // whether the answers so far settle them: on R2, R3 and its re-run a queued question
+        // repeated one a person had just answered. Otherwise ask the next, or implement.
+        if (answered.PendingQuestions.Count > 0 && answered.DecisionsAsked < Limits.MaxDecisions && Limits.ScanRecheck)
+            return Preflight(answered with { Rechecking = true }, new StartTurnStep(TurnKind.Scan, BriefKind.ScanRecheck, SessionScope.Scan));
 
-        return Preflight(answered with { PendingQuestions = [] }, new StartTurnStep(TurnKind.Implement, BriefKind.Run));
+        return AskNextOrImplement(answered);
+    }
+
+    /// <summary>Asks the next question the scan raised, or implements once none is left.</summary>
+    private RunTransition AskNextOrImplement(RunState state)
+    {
+        if (state.PendingQuestions.Count > 0 && state.DecisionsAsked < Limits.MaxDecisions)
+            return Ask(state with { PendingQuestions = [.. state.PendingQuestions.Skip(1)] }, state.PendingQuestions[0]);
+
+        return Preflight(state with { PendingQuestions = [] }, new StartTurnStep(TurnKind.Implement, BriefKind.Run));
+    }
+
+    /// <summary>
+    /// After a re-check: questions an answer settles are not asked, and are stated with the answer
+    /// that settled them; the rest are asked as before. A re-check that did not finish asks the
+    /// next question, as if there had been none.
+    /// </summary>
+    private RunTransition OnRecheck(RunState state, PlanSubmission? recheck)
+    {
+        var after = state with { Rechecking = false };
+        if (recheck is null)
+            return AskNextOrImplement(after);
+
+        var (still, settled) = DecisionPolicy.Recheck(after.PendingQuestions, recheck, [.. after.Decisions.Select(d => d.Answer)]);
+        return AskNextOrImplement(after with
+        {
+            PendingQuestions = still,
+            Assumptions = [.. after.Assumptions, .. settled.Select(DecisionPolicy.Assumption)],
+        });
     }
 
     /// <summary>Stops the run on a question the scan raised, which a person answers.</summary>
@@ -184,6 +213,8 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
                 return OnScanTurnCompleted(state, turn with { Submission = null });
             case TurnEndReason.OutputLimit when state.WorkTurn == TurnKind.Review:
                 return OnReviewCutOff(state, turn);
+            case TurnEndReason.OutputLimit when state.WorkTurn == TurnKind.Scan && state.Rechecking:
+                return OnRecheck(state, null);
             case TurnEndReason.OutputLimit when state.WorkTurn == TurnKind.Scan:
                 // A scan never blocks the task: implement without it, and say so.
                 return Enter(
@@ -211,6 +242,9 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
 
     private RunTransition OnScanTurnCompleted(RunState state, TurnEnded turn)
     {
+        if (state.Rechecking)
+            return OnRecheck(state, turn.Submission as PlanSubmission);
+
         if (turn.Submission is PlanSubmission plan)
             return AfterScan(state with { Plan = plan }, plan);
 
@@ -289,13 +323,16 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
     private static RunTransition OnReviewCutOff(RunState state, TurnEnded turn)
     {
         var cutOffs = state.ReviewCutOffs + 1;
-        if (cutOffs < 2)
+        // A light review is not run again: a resumed review runs as a full one, and on the R3
+        // re-run that second attempt cost 64,717 tokens and was cut off too.
+        if (cutOffs < 2 && !turn.LightReview)
             return Enter(state with { ReviewCutOffs = cutOffs }, new StartTurnStep(TurnKind.Review, BriefKind.Resume, SessionScope.Review));
 
-        var disclosure = "The agent review could not complete: its model twice reached the output limit without replying. "
+        var times = cutOffs == 1 ? "reached the output limit without replying" : "twice reached the output limit without replying";
+        var disclosure = $"The agent review could not complete: its model {times}. "
             + "The factory's own verification (build, unit tests and changed-line coverage) passed; review the change yourself.";
         return Enter(
-            state with { ReviewCutOffs = cutOffs, Review = ReviewStatus.NotRun, Disclosures = [.. state.Disclosures, disclosure] },
+            state with { ReviewCutOffs = cutOffs, Review = ReviewStatus.DidNotFinish, Disclosures = [.. state.Disclosures, disclosure] },
             new HandoffStep());
     }
 

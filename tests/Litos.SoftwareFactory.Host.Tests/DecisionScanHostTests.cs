@@ -67,6 +67,36 @@ public sealed class DecisionScanRunTests : IAsyncLifetime
         Assert.Contains("Assumed, not asked: On read or a background sweep: On read", handoff.PayloadJson);
     }
 
+    /// <summary>On R2, R3 and R3's re-run a queued question repeated one a person had just
+    /// answered. After an answer the scan session re-checks the rest, and one the answer settles
+    /// is not asked.</summary>
+    [Fact]
+    public async Task AfterAnAnswer_TheScanRechecksTheRest_AndAQuestionTheAnswerSettlesIsNotAsked()
+    {
+        var partial = new OpenChoice("Is a partial response kept?", ChoiceCategories.ExistingData, ["Discard it", "Keep it"], "Discard it");
+        ScanFinds(FormatChoice(), partial);
+        _host.Workers.Script.Enqueue(async call =>
+        {
+            Assert.Equal(TurnKind.Scan, call.Kind);
+            Assert.StartsWith("# Factory decision scan: re-check the remaining questions", call.Brief);
+            Assert.Contains("1. Is a partial response kept?", call.Brief);
+            await call.Worker.SubmitAsync(call.SessionId, new PlanSubmission("recheck", [], [partial with { SettledBy = "Keep reading them, and nothing partial" }]));
+            return FakeWorkerLauncher.Done();
+        });
+        var threadId = await DelegatedAsync();
+
+        var waiting = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingDecision);
+        await _host.PostAsync($"api/decisions/{waiting.Decisions.Single().Id}/answer", new { answer = "Keep reading them, and nothing partial is kept." }, HttpStatusCode.OK);
+        var done = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        var turns = _host.Workers.Turns.ToArray();
+        Assert.Equal([TurnKind.Scan, TurnKind.Scan, TurnKind.Implement, TurnKind.Review], turns.Select(t => t.Kind));
+        Assert.Equal(turns[0].SessionId, turns[1].SessionId);            // the re-check continues the scan's session
+        Assert.Single(done.Decisions);                                    // the second question was never asked
+        Assert.Contains(done.Messages, m => m.Text == "Re-checked the remaining questions against your answers: 1 is settled, so nothing more needs asking.");
+        Assert.Contains("Is a partial response kept: Discard it (Keep reading them, and nothing partial)", turns[2].Brief);
+    }
+
     [Fact]
     public async Task AScanWithNothingForAPerson_GoesStraightToImplementation()
     {
@@ -180,6 +210,13 @@ public class ScanOptionsTests
     {
         Assert.True(From().Limits.AllowNoReview);
         Assert.False(From(("FACTORY_REVIEW_NONE", "off")).Limits.AllowNoReview);
+    }
+
+    [Fact]
+    public void TheRecheckIsOnByDefault_AndCanBeTurnedOff()
+    {
+        Assert.True(From().Limits.ScanRecheck);
+        Assert.False(From(("FACTORY_SCAN_RECHECK", "off")).Limits.ScanRecheck);
     }
 
     [Fact]

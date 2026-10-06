@@ -93,6 +93,10 @@ public sealed record RunLimits
 
     // ---- The decision scan (DecisionPolicy) ----
 
+    /// <summary>After each answer, while questions remain, the scan session checks whether the
+    /// answers settle them before the next is asked (FACTORY_SCAN_RECHECK=off turns it off).</summary>
+    public bool ScanRecheck { get; init; } = true;
+
     /// <summary>Whether a first run starts with a decision scan. Off unless the host turns it on
     /// (FACTORY_DECISION_SCAN), so the orchestrator's behaviour is unchanged by default.</summary>
     public bool DecisionScan { get; init; }
@@ -131,6 +135,10 @@ public enum BriefKind
 
     /// <summary>The decision scan: list the choices the request leaves open.</summary>
     Scan,
+
+    /// <summary>After an answer, the scan checks whether the answers so far settle the questions
+    /// not yet asked.</summary>
+    ScanRecheck,
 }
 
 // ---- Steps: what the host should do next ----
@@ -246,8 +254,10 @@ public enum TurnEndReason
 /// An agent turn ended. Submission is what a completion tool reported during the turn, if any —
 /// taken from the host's own record of the callback, not from the turn's event stream.
 /// </summary>
+/// <param name="LightReview">The turn was a light review: one cut off at its output limit is not
+/// run again, because a resumed review runs as a full one.</param>
 public sealed record TurnEnded(
-    TurnEndReason Reason, Submission? Submission = null, bool FilesChanged = false, string? Detail = null) : StepOutcome;
+    TurnEndReason Reason, Submission? Submission = null, bool FilesChanged = false, string? Detail = null, bool LightReview = false) : StepOutcome;
 
 public sealed record DecisionAnswered(string Answer) : StepOutcome;
 
@@ -330,6 +340,9 @@ public sealed record RunState(RunKind Kind)
     public PlanSubmission? Plan { get; init; }
 
     /// <summary>Choices the scan raised that are still to be asked, after the open one.</summary>
+    /// <summary>True while the scan is re-checking the questions not yet asked against the answers.</summary>
+    public bool Rechecking { get; init; }
+
     public IReadOnlyList<OpenChoice> PendingQuestions { get; init; } = [];
 
     /// <summary>Choices the run proceeds on without asking, stated to the implementer and in the

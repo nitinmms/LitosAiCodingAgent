@@ -58,8 +58,9 @@ public static partial class BriefComposer
 {
     /// <summary>Bump whenever any template or any text composed here changes, and when the turns
     /// a run is given change (m1.12: review depth is scored, and a small safe change gets none;
-    /// m1.13: implementation turns get cost notes, and test-run output is cut to failures and summary).</summary>
-    public const string Revision = "m1.13";
+    /// m1.13: implementation turns get cost notes, and test-run output is cut to failures and summary;
+    /// m1.14: the scan re-checks the questions not yet asked against each answer).</summary>
+    public const string Revision = "m1.14";
 
     private const int CharsPerToken = 4;
 
@@ -74,6 +75,7 @@ public static partial class BriefComposer
         BriefKind.ProceedOnRecommendation => Render("proceed", new() { ["maxDecisions"] = limits.MaxDecisions.ToString() }),
         BriefKind.Resume => Resume(state),
         BriefKind.Scan => Scan(context, state),
+        BriefKind.ScanRecheck => ScanRecheck(state),
         _ => throw new ArgumentOutOfRangeException(nameof(step), step.Brief, "Unknown brief kind."),
     };
 
@@ -100,6 +102,13 @@ public static partial class BriefComposer
         ["request"] = context.Request.Trim(),
         ["specification"] = Specification(context),
         ["decisions"] = Decisions(state),
+    });
+
+    private static string ScanRecheck(RunState state) => Render("scan-recheck", new()
+    {
+        ["decisions"] = Decisions(state),
+        ["questions"] = state.PendingQuestions.Count == 0 ? "(none)" : string.Join("\n", state.PendingQuestions.Select((q, i) =>
+            $"{i + 1}. {q.Question.Trim()} (category `{q.Category}`; options: {string.Join(" / ", q.Options)})")),
     });
 
     private static string Rework(RunContext context, RunState state) => Render("rework", new()

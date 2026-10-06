@@ -43,6 +43,10 @@ public enum ReviewStatus
 
     /// <summary>The review planner judged the change too small and safe to need one.</summary>
     NotNeeded,
+
+    /// <summary>A review was started but did not finish: its model reached the output limit
+    /// without replying. Distinct from NotRun, which means no review was attempted.</summary>
+    DidNotFinish,
 }
 
 public enum HumanTestingStatus

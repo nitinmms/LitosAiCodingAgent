@@ -206,7 +206,7 @@ describe('format', () => {
   it('only something that ran and passed is green', () => {
     expect(['Passed', 'Met', 'Clean', 'FindingsFixed'].map(toneOf)).toEqual(['done', 'done', 'done', 'done']);
     expect(['Failed', 'BelowThreshold', 'FindingsOpen'].map(toneOf)).toEqual(['bad', 'bad', 'bad']);
-    expect(['Unavailable', 'NoTests'].map(toneOf)).toEqual(['you', 'you']);
+    expect(['Unavailable', 'NoTests', 'DidNotFinish'].map(toneOf)).toEqual(['you', 'you', 'you']);
     expect(['NotRun', 'NotMeasured', 'NotApplicable', 'anything'].map(toneOf)).toEqual(['neutral', 'neutral', 'neutral', 'neutral']);
   });
 });

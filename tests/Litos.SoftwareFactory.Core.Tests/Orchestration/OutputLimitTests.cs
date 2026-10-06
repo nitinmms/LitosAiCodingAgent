@@ -56,8 +56,23 @@ public class OutputLimitTests
         Assert.Equal(1, run.State.ReviewCutOffs);
     }
 
+    /// <summary>A light review is not run again: the retry runs as a full review, and on the R3
+    /// re-run it cost 64,717 tokens and was cut off too.</summary>
     [Fact]
-    public void AReviewCutOffTwice_HandsOffWithTheReviewNotRun_AndSaysSo()
+    public void ALightReviewCutOffOnce_HandsOffAtOnce_WithTheReviewMarkedDidNotFinish()
+    {
+        var run = new Run();
+        run.AtReview();
+
+        var next = run.Report(CutOff with { LightReview = true });
+
+        Assert.IsType<HandoffStep>(next);
+        Assert.Equal(ReviewStatus.DidNotFinish, run.State.Review);
+        Assert.StartsWith("The agent review could not complete: its model reached the output limit without replying.", Assert.Single(run.State.Disclosures));
+    }
+
+    [Fact]
+    public void AReviewCutOffTwice_HandsOffWithTheReviewMarkedDidNotFinish_AndSaysSo()
     {
         var run = new Run();
         run.AtReview();
@@ -66,8 +81,8 @@ public class OutputLimitTests
         var next = run.Report(CutOff);
 
         Assert.IsType<HandoffStep>(next);
-        Assert.Equal(ReviewStatus.NotRun, run.State.Review);
-        Assert.Contains("The agent review could not complete", Assert.Single(run.State.Disclosures));
+        Assert.Equal(ReviewStatus.DidNotFinish, run.State.Review);
+        Assert.Contains("The agent review could not complete: its model twice reached", Assert.Single(run.State.Disclosures));
         Assert.Contains("verification (build, unit tests and changed-line coverage) passed", run.State.Disclosures[0]);
 
         var stop = Assert.IsType<StopStep>(run.Report(new HandoffCompleted(true)));

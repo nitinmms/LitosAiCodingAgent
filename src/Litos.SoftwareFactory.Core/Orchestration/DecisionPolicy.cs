@@ -70,6 +70,71 @@ public static class DecisionPolicy
         && (string.IsNullOrWhiteSpace(choice.SettledBy) || string.Equals(choice.Category, ChoiceCategories.ExistingData, StringComparison.OrdinalIgnoreCase))
         && choice.Options.Count >= 2;
 
+    /// <summary>The shortest stretch of an answer a re-check must quote for it to count.</summary>
+    public const int MinQuotedAnswer = 12;
+
+    /// <summary>
+    /// Whether a choice is settled by a person's answer: its <c>SettledBy</c> quotes one of the
+    /// answers, at least <see cref="MinQuotedAnswer"/> characters of it (or the whole answer, when
+    /// shorter). This holds for existing-data choices too: what a person answered settles them,
+    /// where the request's own wording does not (DecisionPolicy.NeedsAPerson).
+    /// </summary>
+    public static bool SettledByAnswer(OpenChoice choice, IEnumerable<string> answers)
+    {
+        if (string.IsNullOrWhiteSpace(choice.SettledBy))
+            return false;
+        var quoted = Normalise(choice.SettledBy);
+        foreach (var answer in answers.Select(Normalise).Where(a => a.Length > 0))
+        {
+            if (answer.Length <= MinQuotedAnswer)
+            {
+                if (quoted.Contains(answer, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                continue;
+            }
+
+            for (var start = 0; start + MinQuotedAnswer <= answer.Length; start++)
+            {
+                if (quoted.Contains(answer.AsSpan(start, MinQuotedAnswer), StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Sorts the questions not yet asked by a re-check: those an answer settles, and those still to
+    /// ask, in their order. A pending question the re-check did not return, or returned reworded,
+    /// is still asked.
+    /// </summary>
+    public static (IReadOnlyList<OpenChoice> StillAsk, IReadOnlyList<OpenChoice> Settled) Recheck(
+        IReadOnlyList<OpenChoice> pending, PlanSubmission recheck, IReadOnlyList<string> answers)
+    {
+        var still = new List<OpenChoice>();
+        var settled = new List<OpenChoice>();
+        foreach (var question in pending)
+        {
+            var returned = recheck.Choices.FirstOrDefault(c => Normalise(c.Question).Equals(Normalise(question.Question), StringComparison.OrdinalIgnoreCase));
+            if (returned is not null && SettledByAnswer(returned, answers))
+                settled.Add(question with { SettledBy = returned.SettledBy!.Trim() });
+            else
+                still.Add(question);
+        }
+
+        return (still, settled);
+    }
+
+    /// <summary>The line the thread shows after a re-check.</summary>
+    public static string DescribeRecheck(int settled, int stillAsk) => (settled, stillAsk) switch
+    {
+        (0, _) => "Re-checked the remaining questions against your answers: none is settled yet.",
+        (_, 0) => $"Re-checked the remaining questions against your answers: {(settled == 1 ? "1 is" : $"{settled} are")} settled, so nothing more needs asking.",
+        _ => $"Re-checked the remaining questions against your answers: {(settled == 1 ? "1 is" : $"{settled} are")} settled; {(stillAsk == 1 ? "1 still needs" : $"{stillAsk} still need")} you.",
+    };
+
+    private static string Normalise(string text) => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim().Trim('"', '\'', '“', '”');
+
     /// <summary>The decision card for a choice the scan raised.</summary>
     public static DecisionSubmission ToDecision(OpenChoice choice) => new(
         choice.Question,

@@ -160,9 +160,9 @@ public class DecisionScanRunTests
     }
 
     [Fact]
-    public void QuestionsAreAskedOneAtATime_ThenTheRunImplementsWithEveryAnswer()
+    public void WithTheRecheckOff_QuestionsAreAskedOneAtATime_ThenTheRunImplementsWithEveryAnswer()
     {
-        var run = new Run();
+        var run = new Run(limits: Scanning with { ScanRecheck = false });
         run.Started();
 
         var first = Assert.IsType<StopStep>(run.Scanned(Asked("Q1?"), Assumed("Sweep?"), Asked("Q2?")));
@@ -182,6 +182,146 @@ public class DecisionScanRunTests
         Assert.Empty(run.State.PendingQuestions);
         Assert.Equal(["Sweep: On read"], run.State.Assumptions);
     }
+
+    // ---- Re-checking the questions not yet asked (m1.14) ----
+    // On R2, R3 and R3's re-run a queued question repeated one a person had just answered.
+
+    private static RunStep Rechecked(Run run, params OpenChoice[] choices)
+    {
+        Assert.IsType<PreflightStep>(run.Report(new DecisionAnswered("Nothing partial is shown, and the story stays as it was.")));
+        Assert.Equal(new StartTurnStep(TurnKind.Scan, BriefKind.ScanRecheck, SessionScope.Scan), run.Report(new PreflightCompleted(true)));
+        Assert.True(run.State.Rechecking);
+        return run.Report(new TurnEnded(TurnEndReason.Completed, new PlanSubmission("recheck", [], choices)));
+    }
+
+    [Fact]
+    public void AfterAnAnswer_TheRemainingQuestionsAreRechecked_AndOneTheAnswerSettlesIsNotAsked()
+    {
+        var run = new Run();
+        run.Started();
+        run.Scanned(Asked("What does the user see?"), Asked("Is a partial response kept?"), Asked("Which status code?"));
+
+        var next = Assert.IsType<StopStep>(Rechecked(run,
+            Asked("Is a partial response kept?") with { SettledBy = "\"nothing partial is shown\"" },
+            Asked("Which status code?")));
+
+        Assert.Equal("Which status code?", next.Message);
+        Assert.False(run.State.Rechecking);
+        Assert.Empty(run.State.PendingQuestions);
+        Assert.Contains(run.State.Assumptions, a => a.StartsWith("Is a partial response kept: Keep reading them") && a.Contains("nothing partial is shown"));
+    }
+
+    [Fact]
+    public void ARecheckThatSettlesEverything_Implements()
+    {
+        var run = new Run();
+        run.Started();
+        run.Scanned(Asked("What does the user see?"), Asked("Is a partial response kept?"));
+
+        Assert.IsType<PreflightStep>(Rechecked(run, Asked("Is a partial response kept?") with { SettledBy = "the story stays as it was" }));
+        Assert.Equal(new StartTurnStep(TurnKind.Implement, BriefKind.Run), run.Report(new PreflightCompleted(true)));
+        Assert.Equal(1, run.State.DecisionsAsked);
+    }
+
+    /// <summary>A settledBy that does not quote an answer does not count, for existing data least of
+    /// all: the request's own words did not settle F7's format question.</summary>
+    [Fact]
+    public void ARecheckThatOnlyParaphrasesOrQuotesTheRequest_StillAsks()
+    {
+        var run = new Run();
+        run.Started();
+        run.Scanned(Asked("What does the user see?"), Asked("Is a partial response kept?"));
+
+        var next = Assert.IsType<StopStep>(Rechecked(run, Asked("Is a partial response kept?") with { SettledBy = "Versions must survive reopening and compaction" }));
+
+        Assert.Equal("Is a partial response kept?", next.Message);
+    }
+
+    [Fact]
+    public void ARecheckThatRewordsTheQuestion_StillAsksTheOriginal()
+    {
+        var run = new Run();
+        run.Started();
+        run.Scanned(Asked("What does the user see?"), Asked("Is a partial response kept?"));
+
+        var next = Assert.IsType<StopStep>(Rechecked(run, Asked("Should partial output be kept?") with { SettledBy = "nothing partial is shown" }));
+
+        Assert.Equal("Is a partial response kept?", next.Message);
+    }
+
+    [Fact]
+    public void ARecheckThatDoesNotSubmit_AsksTheNextQuestion_WithoutANudge()
+    {
+        var run = new Run();
+        run.Started();
+        run.Scanned(Asked("Q1?"), Asked("Q2?"));
+        run.Report(new DecisionAnswered("Keep."));
+        run.Report(new PreflightCompleted(true));
+
+        var next = Assert.IsType<StopStep>(run.Report(new TurnEnded(TurnEndReason.Completed)));
+
+        Assert.Equal("Q2?", next.Message);
+        Assert.False(run.State.Rechecking);
+    }
+
+    [Fact]
+    public void ARecheckCutOffAtTheOutputLimit_AsksTheNextQuestion()
+    {
+        var run = new Run();
+        run.Started();
+        run.Scanned(Asked("Q1?"), Asked("Q2?"));
+        run.Report(new DecisionAnswered("Keep."));
+        run.Report(new PreflightCompleted(true));
+
+        var next = Assert.IsType<StopStep>(run.Report(new TurnEnded(TurnEndReason.OutputLimit, Detail: "The model reached the output limit")));
+
+        Assert.Equal("Q2?", next.Message);
+    }
+
+    [Fact]
+    public void TheLastAnswer_NeedsNoRecheck()
+    {
+        var run = new Run();
+        run.Started();
+        run.Scanned(Asked("Q1?"));
+
+        Assert.IsType<PreflightStep>(run.Report(new DecisionAnswered("Keep.")));
+        Assert.Equal(new StartTurnStep(TurnKind.Implement, BriefKind.Run), run.Report(new PreflightCompleted(true)));
+    }
+
+    [Fact]
+    public void TheRecheckFlag_SurvivesTheCheckpoint()
+    {
+        var run = new Run();
+        run.Started();
+        run.Scanned(Asked("Q1?"), Asked("Q2?"));
+        run.Report(new DecisionAnswered("Keep."));
+
+        Assert.True(RunStateJson.Deserialize(RunStateJson.Serialize(run.State)).Rechecking);
+    }
+
+    [Theory]
+    [InlineData("\"Nothing partial is shown\"", true)]
+    [InlineData("the answer: nothing partial is SHOWN, so no", true)]
+    [InlineData("nothing   partial\n is shown", true)]
+    [InlineData("partial results are hidden", false)]
+    [InlineData("", false)]
+    public void SettledByAnswer_NeedsAQuoteOfAnAnswer(string settledBy, bool expected) =>
+        Assert.Equal(expected, DecisionPolicy.SettledByAnswer(Asked("Q?") with { SettledBy = settledBy }, ["Nothing partial is shown, and the story stays as it was."]));
+
+    [Fact]
+    public void SettledByAnswer_AShortAnswerMustBeQuotedWhole()
+    {
+        Assert.True(DecisionPolicy.SettledByAnswer(Asked("Q?") with { SettledBy = "answered: Discard" }, ["Discard"]));
+        Assert.False(DecisionPolicy.SettledByAnswer(Asked("Q?") with { SettledBy = "Disc" }, ["Discard"]));
+    }
+
+    [Theory]
+    [InlineData(0, 2, "Re-checked the remaining questions against your answers: none is settled yet.")]
+    [InlineData(1, 0, "Re-checked the remaining questions against your answers: 1 is settled, so nothing more needs asking.")]
+    [InlineData(2, 1, "Re-checked the remaining questions against your answers: 2 are settled; 1 still needs you.")]
+    public void DescribeRecheck_SaysWhatHappened(int settled, int still, string expected) =>
+        Assert.Equal(expected, DecisionPolicy.DescribeRecheck(settled, still));
 
     [Fact]
     public void TheScanUsesTheRunsDecisionAllowance()

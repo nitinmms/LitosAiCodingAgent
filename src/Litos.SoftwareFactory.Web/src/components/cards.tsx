@@ -161,6 +161,8 @@ function reviewLine(e: HandoffEvidence): string {
       return `${count(e.findings.length, 'finding')} open`;
     case 'NotNeeded':
       return 'Not needed (a small change with no risk signals)';
+    case 'DidNotFinish':
+      return "Didn't finish (its model reached the output limit without replying)";
     default:
       return 'Not run';
   }

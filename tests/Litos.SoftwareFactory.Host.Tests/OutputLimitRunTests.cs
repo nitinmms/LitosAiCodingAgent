@@ -21,9 +21,32 @@ public sealed class OutputLimitRunTests : IAsyncLifetime
 
     private void Turn(Func<TurnCall, Task<TurnStreamResult>> turn) => _host.Workers.Script.Enqueue(turn);
 
+    /// <summary>Every review a full one, for the tests of a full review's retry.</summary>
+    private void FullReviews() => _host.Options.Limits = _host.Options.Limits with { FullReviewFromScore = 0 };
+
+    /// <summary>On the R3 re-run a light review cut off once was run again as a full review, which
+    /// cost 64,717 tokens and was cut off too. A light review cut off once now hands off.</summary>
     [Fact]
-    public async Task AReviewCutOffTwice_StillHandsOff_AndTheHandoffSaysTheReviewDidNotRun()
+    public async Task ALightReviewCutOffOnce_HandsOff_AndTheHandoffSaysItDidNotFinish()
     {
+        Turn(_host.DefaultTurnAsync);                                                    // implement
+        Turn(_ => Task.FromResult(new TurnStreamResult(false, 1, CutOff)));              // light review, cut off
+        var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
+
+        await _host.DelegateAsync(threadId);
+        var done = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Equal([TurnKind.Implement, TurnKind.Review], _host.Workers.Turns.Select(t => t.Kind));
+        var handoff = done.Messages.Single(m => m.Kind == MessageKind.Handoff);
+        Assert.Contains("The agent review could not complete: its model reached the output limit without replying.", handoff.PayloadJson);
+        Assert.Contains("\"review\":\"DidNotFinish\"", handoff.PayloadJson);
+        Assert.Contains("Agent review: did not finish.", handoff.Text);
+    }
+
+    [Fact]
+    public async Task AFullReviewCutOffTwice_StillHandsOff_AndTheHandoffSaysItDidNotFinish()
+    {
+        FullReviews();
         Turn(_host.DefaultTurnAsync);                                                    // implement
         Turn(_ => Task.FromResult(new TurnStreamResult(false, 1, CutOff)));              // review, cut off
         Turn(_ => Task.FromResult(new TurnStreamResult(false, 1, CutOff)));              // review again, cut off
@@ -34,13 +57,14 @@ public sealed class OutputLimitRunTests : IAsyncLifetime
 
         Assert.Equal([TurnKind.Implement, TurnKind.Review, TurnKind.Review], _host.Workers.Turns.Select(t => t.Kind));
         var handoff = done.Messages.Single(m => m.Kind == MessageKind.Handoff);
-        Assert.Contains("The agent review could not complete", handoff.PayloadJson);
-        Assert.Contains("\"review\":\"NotRun\"", handoff.PayloadJson);
+        Assert.Contains("The agent review could not complete: its model twice reached", handoff.PayloadJson);
+        Assert.Contains("\"review\":\"DidNotFinish\"", handoff.PayloadJson);
     }
 
     [Fact]
-    public async Task AReviewCutOffOnce_IsRunAgain_AndItsFindingsCount()
+    public async Task AFullReviewCutOffOnce_IsRunAgain_AndItsFindingsCount()
     {
+        FullReviews();
         Turn(_host.DefaultTurnAsync);
         Turn(_ => Task.FromResult(new TurnStreamResult(false, 1, CutOff)));
         Turn(async call =>

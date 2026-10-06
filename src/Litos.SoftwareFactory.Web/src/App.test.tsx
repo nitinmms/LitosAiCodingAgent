@@ -657,6 +657,12 @@ describe('a handoff', () => {
     await waitFor(() => expect(first.getByRole('button', { name: 'Real defect' })).toHaveAttribute('aria-pressed', 'false'));
   });
 
+  it('says a review that was started but cut off did not finish, rather than that it never ran', async () => {
+    const { card } = await handedOff({ review: 'DidNotFinish', findings: [] });
+
+    expect(card.getByText("Didn't finish (its model reached the output limit without replying)")).toBeInTheDocument();
+  });
+
   it('says plainly when a change was not reviewed because it did not need one', async () => {
     const { card } = await handedOff({ review: 'NotNeeded', findings: [] });
 

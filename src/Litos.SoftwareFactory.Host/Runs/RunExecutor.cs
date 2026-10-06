@@ -317,8 +317,15 @@ public sealed class RunExecutor(
         var submission = active.Submission;
         if (submission is ReviewSubmission review)
             await store.SaveFindingsAsync(data.Run.Id, review.Findings, CancellationToken.None);
-        if (submission is PlanSubmission plan)
-            await NoteAsync(data, DecisionPolicy.Decide(plan, Math.Max(0, options.Limits.MaxDecisions - state.DecisionsAsked)).Describe());
+        if (submission is PlanSubmission plan && state.Rechecking)
+        {
+            var (still, settled) = DecisionPolicy.Recheck(state.PendingQuestions, plan, [.. state.Decisions.Select(d => d.Answer)]);
+            await NoteAsync(data, DecisionPolicy.DescribeRecheck(settled.Count, still.Count));
+        }
+        else if (submission is PlanSubmission scanned)
+        {
+            await NoteAsync(data, DecisionPolicy.Decide(scanned, Math.Max(0, options.Limits.MaxDecisions - state.DecisionsAsked)).Describe());
+        }
 
         if (active.StopRequest == StopRequest.Cancel)
             return new TurnEnded(TurnEndReason.Cancelled);
@@ -335,7 +342,7 @@ public sealed class RunExecutor(
             if (error.StartsWith("The turn exceeded", StringComparison.Ordinal))
                 return new TurnEnded(TurnEndReason.ToolCallLimit, FilesChanged: filesChanged);
             return error.Contains(Gateway.ModelGateway.CutOffPrefix, StringComparison.Ordinal)
-                ? new TurnEnded(TurnEndReason.OutputLimit, FilesChanged: filesChanged, Detail: error)
+                ? new TurnEnded(TurnEndReason.OutputLimit, FilesChanged: filesChanged, Detail: error, LightReview: phase == "LightReview")
                 : new TurnEnded(TurnEndReason.Faulted, FilesChanged: filesChanged, Detail: error);
         }
 
@@ -371,7 +378,7 @@ public sealed class RunExecutor(
         RunData data, RunState state, StartTurnStep step, WorkspaceDiff? diff, CancellationToken ct)
     {
         if (state.WorkTurn == TurnKind.Scan)
-            return ("Scan", step.Brief == BriefKind.Nudge ? TurnAllowance.ForScanNudge(options.Limits) : TurnAllowance.ForScan(options.Limits));
+            return ("Scan", step.Brief is BriefKind.Nudge or BriefKind.ScanRecheck ? TurnAllowance.ForScanNudge(options.Limits) : TurnAllowance.ForScan(options.Limits));
         if (state.WorkTurn != TurnKind.Review)
             return (step.Kind.ToString(), null);
         if (step.Brief == BriefKind.Nudge)

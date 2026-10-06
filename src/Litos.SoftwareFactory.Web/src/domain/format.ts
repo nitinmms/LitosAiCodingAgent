@@ -41,6 +41,7 @@ export function toneOf(status: string): Tone {
       return 'bad';
     case 'Unavailable':
     case 'NoTests':
+    case 'DidNotFinish':
       return 'you';
     default:
       return 'neutral';
