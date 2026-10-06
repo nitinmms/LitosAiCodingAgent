@@ -692,7 +692,7 @@ public sealed class RecoveryTests
 
         var again = (await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
         Assert.Equal(RunEntry.Resume, again.Run.Entry);
-        await host.App.Services.GetRequiredService<RunExecutor>().ExecuteAsync(again, default);
+        await host.App.Services.GetRequiredService<RunSupervisor>().Start(again, default);
 
         var details = await host.ThreadAsync(threadId);
         Assert.Equal(LifecycleState.AwaitingHumanTesting, details.Thread.State);
@@ -716,7 +716,7 @@ public sealed class RecoveryTests
         await host.PostAsync($"api/threads/{threadId}/resume", null, HttpStatusCode.OK);
 
         var again = (await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
-        await host.App.Services.GetRequiredService<RunExecutor>().ExecuteAsync(again, default);
+        await host.App.Services.GetRequiredService<RunSupervisor>().Start(again, default);
 
         Assert.Equal(LifecycleState.AwaitingHumanTesting, (await host.ThreadAsync(threadId)).Thread.State);
         Assert.DoesNotContain("has been resumed", host.Workers.Turns.First().Brief);

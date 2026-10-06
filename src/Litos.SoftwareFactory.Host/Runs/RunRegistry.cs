@@ -284,22 +284,28 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
     }
 }
 
-/// <summary>The runs executing in this host process, by run and by thread.</summary>
+/// <summary>
+/// The runs this host holds, by run and by thread: the slot ledger. A run is held from the moment
+/// it is claimed until its executor has finished, including the time its worker takes to shut
+/// down after the run has stopped, so the claim never starts the same run twice
+/// (docs/software-factory/m2-architecture.md §3.2). <see cref="RunSupervisor"/> adds and removes.
+/// </summary>
 public sealed class RunRegistry
 {
     private readonly ConcurrentDictionary<Guid, ActiveRun> _byRun = new();
 
-    public ActiveRun Add(ActiveRun run)
-    {
-        _byRun[run.RunId] = run;
-        return run;
-    }
+    /// <summary>Holds a run. False when this host already holds a run with that id.</summary>
+    public bool TryAdd(ActiveRun run) => _byRun.TryAdd(run.RunId, run);
 
-    public void Remove(Guid runId) => _byRun.TryRemove(runId, out _);
+    /// <summary>Releases this instance only: never a newer hold on the same run.</summary>
+    public bool Remove(ActiveRun run) => _byRun.TryRemove(new KeyValuePair<Guid, ActiveRun>(run.RunId, run));
 
     public ActiveRun? Find(Guid runId) => _byRun.GetValueOrDefault(runId);
 
     public ActiveRun? FindByThread(Guid threadId) => _byRun.Values.FirstOrDefault(r => r.ThreadId == threadId);
+
+    /// <summary>The runs held now: the busy slots, which the claim must not start again.</summary>
+    public IReadOnlySet<Guid> RunIds => _byRun.Keys.ToHashSet();
 
     public int Count => _byRun.Count;
 }

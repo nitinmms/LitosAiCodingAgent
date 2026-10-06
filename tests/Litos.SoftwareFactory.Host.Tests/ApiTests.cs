@@ -605,13 +605,13 @@ public class FactoryOptionsTests
     }
 
     [Fact]
-    public void Defaults_AreOpenRouter_DeepSeekFlash_AndOneSlot()
+    public void Defaults_AreOpenRouter_DeepSeekFlash_AndTwoSlots()
     {
         var options = new FactoryOptions();
 
         Assert.Equal("openrouter", options.Provider);
         Assert.Equal("deepseek/deepseek-v4.1-flash", options.Model);
-        Assert.Equal(1, options.SlotCap);
+        Assert.Equal(2, options.SlotCap);
         Assert.Equal(2, options.Limits.MaxRepairCycles);
     }
 
@@ -687,11 +687,11 @@ public class FactoryOptionsTests
     }
 
     [Fact]
-    public void From_NothingSet_KeepsOneSlotOneVerificationAndAHalfMinuteSweep()
+    public void From_NothingSet_KeepsTwoSlotsOneVerificationAndAHalfMinuteSweep()
     {
         var options = From();
 
-        Assert.Equal(1, options.SlotCap);
+        Assert.Equal(2, options.SlotCap);
         Assert.Equal(1, options.VerifyConcurrency);
         Assert.Equal(TimeSpan.FromSeconds(30), options.LivenessInterval);
     }
@@ -713,7 +713,7 @@ public class FactoryOptionsTests
     {
         var options = From(("FACTORY_SLOT_CAP", value), ("FACTORY_VERIFY_CONCURRENCY", value));
 
-        Assert.Equal(1, options.SlotCap);
+        Assert.Equal(2, options.SlotCap);
         Assert.Equal(1, options.VerifyConcurrency);
     }
 

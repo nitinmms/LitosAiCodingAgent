@@ -57,7 +57,7 @@ public static class FactoryHostApp
         services.AddSingleton<IWorkerClientFactory, HttpWorkerClientFactory>();
         services.AddSingleton<IUserDirectory, IdentityUserDirectory>();
         services.AddSingleton<RunExecutor>(sp => new RunExecutor(
-            sp.GetRequiredService<IFactoryStore>(), sp.GetRequiredService<RunRegistry>(), options,
+            sp.GetRequiredService<IFactoryStore>(), options,
             sp.GetRequiredService<IWorkspaceProvider>(), sp.GetRequiredService<IVerifier>(), sp.GetRequiredService<IWorkerLauncher>(),
             sp.GetRequiredService<IWorkerClientFactory>(), sp.GetRequiredService<IUserDirectory>(), sp.GetRequiredService<FactorySignals>(),
             sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>()));
@@ -67,8 +67,9 @@ public static class FactoryHostApp
         services.AddSingleton<PullRequestStatus>(sp => new PullRequestStatus(
             sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILogger<PullRequestStatus>>(), sp.GetService<IGitHub>()));
 
+        services.AddSingleton<RunSupervisor>();
+        services.AddSingleton<IRunControl>(sp => sp.GetRequiredService<RunSupervisor>());
         services.AddSingleton<RunCoordinator>();
-        services.AddSingleton<IRunControl>(sp => sp.GetRequiredService<RunCoordinator>());
         services.AddHostedService(sp => sp.GetRequiredService<RunCoordinator>());
 
         configureServices?.Invoke(services);

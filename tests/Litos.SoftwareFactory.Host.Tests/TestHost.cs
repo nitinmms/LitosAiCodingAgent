@@ -401,10 +401,11 @@ public sealed class FakeWorker(WorkerLaunch launch, FakeWorkerLauncher owner) : 
         return Task.FromResult(true);
     }
 
-    public Task ShutdownAsync(CancellationToken ct)
+    public async Task ShutdownAsync(CancellationToken ct)
     {
         ShutdownRequested = true;
-        return Task.CompletedTask;
+        if (owner.ShutdownGate is { } gate)
+            await gate;
     }
 }
 
@@ -417,6 +418,10 @@ public sealed class FakeWorkerLauncher(FakeWorkspaceProvider workspaces) : IWork
     public ConcurrentQueue<FakeWorker> Workers { get; } = new();
 
     public Exception? FailLaunch { get; set; }
+
+    /// <summary>While set, a worker asked to shut down does not finish shutting down until this
+    /// completes: a run that has stopped is then still tearing down.</summary>
+    public Task? ShutdownGate { get; set; }
 
     /// <summary>What a turn does when the script is empty: an implement turn edits a file and
     /// submits work, a review turn submits a clean review.</summary>
@@ -435,7 +440,9 @@ public sealed class FakeWorkerLauncher(FakeWorkspaceProvider workspaces) : IWork
         return Task.FromResult<IWorkerHandle>(worker);
     }
 
-    public IWorkerClient Create(Uri baseAddress, string secret) => Workers.Last();
+    /// <summary>The worker launched with this secret: with more than one run at a time, the last
+    /// one launched may belong to another run.</summary>
+    public IWorkerClient Create(Uri baseAddress, string secret) => Workers.Last(w => w.Launch.Secret == secret);
 
     public static TurnStreamResult Done(int toolCalls = 3) => new(true, toolCalls, null);
 
@@ -492,6 +499,8 @@ public sealed class TestHost : IAsyncDisposable
             OpenRouterApiKey = "test-key",
             AdminPassword = AdminPassword,
             PollInterval = TimeSpan.FromMilliseconds(100),
+            // The M1 tests run one task at a time; the concurrency tests set their own cap.
+            SlotCap = 1,
             Budget = new BudgetPolicy { OutputAllowanceTokens = 4_000, Margin = 0.10 },
         };
         // The scripted changes are small and clean, so the planner would skip their review; the

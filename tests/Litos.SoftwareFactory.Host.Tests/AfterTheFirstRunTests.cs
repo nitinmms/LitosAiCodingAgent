@@ -141,7 +141,7 @@ public sealed class WithdrawTests : IAsyncLifetime
         var projectId = await host.RegisterProjectAsync();
         var threadId = await host.CreateThreadAsync(projectId);
         await host.DelegateAsync(threadId);
-        await host.App.Services.GetRequiredService<RunExecutor>().ExecuteAsync((await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!, default);
+        await host.App.Services.GetRequiredService<RunSupervisor>().Start((await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!, default);
         Assert.Equal(LifecycleState.AwaitingHumanTesting, (await host.ThreadAsync(threadId)).Thread.State);
         await host.DelegateAsync(threadId, "@factory How do I set up manual tests?"); // queued; nothing claims it
 

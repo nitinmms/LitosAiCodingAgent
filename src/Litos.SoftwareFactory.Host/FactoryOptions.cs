@@ -37,12 +37,10 @@ public sealed class FactoryOptions
     /// <summary>The cap a new thread gets when its creator sets none; null means no cap.</summary>
     public long? DefaultBudget { get; set; } = 300_000;
 
-    /// <summary>
-    /// Concurrent runs across all repositories (FACTORY_SLOT_CAP). The default stays at 1 until
-    /// the registry releases a run's slot only after its executor has finished
-    /// (docs/software-factory/m2-architecture.md §3.2).
-    /// </summary>
-    public int SlotCap { get; set; } = 1;
+    /// <summary>Concurrent runs across all repositories (FACTORY_SLOT_CAP); never two on one
+    /// repository. A run holds its slot until its executor has finished
+    /// (docs/software-factory/m2-architecture.md §3.2).</summary>
+    public int SlotCap { get; set; } = 2;
 
     /// <summary>How many verification commands may run at once across all runs
     /// (FACTORY_VERIFY_CONCURRENCY). Other runs' verify steps wait their turn.</summary>

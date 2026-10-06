@@ -1,25 +1,21 @@
-using System.Collections.Concurrent;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
-using Litos.SoftwareFactory.Host.Api;
 using Litos.SoftwareFactory.Infrastructure.Workers;
 
 namespace Litos.SoftwareFactory.Host.Runs;
 
 /// <summary>
 /// The coordinator (ReadMe_LitosSoftwareFactory_V1.md §7, §8): it wakes when work is queued or
-/// on a poll, claims runs under the slot cap, and hands each to a <see cref="RunExecutor"/>.
-/// On startup it marks every run that was in progress when the host last stopped as Interrupted
-/// — work is never blindly re-run.
+/// on a poll, claims runs under the slot cap, and hands each to the <see cref="RunSupervisor"/>.
+/// The runs the registry holds are the busy slots. On startup it marks every run that was in
+/// progress when the host last stopped as Interrupted — work is never blindly re-run.
 /// </summary>
 public sealed class RunCoordinator(
-    IFactoryStore store, RunExecutor executor, RunRegistry registry, FactoryOptions options, FactorySignals signals, IClock clock,
-    ILogger<RunCoordinator> logger) : BackgroundService, IRunControl
+    IFactoryStore store, RunSupervisor supervisor, RunRegistry registry, FactoryOptions options, FactorySignals signals, IClock clock,
+    ILogger<RunCoordinator> logger) : BackgroundService
 {
-    private readonly ConcurrentDictionary<Guid, Task> _running = new();
-
     /// <summary>Completes once startup recovery is done and the coordinator is claiming work.</summary>
     public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -34,13 +30,11 @@ public sealed class RunCoordinator(
             {
                 try
                 {
-                    if (registry.Count < options.SlotCap
-                        && await store.ClaimNextRunAsync(options.SlotCap, clock.UtcNow, stoppingToken) is { } claimed)
+                    // Asked even with every slot busy, so each queued thread says what it waits for.
+                    if (await store.ClaimNextRunAsync(options.SlotCap, clock.UtcNow, stoppingToken, registry.RunIds) is { } claimed)
                     {
                         signals.EventsWritten();
-                        var task = Task.Run(() => executor.ExecuteAsync(claimed, stoppingToken), CancellationToken.None);
-                        _running[claimed.Run.Id] = task;
-                        _ = task.ContinueWith(_ => _running.TryRemove(claimed.Run.Id, out Task? _), TaskScheduler.Default);
+                        _ = supervisor.Start(claimed, stoppingToken);
                         continue; // there may be another to claim
                     }
                 }
@@ -60,7 +54,7 @@ public sealed class RunCoordinator(
         finally
         {
             Started.TrySetResult();
-            await Task.WhenAll(_running.Values);
+            await supervisor.DrainAsync();
         }
     }
 
@@ -110,29 +104,5 @@ public sealed class RunCoordinator(
             logger.LogWarning("{Count} model call(s) left without reported usage were charged their input estimate.", reconciled);
 
         signals.EventsWritten();
-    }
-
-    public bool RequestStop(Guid threadId, StopRequest request)
-    {
-        if (registry.FindByThread(threadId) is not { } active)
-            return false;
-
-        active.RequestStop(request);
-        return true;
-    }
-
-    public async Task SteerAsync(Guid threadId, string text, CancellationToken ct)
-    {
-        if (registry.FindByThread(threadId) is { Client: { } client, SessionId: { } sessionId })
-        {
-            try
-            {
-                await client.SteerAsync(sessionId, text, ct);
-            }
-            catch (HttpRequestException ex)
-            {
-                logger.LogWarning(ex, "A follow-up for thread {ThreadId} could not be delivered to its worker.", threadId);
-            }
-        }
     }
 }

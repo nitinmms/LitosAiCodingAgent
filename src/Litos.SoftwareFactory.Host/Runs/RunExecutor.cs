@@ -36,16 +36,17 @@ public interface IUserDirectory
 /// records.
 /// </summary>
 public sealed class RunExecutor(
-    IFactoryStore store, RunRegistry registry, FactoryOptions options, IWorkspaceProvider workspaces, IVerifier verifier,
+    IFactoryStore store, FactoryOptions options, IWorkspaceProvider workspaces, IVerifier verifier,
     IWorkerLauncher launcher, IWorkerClientFactory clients, IUserDirectory users, FactorySignals signals, IClock clock,
     ILogger<RunExecutor> logger, IGitHub? gitHub = null)
 {
     private readonly RunOrchestrator _orchestrator = new(options.Limits);
 
-    public async Task ExecuteAsync(ClaimedRun claimed, CancellationToken hostStopping)
+    /// <summary>Executes a claimed run until it stops. <see cref="RunSupervisor"/> holds the run
+    /// in the registry around this, and releases it only once this has returned.</summary>
+    public async Task ExecuteAsync(ClaimedRun claimed, ActiveRun active, CancellationToken hostStopping)
     {
-        var (run, thread, project) = claimed;
-        var active = registry.Add(new ActiveRun(run.Id, thread.Id, run.RequestedBy, thread.Provider, thread.Model));
+        var (run, _, project) = claimed;
         var session = new WorkerSession(this, active, claimed);
         try
         {
@@ -99,7 +100,6 @@ public sealed class RunExecutor(
         finally
         {
             await session.DisposeAsync();
-            registry.Remove(run.Id);
 
             // The worker is gone, so a call of this run whose usage was never reported never
             // will be. Its reservation is settled now rather than held against the task.
@@ -111,9 +111,6 @@ public sealed class RunExecutor(
             {
                 logger.LogWarning(ex, "Unreported usage of run {RunId} could not be reconciled.", run.Id);
             }
-
-            signals.EventsWritten();
-            signals.WorkQueued();
         }
     }
 
@@ -134,6 +131,9 @@ public sealed class RunExecutor(
         public string? ReviewSessionId { get; set; } = Claimed.Run.ReviewSessionId;
 
         public VerificationOutcome? Baseline { get; set; }
+
+        /// <summary>What the handoff recorded, for the handoff message the stop posts.</summary>
+        public HandoffEvidence? Handoff { get; set; }
     }
 
     // ---- Preflight ----
@@ -580,7 +580,7 @@ public sealed class RunExecutor(
                 EvidenceJson = JsonSerializer.Serialize(evidence, FactoryWire.Json),
                 CreatedAt = clock.UtcNow,
             }, ct);
-            _handoffs[data.Run.Id] = evidence;
+            data.Handoff = evidence;
             return new HandoffCompleted(true);
         }
         catch (WorkspaceException ex)
@@ -589,8 +589,6 @@ public sealed class RunExecutor(
             return new HandoffCompleted(false, ex.Message);
         }
     }
-
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, HandoffEvidence> _handoffs = new();
 
     // ---- Stop ----
 
@@ -602,7 +600,7 @@ public sealed class RunExecutor(
             Stage = state.Stage,
         };
 
-        if (stop.Reason == StopReason.HandedOff && _handoffs.TryRemove(data.Run.Id, out var evidence))
+        if (stop.Reason == StopReason.HandedOff && data.Handoff is { } evidence)
         {
             command = command with
             {
