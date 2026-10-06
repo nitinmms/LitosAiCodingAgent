@@ -77,6 +77,20 @@ public sealed record RunLimits
     /// <summary>...and is stopped after this many tool calls.</summary>
     public int FullReviewMaxToolCalls { get; init; } = 24;
 
+    // ---- The cost note in work turns (CostMeter) ----
+
+    /// <summary>Whether implement, rework and repair turns are sent cost notes (FACTORY_COST_NOTES=off turns them off).</summary>
+    public bool CostNotes { get; init; } = true;
+
+    /// <summary>A note is sent after this many calls since the last one...</summary>
+    public int CostNoteEveryCalls { get; init; } = 15;
+
+    /// <summary>...and when the context first passes each of these sizes, in tokens...</summary>
+    public IReadOnlyList<long> CostNoteContextThresholds { get; init; } = [50_000, 80_000, 110_000];
+
+    /// <summary>...but never within this many calls of the last note.</summary>
+    public int CostNoteMinGapCalls { get; init; } = 5;
+
     // ---- The decision scan (DecisionPolicy) ----
 
     /// <summary>Whether a first run starts with a decision scan. Off unless the host turns it on

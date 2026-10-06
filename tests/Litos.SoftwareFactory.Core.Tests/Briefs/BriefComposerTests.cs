@@ -820,7 +820,7 @@ public class BriefComposerTests
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
         // m1.11: the decision scan brief, and the plan section of the run brief.
-        Assert.Equal("m1.12", BriefComposer.Revision);
+        Assert.Equal("m1.13", BriefComposer.Revision);
     }
 
     [Theory]

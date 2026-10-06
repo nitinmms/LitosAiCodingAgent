@@ -119,12 +119,37 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             TurnCalls = 0;
             TurnCharged = 0;
             _wrapUpSent = false;
+            _costMeter = new Core.Orchestration.CostMeterState();
             _askAboutBreakingLimitations = askAboutBreakingLimitations;
             _breakingLimitationRaised = false;
             _submission = null;
             BudgetRefusal = null;
             DecisionId = null;
             return _turn.Token;
+        }
+    }
+
+    private Core.Orchestration.CostMeterState _costMeter = new();
+
+    /// <summary>
+    /// Whether the turn in progress is due a cost note after the call just recorded (CostMeter).
+    /// Only implementation work gets one: implement, rework and repair turns and their nudges,
+    /// never a review or a scan, and never once the turn has submitted.
+    /// </summary>
+    public bool CostNoteDue(long contextTokens, Core.Orchestration.RunLimits limits)
+    {
+        lock (_lock)
+        {
+            if (TurnKind is null || _submission is not null
+                || WorkKind is not (Contracts.TurnKind.Implement or Contracts.TurnKind.Rework or Contracts.TurnKind.Repair))
+            {
+                return false;
+            }
+
+            if (!Core.Orchestration.CostMeter.IsDue(TurnCalls, contextTokens, _costMeter, limits, out var next))
+                return false;
+            _costMeter = next;
+            return true;
         }
     }
 

@@ -181,4 +181,11 @@ public class ScanOptionsTests
         Assert.True(From().Limits.AllowNoReview);
         Assert.False(From(("FACTORY_REVIEW_NONE", "off")).Limits.AllowNoReview);
     }
+
+    [Fact]
+    public void CostNotesAreOnByDefault_AndCanBeTurnedOff()
+    {
+        Assert.True(From().Limits.CostNotes);
+        Assert.False(From(("FACTORY_COST_NOTES", "off")).Limits.CostNotes);
+    }
 }

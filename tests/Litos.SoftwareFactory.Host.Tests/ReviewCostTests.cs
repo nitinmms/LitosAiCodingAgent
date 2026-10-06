@@ -187,8 +187,55 @@ public sealed class GatewayAllowanceTests : IAsyncLifetime
         Assert.Contains("2 model calls", note.Text);
     }
 
+    /// <summary>R3's implementation re-read a context that grew to 115,000 tokens; the turn is
+    /// now told, once its context passes a threshold, what its calls cost.</summary>
     [Fact]
-    public async Task AnImplementTurn_IsNeverSteered()
+    public async Task AnImplementTurn_GetsACostNote_WhenItsContextPassesAThreshold_AndTheThreadSaysSo()
+    {
+        _run.BeginTurn(TurnKind.Implement, TurnKind.Implement, "thread", default);
+        _host.Provider.EnqueueReply("small", new UsageInfo(20_000, 300));
+        _host.Provider.EnqueueReply("large", new UsageInfo(4_000, 300, 0, 58_000));
+
+        await CallAsync("thread");
+        await Task.Delay(100);
+        Assert.Empty(_client.Steered);
+        await CallAsync("thread");
+
+        await WaitUntilAsync(() => !_client.Steered.IsEmpty);
+        var (session, message) = Assert.Single(_client.Steered);
+        Assert.Equal("thread", session);
+        Assert.StartsWith("Cost note from the factory. This is information, not a request to stop. This turn has made 2 model calls.", message);
+        Assert.Contains("now about 62,000 tokens", message);
+        await WaitUntilAsync(async () => (await _host.ThreadAsync(_threadId)).Messages.Any(m => m.Text.StartsWith("Cost note sent to the agent after 2 model calls")));
+    }
+
+    [Fact]
+    public async Task AReviewTurn_NeverGetsACostNote()
+    {
+        _run.BeginTurn(TurnKind.Review, TurnKind.Review, "review-1", default, "Review", new TurnAllowance(12, null, 24));
+        _host.Provider.EnqueueReply("large", new UsageInfo(4_000, 300, 0, 90_000));
+
+        await CallAsync();
+
+        await Task.Delay(100);
+        Assert.Empty(_client.Steered);
+    }
+
+    [Fact]
+    public async Task WithCostNotesOff_AnImplementTurn_GetsNone()
+    {
+        _host.Options.Limits = _host.Options.Limits with { CostNotes = false };
+        _run.BeginTurn(TurnKind.Implement, TurnKind.Implement, "thread", default);
+        _host.Provider.EnqueueReply("large", new UsageInfo(4_000, 300, 0, 90_000));
+
+        await CallAsync("thread");
+
+        await Task.Delay(100);
+        Assert.Empty(_client.Steered);
+    }
+
+    [Fact]
+    public async Task AnImplementTurn_IsNeverAskedToWrapUp()
     {
         _run.BeginTurn(TurnKind.Implement, TurnKind.Implement, "thread", default);
 

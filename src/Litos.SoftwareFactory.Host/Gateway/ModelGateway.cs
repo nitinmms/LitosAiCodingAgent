@@ -5,6 +5,7 @@ using Litos.Agent.Streaming;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Budget;
 using Litos.SoftwareFactory.Core.Estimation;
+using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Runs;
@@ -225,6 +226,8 @@ public sealed class ModelGateway(
                             run.PreferredUpstream = servedBy;
                         if (run.RecordTurnCall(charged) is { } wrapUp)
                             _ = WrapUpAsync(run, wrapUp);
+                        else if (run.CostNoteDue(completed.Usage.TotalInputTokens, options.Limits))
+                            _ = CostNoteAsync(run, chat, completed.Usage.TotalInputTokens, charged);
 
                         // Charged, but not passed on: to the agent loop an empty reply looks like
                         // a turn that chose to stop, and the run would be blamed for not calling
@@ -339,6 +342,28 @@ public sealed class ModelGateway(
     /// and the thread says why. Not awaited by the call that triggered it, which has a reply to
     /// stream; a failure to steer is logged, and the turn's hard tool-call limit still applies.
     /// </summary>
+    /// <summary>
+    /// Tells an implementation turn what its calls now cost and what fills its context
+    /// (CostMeter), and notes it in the thread. Appended like any steer, so the provider's prompt
+    /// cache is unaffected. Not awaited by the call that triggered it; a failure is logged.
+    /// </summary>
+    private async Task CostNoteAsync(ActiveRun run, Litos.Agent.Providers.ChatRequest chat, long contextTokens, long lastCallCharged)
+    {
+        try
+        {
+            var composition = CostMeter.Composition(chat.Messages);
+            if (run.Client is { } client && run.SessionId is { } sessionId)
+                await client.SteerAsync(sessionId, CostMeter.Note(run.TurnCalls, contextTokens, lastCallCharged, composition), CancellationToken.None);
+            await store.AddFactoryMessageAsync(
+                run.ThreadId, MessageKind.Status, CostMeter.ThreadLine(run.TurnCalls, contextTokens, composition), null, clock.UtcNow, CancellationToken.None);
+            signals.EventsWritten();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Run {RunId}: the cost note could not be sent.", run.RunId);
+        }
+    }
+
     private async Task WrapUpAsync(ActiveRun run, string message)
     {
         try

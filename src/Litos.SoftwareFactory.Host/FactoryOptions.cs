@@ -101,6 +101,7 @@ public sealed class FactoryOptions
             DecisionScan = !IsOff(configuration["FACTORY_DECISION_SCAN"]),
             ScanOnly = IsOn(configuration["FACTORY_SCAN_ONLY"]),
             AllowNoReview = !IsOff(configuration["FACTORY_REVIEW_NONE"]),
+            CostNotes = !IsOff(configuration["FACTORY_COST_NOTES"]),
         };
 
         if (configuration["FACTORY_DEFAULT_BUDGET"] is { Length: > 0 } defaultBudget)
