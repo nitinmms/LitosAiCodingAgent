@@ -236,6 +236,10 @@ public sealed class UsageEntry
     /// <summary>What the call was for: the kind of turn it was made in (Implement, Repair,
     /// Rework, Review, LightReview, Nudge), or null when it was made outside a turn.</summary>
     public string? Phase { get; set; }
+
+    /// <summary>Who served the call: a router's upstream when the provider reports one
+    /// (UsageInfo.ServedBy), otherwise the provider itself. Null until settled.</summary>
+    public string? ServedBy { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? SettledAt { get; set; }
 }

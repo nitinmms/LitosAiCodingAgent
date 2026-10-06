@@ -133,6 +133,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(u => u.Provider).HasMaxLength(60);
             e.Property(u => u.Model).HasMaxLength(200);
             e.Property(u => u.Phase).HasMaxLength(40);
+            e.Property(u => u.ServedBy).HasMaxLength(100);
             e.HasOne<TaskThread>().WithMany().HasForeignKey(u => u.ThreadId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(u => u.RequestKey).IsUnique();
             e.HasIndex(u => new { u.UserId, u.CreatedAt });

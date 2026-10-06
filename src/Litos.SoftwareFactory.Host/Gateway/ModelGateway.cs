@@ -226,7 +226,7 @@ public sealed class ModelGateway(
                             return null;
                         }
 
-                        run.Baselines[sessionKey] = SessionBaseline.From(chat, completed.Usage, clock.UtcNow);
+                        run.Baselines[sessionKey] = SessionBaseline.From(chat, completed.Usage, clock.UtcNow, run.Baselines.GetValueOrDefault(sessionKey));
                     }
 
                     if (GatewayEvent.FromAgentEvent(evt) is { } wire and not GatewayHeartbeat)

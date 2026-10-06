@@ -252,6 +252,35 @@ public sealed class GatewayTests : IAsyncLifetime
         Assert.Equal(new[] { 15_300L, 1_000 + 1_500 + 300, 1_100 + 1_600 + 300 }, entries.Select(e => e.Charged));
     }
 
+    /// <summary>
+    /// R2: one call that missed the cache made the next reservation assume no cache at all, about
+    /// 104,000 for a call that cost 8,000, and every resume paused again at once. One miss is now
+    /// followed by a reservation that still counts on the cache; a second miss in a row is not.
+    /// </summary>
+    [Fact]
+    public async Task AfterOneCacheMiss_TheNextCallStillCountsOnTheCache_AndAfterTwoItDoesNot()
+    {
+        await StartRunAsync(cap: 500_000);
+        _host.Provider.EnqueueReply("first", new UsageInfo(1_000, 300, 0, 14_000));     // the cache works
+        _host.Provider.EnqueueReply("second", new UsageInfo(16_000, 300));              // a miss
+        _host.Provider.EnqueueReply("third", new UsageInfo(17_000, 300));               // another
+        _host.Provider.EnqueueReply("fourth", new UsageInfo(1_000, 300, 0, 17_000));
+        ChatMessage[] turn2 = [ChatMessage.Assistant([new TextBlock("first")]), ChatMessage.User(new string('y', 4_000))];
+        ChatMessage[] turn3 = [.. turn2, ChatMessage.Assistant([new TextBlock("second")]), ChatMessage.User(new string('z', 4_000))];
+        ChatMessage[] turn4 = [.. turn3, ChatMessage.Assistant([new TextBlock("third")]), ChatMessage.User(new string('w', 4_000))];
+
+        await CallAsync(Request());
+        await CallAsync(Request(more: turn2));
+        await CallAsync(Request(more: turn3));
+        await CallAsync(Request(more: turn4));
+
+        var entries = await _host.Store.ListUsageAsync(_threadId, default);
+        // Third call, after one miss: the second call's 16,000 is still expected from the cache.
+        Assert.Equal((long)Math.Ceiling((entries[2].EstimatedInput - 16_000 + 1_600) * 1.1m) + 4_000, entries[2].Reserved);
+        // Fourth, after two misses in a row: reserved in full.
+        Assert.Equal((long)Math.Ceiling(entries[3].EstimatedInput * 1.1m) + 4_000, entries[3].Reserved);
+    }
+
     [Fact]
     public async Task ACacheHitTooLongAgo_IsNotCountedOn_AndTheCallIsReservedInFull()
     {

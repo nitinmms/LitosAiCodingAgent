@@ -19,17 +19,48 @@ public sealed record SessionBaseline(int MessageCount, int TotalInputTokens)
     /// <summary>When the request settled; null when not recorded.</summary>
     public DateTimeOffset? SettledAt { get; init; }
 
-    public static SessionBaseline From(ChatRequest request, UsageInfo usage, DateTimeOffset? settledAt = null) =>
-        new(request.Messages.Count, usage.TotalInputTokens) { CacheReadTokens = usage.CacheReadInputTokens, SettledAt = settledAt };
+    /// <summary>True once any call in the session has been served from the cache.</summary>
+    public bool CacheProven { get; init; }
+
+    /// <summary>Calls in a row, since the cache was proven, that it served nothing.</summary>
+    public int CacheMisses { get; init; }
+
+    /// <summary>
+    /// Misses in a row after which a session's cache is no longer counted on. A single miss is
+    /// a provider's routing or eviction and is followed by hits again; on R2 one miss made the
+    /// next reservation assume no cache at all, about 104,000 for a call that cost 8,000, and
+    /// every resume paused again at once. Two in a row is treated as the cache having gone.
+    /// </summary>
+    public const int MaxCacheMisses = 2;
+
+    /// <param name="previous">The session's baseline before this request, which carries
+    /// forward whether the cache has been proven and how many misses followed.</param>
+    public static SessionBaseline From(ChatRequest request, UsageInfo usage, DateTimeOffset? settledAt = null, SessionBaseline? previous = null)
+    {
+        var hit = usage.CacheReadInputTokens > 0;
+        var proven = hit || previous?.CacheProven == true;
+        return new(request.Messages.Count, usage.TotalInputTokens)
+        {
+            CacheReadTokens = usage.CacheReadInputTokens,
+            SettledAt = settledAt,
+            CacheProven = proven,
+            CacheMisses = hit || !proven ? 0 : (previous?.CacheMisses ?? 0) + 1,
+        };
+    }
 
     /// <summary>
     /// How much of the next request's input the provider can be expected to serve from its
     /// cache: all of this request's input, once the session has shown that the cache is being
-    /// hit and while it is recent enough to still be held. Otherwise nothing — a first call, a
-    /// provider that does not cache, or a session resumed after a pause is reserved in full.
+    /// hit — and still after one call that missed — while it is recent enough to still be held.
+    /// Otherwise nothing: a first call, a provider that does not cache, a cache that missed
+    /// <see cref="MaxCacheMisses"/> times in a row, or a session resumed after a pause is
+    /// reserved in full.
     /// </summary>
     public long ExpectedCachedTokens(DateTimeOffset now, TimeSpan cacheWindow) =>
-        CacheReadTokens > 0 && SettledAt is { } at && now >= at && now - at <= cacheWindow ? TotalInputTokens : 0;
+        (CacheReadTokens > 0 || (CacheProven && CacheMisses < MaxCacheMisses))
+        && SettledAt is { } at && now >= at && now - at <= cacheWindow
+            ? TotalInputTokens
+            : 0;
 }
 
 public enum EstimateBasis

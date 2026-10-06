@@ -164,6 +164,55 @@ public class RequestEstimatorTests
         Assert.Equal(0, Baseline(22_000, Now.AddMinutes(1)).ExpectedCachedTokens(Now, Window));
     }
 
+    /// <summary>R2: one call that missed the cache made the next reservation assume no cache,
+    /// and every resume paused again at once.</summary>
+    [Fact]
+    public void ExpectedCachedTokens_AfterOneMiss_StillCountsOnTheCache_AndAfterTwoInARowDoesNot()
+    {
+        var request = Request([UserText(10)]);
+        var hit = SessionBaseline.From(request, new UsageInfo(1_000, 100, 0, 60_000), Now);
+        var oneMiss = SessionBaseline.From(request, new UsageInfo(64_000, 100), Now, hit);
+        var twoMisses = SessionBaseline.From(request, new UsageInfo(64_000, 100), Now, oneMiss);
+
+        Assert.Equal((true, 1), (oneMiss.CacheProven, oneMiss.CacheMisses));
+        Assert.Equal(64_000, oneMiss.ExpectedCachedTokens(Now, Window));
+        Assert.Equal(2, twoMisses.CacheMisses);
+        Assert.Equal(0, twoMisses.ExpectedCachedTokens(Now, Window));
+    }
+
+    [Fact]
+    public void ExpectedCachedTokens_AHitAfterAMiss_ResetsTheCount()
+    {
+        var request = Request([UserText(10)]);
+        var hit = SessionBaseline.From(request, new UsageInfo(1_000, 100, 0, 60_000), Now);
+        var miss = SessionBaseline.From(request, new UsageInfo(64_000, 100), Now, hit);
+        var again = SessionBaseline.From(request, new UsageInfo(1_000, 100, 0, 64_000), Now, miss);
+
+        Assert.Equal((true, 0), (again.CacheProven, again.CacheMisses));
+    }
+
+    /// <summary>A provider that never caches is still reserved in full on every call.</summary>
+    [Fact]
+    public void ExpectedCachedTokens_NeverProven_StaysNothing()
+    {
+        var request = Request([UserText(10)]);
+        var first = SessionBaseline.From(request, new UsageInfo(20_000, 100), Now);
+        var second = SessionBaseline.From(request, new UsageInfo(21_000, 100), Now, first);
+
+        Assert.Equal((false, 0), (second.CacheProven, second.CacheMisses));
+        Assert.Equal(0, second.ExpectedCachedTokens(Now, Window));
+    }
+
+    [Fact]
+    public void ExpectedCachedTokens_AfterOneMiss_StillRespectsTheCacheWindow()
+    {
+        var request = Request([UserText(10)]);
+        var hit = SessionBaseline.From(request, new UsageInfo(1_000, 100, 0, 60_000), Now);
+        var miss = SessionBaseline.From(request, new UsageInfo(64_000, 100), Now, hit);
+
+        Assert.Equal(0, miss.ExpectedCachedTokens(Now + Window + TimeSpan.FromSeconds(1), Window));
+    }
+
     [Fact]
     public void SessionBaseline_From_RecordsWhenItSettled()
     {

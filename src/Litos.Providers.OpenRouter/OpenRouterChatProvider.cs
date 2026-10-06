@@ -80,6 +80,7 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
         var cacheReadTokens = 0;
         var cacheWriteTokens = 0;
         var reasoningTokens = 0;
+        string? servedBy = null;
 
         while (await reader.ReadLineAsync(ct) is { } line)
         {
@@ -104,6 +105,11 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
 
             if (chunk is null)
                 continue;
+
+            // The upstream OpenRouter routed this call to. A cache lives with the upstream, so a
+            // call sent somewhere else misses a cache the previous call wrote.
+            if (!string.IsNullOrWhiteSpace(chunk.Provider))
+                servedBy = chunk.Provider;
 
             if (chunk.Usage is { } usage)
             {
@@ -167,7 +173,7 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
         foreach (var index in toolCallOrder)
             contentBlocks.Add(new LM.ToolUseBlock(toolCallIds[index], toolCallNames[index], ParseToolArguments(toolCallJson[index])));
 
-        yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), new UsageInfo(inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, reasoningTokens));
+        yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), new UsageInfo(inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, reasoningTokens) { ServedBy = servedBy });
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -286,7 +292,7 @@ internal sealed record OpenRouterModelListResponse(List<OpenRouterModel> Data);
 
 internal sealed record OpenRouterModel(string Id, string? Name, [property: JsonPropertyName("context_length")] int? ContextLength);
 
-internal sealed record OpenRouterStreamChunk(List<OpenRouterStreamChoice>? Choices, OpenRouterUsage? Usage);
+internal sealed record OpenRouterStreamChunk(List<OpenRouterStreamChoice>? Choices, OpenRouterUsage? Usage, string? Provider = null);
 
 internal sealed record OpenRouterStreamChoice(OpenRouterDelta? Delta);
 

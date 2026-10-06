@@ -729,6 +729,20 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(UsageStatus.Settled, entry.Status);
         Assert.Equal((12_200L, 12_000L, 900L, 640L, 13_100L, admitted.Reserved), (entry.ActualInput, entry.ActualCachedInput, entry.ActualOutput, entry.ActualReasoning, entry.Charged, entry.Reserved));
         Assert.Equal(T0.AddSeconds(30), entry.SettledAt);
+        Assert.Equal(entry.Provider, entry.ServedBy);
+    }
+
+    /// <summary>R2 lost a third of its tokens to calls that missed the cache; which upstream
+    /// served each call is what shows whether a router sent it elsewhere.</summary>
+    [SkippableFact]
+    public async Task Settle_RecordsWhoServedTheCall_WhenTheProviderSaysSo()
+    {
+        var running = await RunningAsync(cap: 100_000);
+        await Store.ReserveAsync(Reserve(running, "key-1"), Policy, T0, default);
+
+        await Store.SettleAsync("key-1", new UsageInfo(9_000, 500) { ServedBy = "DeepSeek" }, 9_500, T0, default);
+
+        Assert.Equal("DeepSeek", Assert.Single(await Store.ListUsageAsync(running.Thread.Id, default)).ServedBy);
     }
 
     /// <summary>A unique request key per call prevents double-charging on repeated callbacks.</summary>

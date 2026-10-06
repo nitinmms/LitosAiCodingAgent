@@ -342,6 +342,33 @@ public class OpenRouterChatProviderTests
         Assert.Equal(10_339, usage.TotalInputTokens);
     }
 
+    /// <summary>A cache lives with the upstream that served the call, so the factory records it
+    /// to explain a call that missed the cache.</summary>
+    [Fact]
+    public async Task StreamAsync_ReportsTheUpstreamThatServedTheCall()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            "data: {\"provider\":\"DeepSeek\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"
+            + "data: {\"provider\":\"DeepSeek\",\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":5}}\n\ndata: [DONE]\n\n"));
+
+        var events = await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "deepseek/deepseek-v4.1-flash"), CancellationToken.None));
+
+        Assert.Equal("DeepSeek", events.OfType<MessageCompleted>().Single().Usage.ServedBy);
+    }
+
+    [Fact]
+    public async Task StreamAsync_NoUpstreamReported_LeavesServedByEmpty()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":5}}\n\ndata: [DONE]\n\n"));
+
+        var events = await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "deepseek/deepseek-v4.1-flash"), CancellationToken.None));
+
+        Assert.Null(events.OfType<MessageCompleted>().Single().Usage.ServedBy);
+    }
+
     [Fact]
     public async Task StreamAsync_ExclusivePromptTokens_PassesThroughWithoutSubtracting()
     {

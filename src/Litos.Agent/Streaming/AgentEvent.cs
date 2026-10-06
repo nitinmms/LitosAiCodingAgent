@@ -73,4 +73,13 @@ public sealed record UsageInfo(
     /// represents once caching is active.
     /// </summary>
     public int TotalInputTokens => InputTokens + CacheCreationInputTokens + CacheReadInputTokens;
+
+    /// <summary>
+    /// Who actually served the call, when the provider can say and it is not simply the provider
+    /// itself: a router's upstream (OpenRouter's "provider" field), for example. Null otherwise —
+    /// a direct provider leaves it unset, and callers that record it fall back to the provider's
+    /// own name. A cache lives with whoever served the call, so this is what explains a call
+    /// that missed a cache the previous call wrote.
+    /// </summary>
+    public string? ServedBy { get; init; }
 }

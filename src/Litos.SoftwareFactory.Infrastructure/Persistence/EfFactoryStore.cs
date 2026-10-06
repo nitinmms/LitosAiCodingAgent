@@ -726,6 +726,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         entry.ActualCachedInput = usage.CacheCreationInputTokens + usage.CacheReadInputTokens;
         entry.ActualOutput = usage.OutputTokens;
         entry.ActualReasoning = usage.ReasoningTokens;
+        entry.ServedBy = usage.ServedBy is { Length: > 0 } servedBy ? servedBy[..Math.Min(servedBy.Length, 100)] : entry.Provider;
         entry.Charged = charge;
         entry.SettledAt = now;
         Touch(db, thread, now, EventTypes.UsageChanged);
