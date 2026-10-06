@@ -21,6 +21,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 | F6, re-run on `m1.7` | **Yes, after one rework.** The expected decision was still never asked | 1 | 0 | 0 of 1 expected | 799,093 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | 50 min of call time (13 + 37 for the rework, of which about 20 stalled on a kernel defect and paused for its fix) | 0 |
 | F7, with the decision scan (`m1.11`) | **Yes, after one rework** | 1 | 0 | **2 asked**, including the 1 expected, answered as scripted | 942,772 | 1,200,000 (1,800,000 with the rework's top-up) | **Yes**, inside the original cap | about 95 min of run time (55 + 40 for the rework), not counting time spent Blocked | 0 |
 | R4, with the decision scan (`m1.11`) | **No: budget-paused three times during its implementation**, before any submission | 0 | 0 | **3 asked**, including the 1 expected, which was answered against the script | 1,315,680 | 1,200,000 (raised to 1,400,000) | No | about 35 min of run time | 0 |
+| R2, with the decision scan (`m1.11`; rework on `m1.12`) | **No: budget-paused four times during its implementation.** All five criteria met after one rework | 1 | 0 | **3 asked, none expected**: 1 fair, 2 unnecessary | 1,279,785 | 600,000 (raised to 1,000,000; 1,300,000 with the rework's top-up) | No | about 45 min of run time (38 + 7 for the rework) | 0 |
 
 **Against the M1 gate so far (7 of 12 run):**
 
@@ -38,6 +39,8 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 **After the fixes (re-runs on prompt revision `m1.7`):** F6 was re-run and accepted after one rework, inside its original cap, at 799,093 tokens against 1,188,184 the first time. It still did not ask the decision it was expected to; see its section. R1 was re-run three times and paused on budget during its implementation every time, before submitting anything; see its section. On this model a change the task set calls small costs this repository about 300,000 to 440,000 tokens. F3 was re-run and accepted after one rework at 231,807 tokens, against 971,057 and a budget pause the first time; see its section. F5 was re-run and failed again: its first handoff wrapped the synchronous methods in `Task.Run`, and its rework, which did move to asynchronous file I/O, ended Blocked when a provider stream produced nothing, after spending most of its calls on a test hang it blamed on the environment. With the re-runs, 5 of the 7 tasks run are accepted.
 
 **With the decision scan (`m1.11`):** F7 and R4 each asked the decision the task set expects, first: the first decisions the factory asked in the evaluation. F7 was accepted after one rework at 942,772 tokens, inside its original cap. R4 asked its three questions for 36,012 tokens, then paused on budget three times during its implementation, in 125 calls on a context of up to 122,000 tokens, and was cancelled at 1,315,680 before submitting anything. **6 of the 9 tasks run are accepted** (F1, F2, F3, F4, F6, F7; F3 and F6 on re-runs). The gate needs 7 of 12, so one of the three unrun tasks (R2, R3, F8) must pass.
+
+**R2 (2026-10-05 and 06):** paused on budget four times during its implementation, so it is recorded as failed, although its code met all five criteria after one rework. Its scan asked three questions on a task that expects none. **6 of the 10 tasks run are accepted**, and the gate now needs both R3 and F8 to pass.
 
 ## Budgets
 
@@ -134,6 +137,10 @@ The first two tasks were also the first real end-to-end runs, and found defects 
 | F7 | A review failed with "the process cannot access the file ... transcript.jsonl": another handle held the transcript for a moment | Transcript files are opened sharing read, write and delete, and an append retries a briefly locked file (an engine change) | `283e7c5` |
 | F7 | OpenRouter ended a stream 3,479 bytes into a tool call's arguments; the reply could not be read and the turn failed | The gateway holds a call's events until it completes, with heartbeats, and sends a call that broke part-way again, up to twice, each attempt charged on its own | `219bee8` |
 | F7 | A light review of one test file reasoned for 36,006 tokens without a reply, twice, and the task sat blocked at its last step | A review whose model reaches its output limit without replying runs once more, then the run hands off with the review not run and says so; a scan cut off this way implements without it | `efda4b5` |
+| R4 | Thread messages showed numbers in the host machine's culture ("1,22,616"), and the scan's allowance note called it a review | Thread messages format numbers invariantly; the note names the decision scan | `2fee56c` |
+| R2 | Four calls missed the provider cache completely and cost about 281,000 of 860,000 tokens; each miss also made the next reservation assume no cache (about 104,000 for a call that cost 8,000), so every resume paused again at once | A session's cache, once proven, is still counted on after one miss (two in a row are reserved in full); every call records who served it (`ServedBy`: a router's upstream when the provider reports one, otherwise the provider), for any provider | `d368d7b` |
+| All | Review took 10% to 44% of a task's tokens, a quarter on average, and a tiny check task spent 44% on a light review that found nothing (ReadM_SoftwareFactory_ReviewGuidance.md) | Review depth is scored: weighted risk signals pick no review, light or full; deep-review categories (auth, schema, storage, locking, process or markup injection) are full on their own; no review only for at most 40 lines in 4 files with no signal, a clean verification and every criterion tested; `FACTORY_REVIEW_NONE=off` keeps at least a light one (`m1.12`) | `1480171` |
+| All | Nothing recorded whether a review finding was real, so review's value could not be measured | A person can judge each finding (real defect, not worth fixing, wrong); review yield per task and in total: review tokens, share, confirmed defects per 100,000 review tokens, false-positive rate | `76ad5b3` |
 | F3 | A rework's review cost more than the first implementation | The review of a rework covers only the rework; briefs say that calls are what cost; prompt revision `m1.2` | `c5e10d8` |
 
 ## F1 · Enforce size limits on keys, names and documents
@@ -238,7 +245,7 @@ Two requests that expect a decision, run with the scan (prompt revision `m1.11`)
 
 - **Both expected decisions were asked**, first: the first decisions the factory asked in the evaluation.
 - **A flaw:** F7's scan marked "how the format changes, and when an existing file is upgraded" as settled by "Versions must survive reopening and compaction", which does not settle it. That is F6's failure mode, so `existing-data` choices should be asked whatever the scan says settles them.
-- **Not yet measured:** questions on requests that should ask none.
+- **Questions on a request that should ask none:** measured on R2 (see its section). It asked three: one fair existing-data question, one that repeated it, and one the request's own words settled.
 - **How the two runs ended:** F7 accepted, R4 failed on budget. See their sections.
 
 ## R1 · Per-slide text alignment and size
@@ -338,6 +345,27 @@ Run on 2026-10-05 with the decision scan (prompt revision `m1.11`), at the same 
   - The context reached 121,759 tokens. Most of the cost was that context re-read from the cache: 910,106 of the 1,279,668, at 10%, over 125 calls. The final pauses were for reservations of about 123,000 and 140,000, which assume no cache hit.
 - **What it shows:** the scan works on a client-and-server request too. All three questions were real and answered in about seven minutes. But the change is too large for this model at this cap: it spent the whole budget implementing, in 125 calls that each re-read a growing context. Even so, a handoff would have failed criterion 3, because the timing answer was not the scripted one.
 
+## R2 · Focal point for photo cropping
+
+Run on 2026-10-05 with the decision scan (prompt revision `m1.11`); its rework ran on 2026-10-06 on `m1.12`. The thread was titled "Old drafts load with the focal point at the centre." by mistake (a suggested answer went into the title field), so its branch is `factory/143e-old-drafts-load-…`; the title reaches no brief, and pull request #2 was retitled "Focal point for photo cropping".
+
+- **Outcome:** **not accepted.** Its implementation paused on budget four times before submitting, at 541,481 of 600,000 and again after each raise (to 900,000, then 1,000,000). The final handoff meets all five criteria, and pull request #2 was merged.
+- **Decision scan** (23,701 tokens, 7 calls): 7 open choices, 3 asked, 4 assumed. The task set expects no decision.
+  - "How is the focal point represented and added to the Slide schema?" A fair existing-data question, but its options offered `focusX`/`focusY` where criterion 1 asks for `{x, y}`. Answered with "Other": an optional `focalPoint {x, y}` defaulting to the centre. The answer also corrected one of the scan's stated assumptions, "click/tap only for now" for keyboard users, which contradicted criterion 2. **That requirement reached the factory through the answer, not the request.**
+  - "What happens to focal points already-saved drafts do not have?" **Unnecessary:** the first answer settled it. Questions are chosen all at once during the scan, and a later one is not checked against an earlier answer.
+  - "Should the AI planner also choose focal points?" **Unnecessary:** the request says "let users set a focal point".
+- **First handoff** (commit `c992d93`, 983,387 tokens with the scan: 857,545 implementing in 69 calls, 102,141 reviewing in 13): build passed; 142 tests passed (19 new); changed-line coverage 97.6%. Full review (15 files, a changed public declaration).
+  - Criteria 1, 2, 3 and 5 met. Not met: criterion 4. No focal-point marker; the handoff disclosed it.
+  - Criterion 2 is met with two weaknesses: the accessible name is the preview's existing label, and the canvas is a button that Enter and Space do not activate.
+  - **Four calls missed the cache completely** and cost about 281,000 tokens, a third of the task. Two came 40 seconds apart with the same prefix, so the first wrote no cache the second could use. Each miss made the next reservation assume no cache, about 104,000 tokens, and every resume paused again at once. Fixed in `d368d7b`.
+  - The review left 7 minor findings, one a real defect beyond the criteria: rewriting a slide reset its crop to the centre. No verdicts were recorded on them.
+- **Rework** (commit `748b920`, prompt revision `m1.12`): one message asking for the marker, a rewritten slide keeping its crop, and the hint only on slides with a photo. The thread recorded the top-up: 300,000 added, cap 1,300,000.
+  - Delivered all three: a marker drawn as an element over the canvas, never on it, shown while the preview is focused or hovered, at the right place in the cropped frame; the slide-replace step keeps the user's focal point, with a test; the hint is shown only with a photo. 145 tests passed (22 new); changed-line coverage 98.1%.
+  - Cost: 296,398 tokens, 273,447 reworking in 41 calls and 22,951 for a **light review** (risk score 5: 54 lines, 7 files, a changed public declaration) in one call. **No call missed the cache**; every rework call was served by the same upstream (Together), and the largest reservation was 42,556.
+  - One minor finding open: hover and focus share one flag, so the marker hides when the pointer leaves a focused preview.
+- **Evidence:** no mismatch.
+- **What it shows:** the factory built a correct medium UI change, but on this repository it costs far more than the cap: 857,545 tokens to the first handoff, against 600,000. The scan's false-alarm rate on a request that needs no decision is high: two of three questions were unnecessary. The rework is the first run on the cache and review fixes, and both behaved as intended.
+
 ## What the seven tasks show
 
 The gate cannot realistically be met: it needs all five remaining tasks to pass, and three of them are large or expect a decision. The blueprint's rule for a missed gate is to iterate on the prompts, orchestration and tools and re-run the task set before M2.
@@ -355,3 +383,10 @@ F5 adds a third, smaller one: a repair that satisfied a review finding by removi
 - **The first cause is addressed for reworks.** F3, F6 and F7 finished their reworks well inside the top-up.
 - **What remains is the cost of a large first implementation.** R4 spent 1.28 million tokens implementing without submitting, in 125 calls on a context of up to 122,000 tokens. R1 failed the same way at a smaller scale.
 - **Tally:** 6 of 9 tasks are accepted. One of R2, R3 and F8 must pass for the gate.
+
+**After R2 (2026-10-06):**
+
+- **Implementation cost is now the cause of every failure since F6.** R1, R4 and R2 all paused on budget before their first submission; the code R2 eventually produced met every criterion.
+- **A third of R2's cost was calls that missed the cache**, which the factory did not cause and could not see; it now records who served each call, and one miss no longer inflates the next reservation.
+- **The scan over-asks on a request that needs no decision:** two of R2's three questions were unnecessary.
+- **Tally:** 6 of 10 tasks are accepted. The gate needs both R3 and F8 to pass.
