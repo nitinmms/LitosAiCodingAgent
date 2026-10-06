@@ -37,6 +37,9 @@ public sealed record StopRunCommand(Guid RunId, LifecycleTrigger Trigger, StopRe
     /// <summary>The orchestrator's state at the stop, so the run can be resumed from it.</summary>
     public string? StateJson { get; init; }
 
+    /// <summary>The working copy at the stop; null keeps the last checkpoint's.</summary>
+    public string? WorkspaceSnapshotJson { get; init; }
+
     public Stage Stage { get; init; } = Stage.Implement;
 
     /// <summary>True when the working copy is clean and the branch pushed, or the run is over:
@@ -138,14 +141,21 @@ public interface IFactoryStore
     // ---- The coordinator ----
 
     /// <summary>
-    /// Claims the oldest queued run that can start: under the global slot cap, and with no other
-    /// thread holding its repository. Taking the lease, moving the thread to Running and
-    /// recording the event happen in one serialized transaction.
+    /// Claims the run that has waited longest in the queue and can start: under the global slot
+    /// cap, not still held by the host, and with no other thread holding its repository. Taking
+    /// the lease, moving the thread to Running and recording the event happen in one serialized
+    /// transaction. Every queued thread that cannot start is given its waiting reason, even when
+    /// all the slots are busy (§6.3).
     /// </summary>
-    Task<ClaimedRun?> ClaimNextRunAsync(int slotCap, DateTimeOffset now, CancellationToken ct);
+    /// <param name="heldRuns">The runs the host still has an executor for. They fill the slots,
+    /// and one that has been queued again is not claimed until its executor has finished. Null
+    /// counts the runs marked Running instead.</param>
+    Task<ClaimedRun?> ClaimNextRunAsync(int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null);
 
-    /// <summary>Saves the orchestrator's state after a step, with the stage the task is now in.</summary>
-    Task SaveCheckpointAsync(Guid runId, string stateJson, Stage stage, DateTimeOffset now, CancellationToken ct);
+    /// <summary>Saves the orchestrator's state after a step, with the stage the task is now in,
+    /// and the working copy as it is now (null keeps the last one).</summary>
+    Task SaveCheckpointAsync(
+        Guid runId, string stateJson, Stage stage, DateTimeOffset now, CancellationToken ct, string? workspaceSnapshotJson = null);
 
     Task SetRunWorkerAsync(Guid runId, int? processId, DateTimeOffset? startTime, CancellationToken ct);
 
@@ -209,11 +219,12 @@ public interface IFactoryStore
     /// Reconciles calls whose usage will never be reported: each is charged
     /// <see cref="BudgetLedger.ReconciledCharge"/> and the rest of its reservation is released.
     /// Call it only when the calls cannot still be in flight. With a run id, that run's Unknown
-    /// calls — for when the run has stopped. With none, every Unknown call and every call still
-    /// marked Reserved — for host startup, when no call from a previous host can be in flight.
-    /// Returns the number of calls reconciled.
+    /// calls — for when the run has stopped — and, with <paramref name="includeInFlight"/>, its
+    /// calls still marked Reserved, for a run that no executor owns any more. With none, every
+    /// Unknown call and every call still marked Reserved — for host startup, when no call from a
+    /// previous host can be in flight. Returns the number of calls reconciled.
     /// </summary>
-    Task<int> ReconcileUsageAsync(Guid? runId, DateTimeOffset now, CancellationToken ct);
+    Task<int> ReconcileUsageAsync(Guid? runId, DateTimeOffset now, CancellationToken ct, bool includeInFlight = false);
 
     Task<IReadOnlyList<UsageEntry>> ListUsageAsync(Guid threadId, CancellationToken ct);
 

@@ -333,7 +333,7 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Null(await Store.ClaimNextRunAsync(1, T0, default));
     }
 
-    /// <summary>The slot cap stays at 1 in M1: a second queued run waits while one is running.</summary>
+    /// <summary>A second queued run waits while the only slot is taken.</summary>
     [SkippableFact]
     public async Task Claim_AtTheSlotCap_ClaimsNothing()
     {
@@ -416,6 +416,140 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         await Store.StopRunAsync(Stop(first.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
 
         Assert.Equal(second.Id, (await Store.ClaimNextRunAsync(1, T0, default))!.Thread.Id);
+    }
+
+    // ---- Claiming with more than one slot (M2) ----
+
+    [SkippableFact]
+    public async Task Dispatch_QueuesTheRunAtTheTimeOfTheMessage()
+    {
+        var (_, _, runId) = await QueuedAsync();
+
+        Assert.Equal(T0, (await Store.GetRunAsync(runId, default))!.QueuedAt);
+    }
+
+    /// <summary>With every slot busy the queue is still scanned, so each waiting thread says why,
+    /// and saying it again changes nothing.</summary>
+    [SkippableFact]
+    public async Task Claim_AtTheSlotCap_TellsEveryQueuedThreadItWaitsForASlot()
+    {
+        await RunningAsync("a");
+        var (_, b, _) = await QueuedAsync("b");
+        var (_, c, _) = await QueuedAsync("c");
+
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 1, T0, default));
+
+        Assert.Equal("Waiting for a free slot (1 of 1 busy).", (await ThreadAsync(b.Id)).StateReason);
+        Assert.Equal("Waiting for a free slot (1 of 1 busy).", (await ThreadAsync(c.Id)).StateReason);
+
+        var revision = (await ThreadAsync(b.Id)).Revision;
+        var events = (await Store.ReadEventsAsync(b.Id, 0, 100, default)).Count;
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 1, T0.AddSeconds(5), default));
+        Assert.Equal(revision, (await ThreadAsync(b.Id)).Revision);
+        Assert.Equal(events, (await Store.ReadEventsAsync(b.Id, 0, 100, default)).Count);
+    }
+
+    /// <summary>The held repository is the more specific reason, so it wins over the busy slots.</summary>
+    [SkippableFact]
+    public async Task Claim_RepositoryHeld_AndSlotsBusy_SaysTheRepository()
+    {
+        var first = await RunningAsync();
+        var second = await AddThreadAsync(first.Project, "Fix the footer");
+        await Store.DispatchAsync(second.Id, Admin, "msg-b", "Fix the footer.", T0, default);
+
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 1, T0, default));
+
+        Assert.Equal("Waiting for salesapp — held by \"Add CSV export\" (running).", (await ThreadAsync(second.Id)).StateReason);
+    }
+
+    /// <summary>A reason that is no longer true is replaced when the claim next looks, and
+    /// cleared when the thread starts.</summary>
+    [SkippableFact]
+    public async Task Claim_StaleReason_IsReplaced_ThenClearedWhenTheThreadStarts()
+    {
+        var holder = await RunningAsync("a");
+        var other = await RunningAsync("b");
+        var waiting = await AddThreadAsync(holder.Project, "Fix the footer");
+        await Store.DispatchAsync(waiting.Id, Admin, "msg-w", "Fix the footer.", T0, default);
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 5, T0, default));
+        Assert.StartsWith("Waiting for a — held by", (await ThreadAsync(waiting.Id)).StateReason);
+
+        // The repository is free now, but the one slot is still taken by the other task.
+        await Store.StopRunAsync(Stop(holder.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 1, T0, default));
+        Assert.Equal("Waiting for a free slot (1 of 1 busy).", (await ThreadAsync(waiting.Id)).StateReason);
+
+        await Store.StopRunAsync(Stop(other.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
+        Assert.Equal(waiting.Id, (await Store.ClaimNextRunAsync(slotCap: 1, T0, default))!.Thread.Id);
+        Assert.Null((await ThreadAsync(waiting.Id)).StateReason);
+    }
+
+    /// <summary>The host's registry, not the database, says which slots are busy: a run that has
+    /// stopped but is still tearing down holds its slot.</summary>
+    [SkippableFact]
+    public async Task Claim_RunsTheHostStillHolds_FillTheSlots()
+    {
+        var (_, waiting, runId) = await QueuedAsync("b");
+        var tearingDown = new HashSet<Guid> { Guid.NewGuid() };
+
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 1, T0, default, tearingDown));
+        Assert.Equal("Waiting for a free slot (1 of 1 busy).", (await ThreadAsync(waiting.Id)).StateReason);
+
+        Assert.Equal(runId, (await Store.ClaimNextRunAsync(slotCap: 2, T0, default, tearingDown))!.Run.Id);
+    }
+
+    /// <summary>The resume race: a run paused and resumed before its executor finished tearing
+    /// down must not be claimed a second time while that executor still holds it.</summary>
+    [SkippableFact]
+    public async Task Claim_ARunTheHostStillHolds_IsNotClaimedAgain_UntilItIsReleased()
+    {
+        var running = await RunningAsync();
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Pause, StopReason.PausedByUser), T0, default);
+        await Store.ApplyUserActionAsync(running.Thread.Id, Admin, LifecycleTrigger.Resume, T0, default);
+        var held = new HashSet<Guid> { running.Run.Id };
+
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 5, T0, default, held));
+        var thread = await ThreadAsync(running.Thread.Id);
+        Assert.Equal(LifecycleState.Queued, thread.State);
+        Assert.Null(thread.StateReason);
+
+        Assert.Equal(running.Run.Id, (await Store.ClaimNextRunAsync(slotCap: 5, T0, default, new HashSet<Guid>()))!.Run.Id);
+    }
+
+    /// <summary>A resumed run waits behind work queued before it was resumed, whichever was
+    /// created first.</summary>
+    [SkippableTheory]
+    [InlineData(LifecycleTrigger.Pause, LifecycleTrigger.Resume)]
+    [InlineData(LifecycleTrigger.Block, LifecycleTrigger.ResolveBlocker)]
+    [InlineData(LifecycleTrigger.ExhaustBudget, LifecycleTrigger.RaiseBudgetAndResume)]
+    [InlineData(LifecycleTrigger.Interrupt, LifecycleTrigger.Recover)]
+    public async Task Claim_IsFirstInFirstOut_ByWhenARunWasLastQueued(LifecycleTrigger stop, LifecycleTrigger resume)
+    {
+        var older = await RunningAsync("a");
+        await Store.StopRunAsync(Stop(older.Run.Id, stop, StopReason.PausedByUser), T0.AddMinutes(1), default);
+        var newer = await AddThreadAsync(await AddProjectAsync("b"), "newer");
+        await Store.DispatchAsync(newer.Id, Admin, "m-newer", "newer", T0.AddMinutes(5), default);
+
+        await Store.ApplyUserActionAsync(older.Thread.Id, Admin, resume, T0.AddMinutes(10), default);
+
+        Assert.Equal(T0.AddMinutes(10), (await Store.GetRunAsync(older.Run.Id, default))!.QueuedAt);
+        Assert.Equal(newer.Id, (await Store.ClaimNextRunAsync(slotCap: 5, T0.AddMinutes(11), default))!.Thread.Id);
+        Assert.Equal(older.Run.Id, (await Store.ClaimNextRunAsync(slotCap: 5, T0.AddMinutes(11), default))!.Run.Id);
+    }
+
+    [SkippableFact]
+    public async Task Claim_AnAnsweredDecision_JoinsTheBackOfTheQueue()
+    {
+        var older = await RunningAsync("a");
+        var decision = await Store.OpenDecisionAsync(older.Run.Id, new DecisionSubmission("Q?", "w", ["a", "b"]), T0, default);
+        await Store.StopRunAsync(Stop(older.Run.Id, LifecycleTrigger.RequestDecision, StopReason.DecisionNeeded), T0, default);
+        var newer = await AddThreadAsync(await AddProjectAsync("b"), "newer");
+        await Store.DispatchAsync(newer.Id, Admin, "m-newer", "newer", T0.AddMinutes(5), default);
+
+        await Store.AnswerDecisionAsync(decision.Id, Admin, "a", T0.AddMinutes(10), default);
+
+        Assert.Equal(T0.AddMinutes(10), (await Store.GetRunAsync(older.Run.Id, default))!.QueuedAt);
+        Assert.Equal(newer.Id, (await Store.ClaimNextRunAsync(slotCap: 5, T0.AddMinutes(11), default))!.Thread.Id);
     }
 
     // ---- Stopping, decisions and user actions ----
@@ -626,6 +760,25 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Contains("Verify", run!.StateJson);
         Assert.Equal(T0.AddMinutes(2), run.HeartbeatAt);
         Assert.Equal(Stage.Verify, (await ThreadAsync(running.Thread.Id)).Stage);
+    }
+
+    /// <summary>The working copy is recorded with each checkpoint and with the stop, so a resumed
+    /// run can compare (§16). A step that could not take a snapshot keeps the last one.</summary>
+    [SkippableFact]
+    public async Task Checkpoint_AndStop_KeepTheLatestWorkspaceSnapshot()
+    {
+        var running = await RunningAsync();
+        const string First = """{"branch":"factory/x","head":"aaa","files":{"src/A.cs":"11"},"truncated":false}""";
+        const string AtStop = """{"branch":"factory/x","head":"bbb","files":{},"truncated":false}""";
+
+        await Store.SaveCheckpointAsync(running.Run.Id, """{"phase":"Turn"}""", Stage.Implement, T0, default, First);
+        await Store.SaveCheckpointAsync(running.Run.Id, """{"phase":"Verify"}""", Stage.Verify, T0, default);
+        Assert.Contains("src/A.cs", (await Store.GetRunAsync(running.Run.Id, default))!.WorkspaceSnapshotJson);
+
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Pause, StopReason.PausedByUser) with { WorkspaceSnapshotJson = AtStop }, T0, default);
+        var stored = (await Store.GetRunAsync(running.Run.Id, default))!.WorkspaceSnapshotJson!;
+        Assert.Contains("bbb", stored);
+        Assert.DoesNotContain("src/A.cs", stored);
     }
 
     [SkippableFact]
@@ -918,6 +1071,28 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         var thread = await ThreadAsync(running.Thread.Id);
         Assert.Equal((9_500L, 11_000L + 32_768L), (thread.TokensUsed, thread.TokensReserved));
         Assert.Equal(UsageStatus.Unknown, Assert.Single(await Store.ListUsageAsync(other.Thread.Id, default)).Status);
+    }
+
+    /// <summary>For a run the liveness sweep found with no executor: nothing can report its
+    /// calls any more, so those still Reserved are charged their estimate too. Other runs'
+    /// calls, which may still be in flight, are left alone.</summary>
+    [SkippableFact]
+    public async Task Reconcile_ForARunWithNoExecutor_AlsoTakesItsReservedCalls_ButNoOtherRunsCalls()
+    {
+        var orphan = await RunningAsync(cap: 900_000);
+        var live = await RunningAsync("other-repo", cap: 900_000);
+        await Store.ReserveAsync(Reserve(orphan, "in-flight", estimate: 10_000), Real, T0, default);
+        await Store.ReserveAsync(Reserve(orphan, "unknown", estimate: 5_000), Real, T0, default);
+        await Store.MarkUsageUnknownAsync("unknown", default);
+        await Store.ReserveAsync(Reserve(orphan, "settled", estimate: 10_000), Real, T0, default);
+        await Store.SettleAsync("settled", new UsageInfo(9_000, 500), 9_500, T0, default);
+        await Store.ReserveAsync(Reserve(live, "live-in-flight", estimate: 7_000), Real, T0, default);
+
+        Assert.Equal(2, await Store.ReconcileUsageAsync(orphan.Run.Id, T0, default, includeInFlight: true));
+
+        var thread = await ThreadAsync(orphan.Thread.Id);
+        Assert.Equal((9_500L + 10_000L + 5_000L, 0L), (thread.TokensUsed, thread.TokensReserved));
+        Assert.Equal(UsageStatus.Reserved, Assert.Single(await Store.ListUsageAsync(live.Thread.Id, default)).Status);
     }
 
     /// <summary>What a starting host does. The first real run left a call Reserved for ever when

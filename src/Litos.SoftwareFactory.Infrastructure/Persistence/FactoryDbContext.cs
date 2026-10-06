@@ -112,10 +112,11 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(r => r.HeadCommit).HasMaxLength(64);
             e.Property(r => r.ReviewSessionId).HasMaxLength(100);
             Json(e.Property(r => r.StateJson));
+            Json(e.Property(r => r.WorkspaceSnapshotJson));
             e.HasOne<TaskThread>().WithMany().HasForeignKey(r => r.ThreadId).OnDelete(DeleteBehavior.Cascade);
             // One active run per thread: a second one cannot be inserted while the first is live.
             e.HasIndex(r => r.ThreadId).IsUnique().HasFilter("\"Status\" <> 'Finished'").HasDatabaseName("ix_task_runs_one_active_per_thread");
-            e.HasIndex(r => new { r.Status, r.CreatedAt });
+            e.HasIndex(r => new { r.Status, r.QueuedAt });
         });
 
         model.Entity<Decision>(e =>

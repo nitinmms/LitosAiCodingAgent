@@ -213,8 +213,16 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             PromptRevision = BriefComposer.Revision,
             CreatedAt = now,
         };
+        Enqueue(run, now);
         db.Runs.Add(run);
         return run.Id;
+    }
+
+    /// <summary>Puts a run in the queue. The claim takes runs in the order they last entered it.</summary>
+    private static void Enqueue(TaskRun run, DateTimeOffset now)
+    {
+        run.Status = RunStatus.Queued;
+        run.QueuedAt = now;
     }
 
     private static async Task<Guid?> ActiveRunIdAsync(FactoryDbContext db, Guid threadId, CancellationToken ct) =>
@@ -272,7 +280,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             default: // the four ways back into the queue
                 if (run is null)
                     throw new StoreConflictException("This task has no run to continue.");
-                run.Status = RunStatus.Queued;
+                Enqueue(run, now);
                 note = "Queued to continue.";
                 break;
         }
@@ -394,7 +402,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         decision.AnsweredBy = userId;
         decision.AnsweredAt = now;
 
-        run.Status = RunStatus.Queued;
+        Enqueue(run, now);
         run.Entry = RunEntry.DecisionAnswered;
         run.EntryAnswer = answer;
 
@@ -408,17 +416,25 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
     // ---- The coordinator ----
 
-    public async Task<ClaimedRun?> ClaimNextRunAsync(int slotCap, DateTimeOffset now, CancellationToken ct)
+    public async Task<ClaimedRun?> ClaimNextRunAsync(int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null)
     {
         await using var write = await BeginWriteAsync(ct, claim: true);
         var db = write.Db;
 
-        if (await db.Threads.CountAsync(t => t.State == LifecycleState.Running, ct) >= slotCap)
-            return null;
+        // The host's registry knows which runs still have an executor, including one that has
+        // stopped and is still tearing down. Without it, the runs marked Running are the slots.
+        var held = heldRuns ?? (await db.Runs.Where(r => r.Status == RunStatus.Running).Select(r => r.Id).ToListAsync(ct)).ToHashSet();
+        var full = held.Count >= slotCap;
 
-        var queued = await db.Runs.Where(r => r.Status == RunStatus.Queued).OrderBy(r => r.CreatedAt).ToListAsync(ct);
+        // Even when every slot is busy the queue is scanned, so each waiting thread says why.
+        var queued = await db.Runs.Where(r => r.Status == RunStatus.Queued)
+            .OrderBy(r => r.QueuedAt).ThenBy(r => r.CreatedAt).ThenBy(r => r.Id).ToListAsync(ct);
         foreach (var run in queued)
         {
+            // Resumed while its previous executor is still tearing down: it starts once that is done.
+            if (held.Contains(run.Id))
+                continue;
+
             var thread = await LockThreadAsync(db, run.ThreadId, ct);
             if (thread.State != LifecycleState.Queued)
                 continue;
@@ -427,14 +443,24 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             var lockIdentity = LockIdentity(project);
             var lease = await db.Leases.FirstOrDefaultAsync(l => l.LockIdentity == lockIdentity, ct);
 
+            // The queued thread says exactly what it waits for (§6.3). Its repository being held
+            // is the more specific reason, so it wins over a full set of slots.
+            string? waitingFor = null;
             if (lease is not null && lease.ThreadId != thread.Id)
             {
-                // The queued thread says exactly what it waits for (§6.3).
                 var holder = await db.Threads.AsNoTracking().FirstAsync(t => t.Id == lease.ThreadId, ct);
-                var reason = $"Waiting for {project.Name} — held by \"{holder.Title}\" ({Describe(holder.State)}).";
-                if (thread.StateReason != reason)
+                waitingFor = $"Waiting for {project.Name} — held by \"{holder.Title}\" ({Describe(holder.State)}).";
+            }
+            else if (full)
+            {
+                waitingFor = $"Waiting for a free slot ({held.Count} of {slotCap} busy).";
+            }
+
+            if (waitingFor is not null)
+            {
+                if (thread.StateReason != waitingFor)
                 {
-                    thread.StateReason = reason;
+                    thread.StateReason = waitingFor;
                     Touch(db, thread, now);
                 }
 
@@ -489,7 +515,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         _ => state.ToString().ToLowerInvariant(),
     };
 
-    public async Task SaveCheckpointAsync(Guid runId, string stateJson, Stage stage, DateTimeOffset now, CancellationToken ct)
+    public async Task SaveCheckpointAsync(
+        Guid runId, string stateJson, Stage stage, DateTimeOffset now, CancellationToken ct, string? workspaceSnapshotJson = null)
     {
         await using var write = await BeginWriteAsync(ct);
         var db = write.Db;
@@ -497,6 +524,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         var thread = await LockThreadAsync(db, run.ThreadId, ct);
 
         run.StateJson = stateJson;
+        run.WorkspaceSnapshotJson = workspaceSnapshotJson ?? run.WorkspaceSnapshotJson;
         run.HeartbeatAt = now;
         var lease = await db.Leases.FirstOrDefaultAsync(l => l.ThreadId == thread.Id, ct);
         if (lease is not null)
@@ -554,6 +582,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         run.Status = finished ? RunStatus.Finished : RunStatus.Suspended;
         run.StopReason = command.Reason;
         run.StateJson = command.StateJson ?? run.StateJson;
+        run.WorkspaceSnapshotJson = command.WorkspaceSnapshotJson ?? run.WorkspaceSnapshotJson;
         run.Entry = RunEntry.Resume;
         run.EntryAnswer = null;
         run.WorkerProcessId = null;
@@ -790,13 +819,16 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
     public Task ReleaseReservationAsync(string requestKey, CancellationToken ct) =>
         SettleAsync(requestKey, new UsageInfo(0, 0), charge: 0, DateTimeOffset.UtcNow, ct);
 
-    public async Task<int> ReconcileUsageAsync(Guid? runId, DateTimeOffset now, CancellationToken ct)
+    public async Task<int> ReconcileUsageAsync(Guid? runId, DateTimeOffset now, CancellationToken ct, bool includeInFlight = false)
     {
-        // For one run: what the gateway marked Unknown. For a starting host: also what a previous
-        // host left Reserved, which it can no longer settle.
-        System.Linq.Expressions.Expression<Func<UsageEntry, bool>> unreported = runId is { } id
-            ? u => u.RunId == id && u.Status == UsageStatus.Unknown
-            : u => u.Status == UsageStatus.Unknown || u.Status == UsageStatus.Reserved;
+        // For one run: what the gateway marked Unknown, and what is still Reserved when nothing
+        // can settle it any more. For a starting host: also what a previous host left Reserved.
+        System.Linq.Expressions.Expression<Func<UsageEntry, bool>> unreported = runId switch
+        {
+            { } id when includeInFlight => u => u.RunId == id && (u.Status == UsageStatus.Unknown || u.Status == UsageStatus.Reserved),
+            { } id => u => u.RunId == id && u.Status == UsageStatus.Unknown,
+            null => u => u.Status == UsageStatus.Unknown || u.Status == UsageStatus.Reserved,
+        };
 
         List<Guid> threadIds;
         await using (var db = await contextFactory.CreateDbContextAsync(ct))

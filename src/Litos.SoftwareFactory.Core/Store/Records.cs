@@ -170,6 +170,10 @@ public sealed class TaskRun
     /// <summary>The orchestrator's RunState, saved with every step so a restarted host resumes
     /// from its own records (§15 checkpoints).</summary>
     public string? StateJson { get; set; }
+
+    /// <summary>The working copy at the last checkpoint (a WorkspaceSnapshot), which a resumed
+    /// run compares with the working copy now (§16).</summary>
+    public string? WorkspaceSnapshotJson { get; set; }
     public string? ReviewSessionId { get; set; }
     public required string PromptRevision { get; set; }
     public StopReason? StopReason { get; set; }
@@ -178,6 +182,10 @@ public sealed class TaskRun
     public int? WorkerProcessId { get; set; }
     public DateTimeOffset? WorkerStartTime { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>When the run last entered the queue; runs are claimed in this order, so a
+    /// resumed run waits behind work queued before it.</summary>
+    public DateTimeOffset QueuedAt { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? HeartbeatAt { get; set; }
     public DateTimeOffset? EndedAt { get; set; }
