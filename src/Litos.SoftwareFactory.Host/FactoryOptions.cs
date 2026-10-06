@@ -37,8 +37,20 @@ public sealed class FactoryOptions
     /// <summary>The cap a new thread gets when its creator sets none; null means no cap.</summary>
     public long? DefaultBudget { get; set; } = 300_000;
 
-    /// <summary>Concurrent runs across all repositories. It stays at 1 until M2.</summary>
+    /// <summary>
+    /// Concurrent runs across all repositories (FACTORY_SLOT_CAP). The default stays at 1 until
+    /// the registry releases a run's slot only after its executor has finished
+    /// (docs/software-factory/m2-architecture.md §3.2).
+    /// </summary>
     public int SlotCap { get; set; } = 1;
+
+    /// <summary>How many verification commands may run at once across all runs
+    /// (FACTORY_VERIFY_CONCURRENCY). Other runs' verify steps wait their turn.</summary>
+    public int VerifyConcurrency { get; set; } = 1;
+
+    /// <summary>How often the coordinator looks for Running runs that no executor in this host
+    /// owns, and marks them Interrupted (§16).</summary>
+    public TimeSpan LivenessInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     public BudgetPolicy Budget { get; set; } = new();
 
@@ -60,6 +72,9 @@ public sealed class FactoryOptions
     public string WorkspacesDirectory => Path.Combine(DataDirectory, "workspaces");
 
     public string RunDirectory(Guid runId) => Path.Combine(DataDirectory, "runs", runId.ToString("N"));
+
+    /// <summary>The run's own TEMP, TMP and TMPDIR, so concurrent runs never share temporary files.</summary>
+    public string RunTempDirectory(Guid runId) => Path.Combine(RunDirectory(runId), "tmp");
 
     /// <summary>Reads the options from configuration: environment variables, and the private
     /// settings file when one was given.</summary>
@@ -105,6 +120,12 @@ public sealed class FactoryOptions
             ScanRecheck = !IsOff(configuration["FACTORY_SCAN_RECHECK"]),
         };
 
+        // A number below 1 is kept so Validate refuses it: a cap of 0 would never run anything.
+        if (int.TryParse(configuration["FACTORY_SLOT_CAP"], out var slotCap))
+            options.SlotCap = slotCap;
+        if (int.TryParse(configuration["FACTORY_VERIFY_CONCURRENCY"], out var verifyConcurrency))
+            options.VerifyConcurrency = verifyConcurrency;
+
         if (configuration["FACTORY_DEFAULT_BUDGET"] is { Length: > 0 } defaultBudget)
         {
             // "none" removes the default cap; a number replaces it.
@@ -131,7 +152,11 @@ public sealed class FactoryOptions
         if (string.IsNullOrWhiteSpace(Model))
             problems.Add("No model is configured.");
         if (SlotCap < 1)
-            problems.Add("The slot cap must be at least 1.");
+            problems.Add("FACTORY_SLOT_CAP must be at least 1.");
+        if (VerifyConcurrency < 1)
+            problems.Add("FACTORY_VERIFY_CONCURRENCY must be at least 1.");
+        if (LivenessInterval <= TimeSpan.Zero)
+            problems.Add("The liveness interval must be positive.");
         return problems;
     }
 

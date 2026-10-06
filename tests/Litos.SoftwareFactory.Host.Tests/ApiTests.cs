@@ -687,6 +687,73 @@ public class FactoryOptionsTests
     }
 
     [Fact]
+    public void From_NothingSet_KeepsOneSlotOneVerificationAndAHalfMinuteSweep()
+    {
+        var options = From();
+
+        Assert.Equal(1, options.SlotCap);
+        Assert.Equal(1, options.VerifyConcurrency);
+        Assert.Equal(TimeSpan.FromSeconds(30), options.LivenessInterval);
+    }
+
+    [Fact]
+    public void From_ReadsTheSlotCapAndTheVerifyConcurrency()
+    {
+        var options = From(("FACTORY_SLOT_CAP", "3"), ("FACTORY_VERIFY_CONCURRENCY", "2"));
+
+        Assert.Equal(3, options.SlotCap);
+        Assert.Equal(2, options.VerifyConcurrency);
+    }
+
+    [Theory]
+    [InlineData("many")]
+    [InlineData("")]
+    [InlineData("2.5")]
+    public void From_ASlotCapThatIsNotANumber_IsIgnored(string value)
+    {
+        var options = From(("FACTORY_SLOT_CAP", value), ("FACTORY_VERIFY_CONCURRENCY", value));
+
+        Assert.Equal(1, options.SlotCap);
+        Assert.Equal(1, options.VerifyConcurrency);
+    }
+
+    /// <summary>A cap of 0 would queue every task for ever, so it is refused rather than ignored.</summary>
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    public void From_ASlotCapBelowOne_IsRefusedAtStart(string value)
+    {
+        var options = From(
+            ("ConnectionStrings:FactoryState", "Host=127.0.0.1"), ("FACTORY_DATA_DIR", "data"), ("OPENROUTER_API_KEY", "key"),
+            ("FACTORY_SLOT_CAP", value), ("FACTORY_VERIFY_CONCURRENCY", value));
+
+        var problems = options.Validate();
+
+        Assert.Equal(2, problems.Count);
+        Assert.Contains(problems, p => p.Contains("FACTORY_SLOT_CAP"));
+        Assert.Contains(problems, p => p.Contains("FACTORY_VERIFY_CONCURRENCY"));
+    }
+
+    [Fact]
+    public void Validate_RefusesANonPositiveLivenessInterval()
+    {
+        var options = Valid();
+        options.LivenessInterval = TimeSpan.Zero;
+
+        Assert.Contains(options.Validate(), p => p.Contains("liveness interval"));
+    }
+
+    [Fact]
+    public void RunTempDirectory_IsInsideTheRunsOwnDirectory()
+    {
+        var options = Valid();
+        var runId = Guid.NewGuid();
+
+        Assert.Equal(Path.Combine(options.RunDirectory(runId), "tmp"), options.RunTempDirectory(runId));
+        Assert.NotEqual(options.RunTempDirectory(runId), options.RunTempDirectory(Guid.NewGuid()));
+    }
+
+    [Fact]
     public void Validate_ReportsEverythingMissing()
     {
         var problems = new FactoryOptions().Validate();
