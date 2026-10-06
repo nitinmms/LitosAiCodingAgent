@@ -172,6 +172,12 @@ public interface IFactoryStore
 
     Task SetFindingsStatusAsync(Guid runId, FindingSeverity severity, FindingStatus status, CancellationToken ct);
 
+    /// <summary>
+    /// The upstream that served the thread's most recent settled call, when its provider reported
+    /// one other than itself (a router's); null when none has.
+    /// </summary>
+    Task<string?> LastServedByAsync(Guid threadId, CancellationToken ct);
+
     /// <summary>Every finding of every run of the thread, oldest run first.</summary>
     Task<IReadOnlyList<ReviewFindingRecord>> ListFindingsAsync(Guid threadId, CancellationToken ct);
 

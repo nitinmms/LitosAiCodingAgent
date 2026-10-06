@@ -661,6 +661,24 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Null(await Store.FindBaselineAsync(Guid.NewGuid(), "abc", 1, default));   // a different project
     }
 
+    /// <summary>The next call asks for the upstream that served the last one: the most recent
+    /// settled call a router reported, never the provider's own name.</summary>
+    [SkippableFact]
+    public async Task LastServedBy_IsTheMostRecentRoutedUpstream_AndIgnoresTheProvidersOwnName()
+    {
+        var running = await RunningAsync(cap: 100_000);
+        Assert.Null(await Store.LastServedByAsync(running.Thread.Id, default));
+
+        await Store.ReserveAsync(Reserve(running, "k1"), Policy, T0, default);
+        await Store.SettleAsync("k1", new UsageInfo(1_000, 100) { ServedBy = "AtlasCloud" }, 1_100, T0, default);
+        await Store.ReserveAsync(Reserve(running, "k2"), Policy, T0, default);
+        await Store.SettleAsync("k2", new UsageInfo(1_000, 100) { ServedBy = "Together" }, 1_100, T0.AddSeconds(5), default);
+        await Store.ReserveAsync(Reserve(running, "k3"), Policy, T0, default);
+        await Store.SettleAsync("k3", new UsageInfo(1_000, 100), 1_100, T0.AddSeconds(9), default);   // recorded as the provider itself
+
+        Assert.Equal("Together", await Store.LastServedByAsync(running.Thread.Id, default));
+    }
+
     /// <summary>Review yield is measured from a person's verdict on each finding.</summary>
     [SkippableFact]
     public async Task AFindingsVerdict_IsRecordedWithWhoAndWhen_AndCanBeCleared()

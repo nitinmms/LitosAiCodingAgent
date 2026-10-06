@@ -460,6 +460,35 @@ public class OpenRouterChatProviderTests
         Assert.False(json.RootElement.TryGetProperty("session_id", out _));
     }
 
+    /// <summary>R3 moved to another upstream after a pause and lost its cache; the preferred
+    /// upstream is asked for first, and fallbacks stay allowed so the call is never refused.</summary>
+    [Fact]
+    public async Task StreamAsync_AsksForThePreferredUpstreamFirst_WithFallbacksAllowed()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "deepseek/deepseek-v4.1-flash", PreferredUpstream: "AtlasCloud");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        var routing = json.RootElement.GetProperty("provider");
+        Assert.Equal(["AtlasCloud"], routing.GetProperty("order").EnumerateArray().Select(e => e.GetString()));
+        Assert.True(routing.GetProperty("allow_fallbacks").GetBoolean());
+    }
+
+    [Fact]
+    public async Task StreamAsync_WithNoPreferredUpstream_SendsNoRoutingPreference()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+
+        await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "some-model", PreferredUpstream: " "), CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        Assert.False(json.RootElement.TryGetProperty("provider", out _));
+    }
+
     [Fact]
     public async Task StreamAsync_TruncatesSessionId_ToOpenRouterMaximum()
     {

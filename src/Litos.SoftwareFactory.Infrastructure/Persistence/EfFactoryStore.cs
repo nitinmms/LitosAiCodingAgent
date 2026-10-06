@@ -651,6 +651,16 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<string?> LastServedByAsync(Guid threadId, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Usage.AsNoTracking()
+            .Where(u => u.ThreadId == threadId && u.Status == UsageStatus.Settled && u.ServedBy != null && u.ServedBy != u.Provider)
+            .OrderByDescending(u => u.SettledAt)
+            .Select(u => u.ServedBy)
+            .FirstOrDefaultAsync(ct);
+    }
+
     public async Task<IReadOnlyList<ReviewFindingRecord>> ListFindingsAsync(Guid threadId, CancellationToken ct)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);

@@ -281,6 +281,45 @@ public sealed class GatewayTests : IAsyncLifetime
         Assert.Equal((long)Math.Ceiling(entries[3].EstimatedInput * 1.1m) + 4_000, entries[3].Reserved);
     }
 
+    /// <summary>
+    /// R3: after a two-minute pause OpenRouter sent the session to another upstream, and the first
+    /// call found no cache (110,000 tokens). The next call asks for the upstream that served the
+    /// last one, and a resumed run starts from the one the store recorded.
+    /// </summary>
+    [Fact]
+    public async Task TheNextCall_AsksForTheUpstreamThatServedTheLastOne_EvenAfterAResume()
+    {
+        await StartRunAsync(cap: 500_000);
+        _host.Provider.EnqueueReply("first", new UsageInfo(15_000, 300) { ServedBy = "AtlasCloud" });
+        _host.Provider.EnqueueReply("second", new UsageInfo(1_000, 300, 0, 15_000) { ServedBy = "AtlasCloud" });
+        _host.Provider.EnqueueReply("third", new UsageInfo(1_000, 300, 0, 16_000));
+
+        await CallAsync(Request());
+        await CallAsync(Request(more: [ChatMessage.Assistant([new TextBlock("first")]), ChatMessage.User("go on")]));
+        // A resumed run is a new ActiveRun: nothing in memory, so the store is asked.
+        _run.PreferredUpstream = null;
+        _run.PreferredUpstreamLoaded = false;
+        await CallAsync(Request());
+
+        Assert.Equal([null, "AtlasCloud", "AtlasCloud"], _host.Provider.Requests.Select(r => r.PreferredUpstream));
+        Assert.Equal("AtlasCloud", await _host.Store.LastServedByAsync(_threadId, default));
+    }
+
+    /// <summary>A direct provider reports no upstream of its own; nothing is asked for.</summary>
+    [Fact]
+    public async Task AProviderThatDoesNotRoute_IsNeverAskedForAnUpstream()
+    {
+        await StartRunAsync(cap: 500_000);
+        _host.Provider.EnqueueReply("first", new UsageInfo(15_000, 300));
+        _host.Provider.EnqueueReply("second", new UsageInfo(1_000, 300, 0, 15_000));
+
+        await CallAsync(Request());
+        await CallAsync(Request());
+
+        Assert.All(_host.Provider.Requests, r => Assert.Null(r.PreferredUpstream));
+        Assert.Null(await _host.Store.LastServedByAsync(_threadId, default));
+    }
+
     [Fact]
     public async Task ACacheHitTooLongAgo_IsNotCountedOn_AndTheCallIsReservedInFull()
     {

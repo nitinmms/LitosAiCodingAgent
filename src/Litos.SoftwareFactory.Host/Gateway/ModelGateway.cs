@@ -66,7 +66,14 @@ public sealed class ModelGateway(
     public async Task HandleAsync(ActiveRun run, GatewayRequest request, Func<GatewayEvent, Task> write, CancellationToken ct)
     {
         // The model is the task's, fixed when the thread was created: a worker cannot ask for another.
-        var chat = request.ChatRequest with { Model = run.Model };
+        // A routing provider is asked for the upstream that served the task last, where its cache is.
+        if (!run.PreferredUpstreamLoaded)
+        {
+            run.PreferredUpstream = await store.LastServedByAsync(run.ThreadId, ct);
+            run.PreferredUpstreamLoaded = true;
+        }
+
+        var chat = request.ChatRequest with { Model = run.Model, PreferredUpstream = run.PreferredUpstream };
         var sessionKey = chat.SessionId ?? "";
 
         // A turn whose result is recorded is over, but from PTC kernel code the model never sees
@@ -214,6 +221,8 @@ public sealed class ModelGateway(
                     {
                         var charged = await SettleAsync(requestKey, completed, estimate, calibration);
                         call.Settled = true;
+                        if (completed.Usage.ServedBy is { Length: > 0 } servedBy)
+                            run.PreferredUpstream = servedBy;
                         if (run.RecordTurnCall(charged) is { } wrapUp)
                             _ = WrapUpAsync(run, wrapUp);
 

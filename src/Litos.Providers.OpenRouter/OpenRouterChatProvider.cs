@@ -45,7 +45,14 @@ public sealed class OpenRouterChatProvider(HttpClient httpClient) : IChatProvide
             // conversation in OpenRouter's Logs Sessions view. Capped at 256 chars per their API;
             // session ids here are short (GUID-like), but truncate rather than risk a 400 on a
             // caller that uses something longer.
-            SessionId: request.SessionId is { Length: > 256 } id ? id[..256] : request.SessionId);
+            SessionId: request.SessionId is { Length: > 256 } id ? id[..256] : request.SessionId,
+            // session_id only pins after OpenRouter has seen a cache hit, and does not survive a
+            // pause: R3's session moved from one upstream to another after two minutes, and the
+            // first call found no cache. Asking for the upstream that served the conversation
+            // first keeps it with its cache; fallbacks stay allowed, so the call is never refused.
+            Provider: string.IsNullOrWhiteSpace(request.PreferredUpstream)
+                ? null
+                : new OpenRouterProviderPreferences([request.PreferredUpstream.Trim()], AllowFallbacks: true));
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "chat/completions")
         {
@@ -242,7 +249,11 @@ internal sealed record OpenRouterChatRequest(
     int? MaxTokens,
     List<OpenRouterTool>? Tools,
     OpenRouterCacheControl? CacheControl,
-    [property: JsonPropertyName("session_id")] string? SessionId);
+    [property: JsonPropertyName("session_id")] string? SessionId,
+    OpenRouterProviderPreferences? Provider = null);
+
+/// <summary>OpenRouter's provider routing: the upstreams to try first, in order.</summary>
+internal sealed record OpenRouterProviderPreferences(List<string> Order, bool AllowFallbacks);
 
 /// <summary>
 /// Top-level cache_control, OpenRouter's "automatic" caching mode: it places the breakpoint on

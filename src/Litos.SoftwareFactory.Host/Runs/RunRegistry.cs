@@ -63,6 +63,16 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
     /// <summary>The last settled model call of each session, which the next call's estimate starts from.</summary>
     public ConcurrentDictionary<string, SessionBaseline> Baselines { get; } = new();
 
+    /// <summary>
+    /// The upstream that served the task's last call, when its provider routes calls: the next
+    /// call asks for it first, so the conversation stays where its prompt cache is. Loaded from
+    /// the store on the run's first call, so a resumed run keeps the upstream of the run before.
+    /// </summary>
+    public string? PreferredUpstream { get; set; }
+
+    /// <summary>Whether <see cref="PreferredUpstream"/> has been loaded from the store.</summary>
+    public bool PreferredUpstreamLoaded { get; set; }
+
     public bool HasSecret(string presented) =>
         presented.Length > 0 && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(presented), Encoding.UTF8.GetBytes(Secret));
 
