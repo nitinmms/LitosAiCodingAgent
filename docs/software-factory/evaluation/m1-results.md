@@ -40,7 +40,7 @@ Results of running the [M1 task set](m1-task-set.md). One row per task, recorded
 
 **With the decision scan (`m1.11`):** F7 and R4 each asked the decision the task set expects, first: the first decisions the factory asked in the evaluation. F7 was accepted after one rework at 942,772 tokens, inside its original cap. R4 asked its three questions for 36,012 tokens, then paused on budget three times during its implementation, in 125 calls on a context of up to 122,000 tokens, and was cancelled at 1,315,680 before submitting anything. **6 of the 9 tasks run are accepted** (F1, F2, F3, F4, F6, F7; F3 and F6 on re-runs). The gate needs 7 of 12, so one of the three unrun tasks (R2, R3, F8) must pass.
 
-**R2 (2026-10-05 and 06):** paused on budget four times during its implementation, so it is recorded as failed, although its code met all five criteria after one rework. Its scan asked three questions on a task that expects none. **6 of the 10 tasks run are accepted**, and the gate now needs both R3 and F8 to pass.
+**R2 (2026-10-05 and 06):** paused on budget four times during its implementation, so it is recorded as failed, although its code met all five criteria after one rework. Its scan asked three questions on a task that expects none. **6 of the 10 tasks run are accepted**; the gate needs 7 of 12, so one of R3 and F8 must pass.
 
 ## Budgets
 
@@ -389,4 +389,4 @@ F5 adds a third, smaller one: a repair that satisfied a review finding by removi
 - **Implementation cost is now the cause of every failure since F6.** R1, R4 and R2 all paused on budget before their first submission; the code R2 eventually produced met every criterion.
 - **A third of R2's cost was calls that missed the cache**, which the factory did not cause and could not see; it now records who served each call, and one miss no longer inflates the next reservation.
 - **The scan over-asks on a request that needs no decision:** two of R2's three questions were unnecessary.
-- **Tally:** 6 of 10 tasks are accepted. The gate needs both R3 and F8 to pass.
+- **Tally:** 6 of 10 tasks are accepted. The gate needs 7 of 12, so one of R3 and F8 must pass.
