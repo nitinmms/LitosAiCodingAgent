@@ -1039,6 +1039,8 @@ The implementation architecture (projects, contracts, ports, schema and build or
 
 ### M2: collaboration and concurrency
 
+The implementation architecture, decisions and build order are in [docs/software-factory/m2-architecture.md](docs/software-factory/m2-architecture.md).
+
 - Identity with invitations, roles and project membership; per-user attribution and audit.
 - Chat before `@factory` (read-only tools) and the optional spec stage.
 - Board, whose-turn labels, task types.
