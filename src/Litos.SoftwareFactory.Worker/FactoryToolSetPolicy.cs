@@ -31,7 +31,9 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
 
     /// <param name="workingCopy">The directory the agent may work in; the worker's own by default,
     /// which the host starts it in.</param>
-    public FactoryToolSetPolicy(IEnumerable<ITool> registeredTools, FactoryHostClient host, string? workingCopy = null)
+    /// <param name="testOutputDirectory">Where the whole output of a test run is kept when the
+    /// shell cuts it to its failures and summary (TestOutputTrimmer); null keeps test output whole.</param>
+    public FactoryToolSetPolicy(IEnumerable<ITool> registeredTools, FactoryHostClient host, string? workingCopy = null, string? testOutputDirectory = null)
     {
         _host = host;
         _builtIn = registeredTools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
@@ -40,7 +42,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
         // or from kernel code: no stopping processes by name, and nothing outside the working copy.
         var guard = new WorkingCopyGuard(workingCopy ?? Directory.GetCurrentDirectory());
         if (_builtIn.TryGetValue("shell", out var shell))
-            _builtIn["shell"] = new GuardedShellTool(shell, guard);
+            _builtIn["shell"] = new GuardedShellTool(shell, guard, testOutputDirectory);
         foreach (var name in FileTools)
         {
             if (_builtIn.TryGetValue(name, out var tool))

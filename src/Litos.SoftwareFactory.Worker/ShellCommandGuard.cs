@@ -78,7 +78,9 @@ public static partial class ShellCommandGuard
 }
 
 /// <summary>The shell tool as the factory gives it to an agent: the same tool, behind <see cref="ShellCommandGuard"/>.</summary>
-public sealed class GuardedShellTool(ITool shell, WorkingCopyGuard? workingCopy = null) : ITool
+/// <param name="testOutputDirectory">Where the whole output of a test run is kept when
+/// <see cref="TestOutputTrimmer"/> cuts it; null leaves test output whole.</param>
+public sealed class GuardedShellTool(ITool shell, WorkingCopyGuard? workingCopy = null, string? testOutputDirectory = null) : ITool
 {
     public string Name => shell.Name;
 
@@ -86,18 +88,26 @@ public sealed class GuardedShellTool(ITool shell, WorkingCopyGuard? workingCopy 
 
     public JsonElement ParameterSchema => shell.ParameterSchema;
 
-    public Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
+    public async Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct)
     {
         var command = arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("command", out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
 
         if ((ShellCommandGuard.Refusal(command) ?? workingCopy?.CommandRefusal(command)) is { } reason)
-            return Task.FromResult(ToolResult.Error($"The factory refused this command: {reason}"));
+            return ToolResult.Error($"The factory refused this command: {reason}");
 
-        return ShellCommandGuard.WithHangTimeout(command) is { } adjusted && adjusted != command
-            ? shell.InvokeAsync(WithCommand(arguments, adjusted), ct)
-            : shell.InvokeAsync(arguments, ct);
+        var result = ShellCommandGuard.WithHangTimeout(command) is { } adjusted && adjusted != command
+            ? await shell.InvokeAsync(WithCommand(arguments, adjusted), ct)
+            : await shell.InvokeAsync(arguments, ct);
+
+        if (testOutputDirectory is null || !TestOutputTrimmer.IsTestRun(command) || result.Text.Length <= TestOutputTrimmer.KeepWholeUpTo)
+            return result;
+
+        Directory.CreateDirectory(testOutputDirectory);
+        var path = Path.Combine(testOutputDirectory, $"test-run-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}.txt");
+        await File.WriteAllTextAsync(path, result.Text, ct);
+        return TestOutputTrimmer.Trim(result.Text, path) is { } trimmed ? result with { Text = trimmed } : result;
     }
 
     private static JsonElement WithCommand(JsonElement arguments, string command)

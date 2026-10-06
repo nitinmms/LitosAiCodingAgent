@@ -34,6 +34,10 @@ public sealed record WorkerOptions(
     /// session history.</summary>
     public string SessionsDirectory => Path.Combine(DataDirectory, "runs", RunId, "sessions");
 
+    /// <summary>Where the whole output of each test run is kept when the agent is shown only its
+    /// failures and summary: under the run, outside the working copy, so it is never committed.</summary>
+    public string TestOutputDirectory => Path.Combine(DataDirectory, "runs", RunId, "test-output");
+
     /// <exception cref="WorkerOptionsException">Something required is missing or malformed.</exception>
     public static WorkerOptions Parse(IReadOnlyList<string> arguments, Func<string, string?> environment)
     {

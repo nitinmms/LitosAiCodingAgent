@@ -53,7 +53,8 @@ public static class WorkerApp
             sp.GetServices<ITool>().Select(tool => tool.Name == "read_file"
                 ? new Litos.Tools.FileSystem.ReadFileTool(WorkerOptions.ReadFileMaxBytes, WorkerOptions.ReadFileDefaultLines)
                 : tool),
-            sp.GetRequiredService<FactoryHostClient>()));
+            sp.GetRequiredService<FactoryHostClient>(),
+            testOutputDirectory: options.TestOutputDirectory));
         builder.Services.AddSingleton<IToolSetPolicy>(sp => sp.GetRequiredService<FactoryToolSetPolicy>());
         builder.Services.AddSingleton<IWorkingDirectoryResolver, ProcessWorkingDirectoryResolver>();
 
