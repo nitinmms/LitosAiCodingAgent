@@ -2,6 +2,7 @@ import type {
   CreateThread,
   CurrentUser,
   DispatchResult,
+  FindingVerdict,
   Project,
   PullRequestInfo,
   RegisterProject,
@@ -56,6 +57,8 @@ export interface FactoryApi {
   withdraw(id: string): Promise<Thread>;
   pullRequest(id: string): Promise<PullRequestInfo>;
   answerDecision(decisionId: string, answer: string): Promise<Thread>;
+  /** Judges a review finding, or clears the judgement with null. */
+  setFindingVerdict(findingId: string, verdict: FindingVerdict | null): Promise<Thread>;
 }
 
 /**
@@ -135,5 +138,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     pullRequest: (id) => send<PullRequestInfo>('GET', `${thread(id)}/pull-request`),
     answerDecision: (decisionId, answer) =>
       send<Thread>('POST', `/api/decisions/${encodeURIComponent(decisionId)}/answer`, { answer }),
+    setFindingVerdict: (findingId, verdict) =>
+      send<Thread>('POST', `/api/findings/${encodeURIComponent(findingId)}/verdict`, { verdict }),
   };
 }

@@ -661,6 +661,35 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Null(await Store.FindBaselineAsync(Guid.NewGuid(), "abc", 1, default));   // a different project
     }
 
+    /// <summary>Review yield is measured from a person's verdict on each finding.</summary>
+    [SkippableFact]
+    public async Task AFindingsVerdict_IsRecordedWithWhoAndWhen_AndCanBeCleared()
+    {
+        var running = await RunningAsync();
+        await Store.SaveFindingsAsync(running.Run.Id, [new ReviewFinding(FindingSeverity.Minor, "src/Orders.cs", 7, "Resets the user's choice.")], default);
+        var finding = Assert.Single(await Store.ListFindingsAsync(running.Thread.Id, default));
+        var before = (await ThreadAsync(running.Thread.Id)).Revision;
+
+        var thread = await Store.SetFindingVerdictAsync(finding.Id, FindingVerdict.Real, Admin, T0, default);
+
+        var judged = Assert.Single(await Store.ListFindingsAsync(running.Thread.Id, default));
+        Assert.Equal((FindingVerdict.Real, Admin, T0), (judged.Verdict, judged.VerdictBy, judged.VerdictAt));
+        Assert.True(thread.Revision > before, "A verdict is an event on the thread, so open pages refresh.");
+
+        await Store.SetFindingVerdictAsync(finding.Id, null, Admin, T0, default);
+
+        var cleared = Assert.Single(await Store.ListFindingsAsync(running.Thread.Id, default));
+        Assert.Equal((null, null, null), (cleared.Verdict, cleared.VerdictBy, cleared.VerdictAt));
+    }
+
+    [SkippableFact]
+    public async Task AVerdictOnAFindingThatDoesNotExist_IsNotFound()
+    {
+        await RunningAsync();
+
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.SetFindingVerdictAsync(Guid.NewGuid(), FindingVerdict.Wrong, Admin, T0, default));
+    }
+
     [SkippableFact]
     public async Task FindingsVerificationAndHandoff_AppearInTheThreadDetails()
     {

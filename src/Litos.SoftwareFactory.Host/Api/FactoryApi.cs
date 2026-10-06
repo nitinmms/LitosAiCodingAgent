@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Lifecycle;
+using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Core.Verification;
@@ -22,6 +23,9 @@ public sealed record CreateThreadRequest(Guid ProjectId, string Title, string Ty
 public sealed record PostMessageRequest(string MessageId, string Text);
 
 public sealed record AnswerDecisionRequest(string Answer);
+
+/// <param name="Verdict">Real, NotWorthFixing or Wrong; null clears it.</param>
+public sealed record FindingVerdictRequest(string? Verdict);
 
 public sealed record SetBudgetRequest(long? Cap);
 
@@ -344,6 +348,42 @@ public static class FactoryApi
             return result;
         });
 
+        // A person's verdict on a review finding: what review yield is measured from.
+        api.MapPost("/findings/{id:guid}/verdict", (Guid id, FindingVerdictRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        {
+            FindingVerdict? verdict = null;
+            if (!string.IsNullOrWhiteSpace(request.Verdict))
+            {
+                if (!Enum.TryParse<FindingVerdict>(request.Verdict.Trim(), ignoreCase: true, out var parsed) || !Enum.IsDefined(parsed))
+                    return Task.FromResult(Problem("verdict must be Real, NotWorthFixing or Wrong, or empty to clear it."));
+                verdict = parsed;
+            }
+
+            return ActAsync(signals, () => store.SetFindingVerdictAsync(id, verdict, user.UserId(), clock.UtcNow, ct));
+        });
+
+        // What a task's reviews cost against what a person confirmed they found.
+        api.MapGet("/threads/{id:guid}/review-yield", async (Guid id, IFactoryStore store, CancellationToken ct) =>
+        {
+            if (await store.GetThreadAsync(id, ct) is null)
+                return Results.NotFound();
+            return Results.Ok(YieldView(ReviewYield.From(await store.ListUsageAsync(id, ct), await store.ListFindingsAsync(id, ct))));
+        });
+
+        // The same for every task, one row each, and their total.
+        api.MapGet("/review-yield", async (Guid? projectId, IFactoryStore store, CancellationToken ct) =>
+        {
+            var rows = new List<(TaskThread Thread, ReviewYield Yield)>();
+            foreach (var thread in await store.ListThreadsAsync(projectId, ct))
+                rows.Add((thread, ReviewYield.From(await store.ListUsageAsync(thread.Id, ct), await store.ListFindingsAsync(thread.Id, ct))));
+
+            return Results.Ok(new
+            {
+                Total = YieldView(ReviewYield.Sum(rows.Select(r => r.Yield))),
+                Threads = rows.Select(r => new { ThreadId = r.Thread.Id, r.Thread.Title, State = r.Thread.State.ToString(), Yield = YieldView(r.Yield) }),
+            });
+        });
+
         api.MapPost("/decisions/{id:guid}/answer", async (Guid id, AnswerDecisionRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.Answer))
@@ -482,7 +522,7 @@ public static class FactoryApi
             details.LatestVerification.SkippedCount,
             details.LatestVerification.ChangedLineCoveragePercent,
         },
-        Findings = details.Findings.Select(f => new { Severity = f.Severity.ToString(), f.File, f.Line, f.Text, Status = f.Status.ToString() }),
+        Findings = details.Findings.Select(f => new { f.Id, Severity = f.Severity.ToString(), f.File, f.Line, f.Text, Status = f.Status.ToString(), Verdict = f.Verdict?.ToString() }),
         Handoff = details.LatestHandoff is null ? null : new
         {
             details.LatestHandoff.Branch,
@@ -491,6 +531,21 @@ public static class FactoryApi
             details.LatestHandoff.PullRequestUrl,
             Evidence = Parse(details.LatestHandoff.EvidenceJson),
         },
+    };
+
+    private static object YieldView(ReviewYield y) => new
+    {
+        y.ReviewTokens,
+        y.ReviewCalls,
+        y.TotalTokens,
+        y.ReviewSharePercent,
+        y.Findings,
+        y.Judged,
+        y.Real,
+        y.NotWorthFixing,
+        y.Wrong,
+        y.RealPer100KReviewTokens,
+        y.FalsePositivePercent,
     };
 
     private static JsonElement? Parse(string? json) => string.IsNullOrEmpty(json) ? null : JsonDocument.Parse(json).RootElement.Clone();

@@ -109,7 +109,17 @@ export function ThreadsPage({
               reload={view.reload}
               onNotice={onNotice}
             />
-            <Details details={view.details} usage={view.usage} cachedInputWeight={settings?.cachedInputWeight} />
+            <Details
+              details={view.details}
+              usage={view.usage}
+              cachedInputWeight={settings?.cachedInputWeight}
+              onVerdict={(findingId, verdict) =>
+                void api.setFindingVerdict(findingId, verdict).then(
+                  () => view.reload(),
+                  (error: unknown) => onNotice(error instanceof Error ? error.message : 'The verdict could not be saved.'),
+                )
+              }
+            />
           </>
         ) : (
           <div className="center">

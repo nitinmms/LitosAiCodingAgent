@@ -3,6 +3,7 @@ import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
   CurrentUser,
   Decision,
+  Finding,
   HandoffEvidence,
   LifecycleState,
   Message,
@@ -403,6 +404,9 @@ export class FakeHost {
     const decision = /^\/api\/decisions\/([^/]+)\/answer$/.exec(path);
     if (decision && method === 'POST') return this.answer(decision[1]!, String(data.answer ?? ''));
 
+    const verdict = /^\/api\/findings\/([^/]+)\/verdict$/.exec(path);
+    if (verdict && method === 'POST') return this.judge(verdict[1]!, (data.verdict as string | null | undefined) ?? null);
+
     const route = /^\/api\/threads\/([^/?]+)(?:\/([\w-]+))?$/.exec(path);
     if (!route) return [404];
     const details = this.threads.get(route[1]!);
@@ -494,6 +498,16 @@ export class FakeHost {
     this.say(threadId, { author: 'User', kind: 'Text', text: match[1]!.trim() });
     const thread = queues ? this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: null }) : details.thread;
     return [202, { outcome: queues ? 'Queued' : 'FollowUp', runId: 'r-1', thread }];
+  }
+
+  private judge(findingId: string, verdict: string | null): [number, unknown?] {
+    if (verdict !== null && !['Real', 'NotWorthFixing', 'Wrong'].includes(verdict)) return [400, { error: 'verdict must be Real, NotWorthFixing or Wrong.' }];
+    for (const details of this.threads.values()) {
+      if (!details.findings.some((f) => f.id === findingId)) continue;
+      details.findings = details.findings.map((f) => (f.id === findingId ? { ...f, verdict: verdict as Finding['verdict'] } : f));
+      return [200, this.change(details.thread.id, {})];
+    }
+    return [404];
   }
 
   private answer(decisionId: string, answer: string): [number, unknown?] {

@@ -635,6 +635,28 @@ describe('a handoff', () => {
     expect(card.queryByRole('link')).not.toBeInTheDocument();
   });
 
+  it('lets a person judge each review finding, and pressing the verdict again clears it', async () => {
+    const context = await withThread({ state: 'Running', stage: 'Review', branch: 'factory/add-csv-export-1a2b' });
+    context.host.details(context.thread.id).findings = [
+      { id: 'f-1', severity: 'Minor', file: 'src/Csv.cs', line: 14, text: 'Rewriting resets the choice.', status: 'Open', verdict: null },
+      { id: 'f-2', severity: 'Blocking', file: 'src/Csv.cs', line: 3, text: 'Quotes are not escaped.', status: 'Fixed', verdict: null },
+    ];
+    act(() => void context.host.handOff(context.thread.id));
+    const list = within(await screen.findByRole('list', { name: 'Review findings' }));
+    expect(list.getByText('fixed')).toBeInTheDocument();
+
+    const first = within(list.getAllByRole('group', { name: 'Was this finding right?' })[0]!);
+    await userEvent.click(first.getByRole('button', { name: 'Real defect' }));
+
+    expect(context.host.sent('POST', '/api/findings/f-1/verdict')[0]!.body).toEqual({ verdict: 'Real' });
+    await waitFor(() => expect(first.getByRole('button', { name: 'Real defect' })).toHaveAttribute('aria-pressed', 'true'));
+
+    await userEvent.click(first.getByRole('button', { name: 'Real defect' }));
+
+    expect(context.host.sent('POST', '/api/findings/f-1/verdict')[1]!.body).toEqual({ verdict: null });
+    await waitFor(() => expect(first.getByRole('button', { name: 'Real defect' })).toHaveAttribute('aria-pressed', 'false'));
+  });
+
   it('says plainly when a change was not reviewed because it did not need one', async () => {
     const { card } = await handedOff({ review: 'NotNeeded', findings: [] });
 

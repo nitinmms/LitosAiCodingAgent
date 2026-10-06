@@ -131,12 +131,18 @@ export interface Verification {
   changedLineCoveragePercent: number | null;
 }
 
+/** A person's judgement of a review finding: what review yield is measured from. */
+export type FindingVerdict = 'Real' | 'NotWorthFixing' | 'Wrong';
+
 export interface Finding {
+  /** Present on the thread's findings; a handoff's evidence carries none. */
+  id?: string;
   severity: 'Blocking' | 'Minor';
   file: string;
   line: number | null;
   text: string;
   status?: 'Open' | 'Fixed' | 'Dismissed';
+  verdict?: FindingVerdict | null;
 }
 
 export interface CriterionCoverage {

@@ -172,6 +172,13 @@ public interface IFactoryStore
 
     Task SetFindingsStatusAsync(Guid runId, FindingSeverity severity, FindingStatus status, CancellationToken ct);
 
+    /// <summary>Every finding of every run of the thread, oldest run first.</summary>
+    Task<IReadOnlyList<ReviewFindingRecord>> ListFindingsAsync(Guid threadId, CancellationToken ct);
+
+    /// <summary>Records a person's verdict on a finding, or clears it with null.</summary>
+    /// <exception cref="StoreNotFoundException">No finding has this id.</exception>
+    Task<TaskThread> SetFindingVerdictAsync(Guid findingId, FindingVerdict? verdict, Guid userId, DateTimeOffset now, CancellationToken ct);
+
     Task SaveHandoffAsync(HandoffRecord handoff, CancellationToken ct);
 
     // ---- Budget ----

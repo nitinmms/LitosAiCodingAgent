@@ -1,4 +1,4 @@
-import type { ThreadDetails, UsageCall } from '../api/types';
+import type { Finding, FindingVerdict, ThreadDetails, UsageCall } from '../api/types';
 import { fmt, pct, shortSha, toneOf, words } from '../domain/format';
 
 function humanTesting(state: ThreadDetails['thread']['state']): { text: string; tone: string } {
@@ -33,15 +33,56 @@ export function phaseTotals(calls: UsageCall[]): { implementation: number; revie
   return totals;
 }
 
+/** How each verdict is offered. */
+const VERDICTS: [FindingVerdict, string][] = [
+  ['Real', 'Real defect'],
+  ['NotWorthFixing', 'Not worth fixing'],
+  ['Wrong', 'Wrong'],
+];
+
+/**
+ * One review finding, with buttons to judge it. Pressing the chosen verdict again clears it.
+ * The verdicts are what tells the factory whether its reviews are worth what they cost.
+ */
+function FindingItem({ finding, onVerdict }: { finding: Finding; onVerdict?: (findingId: string, verdict: FindingVerdict | null) => void }) {
+  return (
+    <li>
+      <span className="mono">
+        {finding.file}
+        {finding.line ? `:${finding.line}` : ''}
+      </span>{' '}
+      {finding.status === 'Fixed' ? <span className="pill done">fixed</span> : null} {finding.text}
+      {finding.id && onVerdict ? (
+        <span className="verdicts" role="group" aria-label="Was this finding right?">
+          {VERDICTS.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className="verdict"
+              aria-pressed={finding.verdict === value}
+              onClick={() => onVerdict(finding.id!, finding.verdict === value ? null : value)}
+            >
+              {label}
+            </button>
+          ))}
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
 export function Details({
   details,
   usage,
   cachedInputWeight,
+  onVerdict,
 }: {
   details: ThreadDetails;
   usage: UsageCall[];
   /** The fraction of a cached input token that counts against the budget; unknown until settings load. */
   cachedInputWeight?: number;
+  /** Judges a review finding; without it the findings are shown without buttons. */
+  onVerdict?: (findingId: string, verdict: FindingVerdict | null) => void;
 }) {
   const { thread, verification, findings, handoff, run } = details;
   const evidence = handoff?.evidence ?? null;
@@ -59,7 +100,8 @@ export function Details({
   const failed = verification?.failedCount ?? evidence?.testsFailed ?? 0;
   const review = evidence?.review ?? (findings.length ? 'FindingsOpen' : 'NotRun');
   const human = humanTesting(thread.state);
-  const openFindings = findings.filter((f) => f.status !== 'Fixed' && f.status !== 'Dismissed');
+  // Fixed findings stay listed: a finding that was fixed is the clearest case of a real one.
+  const shownFindings = findings.filter((f) => f.status !== 'Dismissed');
 
   const rows: [string, string, string][] = [
     ['Build', words(build), toneOf(build)],
@@ -144,16 +186,10 @@ export function Details({
             <span className={`pill ${tone}`}>{text}</span>
           </div>
         ))}
-        {openFindings.length ? (
-          <ul className="small findings">
-            {openFindings.map((f, i) => (
-              <li key={i}>
-                <span className="mono">
-                  {f.file}
-                  {f.line ? `:${f.line}` : ''}
-                </span>{' '}
-                {f.text}
-              </li>
+        {shownFindings.length ? (
+          <ul className="small findings" aria-label="Review findings">
+            {shownFindings.map((f, i) => (
+              <FindingItem key={f.id ?? i} finding={f} onVerdict={onVerdict} />
             ))}
           </ul>
         ) : null}

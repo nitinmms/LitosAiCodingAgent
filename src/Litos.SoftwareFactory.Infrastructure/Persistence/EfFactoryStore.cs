@@ -651,6 +651,35 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<IReadOnlyList<ReviewFindingRecord>> ListFindingsAsync(Guid threadId, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.ReviewFindings.AsNoTracking()
+            .Join(db.Runs.Where(r => r.ThreadId == threadId), f => f.RunId, r => r.Id, (f, r) => new { Finding = f, r.CreatedAt })
+            .OrderBy(x => x.CreatedAt)
+            .Select(x => x.Finding)
+            .ToListAsync(ct);
+    }
+
+    public async Task<TaskThread> SetFindingVerdictAsync(Guid findingId, FindingVerdict? verdict, Guid userId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var threadId = await db.ReviewFindings.Where(f => f.Id == findingId)
+            .Join(db.Runs, f => f.RunId, r => r.Id, (f, r) => (Guid?)r.ThreadId)
+            .FirstOrDefaultAsync(ct)
+            ?? throw new StoreNotFoundException("The finding does not exist.");
+        var thread = await LockThreadAsync(db, threadId, ct);
+        var finding = await db.ReviewFindings.FirstAsync(f => f.Id == findingId, ct);
+
+        finding.Verdict = verdict;
+        finding.VerdictBy = verdict is null ? null : userId;
+        finding.VerdictAt = verdict is null ? null : now;
+        Touch(db, thread, now);
+        await write.CommitAsync(ct);
+        return thread;
+    }
+
     public async Task SaveHandoffAsync(HandoffRecord handoff, CancellationToken ct)
     {
         await using var write = await BeginWriteAsync(ct);

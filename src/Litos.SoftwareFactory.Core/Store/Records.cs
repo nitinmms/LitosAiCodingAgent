@@ -291,6 +291,25 @@ public sealed class ReviewFindingRecord
     public int? Line { get; set; }
     public required string Text { get; set; }
     public FindingStatus Status { get; set; } = FindingStatus.Open;
+
+    /// <summary>What a person judged the finding to be; null until judged. This is what review
+    /// yield is measured from (ReviewYield).</summary>
+    public FindingVerdict? Verdict { get; set; }
+    public Guid? VerdictBy { get; set; }
+    public DateTimeOffset? VerdictAt { get; set; }
+}
+
+/// <summary>A person's judgement of a review finding (ReadM_SoftwareFactory_ReviewGuidance.md §13).</summary>
+public enum FindingVerdict
+{
+    /// <summary>A defect that was worth finding.</summary>
+    Real,
+
+    /// <summary>True, but style, preference or too minor to act on.</summary>
+    NotWorthFixing,
+
+    /// <summary>A false positive: the finding is mistaken.</summary>
+    Wrong,
 }
 
 public sealed class HandoffRecord
