@@ -24,6 +24,22 @@ public sealed class WorkspaceException(string message, Exception? inner = null) 
 
 public sealed record WorkspaceStatus(string Branch, string HeadCommit, bool IsClean, IReadOnlyList<string> ChangedPaths);
 
+/// <summary>
+/// What the working copy looked like at a checkpoint: the branch, its head commit, and a SHA-256
+/// of every file that differed from that commit. A resumed run compares this with the working
+/// copy now, so changes made while it was stopped are pointed out (§16).
+/// </summary>
+/// <param name="Files">Path to lower-case hex SHA-256; <see cref="Deleted"/> for a deleted file.</param>
+/// <param name="Truncated">More files differed than were hashed.</param>
+public sealed record WorkspaceSnapshot(string Branch, string Head, IReadOnlyDictionary<string, string> Files, bool Truncated = false)
+{
+    /// <summary>The hash recorded for a file that is changed by being deleted.</summary>
+    public const string Deleted = "";
+
+    /// <summary>The most files a snapshot hashes.</summary>
+    public const int MaxFiles = 1_000;
+}
+
 /// <summary>The lines a diff added or changed in one file, as 1-based line numbers in the new version.</summary>
 public sealed record FileChange(string Path, IReadOnlyList<LineRange> AddedLines)
 {

@@ -47,6 +47,12 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
     public string? ReviewedThroughCommit { get; init; }
 
     public int ChangedLineCount { get; init; }
+
+    // Resumed runs.
+
+    /// <summary>How the working copy differs from the run's last checkpoint
+    /// (<see cref="Orchestration.WorkspaceDrift.Describe"/>); null or empty when it does not.</summary>
+    public string? WorkspaceDrift { get; init; }
 }
 
 /// <summary>
@@ -59,8 +65,9 @@ public static partial class BriefComposer
     /// <summary>Bump whenever any template or any text composed here changes, and when the turns
     /// a run is given change (m1.12: review depth is scored, and a small safe change gets none;
     /// m1.13: implementation turns get cost notes, and test-run output is cut to failures and summary;
-    /// m1.14: the scan re-checks the questions not yet asked against each answer).</summary>
-    public const string Revision = "m1.14";
+    /// m1.14: the scan re-checks the questions not yet asked against each answer;
+    /// m2.1: a resumed run is told how the working copy changed since its last checkpoint).</summary>
+    public const string Revision = "m2.1";
 
     private const int CharsPerToken = 4;
 
@@ -73,7 +80,7 @@ public static partial class BriefComposer
         BriefKind.Nudge => Nudge(state),
         BriefKind.DecisionAnswer => DecisionAnswer(state),
         BriefKind.ProceedOnRecommendation => Render("proceed", new() { ["maxDecisions"] = limits.MaxDecisions.ToString() }),
-        BriefKind.Resume => Resume(state),
+        BriefKind.Resume => Resume(context, state),
         BriefKind.Scan => Scan(context, state),
         BriefKind.ScanRecheck => ScanRecheck(state),
         _ => throw new ArgumentOutOfRangeException(nameof(step), step.Brief, "Unknown brief kind."),
@@ -284,9 +291,12 @@ public static partial class BriefComposer
         return Render("decision-answer", new() { ["question"] = Quote(latest.Question), ["answer"] = Quote(latest.Answer) });
     }
 
-    private static string Resume(RunState state) => Render("resume", new()
+    private static string Resume(RunContext context, RunState state) => Render("resume", new()
     {
         ["reason"] = state.LastStop is { } stop ? $"It had stopped because: {stop.Message}" : "",
+        ["workspaceDrift"] = string.IsNullOrWhiteSpace(context.WorkspaceDrift)
+            ? ""
+            : "The factory compared the working copy with the run's last checkpoint and found it differs:\n\n" + context.WorkspaceDrift.Trim(),
         ["completionTool"] = CompletionTool(state),
     });
 

@@ -37,6 +37,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             Verified verified => OnVerified(state, verified),
             ReviewNotNeeded => OnReviewNotNeeded(state),
             HandoffCompleted handoff => OnHandoff(state, handoff),
+            StepStopped stopped => OnStepStopped(state, stopped),
             _ => throw new InvalidOperationException($"Unknown step outcome {outcome.GetType().Name}."),
         };
 
@@ -97,18 +98,35 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
     /// </summary>
     private static RunTransition OnRecovered(RunState state, DateTimeOffset now)
     {
-        RunStep? redo = state.Phase switch
-        {
-            RunPhase.Preflight => state.AfterPreflight,
-            RunPhase.Turn => new StartTurnStep(state.WorkTurn, BriefKind.Resume, SessionOf(state)),
-            RunPhase.Verify => new VerifyStep(),
-            RunPhase.Handoff => new HandoffStep(),
-            _ => null,
-        };
+        var redo = StepUnderWay(state);
         Require(redo is not null, state, "be recovered");
 
         return Preflight(state with { ActiveSince = now, NudgeUsed = false }, redo!);
     }
+
+    /// <summary>
+    /// A person stopped the run during a step that is not a turn, or between steps. Nothing the
+    /// step produced was recorded, so a resumed run does that step again, as after an interruption.
+    /// </summary>
+    private static RunTransition OnStepStopped(RunState state, StepStopped stopped)
+    {
+        var redo = StepUnderWay(state);
+        Require(redo is not null, state, "be stopped");
+
+        return stopped.Cancel
+            ? Stop(state, LifecycleTrigger.Cancel, StopReason.Cancelled, "Cancelled. Edits and the branch are kept.", resumePoint: null)
+            : Stop(state, LifecycleTrigger.Pause, StopReason.PausedByUser, "Paused.", redo);
+    }
+
+    /// <summary>The step a run in this phase was doing, to be done again when it continues.</summary>
+    private static RunStep? StepUnderWay(RunState state) => state.Phase switch
+    {
+        RunPhase.Preflight => state.AfterPreflight,
+        RunPhase.Turn => new StartTurnStep(state.WorkTurn, BriefKind.Resume, SessionOf(state)),
+        RunPhase.Verify => new VerifyStep(),
+        RunPhase.Handoff => new HandoffStep(),
+        _ => null,
+    };
 
     private RunTransition OnDecisionAnswered(RunState state, DecisionAnswered answer, DateTimeOffset now)
     {

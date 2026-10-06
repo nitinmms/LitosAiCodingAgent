@@ -774,6 +774,27 @@ public class BriefComposerTests
     }
 
     [Fact]
+    public void Resume_WithAnUnchangedWorkingCopy_SaysNothingAboutDrift()
+    {
+        var brief = Compose(BriefKind.Resume, State(), Context with { WorkspaceDrift = "" });
+
+        Assert.DoesNotContain("last checkpoint", brief);
+        Assert.DoesNotContain("\n\n\n", brief);
+    }
+
+    [Fact]
+    public void Resume_WithAChangedWorkingCopy_ListsTheChanges_BeforeAskingForACheck()
+    {
+        var context = Context with { WorkspaceDrift = "- Changed since then: `src/Orders.cs`." };
+
+        var brief = Compose(BriefKind.Resume, State(), context);
+
+        Assert.Contains("compared the working copy with the run's last checkpoint", brief);
+        Assert.Contains("- Changed since then: `src/Orders.cs`.", brief);
+        Assert.True(brief.IndexOf("src/Orders.cs", StringComparison.Ordinal) < brief.IndexOf("Check the current state", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Resume_OfAReview_FinishesWithSubmitReview()
     {
         Assert.Contains("`submit_review`", Compose(BriefKind.Resume, State() with { WorkTurn = TurnKind.Review }, kind: TurnKind.Review));
@@ -820,7 +841,8 @@ public class BriefComposerTests
         // review of a rework scoped to the rework. Bump it with every change to a brief.
         // m1.3: never stop processes by name.
         // m1.11: the decision scan brief, and the plan section of the run brief.
-        Assert.Equal("m1.14", BriefComposer.Revision);
+        // m2.1: the resume brief states how the working copy changed since the last checkpoint.
+        Assert.Equal("m2.1", BriefComposer.Revision);
     }
 
     [Theory]

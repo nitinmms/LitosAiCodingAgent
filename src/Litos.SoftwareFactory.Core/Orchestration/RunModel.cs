@@ -270,6 +270,13 @@ public sealed record Verified(VerificationOutcome Outcome, VerificationOutcome? 
 
 public sealed record HandoffCompleted(bool Succeeded, string? Failure = null) : StepOutcome;
 
+/// <summary>
+/// A person paused or cancelled the run while the host was in a step that is not a model turn
+/// (preflight, verification, handoff, the work before a turn), or between two steps. A stop
+/// during a turn is reported by <see cref="TurnEnded"/> instead.
+/// </summary>
+public sealed record StepStopped(bool Cancel) : StepOutcome;
+
 // ---- State ----
 
 public enum RunPhase

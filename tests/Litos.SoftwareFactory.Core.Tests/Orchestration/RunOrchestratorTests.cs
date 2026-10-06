@@ -912,6 +912,148 @@ public class RunOrchestratorTests
         Assert.Throws<InvalidOperationException>(() => new Run().Report(new Resumed()));
     }
 
+    // ---- A person stopping the run outside a turn ----
+    //
+    // A pause or cancel used to take effect only when a model turn ended, so one asked for during
+    // verification was acted on after the next turn, or lost when the run handed off instead.
+
+    [Fact]
+    public void PausedDuringPreflight_ResumesIntoPreflight_ForTheSameNextStep()
+    {
+        var run = new Run();
+        run.Report(new RunStarted());
+
+        AssertStopped(run.Report(new StepStopped(Cancel: false)), LifecycleTrigger.Pause, StopReason.PausedByUser);
+        Assert.Equal(Stage.Implement, run.State.Stage);
+
+        Assert.IsType<PreflightStep>(run.Report(new Resumed()));
+        AssertTurn(run.Report(new PreflightCompleted(true)), TurnKind.Implement, BriefKind.Run);
+    }
+
+    [Fact]
+    public void PausedDuringVerification_ResumesIntoVerification_AndKeepsTheSubmission()
+    {
+        var run = new Run().Started();
+        Assert.IsType<VerifyStep>(run.Submit());
+
+        var stop = AssertStopped(run.Report(new StepStopped(Cancel: false)), LifecycleTrigger.Pause, StopReason.PausedByUser);
+        Assert.Equal("Paused.", stop.Message);
+        Assert.Equal(Stage.Verify, run.State.Stage);
+
+        run.Report(new Resumed());
+        Assert.IsType<VerifyStep>(run.Report(new PreflightCompleted(true)));
+        Assert.Equal("done", run.State.LastSubmission!.Summary);
+    }
+
+    [Fact]
+    public void PausedDuringHandoff_ResumesIntoHandoff()
+    {
+        var run = new Run().AtReview();
+        Assert.IsType<HandoffStep>(run.ReviewWith());
+
+        run.Report(new StepStopped(Cancel: false));
+        Assert.Equal(Stage.Handoff, run.State.Stage);
+
+        run.Report(new Resumed());
+        Assert.IsType<HandoffStep>(run.Report(new PreflightCompleted(true)));
+    }
+
+    /// <summary>A stop that arrives after a turn was decided on but before it began.</summary>
+    [Fact]
+    public void PausedBeforeAReviewTurnBegan_ResumesTheReview_InTheReviewSession()
+    {
+        var run = new Run().AtReview();
+
+        run.Report(new StepStopped(Cancel: false));
+
+        run.Report(new Resumed());
+        AssertTurn(run.Report(new PreflightCompleted(true)), TurnKind.Review, BriefKind.Resume, SessionScope.Review);
+    }
+
+    /// <summary>A pause is not a blocker somebody resolved: the counts are kept.</summary>
+    [Fact]
+    public void PausedOutsideATurn_KeepsItsRepairCycles()
+    {
+        var run = new Run().Started();
+        run.Submit();
+        run.Verify(Failing("T.Fails"));
+        run.Submit();
+        Assert.Equal(1, run.State.RepairCyclesUsed);
+
+        run.Report(new StepStopped(Cancel: false));
+        run.Report(new Resumed());
+
+        Assert.Equal(1, run.State.RepairCyclesUsed);
+        Assert.Equal(new[] { "T.Fails" }, run.State.FailuresBeforeRepair);
+    }
+
+    [Theory]
+    [InlineData("preflight")]
+    [InlineData("verify")]
+    [InlineData("handoff")]
+    public void CancelledOutsideATurn_Stops_KeepsTheEdits_AndCannotBeResumed(string during)
+    {
+        var run = new Run();
+        switch (during)
+        {
+            case "preflight":
+                run.Report(new RunStarted());
+                break;
+            case "verify":
+                run.Started().Submit();
+                break;
+            default:
+                run.AtReview().ReviewWith();
+                break;
+        }
+
+        var stop = AssertStopped(run.Report(new StepStopped(Cancel: true)), LifecycleTrigger.Cancel, StopReason.Cancelled);
+
+        Assert.Contains("kept", stop.Message);
+        Assert.Null(run.State.ResumePoint);
+        Assert.Throws<InvalidOperationException>(() => run.Report(new Resumed()));
+    }
+
+    [Fact]
+    public void StoppedBeforeTheRunEverStarted_IsRejected()
+    {
+        Assert.Throws<InvalidOperationException>(() => new Run().Report(new StepStopped(Cancel: false)));
+    }
+
+    [Fact]
+    public void StoppedWhenAlreadyStopped_IsRejected()
+    {
+        var run = new Run().Started();
+        run.Report(new TurnEnded(TurnEndReason.PausedByUser));
+
+        Assert.Throws<InvalidOperationException>(() => run.Report(new StepStopped(Cancel: true)));
+    }
+
+    /// <summary>The run time limit never turns a person's pause into a block.</summary>
+    [Fact]
+    public void PausedOutsideATurn_PastTheRunTimeLimit_IsStillAPause()
+    {
+        var run = new Run().Started();
+        run.Submit();
+        run.Now = T0.AddHours(10);
+
+        AssertStopped(run.Report(new StepStopped(Cancel: false)), LifecycleTrigger.Pause, StopReason.PausedByUser);
+    }
+
+    [Fact]
+    public void PausedDuringVerification_SurvivesTheCheckpoint()
+    {
+        var run = new Run().Started();
+        run.Submit();
+        run.Report(new StepStopped(Cancel: false));
+
+        var restored = RunStateJson.Deserialize(RunStateJson.Serialize(run.State));
+
+        Assert.IsType<VerifyStep>(restored.ResumePoint);
+        Assert.Equal(StopReason.PausedByUser, restored.LastStop!.Reason);
+        Assert.Equal(Stage.Verify, restored.Stage);
+    }
+
     // ---- Misuse by the host ----
 
     [Fact]
