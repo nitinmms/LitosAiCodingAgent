@@ -409,7 +409,14 @@ public sealed class Invitation
     public DateTimeOffset? RevokedAt { get; set; }
 
     /// <summary>Whether the link still creates an account at <paramref name="now"/>.</summary>
-    public bool IsUsable(DateTimeOffset now) => AcceptedAt is null && RevokedAt is null && now < ExpiresAt;
+    public bool IsUsable(DateTimeOffset now) => UnusableReason(now) is null;
+
+    /// <summary>Why the link no longer works, in words for the person holding it; null while it does.</summary>
+    public string? UnusableReason(DateTimeOffset now) =>
+        AcceptedAt is not null ? "This invitation has already been used."
+        : RevokedAt is not null ? "This invitation was revoked. Ask an Admin for a new one."
+        : now >= ExpiresAt ? "This invitation has expired. Ask an Admin for a new one."
+        : null;
 }
 
 /// <summary>A Member's place in a project (§14). Admins need none: they see every project.</summary>

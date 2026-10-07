@@ -1124,7 +1124,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         var invitation = await db.Invitations.AsNoTracking().FirstOrDefaultAsync(i => i.Id == invitationId, ct)
             ?? throw new StoreNotFoundException("The invitation does not exist.");
         if (accepted == 0)
-            throw new StoreConflictException(UnusableReason(invitation, now));
+            throw new StoreConflictException(invitation.UnusableReason(now) ?? "This invitation cannot be used.");
 
         Audit(db, userId, AuditActions.InvitationAccept, AuditTargets.Invitation, invitationId, null,
             new { invitation.UserName, Role = invitation.Role.ToString() }, now);
@@ -1141,13 +1141,6 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         await write.CommitAsync(ct);
         return invitation;
     }
-
-    /// <summary>Why an invitation's link no longer works, in words for the person holding it.</summary>
-    internal static string UnusableReason(Invitation invitation, DateTimeOffset now) =>
-        invitation.AcceptedAt is not null ? "This invitation has already been used."
-        : invitation.RevokedAt is not null ? "This invitation was revoked. Ask an Admin for a new one."
-        : invitation.ExpiresAt <= now ? "This invitation has expired. Ask an Admin for a new one."
-        : "This invitation cannot be used.";
 
     public async Task AddAuditAsync(AuditEvent auditEvent, CancellationToken ct)
     {

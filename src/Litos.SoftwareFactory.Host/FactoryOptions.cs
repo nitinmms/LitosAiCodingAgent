@@ -67,6 +67,9 @@ public sealed class FactoryOptions
     /// <summary>How often the coordinator looks for queued work when nothing has signalled it.</summary>
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>How long an invitation's link works.</summary>
+    public TimeSpan InvitationLifetime { get; set; } = TimeSpan.FromDays(7);
+
     public string WorkspacesDirectory => Path.Combine(DataDirectory, "workspaces");
 
     public string RunDirectory(Guid runId) => Path.Combine(DataDirectory, "runs", runId.ToString("N"));

@@ -38,6 +38,21 @@ public class InvitationTests
     }
 
     [Fact]
+    public void UnusableReason_SaysWhyALinkStoppedWorking_AndIsNullWhileItWorks()
+    {
+        var invitation = Fresh();
+        Assert.Null(invitation.UnusableReason(T0));
+        Assert.Contains("expired", invitation.UnusableReason(T0.AddDays(8)));
+
+        invitation.RevokedAt = T0.AddHours(1);
+        Assert.Contains("revoked", invitation.UnusableReason(T0.AddHours(2)));
+
+        // Used is the most specific answer, even after it has also expired.
+        invitation.AcceptedAt = T0.AddHours(1);
+        Assert.Equal("This invitation has already been used.", invitation.UnusableReason(T0.AddDays(30)));
+    }
+
+    [Fact]
     public void ANewInvitation_IsForAMember_JoiningNoProject()
     {
         var invitation = Fresh();

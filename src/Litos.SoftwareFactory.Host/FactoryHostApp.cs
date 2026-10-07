@@ -92,6 +92,7 @@ public static class FactoryHostApp
 
         app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
         app.MapFactoryAuth();
+        app.MapFactoryInvitations();
         app.MapFactoryApi();
         app.MapFactoryEvents();
         app.MapWorkerCallbacks();
