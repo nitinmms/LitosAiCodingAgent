@@ -193,6 +193,22 @@ Differences from the plan above:
 - **Live board:** `GET /api/events?after=` streams `state` events of every project the user belongs to, from the same outbox, and replaces the 15-second polling.
 - **Flow metrics (§12.1) stay in M4,** as the roadmap says.
 
+**Step 3 was completed on 2026-10-07** in these commits:
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `22dcaba` | `TurnLabels` and `TaskTypes` in Core; `ownerId` and `turn` on every thread; `PATCH /api/threads/{id}`; `GET /api/directory` |
+| 2 | `94020e7` | `GET /api/events`, the board's stream; `X-Event-Cursor` on the thread list; a new thread is announced |
+| 3 | `3e9b425` | Web: the board, the host's turn label everywhere, a personal "Awaiting you" |
+| 4 | `26fad8c` | Web: the board kept live from its stream, polling removed; renaming and re-filing a thread |
+
+Differences from the plan above:
+
+- **Owners' names come from `GET /api/directory`,** which names only the owners of threads the caller can see, rather than being added to every thread.
+- **A board event is the thread's whole current view,** not a change to apply, so a client keeps the newer copy by revision and never re-fetches. State events on a thread's own stream now also carry the turn label, title and type.
+- **Creating a thread writes a state event,** so other people's boards see it appear. A new thread's stream therefore starts with that event.
+- **Known limit:** a thread in a project the user leaves stays on their board until they reload; the stream stops sending its changes at once.
+
 ## 7. Event stream and controls (build step 6)
 
 - **Client resilience:**
