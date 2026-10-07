@@ -185,3 +185,63 @@ describe('the event stream', () => {
     expect(events).toEqual([]);
   });
 });
+
+describe('people and invitations', () => {
+  it('keeps an invitation token in the request body, never in the address', async () => {
+    const { fetcher, calls } = fetchReturning(200, { userName: 'erin', role: 'Member', expiresAt: '2026-10-14T09:00:00Z' });
+    const api = createApi(fetcher);
+
+    await api.lookupInvitation('secret-token');
+    await api.acceptInvitation('secret-token', 'a long enough password', 'Erin');
+
+    expect(calls.map((c) => c.path)).toEqual(['/api/invitations/lookup', '/api/invitations/accept']);
+    expect(calls.every((c) => !c.path.includes('secret-token'))).toBe(true);
+    expect(JSON.parse(String(calls[1]!.init.body))).toEqual({ token: 'secret-token', password: 'a long enough password', displayName: 'Erin' });
+    expect(calls.every((c) => CSRF_HEADER in headersOf(c.init))).toBe(true);
+  });
+
+  /** Someone opening a link is not signed in: a refusal is about the link, not their session. */
+  it('does not treat a refused invitation as being signed out', async () => {
+    const { fetcher } = fetchReturning(401, { error: 'nope' });
+    const signedOut = vi.fn();
+    const api = createApi(fetcher, signedOut);
+
+    await expect(api.lookupInvitation('t')).rejects.toBeInstanceOf(ApiError);
+    await expect(api.acceptInvitation('t', 'p')).rejects.toBeInstanceOf(ApiError);
+    expect(signedOut).not.toHaveBeenCalled();
+  });
+
+  it("explains a link that no longer works when the host gives no reason", async () => {
+    const { fetcher } = fetchReturning(410);
+
+    await expect(createApi(fetcher).lookupInvitation('t')).rejects.toThrow('This link no longer works. Ask an admin for a new one.');
+  });
+
+  it('calls the admin routes with the right method and path', async () => {
+    const { fetcher, calls } = fetchReturning(200, {});
+    const api = createApi(fetcher);
+
+    await api.invitations();
+    await api.createInvitation({ userName: 'erin', role: 'Member', projectIds: ['p1'] });
+    await api.revokeInvitation('i 1');
+    await api.people();
+    await api.disablePerson('u1');
+    await api.enablePerson('u1');
+    await api.setRole('u1', 'Admin');
+    await api.addMember('p1', 'u1');
+    await api.removeMember('p1', 'u1');
+
+    expect(calls.map((c) => `${c.init.method} ${c.path}`)).toEqual([
+      'GET /api/invitations',
+      'POST /api/invitations',
+      'POST /api/invitations/i%201/revoke',
+      'GET /api/users',
+      'POST /api/users/u1/disable',
+      'POST /api/users/u1/enable',
+      'POST /api/users/u1/role',
+      'POST /api/projects/p1/members',
+      'DELETE /api/projects/p1/members/u1',
+    ]);
+    expect(JSON.parse(String(calls[7]!.init.body))).toEqual({ userId: 'u1' });
+  });
+});

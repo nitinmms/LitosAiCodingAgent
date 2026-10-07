@@ -1,8 +1,14 @@
 import type {
+  AccountRole,
+  CreatedInvitation,
+  CreateInvitation,
   CreateThread,
   CurrentUser,
   DispatchResult,
   FindingVerdict,
+  Invitation,
+  InvitationPreview,
+  Person,
   Project,
   PullRequestInfo,
   RegisterProject,
@@ -30,6 +36,7 @@ const FALLBACK: Record<number, string> = {
   401: 'You are signed out. Sign in again.',
   403: 'Your account is not allowed to do that.',
   404: 'That no longer exists.',
+  410: 'This link no longer works. Ask an admin for a new one.',
   423: 'This account is locked after repeated failed sign-ins. Try again later.',
   429: 'Too many attempts. Wait a minute, then try again.',
 };
@@ -59,6 +66,20 @@ export interface FactoryApi {
   answerDecision(decisionId: string, answer: string): Promise<Thread>;
   /** Judges a review finding, or clears the judgement with null. */
   setFindingVerdict(findingId: string, verdict: FindingVerdict | null): Promise<Thread>;
+
+  // People and access (Admin), and accepting an invitation (anyone holding its link).
+  invitations(): Promise<Invitation[]>;
+  createInvitation(request: CreateInvitation): Promise<CreatedInvitation>;
+  revokeInvitation(id: string): Promise<void>;
+  /** The token travels in the body, never the URL, so the host never logs it. */
+  lookupInvitation(token: string): Promise<InvitationPreview>;
+  acceptInvitation(token: string, password: string, displayName?: string): Promise<CurrentUser>;
+  people(): Promise<Person[]>;
+  disablePerson(id: string): Promise<Person>;
+  enablePerson(id: string): Promise<Person>;
+  setRole(id: string, role: AccountRole): Promise<Person>;
+  addMember(projectId: string, userId: string): Promise<void>;
+  removeMember(projectId: string, userId: string): Promise<void>;
 }
 
 /**
@@ -140,5 +161,19 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
       send<Thread>('POST', `/api/decisions/${encodeURIComponent(decisionId)}/answer`, { answer }),
     setFindingVerdict: (findingId, verdict) =>
       send<Thread>('POST', `/api/findings/${encodeURIComponent(findingId)}/verdict`, { verdict }),
+    invitations: () => send<Invitation[]>('GET', '/api/invitations'),
+    createInvitation: (request) => send<CreatedInvitation>('POST', '/api/invitations', request),
+    revokeInvitation: async (id) => void (await send<unknown>('POST', `/api/invitations/${encodeURIComponent(id)}/revoke`)),
+    lookupInvitation: (token) => send<InvitationPreview>('POST', '/api/invitations/lookup', { token }, true),
+    acceptInvitation: (token, password, displayName) =>
+      send<CurrentUser>('POST', '/api/invitations/accept', { token, password, displayName }, true),
+    people: () => send<Person[]>('GET', '/api/users'),
+    disablePerson: (id) => send<Person>('POST', `/api/users/${encodeURIComponent(id)}/disable`),
+    enablePerson: (id) => send<Person>('POST', `/api/users/${encodeURIComponent(id)}/enable`),
+    setRole: (id, role) => send<Person>('POST', `/api/users/${encodeURIComponent(id)}/role`, { role }),
+    addMember: async (projectId, userId) =>
+      void (await send<unknown>('POST', `/api/projects/${encodeURIComponent(projectId)}/members`, { userId })),
+    removeMember: async (projectId, userId) =>
+      void (await send<unknown>('DELETE', `/api/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`)),
   };
 }

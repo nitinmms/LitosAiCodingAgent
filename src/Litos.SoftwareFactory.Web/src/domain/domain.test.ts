@@ -217,11 +217,21 @@ describe('routes', () => {
     ['#/threads', { view: 'threads', threadId: null }],
     ['#/threads/abc-123', { view: 'threads', threadId: 'abc-123' }],
     ['#/projects', { view: 'projects' }],
+    ['#/people', { view: 'people' }],
+    ['#/invite/AbC-12_x', { view: 'invite', token: 'AbC-12_x' }],
+    // A link without its token is no invitation.
+    ['#/invite', { view: 'threads', threadId: null }],
     ['#/nonsense', { view: 'threads', threadId: null }],
   ])('%j', (hash, expected) => expect(parseRoute(hash)).toEqual(expected));
 
   it('round-trips', () => {
-    for (const route of [{ view: 'threads', threadId: null }, { view: 'threads', threadId: 'a b' }, { view: 'projects' }] as const)
+    for (const route of [
+      { view: 'threads', threadId: null },
+      { view: 'threads', threadId: 'a b' },
+      { view: 'projects' },
+      { view: 'people' },
+      { view: 'invite', token: 'AbC-12_x' },
+    ] as const)
       expect(parseRoute(routeHash(route))).toEqual(route);
   });
 });

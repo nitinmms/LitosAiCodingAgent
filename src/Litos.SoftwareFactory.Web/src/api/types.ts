@@ -251,3 +251,55 @@ export interface ThreadChange {
   branch: string | null;
   pullRequestUrl: string | null;
 }
+
+// ---- People and access (M2, docs/software-factory/m2-architecture.md §4) ----
+
+export type AccountRole = 'Member' | 'Admin';
+
+export type InvitationStatus = 'Pending' | 'Accepted' | 'Revoked' | 'Expired';
+
+/** An invitation as the Admin sees it. Its link is shown only once, when it is created. */
+export interface Invitation {
+  id: string;
+  userName: string;
+  email: string | null;
+  role: AccountRole;
+  projectIds: string[];
+  status: InvitationStatus;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  acceptedUserId: string | null;
+  revokedAt: string | null;
+}
+
+export interface CreateInvitation {
+  userName: string;
+  role: AccountRole;
+  projectIds: string[];
+}
+
+export interface CreatedInvitation {
+  invitation: Invitation;
+  /** `#/invite/<token>`: the one time the link exists anywhere. */
+  link: string;
+}
+
+/** What the invitation page shows before the invitee chooses a password. */
+export interface InvitationPreview {
+  userName: string;
+  role: AccountRole;
+  expiresAt: string;
+}
+
+/** A person on the Admin's people screen. */
+export interface Person {
+  id: string;
+  userName: string;
+  displayName: string | null;
+  role: AccountRole;
+  disabled: boolean;
+  /** Admins see every project whatever this says. */
+  projectIds: string[];
+}

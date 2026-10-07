@@ -2,11 +2,13 @@
 
 The browser app for the software factory: React, Vite and TypeScript. It talks only to `Litos.SoftwareFactory.Host` and is served by it in production.
 
-## Screens (M1)
+## Screens
 
 - Sign-in.
 - Projects: the registered GitHub repositories, and registration for an admin.
 - Threads: the thread list by project, and for the open thread the stage rail, the conversation with decision and handoff cards, the composer with `@factory`, and the budget, verification and changed-files panels.
+- People (M2, admins only): invite someone with a one-time link, see and revoke invitations, and for each person change their role, disable or re-enable them, and choose their projects.
+- Invitation (M2): where an invitation's link lands. The invitee, not signed in, chooses a password and is signed in.
 
 The visual tokens and components follow the UX prototype in `docs/software-factory/prototype`.
 
@@ -49,7 +51,8 @@ The tests run the whole app against `src/test/fakeHost.ts`, an in-memory host wi
 ## Things to know
 
 - After a handoff, an `@factory` message is a **change request** and starts a rework run; the composer says so and its button reads "Send change request". The factory cannot answer questions in M1. A change request can be taken back with "Withdraw change request" whenever its run is not executing.
-- Routes live in the URL fragment (`#/threads/<id>`, `#/projects`), so the host only ever serves `index.html`.
+- Routes live in the URL fragment (`#/threads/<id>`, `#/projects`, `#/people`, `#/invite/<token>`), so the host only ever serves `index.html`. An invitation's token stays in the fragment, which the browser never sends; the app sends it to the host in a request body.
+- A member sees only the projects they belong to: the host filters every list and answers 404 for anything else, so the app needs no rule of its own.
 - The session is an HTTP-only, same-site cookie; the app holds no token. Every state-changing request sends the `X-Factory-Request` header the host requires.
 - `parseMention` in `src/domain/task.ts` mirrors the host's `FactoryMention.TryParse`, and the rules for what each state allows mirror `TaskLifecycle` and the host's dispatch. The tests on both sides pin the same cases; change them together.
 - Fonts are bundled with the app. It makes no request to any other site.

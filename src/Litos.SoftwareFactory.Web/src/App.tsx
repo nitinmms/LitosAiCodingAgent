@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, createApi, type FactoryApi } from './api/client';
 import type { EventSourceFactory } from './api/events';
 import type { CurrentUser, Project, Settings, Thread } from './api/types';
+import { InvitePage } from './components/InvitePage';
 import { Login } from './components/Login';
+import { PeoplePage } from './components/PeoplePage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { ThreadsPage } from './components/ThreadsPage';
 import { TopBar } from './components/TopBar';
-import { navigate, useRoute } from './domain/route';
+import { navigate, useRoute, type Route } from './domain/route';
 import { newer, turnLabel } from './domain/task';
 
 /** How often the thread list is refreshed; the open thread itself is kept live by its stream. */
@@ -115,6 +117,21 @@ export function App({ createClient, openEvents }: AppProps) {
     };
   }, [api, signedIn]);
 
+  // An invitation's link works for someone who has no account yet.
+  if (route.view === 'invite') {
+    return (
+      <InvitePage
+        api={api}
+        token={route.token}
+        onSignedIn={(me) => {
+          setProblem(null);
+          setUser(me);
+          navigate({ view: 'threads', threadId: null });
+        }}
+      />
+    );
+  }
+
   if (user === undefined) return <p className="note">Loading…</p>;
 
   if (user === null) {
@@ -144,7 +161,7 @@ export function App({ createClient, openEvents }: AppProps) {
         user={user}
         view={route.view}
         awaitingYou={waiting.length}
-        onNavigate={(view) => navigate(view === 'projects' ? { view } : { view, threadId: null })}
+        onNavigate={(view) => navigate(view === 'threads' ? { view, threadId: null } : ({ view } as Route))}
         onAwaitingYou={() => waiting[0] && navigate({ view: 'threads', threadId: waiting[0].id })}
         onSignOut={() => {
           api
@@ -160,6 +177,12 @@ export function App({ createClient, openEvents }: AppProps) {
       ) : null}
       {!loaded ? (
         <p className="note">Loading…</p>
+      ) : route.view === 'people' ? (
+        user.roles.includes('Admin') ? (
+          <PeoplePage api={api} projects={projects} currentUserId={user.id} onNotice={say} />
+        ) : (
+          <p className="note">Only an admin can manage people.</p>
+        )
       ) : route.view === 'projects' ? (
         <ProjectsPage
           api={api}

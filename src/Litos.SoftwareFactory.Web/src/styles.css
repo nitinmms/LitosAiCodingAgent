@@ -227,3 +227,8 @@ a{color:var(--petrol)}
 .verdict[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--surface)}
 .panel details summary{cursor:pointer;color:var(--muted)}
 .compose-box textarea:disabled{cursor:not-allowed}
+
+/* People screen (M2) */
+fieldset.checks{border:0;padding:0;margin:0}
+fieldset.checks legend{padding:0;margin-bottom:4px;font-weight:600}
+#invite-link{max-width:none;flex:1 1 280px}

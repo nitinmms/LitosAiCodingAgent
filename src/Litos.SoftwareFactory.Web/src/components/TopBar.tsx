@@ -15,14 +15,16 @@ export function TopBar({
   view: Route['view'];
   /** How many of the user's tasks are stopped until they act. */
   awaitingYou: number;
-  onNavigate: (view: Route['view']) => void;
+  onNavigate: (view: Exclude<Route['view'], 'invite'>) => void;
   onAwaitingYou: () => void;
   onSignOut: () => void;
 }) {
   const name = user.displayName || user.userName;
-  const tabs: [Route['view'], string][] = [
+  const tabs: [Exclude<Route['view'], 'invite'>, string][] = [
     ['threads', 'Threads'],
     ['projects', 'Projects'],
+    // People, invitations and project membership are an admin's to manage.
+    ...(user.roles.includes('Admin') ? [['people', 'People'] as [Exclude<Route['view'], 'invite'>, string]] : []),
   ];
 
   return (

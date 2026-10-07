@@ -1,12 +1,15 @@
 import { CSRF_HEADER, type Fetch } from '../api/client';
 import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
+  AccountRole,
   CurrentUser,
   Decision,
   Finding,
   HandoffEvidence,
+  Invitation,
   LifecycleState,
   Message,
+  Person,
   Project,
   PullRequestState,
   Settings,
@@ -111,6 +114,15 @@ export class FakeHost {
   private readonly failures: { match: (r: RecordedRequest) => boolean; status: number; error?: string }[] = [];
   private sequence = 0;
   private ids = 0;
+  /** Everyone with an account; the signed-in user is one of them. */
+  readonly people: Person[] = [
+    { id: ADMIN.id, userName: ADMIN.userName, displayName: ADMIN.displayName, role: 'Admin', disabled: false, projectIds: [] },
+  ];
+  readonly invitations: Invitation[] = [];
+  /** Each invitation's link token, which the real host never keeps; tests open links with it. */
+  readonly invitationTokens = new Map<string, string>();
+  /** What "now" is for invitation expiry. */
+  now = new Date(NOW);
 
   // ---- what the app is given ----
 
@@ -208,6 +220,49 @@ export class FakeHost {
     const details = this.threads.get(threadId);
     if (!details) throw new Error(`No thread ${threadId}`);
     return details;
+  }
+
+  /** Adds someone with an account. */
+  addPerson(overrides: Partial<Person> = {}): Person {
+    const person: Person = {
+      id: this.nextId('u'),
+      userName: 'ben',
+      displayName: 'Ben Okafor',
+      role: 'Member',
+      disabled: false,
+      projectIds: [],
+      ...overrides,
+    };
+    this.people.push(person);
+    return person;
+  }
+
+  /** Signs in as that person instead of the Admin. */
+  signInAs(person: Person): void {
+    this.user = { id: person.id, userName: person.userName, displayName: person.displayName, roles: [person.role] };
+    this.signedIn = true;
+  }
+
+  /** Creates an invitation as the host would, and returns the token its link carries. */
+  invite(userName = 'erin', role: AccountRole = 'Member', projectIds: string[] = []): string {
+    const invitation: Invitation = {
+      id: this.nextId('i'),
+      userName,
+      email: null,
+      role,
+      projectIds,
+      status: 'Pending',
+      createdBy: ADMIN.id,
+      createdAt: this.now.toISOString(),
+      expiresAt: new Date(this.now.getTime() + 7 * 86_400_000).toISOString(),
+      acceptedAt: null,
+      acceptedUserId: null,
+      revokedAt: null,
+    };
+    const token = `token-${invitation.id}`;
+    this.invitations.unshift(invitation);
+    this.invitationTokens.set(token, invitation.id);
+    return token;
   }
 
   // ---- the factory's side of the story ----
@@ -357,6 +412,13 @@ export class FakeHost {
       return [200, this.user];
     }
 
+    // Opening an invitation's link: anonymous, as on the host (Auth/InvitationsApi.cs).
+    if (path === '/api/invitations/lookup' && method === 'POST') return this.lookup(String(data.token ?? ''));
+    if (path === '/api/invitations/accept' && method === 'POST') {
+      if (!request.headers[CSRF_HEADER]) return [400, { error: `State-changing requests must send the ${CSRF_HEADER} header.` }];
+      return this.accept(String(data.token ?? ''), String(data.password ?? ''), data.displayName as string | undefined);
+    }
+
     if (!this.signedIn) return [401];
     if (method !== 'GET' && !request.headers[CSRF_HEADER])
       return [400, { error: `State-changing requests must send the ${CSRF_HEADER} header.` }];
@@ -400,6 +462,9 @@ export class FakeHost {
         }),
       ];
     }
+
+    const people = this.handlePeople(method, path, data);
+    if (people) return people;
 
     const decision = /^\/api\/decisions\/([^/]+)\/answer$/.exec(path);
     if (decision && method === 'POST') return this.answer(decision[1]!, String(data.answer ?? ''));
@@ -465,6 +530,132 @@ export class FakeHost {
       default:
         return [404];
     }
+  }
+
+  // ---- people and invitations (Auth/InvitationsApi.cs, Auth/UsersApi.cs) ----
+
+  private statusOf(invitation: Invitation): Invitation['status'] {
+    if (invitation.acceptedAt) return 'Accepted';
+    if (invitation.revokedAt) return 'Revoked';
+    return this.now.getTime() >= new Date(invitation.expiresAt).getTime() ? 'Expired' : 'Pending';
+  }
+
+  /** The invitation a token belongs to, or the host's refusal of it. */
+  private usable(token: string): Invitation | [number, unknown] {
+    const invitation = this.invitations.find((i) => i.id === this.invitationTokens.get(token));
+    if (!invitation)
+      return [404, { error: 'This invitation link is not valid. Check that it was copied whole, or ask an Admin for a new one.' }];
+    switch (this.statusOf(invitation)) {
+      case 'Accepted':
+        return [410, { error: 'This invitation has already been used.' }];
+      case 'Revoked':
+        return [410, { error: 'This invitation was revoked. Ask an Admin for a new one.' }];
+      case 'Expired':
+        return [410, { error: 'This invitation has expired. Ask an Admin for a new one.' }];
+      default:
+        return invitation;
+    }
+  }
+
+  private lookup(token: string): [number, unknown] {
+    const found = this.usable(token);
+    return Array.isArray(found) ? found : [200, { userName: found.userName, role: found.role, expiresAt: found.expiresAt }];
+  }
+
+  private accept(token: string, password: string, displayName?: string): [number, unknown] {
+    const found = this.usable(token);
+    if (Array.isArray(found)) return found;
+    if (password.length < 12) return [400, { error: 'Passwords must be at least 12 characters.' }];
+    const person = this.addPerson({
+      userName: found.userName,
+      displayName: displayName ?? found.userName,
+      role: found.role,
+      projectIds: [...found.projectIds],
+    });
+    found.acceptedAt = this.now.toISOString();
+    found.acceptedUserId = person.id;
+    this.signInAs(person);
+    return [200, this.user];
+  }
+
+  private handlePeople(method: string, path: string, data: Record<string, unknown>): [number, unknown?] | null {
+    const admin = this.user.roles.includes('Admin');
+    const enabledAdmins = () => this.people.filter((p) => p.role === 'Admin' && !p.disabled).length;
+    const lastAdmin = (name: string): [number, unknown] => [409, { error: `${name} is the last enabled Admin. Make someone else an Admin first.` }];
+
+    if (path === '/api/invitations' && method === 'GET') {
+      if (!admin) return [403];
+      return [200, this.invitations.map((i) => ({ ...i, status: this.statusOf(i) }))];
+    }
+    if (path === '/api/invitations' && method === 'POST') {
+      if (!admin) return [403];
+      const userName = String(data.userName ?? '').trim();
+      if (!/^[A-Za-z0-9._@+-]{1,100}$/.test(userName))
+        return [400, { error: 'userName is required: up to 100 letters, digits and - . _ @ +.' }];
+      const same = (name: string) => name.toLowerCase() === userName.toLowerCase();
+      if (this.people.some((p) => same(p.userName))) return [409, { error: `Someone already signs in as ${userName}.` }];
+      if (this.invitations.some((i) => same(i.userName) && this.statusOf(i) === 'Pending'))
+        return [409, { error: `An invitation for ${userName} is already waiting. Revoke it to send a new one.` }];
+      const token = this.invite(userName, (data.role as AccountRole | undefined) ?? 'Member', (data.projectIds as string[] | undefined) ?? []);
+      return [201, { invitation: this.invitations[0], link: `#/invite/${token}` }];
+    }
+    const revoke = /^\/api\/invitations\/([^/]+)\/revoke$/.exec(path);
+    if (revoke && method === 'POST') {
+      if (!admin) return [403];
+      const invitation = this.invitations.find((i) => i.id === revoke[1]);
+      if (!invitation) return [404];
+      const status = this.statusOf(invitation);
+      if (status === 'Accepted') return [409, { error: 'This invitation has already been used.' }];
+      if (status === 'Revoked') return [409, { error: 'This invitation has already been revoked.' }];
+      invitation.revokedAt = this.now.toISOString();
+      return [204];
+    }
+
+    if (path === '/api/users' && method === 'GET') return admin ? [200, this.people] : [403];
+    const user = /^\/api\/users\/([^/]+)\/(disable|enable|role)$/.exec(path);
+    if (user && method === 'POST') {
+      if (!admin) return [403];
+      const person = this.people.find((p) => p.id === user[1]);
+      if (!person) return [404];
+      if (user[2] === 'disable') {
+        if (person.disabled) return [409, { error: `${person.userName} is already disabled.` }];
+        if (person.id === this.user.id) return [409, { error: 'You cannot disable your own account. Ask another Admin.' }];
+        if (person.role === 'Admin' && enabledAdmins() <= 1) return lastAdmin(person.userName);
+        person.disabled = true;
+        return [200, person];
+      }
+      if (user[2] === 'enable') {
+        if (!person.disabled) return [409, { error: `${person.userName} is not disabled.` }];
+        person.disabled = false;
+        return [200, person];
+      }
+      const role = data.role as AccountRole;
+      if (role !== 'Admin' && role !== 'Member') return [400, { error: 'role must be Member or Admin.' }];
+      if (person.role === 'Admin' && role === 'Member' && !person.disabled && enabledAdmins() <= 1) return lastAdmin(person.userName);
+      person.role = role;
+      return [200, person];
+    }
+
+    const members = /^\/api\/projects\/([^/]+)\/members(?:\/([^/]+))?$/.exec(path);
+    if (members) {
+      if (!admin) return [403];
+      const projectId = members[1]!;
+      if (!this.projects.some((p) => p.id === projectId)) return [404, { error: 'The project does not exist.' }];
+      const person = this.people.find((p) => p.id === (members[2] ?? data.userId));
+      if (!person) return [404, { error: 'The user does not exist.' }];
+      if (method === 'POST') {
+        if (person.projectIds.includes(projectId)) return [204];
+        person.projectIds = [...person.projectIds, projectId];
+        return [201];
+      }
+      if (method === 'DELETE') {
+        if (!person.projectIds.includes(projectId)) return [404];
+        person.projectIds = person.projectIds.filter((id) => id !== projectId);
+        return [204];
+      }
+    }
+
+    return null;
   }
 
   private readonly dispatched = new Set<string>();
