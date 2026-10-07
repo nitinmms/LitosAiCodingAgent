@@ -35,6 +35,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         db.Projects.Add(project);
         // Whoever registers a project belongs to it.
         db.ProjectMembers.Add(new ProjectMember { ProjectId = project.Id, UserId = project.CreatedBy, CreatedBy = project.CreatedBy, CreatedAt = project.CreatedAt });
+        Audit(db, project.CreatedBy, AuditActions.ProjectRegister, AuditTargets.Project, project.Id, project.Id,
+            new { project.Name, GitHub = $"{project.GitHubOwner}/{project.GitHubRepository}", project.DefaultBranch }, project.CreatedAt);
         try
         {
             await db.SaveChangesAsync(ct);
@@ -69,6 +71,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             thread.Id = Guid.NewGuid();
         thread.InitialBudgetCap ??= thread.BudgetCap;
         db.Threads.Add(thread);
+        Audit(db, thread.OwnerId, AuditActions.ThreadCreate, AuditTargets.Thread, thread.Id, thread.ProjectId,
+            new { thread.Title, thread.TypeLabel, thread.BudgetCap }, thread.CreatedAt);
         await db.SaveChangesAsync(ct);
         return thread;
     }
@@ -129,6 +133,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
         Guid? runId;
         DispatchOutcome outcome;
+        string? action = null;
         long topUp = 0;
         switch (thread.State)
         {
@@ -136,6 +141,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 thread.State = TaskLifecycle.Apply(thread.State, LifecycleTrigger.Delegate);
                 runId = AddRun(db, thread, userId, RunKind.Implement, text, now);
                 outcome = DispatchOutcome.Queued;
+                action = AuditActions.ThreadDelegate;
                 break;
 
             case LifecycleState.AwaitingHumanTesting:
@@ -143,6 +149,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 thread.State = TaskLifecycle.Apply(thread.State, LifecycleTrigger.RequestChanges);
                 runId = AddRun(db, thread, userId, RunKind.Rework, text, now);
                 outcome = DispatchOutcome.Queued;
+                action = AuditActions.ThreadChangeRequest;
 
                 // A change the tester asks for is new work, and gets budget of its own.
                 topUp = thread.BudgetCap is null ? 0 : BudgetLedger.ReworkTopUp(thread.InitialBudgetCap ?? thread.BudgetCap, reworkTopUpShare);
@@ -162,6 +169,9 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         {
             thread.Stage = Stage.Implement;
             thread.StateReason = null;
+
+            // A follow-up is only a message, and the message records its author.
+            Audit(db, userId, action!, AuditTargets.Thread, threadId, thread.ProjectId, new { RunId = runId, BudgetTopUp = topUp }, now);
         }
 
         AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, text, now, dispatchKey: dispatchKey);
@@ -287,6 +297,15 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 break;
         }
 
+        var action = trigger switch
+        {
+            LifecycleTrigger.Accept => AuditActions.ThreadAccept,
+            LifecycleTrigger.Cancel => AuditActions.ThreadCancel,
+            LifecycleTrigger.Pause => AuditActions.ThreadPause,
+            _ => AuditActions.ThreadResume,
+        };
+        Audit(db, userId, action, AuditTargets.Thread, threadId, thread.ProjectId, new { From = thread.State.ToString(), To = next.ToString(), Trigger = trigger.ToString() }, now);
+
         thread.State = next;
         thread.StateReason = null;
         AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Status, note, now);
@@ -336,6 +355,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         var heldLease = await db.Leases.AnyAsync(l => l.ThreadId == threadId, ct);
         var project = await db.Projects.AsNoTracking().FirstAsync(p => p.Id == thread.ProjectId, ct);
         AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Status, "Change request withdrawn. The task is back at its last handoff.", now);
+        Audit(db, userId, AuditActions.ThreadWithdraw, AuditTargets.Thread, threadId, thread.ProjectId, new { RunId = run.Id }, now);
         Touch(db, thread, now);
         await write.CommitAsync(ct);
         return new WithdrawResult(thread, project, heldLease);
@@ -348,13 +368,15 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         await write.CommitAsync(ct);
     }
 
-    public async Task<TaskThread> SetBudgetCapAsync(Guid threadId, long? cap, DateTimeOffset now, CancellationToken ct)
+    public async Task<TaskThread> SetBudgetCapAsync(Guid threadId, long? cap, Guid userId, DateTimeOffset now, CancellationToken ct)
     {
         if (cap is < 0)
             throw new ArgumentOutOfRangeException(nameof(cap));
 
         await using var write = await BeginWriteAsync(ct);
         var thread = await LockThreadAsync(write.Db, threadId, ct);
+        // M1 changed budgets without recording who; null is "no cap".
+        Audit(write.Db, userId, AuditActions.ThreadBudget, AuditTargets.Thread, threadId, thread.ProjectId, new { From = thread.BudgetCap, To = cap }, now);
         thread.BudgetCap = cap;
         Touch(write.Db, thread, now, EventTypes.UsageChanged);
         await write.CommitAsync(ct);
@@ -411,6 +433,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         thread.State = next;
         thread.StateReason = null;
         AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.DecisionAnswer, answer, now, decisionId: decisionId);
+        Audit(db, userId, AuditActions.DecisionAnswer, AuditTargets.Decision, decisionId, thread.ProjectId, new { decision.Question, Answer = answer }, now);
         Touch(db, thread, now);
         await write.CommitAsync(ct);
         return thread;
@@ -713,6 +736,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         var thread = await LockThreadAsync(db, threadId, ct);
         var finding = await db.ReviewFindings.FirstAsync(f => f.Id == findingId, ct);
 
+        Audit(db, userId, AuditActions.FindingVerdict, AuditTargets.Finding, findingId, thread.ProjectId,
+            new { From = finding.Verdict?.ToString(), To = verdict?.ToString() }, now);
         finding.Verdict = verdict;
         finding.VerdictBy = verdict is null ? null : userId;
         finding.VerdictAt = verdict is null ? null : now;

@@ -465,6 +465,24 @@ public static class AuditActions
     public const string InvitationCreate = "invitation.create";
     public const string InvitationRevoke = "invitation.revoke";
     public const string InvitationAccept = "invitation.accept";
+
+    public const string ThreadCreate = "thread.create";
+
+    /// <summary>The first @factory: the task is handed to the factory.</summary>
+    public const string ThreadDelegate = "thread.delegate";
+
+    /// <summary>An @factory after a handoff: the tester asks for changes.</summary>
+    public const string ThreadChangeRequest = "thread.change_request";
+    public const string ThreadAccept = "thread.accept";
+    public const string ThreadPause = "thread.pause";
+    public const string ThreadCancel = "thread.cancel";
+
+    /// <summary>Back into the queue: a resume, a recovery, a resolved blocker or a raised budget.</summary>
+    public const string ThreadResume = "thread.resume";
+    public const string ThreadWithdraw = "thread.withdraw";
+    public const string ThreadBudget = "thread.budget";
+    public const string DecisionAnswer = "decision.answer";
+    public const string FindingVerdict = "finding.verdict";
 }
 
 public static class EventTypes

@@ -266,7 +266,7 @@ public abstract class FactoryStoreContract : IAsyncLifetime
     public async Task ACapRaisedByHand_DoesNotRaiseTheTopUp()
     {
         var handedOff = await HandedOffAsync(cap: 600_000);
-        await Store.SetBudgetCapAsync(handedOff.Thread.Id, 1_000_000, T0, default);
+        await Store.SetBudgetCapAsync(handedOff.Thread.Id, 1_000_000, Admin, T0, default);
 
         await Store.DispatchAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", T0, default, reworkTopUpShare: 0.5);
 
@@ -1341,7 +1341,7 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         await Store.SettleAsync("key-1", new UsageInfo(15_000, 3_000), 18_000, T0, default);
         Assert.IsType<Refused>((await Store.ReserveAsync(Reserve(running, "key-2"), Policy, T0, default)).Decision);
 
-        var thread = await Store.SetBudgetCapAsync(running.Thread.Id, 100_000, T0, default);
+        var thread = await Store.SetBudgetCapAsync(running.Thread.Id, 100_000, Admin, T0, default);
 
         Assert.Equal((100_000L, 18_000L), (thread.BudgetCap!.Value, thread.TokensUsed));
         Assert.IsType<Admitted>((await Store.ReserveAsync(Reserve(running, "key-2"), Policy, T0, default)).Decision);
@@ -1436,7 +1436,9 @@ public abstract class FactoryStoreContract : IAsyncLifetime
             CreatedAt = T0,
         }, default);
 
-    private async Task<IReadOnlyList<AuditEvent>> AuditAsync(Guid? projectId = null) => await Store.ListAuditAsync(projectId, 100, default);
+    /// <summary>The audit log, without the rows registering the test's projects wrote.</summary>
+    private async Task<IReadOnlyList<AuditEvent>> AuditAsync(Guid? projectId = null) =>
+        [.. (await Store.ListAuditAsync(projectId, 100, default)).Where(r => r.Action != AuditActions.ProjectRegister)];
 
     /// <summary>The project behind an id the API is given, for the membership check.</summary>
     [SkippableFact]
@@ -1671,6 +1673,178 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Contains("already been used", conflict.Message);
         Assert.Null((await Store.FindInvitationAsync(invitation.TokenHash, default))!.RevokedAt);
         await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.RevokeInvitationAsync(Guid.NewGuid(), Admin, T0, default));
+    }
+
+    // ---- Every user action is audited in its own transaction (§13.3) ----
+
+    private async Task<AuditEvent[]> RowsAsync(string action) =>
+        [.. (await Store.ListAuditAsync(null, 500, default)).Where(r => r.Action == action)];
+
+    private static T Details<T>(AuditEvent row, string property) =>
+        JsonDocument.Parse(row.DetailsJson!).RootElement.EnumerateObject()
+            .First(p => string.Equals(p.Name, property, StringComparison.OrdinalIgnoreCase)).Value.Deserialize<T>()!;
+
+    [SkippableFact]
+    public async Task RegisteringAProject_AndCreatingAThread_AreRecorded_ByWhoDidThem()
+    {
+        var project = await AddProjectAsync();
+        var thread = await AddThreadAsync(project);
+
+        var registered = Assert.Single(await RowsAsync(AuditActions.ProjectRegister));
+        Assert.Equal((Admin, (Guid?)project.Id, (Guid?)project.Id), (registered.ActorId, registered.TargetId, registered.ProjectId));
+        Assert.Equal("acme/salesapp", Details<string>(registered, "gitHub"));
+        var created = Assert.Single(await RowsAsync(AuditActions.ThreadCreate));
+        Assert.Equal((Admin, (Guid?)thread.Id, (Guid?)project.Id), (created.ActorId, created.TargetId, created.ProjectId));
+    }
+
+    [SkippableFact]
+    public async Task Delegating_IsRecorded_ButAFollowUpOrARetriedMessageIsNot()
+    {
+        var (_, thread, runId) = await QueuedAsync();
+        await Store.DispatchAsync(thread.Id, Ben, "follow-up", "Also handle an empty result.", T0, default);
+        await Store.DispatchAsync(thread.Id, Ben, "follow-up", "Also handle an empty result.", T0, default);
+
+        var row = Assert.Single(await RowsAsync(AuditActions.ThreadDelegate));
+        Assert.Equal((Admin, (Guid?)thread.Id), (row.ActorId, row.TargetId));
+        Assert.Equal(runId, Details<Guid>(row, "runId"));
+        Assert.Empty(await RowsAsync(AuditActions.ThreadChangeRequest));
+    }
+
+    [SkippableFact]
+    public async Task AChangeRequest_IsRecorded_WithItsBudgetTopUp()
+    {
+        var handedOff = await HandedOffAsync(cap: 600_000);
+
+        await Store.DispatchAsync(handedOff.Thread.Id, Ben, "msg-2", "Handle a failed compaction.", T0, default, reworkTopUpShare: 0.5);
+
+        var row = Assert.Single(await RowsAsync(AuditActions.ThreadChangeRequest));
+        Assert.Equal(Ben, row.ActorId);
+        Assert.Equal(300_000, Details<long>(row, "budgetTopUp"));
+    }
+
+    [SkippableFact]
+    public async Task ARejectedMessage_IsNotRecorded()
+    {
+        var running = await RunningAsync();
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Pause, StopReason.PausedByUser), T0, default);
+
+        var result = await Store.DispatchAsync(running.Thread.Id, Ben, "m-2", "More.", T0, default);
+
+        Assert.Equal(DispatchOutcome.Rejected, result.Outcome);
+        Assert.Single(await RowsAsync(AuditActions.ThreadDelegate)); // the first delegation only
+        Assert.Empty(await RowsAsync(AuditActions.ThreadChangeRequest));
+    }
+
+    [SkippableTheory]
+    [InlineData(LifecycleTrigger.Pause, AuditActions.ThreadPause)]
+    [InlineData(LifecycleTrigger.Cancel, AuditActions.ThreadCancel)]
+    public async Task PausingOrCancellingAQueuedTask_IsRecorded_WithTheStatesItMovedBetween(LifecycleTrigger trigger, string action)
+    {
+        var (_, thread, _) = await QueuedAsync();
+
+        await Store.ApplyUserActionAsync(thread.Id, Ben, trigger, T0.AddMinutes(1), default);
+
+        var row = Assert.Single(await RowsAsync(action));
+        Assert.Equal((Ben, T0.AddMinutes(1)), (row.ActorId, row.CreatedAt));
+        Assert.Equal("Queued", Details<string>(row, "from"));
+    }
+
+    [SkippableTheory]
+    [InlineData(LifecycleTrigger.Pause, LifecycleTrigger.Resume)]
+    [InlineData(LifecycleTrigger.Block, LifecycleTrigger.ResolveBlocker)]
+    [InlineData(LifecycleTrigger.ExhaustBudget, LifecycleTrigger.RaiseBudgetAndResume)]
+    [InlineData(LifecycleTrigger.Interrupt, LifecycleTrigger.Recover)]
+    public async Task EveryWayBackIntoTheQueue_IsRecordedAsAResume_NamingWhich(LifecycleTrigger stop, LifecycleTrigger resume)
+    {
+        var running = await RunningAsync();
+        await Store.StopRunAsync(Stop(running.Run.Id, stop, StopReason.PausedByUser), T0, default);
+
+        await Store.ApplyUserActionAsync(running.Thread.Id, Ben, resume, T0, default);
+
+        var row = Assert.Single(await RowsAsync(AuditActions.ThreadResume));
+        Assert.Equal(resume.ToString(), Details<string>(row, "trigger"));
+        Assert.Equal("Queued", Details<string>(row, "to"));
+    }
+
+    [SkippableFact]
+    public async Task Accepting_IsRecorded()
+    {
+        var handedOff = await HandedOffAsync(cap: null);
+
+        await Store.ApplyUserActionAsync(handedOff.Thread.Id, Ben, LifecycleTrigger.Accept, T0, default);
+
+        Assert.Equal(Ben, Assert.Single(await RowsAsync(AuditActions.ThreadAccept)).ActorId);
+    }
+
+    /// <summary>A refused action rolls back with its audit row: the log never claims what did not happen.</summary>
+    [SkippableFact]
+    public async Task ARefusedAction_LeavesNoAuditRow()
+    {
+        var (_, thread, _) = await QueuedAsync();
+
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.ApplyUserActionAsync(thread.Id, Ben, LifecycleTrigger.Accept, T0, default));
+
+        Assert.Empty(await RowsAsync(AuditActions.ThreadAccept));
+    }
+
+    /// <summary>M1 changed budgets without recording who.</summary>
+    [SkippableFact]
+    public async Task ChangingABudget_IsRecorded_WithTheOldAndNewCap()
+    {
+        var running = await RunningAsync(cap: 300_000);
+
+        await Store.SetBudgetCapAsync(running.Thread.Id, 400_000, Ben, T0, default);
+        await Store.SetBudgetCapAsync(running.Thread.Id, null, Ben, T0.AddMinutes(1), default);
+
+        var rows = (await RowsAsync(AuditActions.ThreadBudget)).OrderBy(r => r.CreatedAt).ToArray();
+        Assert.Equal(2, rows.Length);
+        Assert.Equal((300_000L, 400_000L), (Details<long>(rows[0], "from"), Details<long>(rows[0], "to")));
+        Assert.Equal(JsonValueKind.Null, JsonDocument.Parse(rows[1].DetailsJson!).RootElement.EnumerateObject()
+            .First(p => string.Equals(p.Name, "to", StringComparison.OrdinalIgnoreCase)).Value.ValueKind);
+        Assert.All(rows, r => Assert.Equal((Ben, (Guid?)running.Project.Id), (r.ActorId, r.ProjectId)));
+    }
+
+    [SkippableFact]
+    public async Task AnsweringADecision_IsRecorded_WithTheQuestionAndTheAnswer()
+    {
+        var running = await RunningAsync();
+        var decision = await Store.OpenDecisionAsync(running.Run.Id, new DecisionSubmission("All rows?", "w", ["Yes", "No"]), T0, default);
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.RequestDecision, StopReason.DecisionNeeded), T0, default);
+
+        await Store.AnswerDecisionAsync(decision.Id, Ben, "Yes", T0, default);
+
+        var row = Assert.Single(await RowsAsync(AuditActions.DecisionAnswer));
+        Assert.Equal((Ben, AuditTargets.Decision, (Guid?)decision.Id), (row.ActorId, row.TargetType, row.TargetId));
+        Assert.Equal(("All rows?", "Yes"), (Details<string>(row, "question"), Details<string>(row, "answer")));
+    }
+
+    [SkippableFact]
+    public async Task AFindingVerdict_IsRecorded_WithWhatItWasBefore()
+    {
+        var running = await RunningAsync();
+        await Store.SaveFindingsAsync(running.Run.Id, [new ReviewFinding(FindingSeverity.Minor, "src/A.cs", 1, "x")], default);
+        var finding = Assert.Single(await Store.ListFindingsAsync(running.Thread.Id, default));
+
+        await Store.SetFindingVerdictAsync(finding.Id, FindingVerdict.Real, Ben, T0, default);
+        await Store.SetFindingVerdictAsync(finding.Id, FindingVerdict.Wrong, Ben, T0.AddMinutes(1), default);
+
+        var last = (await RowsAsync(AuditActions.FindingVerdict)).OrderBy(r => r.CreatedAt).Last();
+        Assert.Equal(("Real", "Wrong"), (Details<string>(last, "from"), Details<string>(last, "to")));
+    }
+
+    [SkippableFact]
+    public async Task WithdrawingAChangeRequest_IsRecorded()
+    {
+        var handedOff = await HandedOffAsync(cap: null);
+        await Store.SaveHandoffAsync(new HandoffRecord
+        {
+            RunId = handedOff.Run.Id, ThreadId = handedOff.Thread.Id, Branch = "factory/x", CommitSha = "abc", EvidenceJson = "{}", CreatedAt = T0,
+        }, default);
+        await Store.DispatchAsync(handedOff.Thread.Id, Ben, "rework", "Change it.", T0, default);
+
+        await Store.WithdrawChangesAsync(handedOff.Thread.Id, Ben, T0.AddMinutes(1), default);
+
+        Assert.Equal(Ben, Assert.Single(await RowsAsync(AuditActions.ThreadWithdraw)).ActorId);
     }
 
     [SkippableFact]

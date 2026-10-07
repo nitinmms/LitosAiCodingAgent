@@ -38,7 +38,7 @@ public sealed class GatewayTests : IAsyncLifetime
     {
         _threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync(), budgetCap: cap);
         if (cap is null)
-            await _host.Store.SetBudgetCapAsync(_threadId, null, DateTimeOffset.UtcNow, default);
+            await _host.Store.SetBudgetCapAsync(_threadId, null, Guid.NewGuid(), DateTimeOffset.UtcNow, default);
         await _host.DelegateAsync(_threadId);
         var claimed = (await _host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
         _run = new ActiveRun(claimed.Run.Id, _threadId, claimed.Run.RequestedBy, "openrouter", "deepseek/deepseek-v4.1-flash");

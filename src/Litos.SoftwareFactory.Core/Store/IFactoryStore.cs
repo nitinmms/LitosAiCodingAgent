@@ -140,7 +140,7 @@ public interface IFactoryStore
     Task ReleaseLeaseAsync(Guid threadId, CancellationToken ct);
 
     /// <summary>Changes the task's cap. Raising a cap changes the maximum, not the accounting history.</summary>
-    Task<TaskThread> SetBudgetCapAsync(Guid threadId, long? cap, DateTimeOffset now, CancellationToken ct);
+    Task<TaskThread> SetBudgetCapAsync(Guid threadId, long? cap, Guid userId, DateTimeOffset now, CancellationToken ct);
 
     Task<Decision> OpenDecisionAsync(Guid runId, DecisionSubmission submission, DateTimeOffset now, CancellationToken ct);
 

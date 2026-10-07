@@ -258,10 +258,10 @@ public static class FactoryApi
             return Results.Accepted(value: new { outcome = result.Outcome.ToString(), result.RunId, thread = ThreadView(result.Thread) });
         });
 
-        threadRoutes.MapPost("/budget", (Guid id, SetBudgetRequest request, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        threadRoutes.MapPost("/budget", (Guid id, SetBudgetRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
             request.Cap is <= 0
                 ? Task.FromResult(Problem("cap must be positive, or null for no cap."))
-                : ActAsync(signals, () => store.SetBudgetCapAsync(id, request.Cap, clock.UtcNow, ct)));
+                : ActAsync(signals, () => store.SetBudgetCapAsync(id, request.Cap, user.UserId(), clock.UtcNow, ct)));
 
         threadRoutes.MapPost("/accept", (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
             ActAsync(signals, () => store.ApplyUserActionAsync(id, user.UserId(), LifecycleTrigger.Accept, clock.UtcNow, ct)));
@@ -421,9 +421,21 @@ public static class FactoryApi
 
         if (details.Thread.State == LifecycleState.Running)
         {
-            return runs.RequestStop(id, request)
-                ? Results.Accepted(value: new { thread = ThreadView(details.Thread), stopping = true })
-                : Results.Conflict(new { error = "The task is marked as running, but this host is not running it. It is marked Interrupted within a minute; recover it then." });
+            if (!runs.RequestStop(id, request))
+                return Results.Conflict(new { error = "The task is marked as running, but this host is not running it. It is marked Interrupted within a minute; recover it then." });
+
+            // The run records the stop itself once it reaches it; who asked is recorded now.
+            await store.AddAuditAsync(new AuditEvent
+            {
+                ActorId = user.UserId(),
+                Action = request == StopRequest.Cancel ? AuditActions.ThreadCancel : AuditActions.ThreadPause,
+                TargetType = AuditTargets.Thread,
+                TargetId = id,
+                ProjectId = details.Thread.ProjectId,
+                DetailsJson = JsonSerializer.Serialize(new { From = nameof(LifecycleState.Running), Requested = true }),
+                CreatedAt = clock.UtcNow,
+            }, CancellationToken.None);
+            return Results.Accepted(value: new { thread = ThreadView(details.Thread), stopping = true });
         }
 
         return await ActAsync(signals, () => store.ApplyUserActionAsync(id, user.UserId(), trigger, clock.UtcNow, ct));
