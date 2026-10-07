@@ -1,4 +1,4 @@
-import type { LifecycleState, PullRequestState, Stage, Thread, ThreadChange } from '../api/types';
+import type { LifecycleState, PullRequestState, Stage, Thread, ThreadChange, Turn } from '../api/types';
 
 export const STAGES: readonly Stage[] = ['Discuss', 'Spec', 'Implement', 'Verify', 'Review', 'Handoff', 'Done'];
 
@@ -25,25 +25,23 @@ export interface TurnLabel {
   cls: TurnClass;
 }
 
-/** Whose move it is. Amber ("you") means the task is stopped until a person does something. */
-export function turnLabel(state: LifecycleState): TurnLabel {
-  switch (state) {
-    case 'Running':
-      return { text: 'Agent working', cls: 'agent' };
-    case 'Queued':
-      return { text: 'Awaiting agent', cls: 'waiting' };
-    case 'PausedUser':
-      return { text: 'Paused', cls: 'neutral' };
-    case 'Accepted':
-      return { text: 'Done', cls: 'done' };
-    case 'Cancelled':
-      return { text: 'Cancelled', cls: 'neutral' };
-    case 'Draft':
-      return { text: 'Not delegated', cls: 'neutral' };
-    default:
-      return { text: 'Awaiting you', cls: 'you' };
-  }
-}
+const TURN_LABELS: Record<Turn, TurnLabel> = {
+  NotStarted: { text: 'Not started', cls: 'neutral' },
+  AwaitingYou: { text: 'Awaiting you', cls: 'you' },
+  AwaitingAgent: { text: 'Awaiting agent', cls: 'waiting' },
+  AgentWorking: { text: 'Agent working', cls: 'agent' },
+  Paused: { text: 'Paused', cls: 'neutral' },
+  Done: { text: 'Done', cls: 'done' },
+};
+
+/**
+ * How the host's turn label (Core/Lifecycle/TurnLabels.cs) is shown. The host decides whose move
+ * it is; amber ("you") means the task is stopped until a person does something.
+ */
+export const turnLabel = (turn: Turn): TurnLabel => TURN_LABELS[turn] ?? { text: turn, cls: 'neutral' };
+
+/** "Awaiting you" is personal (§7.1): the tasks waiting on a person that this user owns. */
+export const awaitsYou = (thread: Thread, userId: string): boolean => thread.turn === 'AwaitingYou' && thread.ownerId === userId;
 
 /** Accepted and Cancelled: nothing more can happen to the task. */
 export const isClosed = (state: LifecycleState): boolean => state === 'Accepted' || state === 'Cancelled';
@@ -101,6 +99,9 @@ export function applyChange(thread: Thread, change: ThreadChange): Thread {
     ...thread,
     state: change.state,
     stage: change.stage,
+    turn: change.turn ?? thread.turn,
+    title: change.title ?? thread.title,
+    typeLabel: change.typeLabel ?? thread.typeLabel,
     stateReason: change.reason,
     revision: change.revision,
     tokensUsed: change.tokensUsed,

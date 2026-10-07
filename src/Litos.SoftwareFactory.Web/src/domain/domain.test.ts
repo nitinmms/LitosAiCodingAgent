@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { LifecycleState, Thread, ThreadChange } from '../api/types';
+import type { LifecycleState, Thread, ThreadChange, Turn } from '../api/types';
 import { fmt, initials, pct, shortSha, toneOf, words } from './format';
 import { parseRoute, routeHash } from './route';
 import {
   applyChange,
+  awaitsYou,
   canCancel,
   canMessage,
   canPause,
@@ -35,6 +36,8 @@ const ALL_STATES: LifecycleState[] = [
 const thread = (overrides: Partial<Thread> = {}): Thread => ({
   id: 't',
   projectId: 'p',
+  ownerId: 'u1',
+  turn: 'AgentWorking',
   title: 'T',
   typeLabel: 'feature',
   stage: 'Implement',
@@ -58,6 +61,9 @@ const thread = (overrides: Partial<Thread> = {}): Thread => ({
 const change = (overrides: Partial<ThreadChange> = {}): ThreadChange => ({
   state: 'PausedBudget',
   stage: 'Verify',
+  turn: 'AwaitingYou',
+  title: 'T',
+  typeLabel: 'feature',
   reason: 'Out of budget.',
   revision: 6,
   tokensUsed: 900,
@@ -90,19 +96,27 @@ describe('withMention', () => {
 });
 
 describe('turnLabel', () => {
-  it.each<[LifecycleState, string, string]>([
-    ['Draft', 'Not delegated', 'neutral'],
-    ['Queued', 'Awaiting agent', 'waiting'],
-    ['Running', 'Agent working', 'agent'],
-    ['AwaitingDecision', 'Awaiting you', 'you'],
-    ['PausedBudget', 'Awaiting you', 'you'],
-    ['PausedUser', 'Paused', 'neutral'],
-    ['Blocked', 'Awaiting you', 'you'],
-    ['AwaitingHumanTesting', 'Awaiting you', 'you'],
-    ['Interrupted', 'Awaiting you', 'you'],
-    ['Accepted', 'Done', 'done'],
-    ['Cancelled', 'Cancelled', 'neutral'],
-  ])('%s is "%s" (%s)', (state, text, cls) => expect(turnLabel(state)).toEqual({ text, cls }));
+  // The host decides whose move it is (Core/Lifecycle/TurnLabels.cs); the app only shows it.
+  it.each<[Turn, string, string]>([
+    ['NotStarted', 'Not started', 'neutral'],
+    ['AwaitingAgent', 'Awaiting agent', 'waiting'],
+    ['AgentWorking', 'Agent working', 'agent'],
+    ['AwaitingYou', 'Awaiting you', 'you'],
+    ['Paused', 'Paused', 'neutral'],
+    ['Done', 'Done', 'done'],
+  ])('%s is "%s" (%s)', (turn, text, cls) => expect(turnLabel(turn)).toEqual({ text, cls }));
+
+  it('"Awaiting you" is only what this user owns', () => {
+    expect(awaitsYou(thread({ turn: 'AwaitingYou', ownerId: 'u1' }), 'u1')).toBe(true);
+    expect(awaitsYou(thread({ turn: 'AwaitingYou', ownerId: 'u2' }), 'u1')).toBe(false);
+    expect(awaitsYou(thread({ turn: 'AgentWorking', ownerId: 'u1' }), 'u1')).toBe(false);
+  });
+
+  it('a state event carries the new turn label, title and type', () => {
+    const next = applyChange(thread(), change({ turn: 'AwaitingYou', title: 'Renamed', typeLabel: 'bug' }));
+
+    expect([next.turn, next.title, next.typeLabel]).toEqual(['AwaitingYou', 'Renamed', 'bug']);
+  });
 
   it('names every state', () => {
     for (const state of ALL_STATES) expect(stateName(state)).not.toBe('');
@@ -213,7 +227,9 @@ describe('format', () => {
 
 describe('routes', () => {
   it.each([
-    ['', { view: 'threads', threadId: null }],
+    // The app opens on the board.
+    ['', { view: 'board' }],
+    ['#/board', { view: 'board' }],
     ['#/threads', { view: 'threads', threadId: null }],
     ['#/threads/abc-123', { view: 'threads', threadId: 'abc-123' }],
     ['#/projects', { view: 'projects' }],
@@ -226,6 +242,7 @@ describe('routes', () => {
 
   it('round-trips', () => {
     for (const route of [
+      { view: 'board' },
       { view: 'threads', threadId: null },
       { view: 'threads', threadId: 'a b' },
       { view: 'projects' },

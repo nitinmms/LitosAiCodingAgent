@@ -1430,6 +1430,21 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Empty(await Store.ReadBoardEventsAsync(null, all[^1].Sequence, 100, default));
     }
 
+    /// <summary>A state event says whose move it is and what the thread is called, so a client
+    /// showing the thread never derives the label or misses a rename.</summary>
+    [SkippableFact]
+    public async Task StateEvents_CarryTheTurnLabelTitleAndType()
+    {
+        var (_, thread, _) = await QueuedAsync();
+        await Store.EditThreadAsync(thread.Id, "Export orders as CSV", "bug", Admin, T0, default);
+
+        var last = JsonDocument.Parse((await Store.ReadEventsAsync(thread.Id, 0, 100, default))[^1].PayloadJson).RootElement;
+
+        Assert.Equal("AwaitingAgent", last.GetProperty("turn").GetString());
+        Assert.Equal("Export orders as CSV", last.GetProperty("title").GetString());
+        Assert.Equal("bug", last.GetProperty("typeLabel").GetString());
+    }
+
     [SkippableFact]
     public async Task ANewThread_IsAnnounced_SoBoardsSeeIt()
     {

@@ -1016,6 +1016,10 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 {
                     State = thread.State.ToString(),
                     Stage = thread.Stage.ToString(),
+                    // Whose move it is, and what the thread is called, so a client never derives them.
+                    Turn = TurnLabels.For(thread.State).ToString(),
+                    thread.Title,
+                    thread.TypeLabel,
                     Reason = thread.StateReason,
                     thread.Revision,
                     thread.TokensUsed,

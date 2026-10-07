@@ -4,6 +4,7 @@ import type {
   CreateInvitation,
   CreateThread,
   CurrentUser,
+  DirectoryEntry,
   DispatchResult,
   FindingVerdict,
   Invitation,
@@ -51,6 +52,8 @@ export interface FactoryApi {
   projects(): Promise<Project[]>;
   registerProject(request: RegisterProject): Promise<Project>;
   threads(): Promise<Thread[]>;
+  /** The names of the owners of the threads this user can see. */
+  directory(): Promise<DirectoryEntry[]>;
   createThread(request: CreateThread): Promise<Thread>;
   thread(id: string): Promise<ThreadDetails>;
   usage(id: string): Promise<UsageCall[]>;
@@ -144,6 +147,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     projects: () => send<Project[]>('GET', '/api/projects'),
     registerProject: (request) => send<Project>('POST', '/api/projects', request),
     threads: () => send<Thread[]>('GET', '/api/threads'),
+    directory: () => send<DirectoryEntry[]>('GET', '/api/directory'),
     createThread: (request) => send<Thread>('POST', '/api/threads', request),
     thread: (id) => send<ThreadDetails>('GET', thread(id)),
     usage: (id) => send<UsageCall[]>('GET', `${thread(id)}/usage`),

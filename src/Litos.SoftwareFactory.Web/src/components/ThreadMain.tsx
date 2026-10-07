@@ -217,7 +217,7 @@ export function ThreadMain({
       <section className="th-head">
         <div className="th-title">
           <h1>{thread.title}</h1>
-          <TurnPill state={thread.state} />
+          <TurnPill turn={thread.turn} />
           <span className="tag">{thread.typeLabel}</span>
         </div>
         <div className="th-sub">
@@ -232,7 +232,7 @@ export function ThreadMain({
           ) : null}
           <span>{stateName(thread.state)}</span>
         </div>
-        <Rail stage={thread.stage} state={thread.state} />
+        <Rail stage={thread.stage} state={thread.state} turn={thread.turn} />
       </section>
 
       <div className="convo" aria-live="polite">

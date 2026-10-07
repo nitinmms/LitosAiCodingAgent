@@ -9,6 +9,8 @@ import { ADMIN, FakeHost, PASSWORD } from './test/fakeHost';
 function start(host: FakeHost, { signedIn = true } = {}) {
   host.signedIn = signedIn;
   const createClient = (onSignedOut: () => void) => createApi(host.fetch, onSignedOut);
+  // These tests are about the threads screen; the app itself opens on the board (Board.test.tsx).
+  if (!window.location.hash) window.location.hash = '#/threads';
   render(<App createClient={createClient} openEvents={host.openEvents} />);
   return userEvent.setup();
 }

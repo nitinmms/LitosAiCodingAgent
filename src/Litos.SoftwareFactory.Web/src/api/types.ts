@@ -55,9 +55,14 @@ export interface RegisterProject {
   pullRequestEnabled: boolean;
 }
 
+/** Whose move a task is (§7.1), as the host computes it. */
+export type Turn = 'NotStarted' | 'AwaitingYou' | 'AwaitingAgent' | 'AgentWorking' | 'Paused' | 'Done';
+
 export interface Thread {
   id: string;
   projectId: string;
+  ownerId: string;
+  turn: Turn;
   title: string;
   typeLabel: string;
   stage: Stage;
@@ -243,6 +248,9 @@ export interface DispatchResult {
 export interface ThreadChange {
   state: LifecycleState;
   stage: Stage;
+  turn: Turn;
+  title: string;
+  typeLabel: string;
   reason: string | null;
   revision: number;
   tokensUsed: number;
@@ -302,4 +310,10 @@ export interface Person {
   disabled: boolean;
   /** Admins see every project whatever this says. */
   projectIds: string[];
+}
+
+/** A name the board shows for an owner: only owners of threads the user can see. */
+export interface DirectoryEntry {
+  id: string;
+  name: string;
 }

@@ -21,6 +21,7 @@ export function TopBar({
 }) {
   const name = user.displayName || user.userName;
   const tabs: [Exclude<Route['view'], 'invite'>, string][] = [
+    ['board', 'Board'],
     ['threads', 'Threads'],
     ['projects', 'Projects'],
     // People, invitations and project membership are an admin's to manage.

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApi } from '../api/client';
 import type { LifecycleState, Stage } from '../api/types';
 import { App } from '../App';
-import { FakeHost } from '../test/fakeHost';
+import { FakeHost, turnOf } from '../test/fakeHost';
 import { Rail, Rich, SafeLink } from './bits';
 import { phaseName, phaseTotals } from './Details';
 
@@ -11,7 +11,7 @@ describe('the stage rail', () => {
   const stations = () =>
     screen.getAllByRole('listitem').map((item) => `${item.className.replace(/^st ?/, '') || '-'}|${item.textContent}`);
 
-  const rail = (stage: Stage, state: LifecycleState) => render(<Rail stage={stage} state={state} />);
+  const rail = (stage: Stage, state: LifecycleState) => render(<Rail stage={stage} state={state} turn={turnOf(state)} />);
 
   it('a draft sits at the first station', () => {
     rail('Discuss', 'Draft');
@@ -104,12 +104,13 @@ describe('the thread list', () => {
     const open = host.addThread(project, { title: 'Open thread' });
     const other = host.addThread(project, { title: 'Other thread', state: 'Running', stage: 'Implement' });
     const createClient = (onSignedOut: () => void) => createApi(host.fetch, onSignedOut);
+    if (!window.location.hash) window.location.hash = '#/threads';
     render(<App createClient={createClient} openEvents={host.openEvents} />);
     await screen.findByRole('heading', { level: 1, name: 'Open thread' });
     expect(screen.getByRole('button', { name: '0 awaiting you' })).toBeDisabled();
 
     // Neither change is announced on the open thread's stream.
-    host.details(other.id).thread = { ...host.details(other.id).thread, state: 'AwaitingHumanTesting', revision: 2 };
+    host.details(other.id).thread = { ...host.details(other.id).thread, state: 'AwaitingHumanTesting', turn: 'AwaitingYou', revision: 2 };
     host.addThread(project, { title: 'Made in another tab' });
     await act(() => vi.advanceTimersByTimeAsync(15_000));
 

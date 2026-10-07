@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import type { LifecycleState, Stage } from '../api/types';
+import type { LifecycleState, Stage, Turn } from '../api/types';
 import { STAGES, turnLabel } from '../domain/task';
 
 /** The factory's mark: a carrier on a line. */
@@ -15,8 +15,8 @@ export function Mark() {
 }
 
 /** Whose turn it is, as a pill. */
-export function TurnPill({ state }: { state: LifecycleState }) {
-  const label = turnLabel(state);
+export function TurnPill({ turn }: { turn: Turn }) {
+  const label = turnLabel(turn);
   return <span className={`pill ${label.cls}`}>{label.text}</span>;
 }
 
@@ -44,9 +44,9 @@ export function Rich({ text }: { text: string }) {
  * The stage rail: where the task is on the line. M1 has no spec stage, so once a task is past
  * it the station is drawn as skipped rather than as done.
  */
-export function Rail({ stage, state }: { stage: Stage; state: LifecycleState }) {
+export function Rail({ stage, state, turn }: { stage: Stage; state: LifecycleState; turn: Turn }) {
   const index = STAGES.indexOf(stage);
-  const you = turnLabel(state).cls === 'you';
+  const you = turn === 'AwaitingYou';
   const finished = state === 'Accepted';
   // A cancelled task is not at any station: the rail shows how far it got, and nothing as current.
   const abandoned = state === 'Cancelled';

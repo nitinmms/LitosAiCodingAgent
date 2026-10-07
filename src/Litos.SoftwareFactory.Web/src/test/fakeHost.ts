@@ -15,6 +15,7 @@ import type {
   Settings,
   Thread,
   ThreadDetails,
+  Turn,
   UsageCall,
 } from '../api/types';
 
@@ -48,6 +49,25 @@ export class FakeEventSource implements EventSourceLike {
 }
 
 const NOW = '2026-10-01T09:00:00Z';
+
+/** The host's turn-label table (Core/Lifecycle/TurnLabels.cs): the fake answers as the host does. */
+export function turnOf(state: LifecycleState): Turn {
+  switch (state) {
+    case 'Draft':
+      return 'NotStarted';
+    case 'Queued':
+      return 'AwaitingAgent';
+    case 'Running':
+      return 'AgentWorking';
+    case 'PausedUser':
+      return 'Paused';
+    case 'Accepted':
+    case 'Cancelled':
+      return 'Done';
+    default:
+      return 'AwaitingYou';
+  }
+}
 
 export const ADMIN: CurrentUser = { id: 'u-admin', userName: 'admin', displayName: 'Priya Raman', roles: ['Admin'] };
 export const PASSWORD = 'correct horse battery';
@@ -179,9 +199,12 @@ export class FakeHost {
   }
 
   addThread(project: Project, overrides: Partial<Thread> = {}): Thread {
+    const state = overrides.state ?? 'Draft';
     const thread: Thread = {
       id: this.nextId('t'),
       projectId: project.id,
+      ownerId: this.user.id,
+      turn: turnOf(state),
       title: 'Add CSV export',
       typeLabel: 'feature',
       stage: 'Discuss',
@@ -201,6 +224,7 @@ export class FakeHost {
       updatedAt: NOW,
       ...overrides,
     };
+    if (!overrides.turn) thread.turn = turnOf(thread.state);
     this.threads.set(thread.id, {
       eventCursor: 0,
       thread,
@@ -271,6 +295,7 @@ export class FakeHost {
   change(threadId: string, patch: Partial<Thread>, eventType: 'state' | 'usage' = 'state'): Thread {
     const details = this.details(threadId);
     details.thread = { ...details.thread, ...patch, revision: details.thread.revision + 1 };
+    details.thread.turn = turnOf(details.thread.state);
     const t = details.thread;
     // The run follows the task: queued, running, stopped where it can continue, or over.
     if (details.run && patch.state) {
@@ -284,6 +309,9 @@ export class FakeHost {
     this.emit(threadId, eventType, {
       state: t.state,
       stage: t.stage,
+      turn: t.turn,
+      title: t.title,
+      typeLabel: t.typeLabel,
       reason: t.stateReason,
       revision: t.revision,
       tokensUsed: t.tokensUsed,
@@ -449,6 +477,11 @@ export class FakeHost {
     }
 
     if (path === '/api/threads' && method === 'GET') return [200, [...this.threads.values()].map((d) => d.thread)];
+    if (path === '/api/directory' && method === 'GET') {
+      // The owners of visible threads, and the user: as the host answers (FactoryApi.cs).
+      const owners = new Set([...this.threads.values()].map((d) => d.thread.ownerId).concat(this.user.id));
+      return [200, this.people.filter((p) => owners.has(p.id)).map((p) => ({ id: p.id, name: p.displayName || p.userName }))];
+    }
     if (path === '/api/threads' && method === 'POST') {
       const project = this.projects.find((p) => p.id === data.projectId);
       if (!project) return [404, { error: 'The project does not exist.' }];

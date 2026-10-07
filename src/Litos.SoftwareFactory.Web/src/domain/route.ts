@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
 export type Route =
+  /** The board (§7.1): every visible task, in columns by stage. Where the app opens. */
+  | { view: 'board' }
   | { view: 'threads'; threadId: string | null }
   | { view: 'projects' }
   /** The Admin's people screen: accounts, invitations and project membership. */
@@ -9,12 +11,13 @@ export type Route =
   | { view: 'invite'; token: string };
 
 /**
- * The app's routes live in the URL fragment (#/threads/<id>, #/projects, #/people,
+ * The app's routes live in the URL fragment (#/board, #/threads/<id>, #/projects, #/people,
  * #/invite/<token>), so the host only ever serves index.html and a reload lands on the same
  * screen. An invitation's token stays in the fragment, which the browser never sends to the host.
  */
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+  if (parts.length === 0 || parts[0] === 'board') return { view: 'board' };
   if (parts[0] === 'projects') return { view: 'projects' };
   if (parts[0] === 'people') return { view: 'people' };
   if (parts[0] === 'invite' && parts[1]) return { view: 'invite', token: decodeURIComponent(parts[1]) };
@@ -23,6 +26,8 @@ export function parseRoute(hash: string): Route {
 
 export const routeHash = (route: Route): string => {
   switch (route.view) {
+    case 'board':
+      return '#/board';
     case 'projects':
       return '#/projects';
     case 'people':
