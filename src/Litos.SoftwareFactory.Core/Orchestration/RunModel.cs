@@ -119,6 +119,12 @@ public enum RunKind
 
     /// <summary>A new run on the same branch after the tester asked for changes.</summary>
     Rework,
+
+    /// <summary>
+    /// One read-only answer to a plain message (m2-architecture.md §5): no repository lease, no
+    /// change to the task's state, and a budget of its own rather than the task's.
+    /// </summary>
+    Chat,
 }
 
 /// <summary>Which template a turn's prompt is composed from.</summary>

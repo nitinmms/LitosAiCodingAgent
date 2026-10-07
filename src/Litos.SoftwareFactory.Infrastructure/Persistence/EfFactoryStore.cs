@@ -98,7 +98,10 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         var project = await db.Projects.AsNoTracking().FirstAsync(p => p.Id == thread.ProjectId, ct);
         var messages = await db.Messages.AsNoTracking().Where(m => m.ThreadId == threadId).OrderBy(m => m.Sequence).ToListAsync(ct);
         var decisions = await db.Decisions.AsNoTracking().Where(d => d.ThreadId == threadId).OrderBy(d => d.CreatedAt).ToListAsync(ct);
-        var latestRun = await db.Runs.AsNoTracking().Where(r => r.ThreadId == threadId).OrderByDescending(r => r.CreatedAt).FirstOrDefaultAsync(ct);
+        var latestRun = await db.Runs.AsNoTracking().Where(r => r.ThreadId == threadId && r.Kind != RunKind.Chat)
+            .OrderByDescending(r => r.CreatedAt).FirstOrDefaultAsync(ct);
+        var chatRun = await db.Runs.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.ThreadId == threadId && r.Kind == RunKind.Chat && r.Status != RunStatus.Finished, ct);
         var handoff = await db.Handoffs.AsNoTracking().Where(h => h.ThreadId == threadId).OrderByDescending(h => h.CreatedAt).FirstOrDefaultAsync(ct);
 
         VerificationRecord? verification = null;
@@ -111,7 +114,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             findings = await db.ReviewFindings.AsNoTracking().Where(f => f.RunId == latestRun.Id).ToListAsync(ct);
         }
 
-        return new ThreadDetails(thread, project, messages, decisions, latestRun, handoff, verification, findings);
+        return new ThreadDetails(thread, project, messages, decisions, latestRun, handoff, verification, findings) { ChatRun = chatRun };
     }
 
     public async Task<TaskRun?> GetRunAsync(Guid runId, CancellationToken ct)
@@ -242,8 +245,81 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
     private static async Task<Guid?> ActiveRunIdAsync(FactoryDbContext db, Guid threadId, CancellationToken ct) =>
         (await ActiveRunAsync(db, threadId, ct))?.Id;
 
+    /// <summary>The task's own run that is not finished. A chat run is never it.</summary>
     private static Task<TaskRun?> ActiveRunAsync(FactoryDbContext db, Guid threadId, CancellationToken ct) =>
-        db.Runs.FirstOrDefaultAsync(r => r.ThreadId == threadId && r.Status != RunStatus.Finished, ct);
+        db.Runs.FirstOrDefaultAsync(r => r.ThreadId == threadId && r.Status != RunStatus.Finished && r.Kind != RunKind.Chat, ct);
+
+    /// <summary>Where a plain message can start a chat (m2-architecture.md §5).</summary>
+    private static bool CanChat(LifecycleState state) =>
+        state is LifecycleState.Draft or LifecycleState.AwaitingHumanTesting or LifecycleState.Accepted;
+
+    public async Task<DispatchResult> ChatAsync(
+        Guid threadId, Guid userId, string dispatchKey, string text, long chatTurnCap, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var thread = await LockThreadAsync(db, threadId, ct);
+
+        if (await db.Messages.AsNoTracking().AnyAsync(m => m.DispatchKey == dispatchKey, ct))
+            return new DispatchResult(DispatchOutcome.Duplicate, thread, null);
+
+        Guid? runId;
+        DispatchOutcome outcome;
+        if (thread.State is LifecycleState.Queued or LifecycleState.Running)
+        {
+            // Said to a task that is working: guidance for the agent, as an @factory follow-up is.
+            runId = await ActiveRunIdAsync(db, threadId, ct);
+            outcome = DispatchOutcome.FollowUp;
+        }
+        else if (!CanChat(thread.State))
+        {
+            return new DispatchResult(DispatchOutcome.Rejected, thread, null, RejectionReason(thread.State));
+        }
+        else if (await db.Runs.AnyAsync(r => r.ThreadId == threadId && r.Kind == RunKind.Chat && r.Status != RunStatus.Finished, ct))
+        {
+            return new DispatchResult(DispatchOutcome.Rejected, thread, null, "Litos is still answering your last message. Wait for the reply, then send this.");
+        }
+        else
+        {
+            runId = AddRun(db, thread, userId, RunKind.Chat, text, now);
+            var run = db.Runs.Local.First(r => r.Id == runId);
+            run.ChatBudgetCap = chatTurnCap;
+            outcome = DispatchOutcome.Chat;
+        }
+
+        AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, text, now, dispatchKey: dispatchKey);
+        try
+        {
+            await write.CommitAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            return new DispatchResult(DispatchOutcome.Duplicate, thread, null);
+        }
+
+        return new DispatchResult(outcome, thread, runId);
+    }
+
+    public async Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var run = await db.Runs.FirstOrDefaultAsync(r => r.Id == runId && r.Kind == RunKind.Chat, ct)
+            ?? throw new StoreNotFoundException("The chat run does not exist.");
+        var thread = await LockThreadAsync(db, run.ThreadId, ct);
+        if (run.Status == RunStatus.Finished)
+            return;
+
+        run.Status = RunStatus.Finished;
+        run.EndedAt = now;
+        run.WorkerProcessId = null;
+        run.WorkerStartTime = null;
+        if (!string.IsNullOrWhiteSpace(reply))
+            AddMessage(db, thread, MessageAuthor.Factory, null, MessageKind.Text, reply.Trim(), now);
+        else
+            AddMessage(db, thread, MessageAuthor.Factory, null, MessageKind.Status, failure ?? "Litos could not answer. Send the message again.", now);
+        await write.CommitAsync(ct);
+    }
 
     public async Task<TaskThread> ApplyUserActionAsync(
         Guid threadId, Guid userId, LifecycleTrigger trigger, DateTimeOffset now, CancellationToken ct)
@@ -482,6 +558,19 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 continue;
 
             var thread = await LockThreadAsync(db, run.ThreadId, ct);
+            if (run.Kind == RunKind.Chat)
+            {
+                // Read-only, on a copy of its own: it waits only for a slot, and leaves the task's
+                // state and its repository alone.
+                if (full)
+                    continue;
+                run.Status = RunStatus.Running;
+                run.StartedAt ??= now;
+                run.HeartbeatAt = now;
+                await write.CommitAsync(ct);
+                return new ClaimedRun(run, thread, await db.Projects.FirstAsync(p => p.Id == thread.ProjectId, ct));
+            }
+
             if (thread.State != LifecycleState.Queued)
                 continue;
 
@@ -794,12 +883,13 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         if (existing is not null)
             return new ReservationResult(new Admitted(existing.Reserved, policy.OutputAllowanceTokens), AlreadyKnown: true);
 
+        var ledger = await LedgerAsync(db, thread, command.RunId, ct);
         var expectedInputCharge = BudgetLedger.ExpectedInputCharge(command.EstimatedInput, command.ExpectedCachedInput, policy.CachedInputWeight);
-        var decision = BudgetLedger.Admit(new BudgetSnapshot(thread.BudgetCap, thread.TokensUsed, thread.TokensReserved), expectedInputCharge, policy);
+        var decision = BudgetLedger.Admit(ledger.Snapshot, expectedInputCharge, policy);
         if (decision is not Admitted admitted)
             return new ReservationResult(decision, AlreadyKnown: false);
 
-        thread.TokensReserved += admitted.Reserved;
+        ledger.Reserve(admitted.Reserved);
         db.Usage.Add(new UsageEntry
         {
             Id = Guid.NewGuid(),
@@ -815,7 +905,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             Reserved = admitted.Reserved,
             CreatedAt = now,
         });
-        Touch(db, thread, now, EventTypes.UsageChanged);
+        if (!ledger.IsChat)
+            Touch(db, thread, now, EventTypes.UsageChanged);
         await write.CommitAsync(ct);
         return new ReservationResult(admitted, AlreadyKnown: false);
     }
@@ -833,9 +924,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         if (entry.Status == UsageStatus.Settled)
             return;
 
-        var after = BudgetLedger.Settle(new BudgetSnapshot(thread.BudgetCap, thread.TokensUsed, thread.TokensReserved), entry.Reserved, charge);
-        thread.TokensUsed = after.TaskUsed;
-        thread.TokensReserved = after.TaskReserved;
+        var ledger = await LedgerAsync(db, thread, entry.RunId, ct);
+        ledger.Settle(entry.Reserved, charge);
 
         entry.Status = UsageStatus.Settled;
         entry.ActualInput = usage.TotalInputTokens;
@@ -845,7 +935,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         entry.ServedBy = usage.ServedBy is { Length: > 0 } servedBy ? servedBy[..Math.Min(servedBy.Length, 100)] : entry.Provider;
         entry.Charged = charge;
         entry.SettledAt = now;
-        Touch(db, thread, now, EventTypes.UsageChanged);
+        if (!ledger.IsChat)
+            Touch(db, thread, now, EventTypes.UsageChanged);
         await write.CommitAsync(ct);
     }
 
@@ -891,9 +982,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             foreach (var entry in entries)
             {
                 var charge = BudgetLedger.ReconciledCharge(entry.EstimatedInput, entry.Reserved);
-                var after = BudgetLedger.Settle(new BudgetSnapshot(thread.BudgetCap, thread.TokensUsed, thread.TokensReserved), entry.Reserved, charge);
-                thread.TokensUsed = after.TaskUsed;
-                thread.TokensReserved = after.TaskReserved;
+                (await LedgerAsync(write.Db, thread, entry.RunId, ct)).Settle(entry.Reserved, charge);
 
                 entry.Status = UsageStatus.Estimated;
                 entry.Charged = charge;
@@ -907,6 +996,45 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         }
 
         return reconciled;
+    }
+
+    /// <summary>
+    /// Whose budget a model call is admitted against and charged to: the task's, or for a chat
+    /// run the run's own (§5: chat is not charged to the task budget).
+    /// </summary>
+    private static async Task<Ledger> LedgerAsync(FactoryDbContext db, TaskThread thread, Guid? runId, CancellationToken ct) =>
+        new(thread, runId is { } id ? await db.Runs.FirstOrDefaultAsync(r => r.Id == id && r.Kind == RunKind.Chat, ct) : null);
+
+    private sealed class Ledger(TaskThread thread, TaskRun? chat)
+    {
+        public bool IsChat => chat is not null;
+
+        public BudgetSnapshot Snapshot => chat is null
+            ? new BudgetSnapshot(thread.BudgetCap, thread.TokensUsed, thread.TokensReserved)
+            : new BudgetSnapshot(chat.ChatBudgetCap, chat.ChatTokensUsed, chat.ChatTokensReserved);
+
+        public void Reserve(long tokens)
+        {
+            if (chat is null)
+                thread.TokensReserved += tokens;
+            else
+                chat.ChatTokensReserved += tokens;
+        }
+
+        public void Settle(long reserved, long charge)
+        {
+            var after = BudgetLedger.Settle(Snapshot, reserved, charge);
+            if (chat is null)
+            {
+                thread.TokensUsed = after.TaskUsed;
+                thread.TokensReserved = after.TaskReserved;
+            }
+            else
+            {
+                chat.ChatTokensUsed = after.TaskUsed;
+                chat.ChatTokensReserved = after.TaskReserved;
+            }
+        }
     }
 
     public async Task<IReadOnlyList<UsageEntry>> ListUsageAsync(Guid threadId, CancellationToken ct)

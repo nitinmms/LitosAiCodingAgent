@@ -119,8 +119,9 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             Json(e.Property(r => r.StateJson));
             Json(e.Property(r => r.WorkspaceSnapshotJson));
             e.HasOne<TaskThread>().WithMany().HasForeignKey(r => r.ThreadId).OnDelete(DeleteBehavior.Cascade);
-            // One active run per thread: a second one cannot be inserted while the first is live.
-            e.HasIndex(r => r.ThreadId).IsUnique().HasFilter("\"Status\" <> 'Finished'").HasDatabaseName("ix_task_runs_one_active_per_thread");
+            // One active run per thread: a second one cannot be inserted while the first is live. A
+            // chat run answering a message is not the task's work, so it never blocks one.
+            e.HasIndex(r => r.ThreadId).IsUnique().HasFilter("\"Status\" <> 'Finished' AND \"Kind\" <> 'Chat'").HasDatabaseName("ix_task_runs_one_active_per_thread");
             e.HasIndex(r => new { r.Status, r.QueuedAt });
         });
 

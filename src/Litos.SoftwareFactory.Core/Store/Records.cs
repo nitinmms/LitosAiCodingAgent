@@ -188,6 +188,12 @@ public sealed class TaskRun
     public DateTimeOffset QueuedAt { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? HeartbeatAt { get; set; }
+
+    // A chat run's own budget (RunKind.Chat): chat is not charged to the task (§5), so its model
+    // calls are admitted against these, never against the thread's cap.
+    public long? ChatBudgetCap { get; set; }
+    public long ChatTokensUsed { get; set; }
+    public long ChatTokensReserved { get; set; }
     public DateTimeOffset? EndedAt { get; set; }
 }
 

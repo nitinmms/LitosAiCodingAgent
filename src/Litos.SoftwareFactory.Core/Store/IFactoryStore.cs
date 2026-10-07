@@ -25,6 +25,9 @@ public enum DispatchOutcome
 
     /// <summary>The thread cannot take work in its current state. The message was not recorded.</summary>
     Rejected,
+
+    /// <summary>A plain message: a read-only chat run was queued to answer it.</summary>
+    Chat,
 }
 
 public sealed record DispatchResult(DispatchOutcome Outcome, TaskThread Thread, Guid? RunId, string? Reason = null);
@@ -84,7 +87,12 @@ public sealed record WithdrawResult(TaskThread Thread, Project Project, bool Hel
 public sealed record ThreadDetails(
     TaskThread Thread, Project Project, IReadOnlyList<ThreadMessage> Messages, IReadOnlyList<Decision> Decisions,
     TaskRun? LatestRun, HandoffRecord? LatestHandoff, VerificationRecord? LatestVerification,
-    IReadOnlyList<ReviewFindingRecord> Findings);
+    IReadOnlyList<ReviewFindingRecord> Findings)
+{
+    /// <summary>A chat run still answering, if there is one. Chat runs are never the LatestRun:
+    /// that is the task's own work.</summary>
+    public TaskRun? ChatRun { get; init; }
+}
 
 /// <summary>
 /// The factory's durable state (docs/software-factory/m1-architecture.md §4 ports, §7 schema).
@@ -141,6 +149,19 @@ public interface IFactoryStore
 
     /// <summary>Changes the task's cap. Raising a cap changes the maximum, not the accounting history.</summary>
     Task<TaskThread> SetBudgetCapAsync(Guid threadId, long? cap, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// A plain message, with no @factory (m2-architecture.md §5). In Draft, after a handoff or
+    /// after acceptance it queues a read-only chat run to answer it, with a budget of
+    /// <paramref name="chatTurnCap"/>; while the task is queued or running it is a follow-up for
+    /// the agent; in any other state it is rejected, as is a second message while one is still
+    /// being answered. The dispatch key makes a retried message safe, as for @factory.
+    /// </summary>
+    Task<DispatchResult> ChatAsync(
+        Guid threadId, Guid userId, string dispatchKey, string text, long chatTurnCap, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Ends a chat run: posts its reply, or says why there is none.</summary>
+    Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>Renames a thread or changes its task type; null leaves that one as it is.</summary>
     Task<TaskThread> EditThreadAsync(Guid threadId, string? title, string? typeLabel, Guid userId, DateTimeOffset now, CancellationToken ct);

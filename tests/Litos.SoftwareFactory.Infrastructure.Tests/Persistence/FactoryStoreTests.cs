@@ -1479,6 +1479,213 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal([1L, 2L, 3L, 4L, 5L], messages.Select(m => m.Sequence));
     }
 
+    // ---- Chat before @factory (M2, m2-architecture.md §5) ----
+
+    private const long ChatCap = 100_000;
+
+    private Task<DispatchResult> ChatAsync(Guid threadId, string text = "Where is the CSV export done?", string? key = null) =>
+        Store.ChatAsync(threadId, Ben, key ?? Guid.NewGuid().ToString(), text, ChatCap, T0, default);
+
+    [SkippableFact]
+    public async Task Chat_FromADraft_QueuesAChatRun_AndLeavesTheTaskAsItWas()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+
+        var result = await ChatAsync(thread.Id);
+
+        Assert.Equal(DispatchOutcome.Chat, result.Outcome);
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Equal((LifecycleState.Draft, Stage.Discuss), (details.Thread.State, details.Thread.Stage));
+        Assert.Null(details.LatestRun); // the task's own work has not started
+        var chat = details.ChatRun!;
+        Assert.Equal((result.RunId, RunKind.Chat, RunStatus.Queued, (long?)ChatCap), (chat.Id, chat.Kind, chat.Status, chat.ChatBudgetCap));
+        var message = Assert.Single(details.Messages);
+        Assert.Equal((MessageAuthor.User, MessageKind.Text, "Where is the CSV export done?"), (message.Author, message.Kind, message.Text));
+    }
+
+    [SkippableTheory]
+    [InlineData(LifecycleTrigger.Handoff)]
+    [InlineData(LifecycleTrigger.Accept)]
+    public async Task Chat_AfterAHandoffOrAcceptance_IsAllowed(LifecycleTrigger to)
+    {
+        var running = await RunningAsync();
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
+        if (to == LifecycleTrigger.Accept)
+            await Store.ApplyUserActionAsync(running.Thread.Id, Admin, LifecycleTrigger.Accept, T0, default);
+
+        Assert.Equal(DispatchOutcome.Chat, (await ChatAsync(running.Thread.Id)).Outcome);
+    }
+
+    /// <summary>To a working task a plain message is guidance, as an @factory follow-up is.</summary>
+    [SkippableFact]
+    public async Task Chat_ToAQueuedOrRunningTask_IsAFollowUp_AndStartsNoChat()
+    {
+        var (_, thread, runId) = await QueuedAsync();
+
+        var result = await ChatAsync(thread.Id, "Also handle an empty result.");
+
+        Assert.Equal((DispatchOutcome.FollowUp, (Guid?)runId), (result.Outcome, result.RunId));
+        Assert.Null((await Store.GetThreadAsync(thread.Id, default))!.ChatRun);
+    }
+
+    [SkippableTheory]
+    [InlineData(LifecycleTrigger.RequestDecision, "waiting for a decision")]
+    [InlineData(LifecycleTrigger.Pause, "paused")]
+    [InlineData(LifecycleTrigger.Block, "blocked")]
+    public async Task Chat_ToATaskStoppedInTheMiddle_IsRejected_AndNothingIsRecorded(LifecycleTrigger stop, string reason)
+    {
+        var running = await RunningAsync();
+        await Store.StopRunAsync(Stop(running.Run.Id, stop, StopReason.PausedByUser), T0, default);
+        var before = (await Store.GetThreadAsync(running.Thread.Id, default))!.Messages.Count;
+
+        var result = await ChatAsync(running.Thread.Id);
+
+        Assert.Equal(DispatchOutcome.Rejected, result.Outcome);
+        Assert.Contains(reason, result.Reason);
+        Assert.Equal(before, (await Store.GetThreadAsync(running.Thread.Id, default))!.Messages.Count);
+    }
+
+    [SkippableFact]
+    public async Task Chat_WhileTheLastMessageIsStillBeingAnswered_IsRejected_UntilItIsAnswered()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        var first = await ChatAsync(thread.Id);
+
+        var second = await ChatAsync(thread.Id, "And the PDF export?");
+        Assert.Equal(DispatchOutcome.Rejected, second.Outcome);
+        Assert.Contains("still answering", second.Reason);
+
+        await Store.FinishChatRunAsync(first.RunId!.Value, "In CsvWriter.cs.", null, T0, default);
+        Assert.Equal(DispatchOutcome.Chat, (await ChatAsync(thread.Id, "And the PDF export?")).Outcome);
+    }
+
+    [SkippableFact]
+    public async Task Chat_TheSameMessageTwice_IsDispatchedOnce()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        await ChatAsync(thread.Id, key: "m-1");
+
+        Assert.Equal(DispatchOutcome.Duplicate, (await ChatAsync(thread.Id, key: "m-1")).Outcome);
+        Assert.Single((await Store.GetThreadAsync(thread.Id, default))!.Messages);
+    }
+
+    /// <summary>A chat run is not the task's work: delegating while Litos answers still starts the task.</summary>
+    [SkippableFact]
+    public async Task AChatBeingAnswered_NeverBlocksDelegating()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        await ChatAsync(thread.Id);
+
+        var delegated = await Store.DispatchAsync(thread.Id, Admin, "delegate", "Add CSV export.", T0, default);
+
+        Assert.Equal(DispatchOutcome.Queued, delegated.Outcome);
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Equal((RunKind.Implement, delegated.RunId), (details.LatestRun!.Kind, (Guid?)details.LatestRun.Id));
+        Assert.NotNull(details.ChatRun);
+    }
+
+    [SkippableFact]
+    public async Task CancellingTheTask_LeavesAChatBeingAnsweredAlone()
+    {
+        var running = await RunningAsync();
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
+        var chat = await ChatAsync(running.Thread.Id);
+
+        await Store.ApplyUserActionAsync(running.Thread.Id, Admin, LifecycleTrigger.Accept, T0, default);
+
+        Assert.Equal(RunStatus.Queued, (await Store.GetRunAsync(chat.RunId!.Value, default))!.Status);
+    }
+
+    /// <summary>A chat run waits only for a slot: no repository lease, and the task's state is untouched.</summary>
+    [SkippableFact]
+    public async Task Claim_StartsAChatRun_WithNoLease_LeavingTheTaskAsItWas()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        var chat = await ChatAsync(thread.Id);
+
+        var claimed = await Store.ClaimNextRunAsync(slotCap: 1, T0, default);
+
+        Assert.Equal((chat.RunId!.Value, RunStatus.Running), (claimed!.Run.Id, claimed.Run.Status));
+        Assert.Equal(LifecycleState.Draft, (await ThreadAsync(thread.Id)).State);
+        await using var db = Contexts.CreateDbContext();
+        Assert.Empty(await db.Leases.ToListAsync());
+    }
+
+    [SkippableFact]
+    public async Task Claim_AChatRun_WaitsForAFreeSlot_AndIgnoresAHeldRepository()
+    {
+        var holder = await RunningAsync();
+        var other = await AddThreadAsync(holder.Project, "Another task");
+        var chat = await ChatAsync(other.Id);
+
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 1, T0, default));
+        Assert.Equal(chat.RunId, (await Store.ClaimNextRunAsync(slotCap: 2, T0, default))!.Run.Id);
+    }
+
+    [SkippableFact]
+    public async Task FinishingAChat_PostsTheReply_OrSaysWhyThereIsNone_Once()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        var answered = await ChatAsync(thread.Id);
+        await Store.FinishChatRunAsync(answered.RunId!.Value, "  In CsvWriter.cs.  ", null, T0, default);
+        await Store.FinishChatRunAsync(answered.RunId!.Value, "again", null, T0, default);
+        var failed = await ChatAsync(thread.Id, "And the PDF?");
+        await Store.FinishChatRunAsync(failed.RunId!.Value, null, "Litos stopped before it could answer.", T0, default);
+
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        var replies = details.Messages.Where(m => m.Author == MessageAuthor.Factory).ToList();
+        Assert.Equal([(MessageKind.Text, "In CsvWriter.cs."), (MessageKind.Status, "Litos stopped before it could answer.")], replies.Select(m => (m.Kind, m.Text)));
+        Assert.Null(details.ChatRun);
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.FinishChatRunAsync(Guid.NewGuid(), "x", null, T0, default));
+    }
+
+    /// <summary>§5: chat tokens are not charged to the task's budget, but to the chat's own.</summary>
+    [SkippableFact]
+    public async Task AChatsModelCalls_AreChargedToItsOwnBudget_NeverTheTasks()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync(), cap: 300_000);
+        var chat = (await ChatAsync(thread.Id)).RunId!.Value;
+        var command = new ReserveCommand("chat-1", thread.Id, chat, Ben, "openrouter", "m", 10_000, 10_000) { Phase = "Chat" };
+
+        var admitted = Assert.IsType<Admitted>((await Store.ReserveAsync(command, Real, T0, default)).Decision);
+        var reserved = await Store.GetRunAsync(chat, default);
+        Assert.Equal(admitted.Reserved, reserved!.ChatTokensReserved);
+        Assert.Equal(0, (await ThreadAsync(thread.Id)).TokensReserved);
+
+        await Store.SettleAsync("chat-1", new UsageInfo(9_000, 500), 9_500, T0, default);
+
+        var settled = await Store.GetRunAsync(chat, default);
+        Assert.Equal((9_500L, 0L), (settled!.ChatTokensUsed, settled.ChatTokensReserved));
+        Assert.Equal((0L, 0L), ((await ThreadAsync(thread.Id)).TokensUsed, (await ThreadAsync(thread.Id)).TokensReserved));
+        var entry = Assert.Single(await Store.ListUsageAsync(thread.Id, default));
+        Assert.Equal((Ben, "Chat"), (entry.UserId, entry.Phase)); // counted to the person who asked
+    }
+
+    [SkippableFact]
+    public async Task AChatsBudget_RefusesACallThatDoesNotFitIt()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync(), cap: 10_000_000);
+        var chat = (await Store.ChatAsync(thread.Id, Ben, "m", "Explain the code.", 20_000, T0, default)).RunId!.Value;
+
+        var decision = (await Store.ReserveAsync(new ReserveCommand("chat-big", thread.Id, chat, Ben, "openrouter", "m", 30_000, 30_000), Real, T0, default)).Decision;
+
+        Assert.IsType<Refused>(decision);
+    }
+
+    [SkippableFact]
+    public async Task ReconcilingAChatsCall_SettlesItAgainstTheChatsBudget()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync(), cap: 300_000);
+        var chat = (await ChatAsync(thread.Id)).RunId!.Value;
+        await Store.ReserveAsync(new ReserveCommand("chat-lost", thread.Id, chat, Ben, "openrouter", "m", 5_000, 5_000), Real, T0, default);
+
+        await Store.ReconcileUsageAsync(chat, T0, default, includeInFlight: true);
+
+        var run = await Store.GetRunAsync(chat, default);
+        Assert.Equal((5_000L, 0L), (run!.ChatTokensUsed, run.ChatTokensReserved));
+        Assert.Equal(0, (await ThreadAsync(thread.Id)).TokensUsed);
+    }
+
     // ---- People and access (M2, m2-architecture.md §4) ----
 
     protected static readonly Guid Ben = Guid.Parse("22222222-2222-2222-2222-222222222222");
