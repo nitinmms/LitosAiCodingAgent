@@ -63,6 +63,36 @@ public class WorkerEnvironmentTests
         Assert.Equal("true", environment["CI"]);
     }
 
+    /// <summary>The worker, and every command its agent starts, uses the run's own temporary
+    /// directory instead of the host's, so concurrent runs never share temporary files.</summary>
+    [Fact]
+    public void Build_WithARunTempDirectory_PointsEveryTempVariableAtIt_AndCreatesIt()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"litos-run-tmp-{Guid.NewGuid():n}");
+        try
+        {
+            var environment = WorkerEnvironment.Build(Host, Launch with { TempDirectory = temp });
+
+            Assert.Equal(temp, environment["TEMP"]);
+            Assert.Equal(temp, environment["TMP"]);
+            Assert.Equal(temp, environment["TMPDIR"]);
+            Assert.True(Directory.Exists(temp));
+        }
+        finally
+        {
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Build_WithNoRunTempDirectory_KeepsTheHostsTemp()
+    {
+        var environment = WorkerEnvironment.Build(Host, Launch);
+
+        Assert.Equal(@"C:\Temp", environment["TEMP"]);
+        Assert.False(environment.ContainsKey("TMPDIR"));
+    }
+
     /// <summary>Acceptance scenario 14: workers never receive provider keys, the GitHub
     /// credential or the database connection string.</summary>
     [Theory]

@@ -139,7 +139,12 @@ public sealed record VerificationRequest(
     /// <summary>The lines the task changed, for changed-line coverage; null for a baseline run.</summary>
     IReadOnlyList<FileChange>? ChangedFiles,
     /// <summary>Where command logs are written.</summary>
-    string LogDirectory);
+    string LogDirectory)
+{
+    /// <summary>The run's own TEMP, TMP and TMPDIR for the commands, so runs going on at the same
+    /// time never share temporary files; null keeps the host's.</summary>
+    public string? TempDirectory { get; init; }
+}
 
 public interface IVerifier
 {
@@ -155,6 +160,10 @@ public sealed record WorkerLaunch(
 {
     /// <summary>Whether new sessions start with Programmatic Tool Calling on (the default, §8).</summary>
     public bool PtcEnabled { get; init; } = true;
+
+    /// <summary>The run's own TEMP, TMP and TMPDIR for the worker and every command it starts;
+    /// null keeps the host's.</summary>
+    public string? TempDirectory { get; init; }
 }
 
 /// <summary>A running worker process.</summary>

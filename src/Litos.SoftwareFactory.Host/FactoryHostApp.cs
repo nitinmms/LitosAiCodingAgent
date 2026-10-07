@@ -62,7 +62,9 @@ public static class FactoryHostApp
             sp.GetRequiredService<IFactoryStore>(), options,
             sp.GetRequiredService<IWorkspaceProvider>(), sp.GetRequiredService<IVerifier>(), sp.GetRequiredService<IWorkerLauncher>(),
             sp.GetRequiredService<IWorkerClientFactory>(), sp.GetRequiredService<IUserDirectory>(), sp.GetRequiredService<FactorySignals>(),
-            sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>()));
+            sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
+            sp.GetRequiredService<VerificationGate>()));
+        services.AddSingleton<VerificationGate>();
         if (!string.IsNullOrWhiteSpace(options.GitHubToken))
             services.AddSingleton<IGitHub>(_ => new GitHubClient(GitHubClient.CreateHttpClient(options.GitHubToken)));
 

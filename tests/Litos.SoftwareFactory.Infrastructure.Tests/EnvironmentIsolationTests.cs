@@ -175,6 +175,59 @@ public class EnvironmentIsolationTests : IDisposable
         }
     }
 
+    // ---- The run's own temporary directory ----
+
+    /// <summary>Concurrent runs must not share temporary files, and a profile cannot point a run
+    /// at another run's directory.</summary>
+    [Fact]
+    public async Task VerificationCommands_UseTheRunsOwnTempDirectory_OverTheHostsAndTheProfiles()
+    {
+        var runner = new RecordingRunner();
+        var host = new Dictionary<string, string>(HostWithSecrets) { ["TEMP"] = @"C:\host-temp", ["TMP"] = @"C:\host-temp" };
+        var profile = Profile("tool", ["x"]) with { Environment = new Dictionary<string, string> { ["TEMP"] = "profile-temp" } };
+        var temp = _logs.Combine("run-tmp");
+
+        await new ProfileVerifier(runner, () => host).VerifyAsync(
+            new VerificationRequest(_repo.Path, profile, null, _logs.Path) { TempDirectory = temp }, default);
+
+        Assert.True(Directory.Exists(temp));
+        Assert.All(runner.Requests, request =>
+        {
+            Assert.Equal(temp, request.Environment["TEMP"]);
+            Assert.Equal(temp, request.Environment["TMP"]);
+            Assert.Equal(temp, request.Environment["TMPDIR"]);
+        });
+    }
+
+    [Fact]
+    public async Task VerificationCommands_WithNoRunTempDirectory_KeepTheHostsTemp()
+    {
+        var runner = new RecordingRunner();
+        var host = new Dictionary<string, string>(HostWithSecrets) { ["TEMP"] = @"C:\host-temp" };
+
+        await new ProfileVerifier(runner, () => host).VerifyAsync(new VerificationRequest(_repo.Path, Profile("tool", ["x"]), null, _logs.Path), default);
+
+        Assert.All(runner.Requests, request =>
+        {
+            Assert.Equal(@"C:\host-temp", request.Environment["TEMP"]);
+            Assert.False(request.Environment.ContainsKey("TMPDIR"));
+        });
+    }
+
+    /// <summary>Real processes: what a test the agent wrote would actually see.</summary>
+    [Fact]
+    public async Task RealVerificationCommand_SeesTheRunsTempDirectory()
+    {
+        var script = Shell.WriteScript(_repo.Path, "dump-temp", "set > seen-env.txt", "env > seen-env.txt");
+        var temp = _logs.Combine("real-run-tmp");
+
+        await new ProfileVerifier().VerifyAsync(
+            new VerificationRequest(_repo.Path, Profile(script, []), null, _logs.Path) { TempDirectory = temp }, default);
+
+        var seen = File.ReadAllText(_repo.Combine("seen-env.txt"));
+        Assert.Contains($"TEMP={temp}", seen);
+    }
+
     // ---- Changed-line coverage: nothing measured must not read as "met" without saying so ----
 
     private static CoverageFile Coverage(string path, bool inRepository, params (int Line, int Hits)[] lines) =>

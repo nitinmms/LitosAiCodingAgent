@@ -252,3 +252,168 @@ public sealed class RunSupervisorTests
         Assert.Equal(LifecycleState.AwaitingHumanTesting, (await host.ThreadAsync(threadId)).Thread.State);
     }
 }
+
+/// <summary>FACTORY_VERIFY_CONCURRENCY: how many verifications run at once across all runs.</summary>
+public sealed class VerificationGateTests
+{
+    private static VerificationGate Gate(int permits) => new(new FactoryOptions { VerifyConcurrency = permits });
+
+    [Fact]
+    public async Task AFreePermit_IsTakenWithoutWaiting()
+    {
+        var waited = 0;
+
+        using var permit = await Gate(1).EnterAsync(() => { waited++; return Task.CompletedTask; }, default);
+
+        Assert.Equal(0, waited);
+    }
+
+    [Fact]
+    public async Task WithAllPermitsTaken_TheNextWaits_SaysSoOnce_AndGoesWhenOneIsReturned()
+    {
+        var gate = Gate(1);
+        var first = await gate.EnterAsync(null, default);
+        var waited = 0;
+
+        var second = gate.EnterAsync(() => { waited++; return Task.CompletedTask; }, default);
+        await Task.Delay(100);
+        Assert.False(second.IsCompleted);
+        Assert.Equal(1, waited);
+
+        first.Dispose();
+        using var permit = await second.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, waited);
+    }
+
+    [Fact]
+    public async Task AWaitThatIsCancelled_TakesNothing()
+    {
+        var gate = Gate(1);
+        var first = await gate.EnterAsync(null, default);
+        using var cancel = new CancellationTokenSource();
+
+        var waiting = gate.EnterAsync(null, cancel.Token);
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+
+        first.Dispose();
+        var waited = false;
+        using var next = await gate.EnterAsync(() => { waited = true; return Task.CompletedTask; }, default);
+        Assert.False(waited);
+    }
+
+    [Fact]
+    public async Task TwoPermits_LetTwoInAtOnce()
+    {
+        var gate = Gate(2);
+        var waited = false;
+
+        using var one = await gate.EnterAsync(() => { waited = true; return Task.CompletedTask; }, default);
+        using var two = await gate.EnterAsync(() => { waited = true; return Task.CompletedTask; }, default);
+
+        Assert.False(waited);
+    }
+
+    [Fact]
+    public async Task AReturnedPermit_IsReturnedOnlyOnce()
+    {
+        var gate = Gate(1);
+        var permit = await gate.EnterAsync(null, default);
+        permit.Dispose();
+        permit.Dispose();
+
+        using var one = await gate.EnterAsync(null, default);
+        var two = gate.EnterAsync(null, default);
+        await Task.Delay(100);
+
+        Assert.False(two.IsCompleted);
+    }
+}
+
+/// <summary>Runs going on at the same time do not share temporary files or verify at once.</summary>
+public sealed class RunIsolationTests : IAsyncLifetime
+{
+    private TestHost _host = null!;
+
+    public async Task InitializeAsync() => _host = await TestHost.StartAsync(o => o.SlotCap = 2);
+
+    public async Task DisposeAsync() => await _host.DisposeAsync();
+
+    [Fact]
+    public async Task TwoRuns_VerifyOneAtATime_AndTheOneThatWaitsSaysSo()
+    {
+        var current = 0;
+        var most = 0;
+        var firstVerify = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = 0;
+        _host.Verifier.Hold = async (request, ct) =>
+        {
+            var now = Interlocked.Increment(ref current);
+            InterlockedMax(ref most, now);
+            try
+            {
+                if (request.ChangedFiles is not null && Interlocked.Exchange(ref held, 1) == 0)
+                {
+                    firstVerify.SetResult();
+                    await release.Task.WaitAsync(ct);
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref current);
+            }
+        };
+
+        var a = await _host.CreateThreadAsync(await _host.RegisterProjectAsync("repo-a"), "Task A");
+        await _host.DelegateAsync(a);
+        await firstVerify.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        var b = await _host.CreateThreadAsync(await _host.RegisterProjectAsync("repo-b"), "Task B");
+        await _host.DelegateAsync(b);
+
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (!(await _host.ThreadAsync(b)).Messages.Any(m => m.Text.StartsWith("Waiting for another task's verification", StringComparison.Ordinal)))
+        {
+            Assert.True(DateTime.UtcNow < deadline, "Task B never said it was waiting for a verification.");
+            await Task.Delay(40);
+        }
+
+        release.SetResult();
+        await _host.WaitForStateAsync(a, LifecycleState.AwaitingHumanTesting);
+        await _host.WaitForStateAsync(b, LifecycleState.AwaitingHumanTesting);
+        Assert.Equal(1, most);
+    }
+
+    [Fact]
+    public async Task EachRun_HasItsOwnTempDirectory_ForItsWorkerAndItsVerification_RemovedWhenItEnds()
+    {
+        var seen = new System.Collections.Concurrent.ConcurrentBag<string>();
+        _host.Verifier.Hold = (request, _) =>
+        {
+            seen.Add(request.TempDirectory!);
+            Directory.CreateDirectory(request.TempDirectory!);
+            File.WriteAllText(Path.Combine(request.TempDirectory!, "scratch.txt"), "x");
+            return Task.CompletedTask;
+        };
+
+        var a = await _host.CreateThreadAsync(await _host.RegisterProjectAsync("repo-a"), "Task A");
+        var b = await _host.CreateThreadAsync(await _host.RegisterProjectAsync("repo-b"), "Task B");
+        await _host.DelegateAsync(a);
+        await _host.DelegateAsync(b);
+        var runA = (await _host.WaitForStateAsync(a, LifecycleState.AwaitingHumanTesting)).LatestRun!.Id;
+        var runB = (await _host.WaitForStateAsync(b, LifecycleState.AwaitingHumanTesting)).LatestRun!.Id;
+
+        var expected = new[] { _host.Options.RunTempDirectory(runA), _host.Options.RunTempDirectory(runB) };
+        Assert.Equal(expected.Order(), _host.Workers.Workers.Select(w => w.Launch.TempDirectory!).Order());
+        Assert.Equal(expected.Order(), seen.Distinct().Order());
+        Assert.All(expected, directory => Assert.False(Directory.Exists(directory)));
+    }
+
+    private static void InterlockedMax(ref int target, int value)
+    {
+        int seen;
+        while ((seen = Volatile.Read(ref target)) < value && Interlocked.CompareExchange(ref target, value, seen) != seen)
+        {
+        }
+    }
+}

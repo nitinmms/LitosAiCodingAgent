@@ -46,6 +46,23 @@ public static class ToolchainEnvironment
         return allowed && !SecretMarkers.Any(marker => name.Contains(marker, StringComparison.OrdinalIgnoreCase));
     }
 
+    private static readonly string[] TempVariables = ["TEMP", "TMP", "TMPDIR"];
+
+    /// <summary>
+    /// The variables that point a process at its own temporary directory — TEMP and TMP on
+    /// Windows, TMPDIR elsewhere — after creating it; none when there is no directory. A run's
+    /// processes then never share temporary files with another run's. Callers apply these last,
+    /// so neither the host's own TEMP nor a verification profile can redirect them.
+    /// </summary>
+    public static IEnumerable<KeyValuePair<string, string>> TempDirectory(string? directory)
+    {
+        if (directory is null)
+            return [];
+
+        Directory.CreateDirectory(directory);
+        return TempVariables.Select(name => KeyValuePair.Create(name, directory));
+    }
+
     public static IReadOnlyDictionary<string, string> CurrentHostEnvironment()
     {
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

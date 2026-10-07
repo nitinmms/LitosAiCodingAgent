@@ -27,6 +27,8 @@ public static class WorkerEnvironment
     public static IReadOnlyDictionary<string, string> Build(IReadOnlyDictionary<string, string> hostEnvironment, WorkerLaunch launch)
     {
         var environment = ToolchainEnvironment.Scrub(hostEnvironment);
+        foreach (var (name, value) in ToolchainEnvironment.TempDirectory(launch.TempDirectory))
+            environment[name] = value;
         environment[FactoryWire.WorkerSecretVariable] = launch.Secret;
         environment[FactoryWire.HostUrlVariable] = launch.HostUrl;
         environment[FactoryWire.RunIdVariable] = launch.RunId;

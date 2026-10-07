@@ -36,6 +36,8 @@ public sealed class ProfileVerifier(
             environment[name] = value;
         foreach (var (name, value) in profile.Environment ?? new Dictionary<string, string>())
             environment[name] = value;
+        foreach (var (name, value) in ToolchainEnvironment.TempDirectory(request.TempDirectory))
+            environment[name] = value;
 
         // CI=true always, set last so a profile cannot turn it off: several test runners (Vitest
         // and Jest among them) otherwise start in watch mode and would hang until the timeout.

@@ -38,9 +38,10 @@ public interface IUserDirectory
 public sealed class RunExecutor(
     IFactoryStore store, FactoryOptions options, IWorkspaceProvider workspaces, IVerifier verifier,
     IWorkerLauncher launcher, IWorkerClientFactory clients, IUserDirectory users, FactorySignals signals, IClock clock,
-    ILogger<RunExecutor> logger, IGitHub? gitHub = null)
+    ILogger<RunExecutor> logger, IGitHub? gitHub = null, VerificationGate? verificationGate = null)
 {
     private readonly RunOrchestrator _orchestrator = new(options.Limits);
+    private readonly VerificationGate _verificationGate = verificationGate ?? new VerificationGate(options);
 
     /// <summary>Executes a claimed run until it stops. <see cref="RunSupervisor"/> holds the run
     /// in the registry around this, and releases it only once this has returned.</summary>
@@ -107,6 +108,15 @@ public sealed class RunExecutor(
         finally
         {
             await session.DisposeAsync();
+
+            // The run's temporary files are its own, and nothing that used them is running now.
+            try
+            {
+                Directory.Delete(options.RunTempDirectory(run.Id), recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
 
             // The worker is gone, so a call of this run whose usage was never reported never
             // will be. Its reservation is settled now rather than held against the task.
@@ -266,8 +276,8 @@ public sealed class RunExecutor(
             return null;
 
         await NoteAsync(data, "Running the verification profile on the base commit, to know what already fails.");
-        var outcome = await verifier.VerifyAsync(
-            new VerificationRequest(data.Workspace.Path, data.Profile, ChangedFiles: null, Path.Combine(options.RunDirectory(data.Run.Id), "baseline")), ct);
+        var outcome = await VerifyGatedAsync(
+            data, new VerificationRequest(data.Workspace.Path, data.Profile, ChangedFiles: null, Path.Combine(options.RunDirectory(data.Run.Id), "baseline")), ct);
         await store.SaveVerificationAsync(Record(data, VerificationKind.Baseline, data.BaseCommit, outcome, runId: null), ct);
         return outcome;
     }
@@ -501,13 +511,24 @@ public sealed class RunExecutor(
 
     // ---- Verify ----
 
+    /// <summary>
+    /// Runs the verifier once a verification permit is free, in the run's own temporary
+    /// directory. Waiting for a permit is said in the thread, and a stop cancels the wait.
+    /// </summary>
+    private async Task<VerificationOutcome> VerifyGatedAsync(RunData data, VerificationRequest request, CancellationToken ct)
+    {
+        using var permit = await _verificationGate.EnterAsync(
+            () => NoteAsync(data, "Waiting for another task's verification to finish before running this one's."), ct);
+        return await verifier.VerifyAsync(request with { TempDirectory = options.RunTempDirectory(data.Run.Id) }, ct);
+    }
+
     /// <param name="ct">Cancelled by a person's stop: the commands' process trees are killed and
     /// nothing is recorded, since an interrupted run is never evidence (§16).</param>
     private async Task<StepOutcome> VerifyAsync(RunData data, RunState state, CancellationToken ct)
     {
         var diff = await data.Workspace.DiffAsync(data.BaseCommit, ct);
-        var outcome = await verifier.VerifyAsync(
-            new VerificationRequest(data.Workspace.Path, data.Profile, diff.Files, Path.Combine(options.RunDirectory(data.Run.Id), $"verify-{clock.UtcNow:HHmmss}")), ct);
+        var outcome = await VerifyGatedAsync(
+            data, new VerificationRequest(data.Workspace.Path, data.Profile, diff.Files, Path.Combine(options.RunDirectory(data.Run.Id), $"verify-{clock.UtcNow:HHmmss}")), ct);
 
         var status = await data.Workspace.GetStatusAsync(ct);
         await store.SaveVerificationAsync(Record(data, VerificationKind.Run, status.HeadCommit, outcome, data.Run.Id), ct);
@@ -703,6 +724,7 @@ public sealed class RunExecutor(
                 options.ContextLength, options.DataDirectory, HostUrl, active.Secret)
             {
                 PtcEnabled = options.PtcEnabled,
+                TempDirectory = options.RunTempDirectory(claimed.Run.Id),
             },
             ct);
         await store.SetRunWorkerAsync(claimed.Run.Id, handle.ProcessId, handle.StartTime, CancellationToken.None);
