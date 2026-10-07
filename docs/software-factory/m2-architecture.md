@@ -103,14 +103,23 @@ Migration `M2Concurrency` adds `task_runs.QueuedAt` (backfilled from `CreatedAt`
 
 ### 3.7 Commits
 
-1. Options: the two settings, the liveness interval and the run temporary directory. `TestHost` keeps a cap of 1 so the M1 tests keep their order.
-2. Core: `StepStopped`, `WorkspaceSnapshot` and `WorkspaceDrift`, and the resume brief.
-3. Store: `QueuedAt`, the snapshot column and migration, the claim rewrite and `Enqueue`, and reconciling one run's in-flight usage.
-4. Ownership: registry, `RunSupervisor`, coordinator and executor rewiring, and the resume-race regression test.
-5. Liveness and the host lock.
-6. Stops at any step.
-7. Isolation: temporary directories and the verification gate.
-8. Resume check.
+Step 1 was completed on 2026-10-07 in these commits:
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `6f4074f` | Options: the two settings, the liveness interval and the run temporary directory |
+| 2 | `44793dd` | Core: `StepStopped`, `WorkspaceSnapshot` and `WorkspaceDrift`, and the resume brief (revision `m2.1`) |
+| 3 | `cb44f01` | Store: `QueuedAt`, the snapshot column and migration, the claim rewrite and `Enqueue`, and reconciling one run's in-flight usage |
+| 4 | `46ce15d` | Ownership: registry, `RunSupervisor`, coordinator and executor rewiring, and the resume-race regression test |
+| 5 | `f6981b4` | Liveness and the host lock |
+| 6 | `7b1e5f6` | Stops at any step |
+| 7 | `75ef2ce` | Isolation: temporary directories and the verification gate |
+| 8 | `0378701` | Resume check |
+
+Two differences from the plan above:
+
+- **The slot cap's default became 2 in commit 4, not commit 1.** Before the registry held a run's slot until its executor had finished, a second slot exposed the resume race. `TestHost` keeps a cap of 1, so the M1 tests keep their order; the concurrency tests set 2.
+- **An orphaned run does not hold a slot.** The registry is the only slot count, so a run marked Running that no executor owns takes no slot, even before the sweep interrupts it. It still holds its repository's lease.
 
 ## 4. Identity, membership and audit (build step 2)
 
