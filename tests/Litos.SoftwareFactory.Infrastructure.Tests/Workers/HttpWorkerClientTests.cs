@@ -139,13 +139,60 @@ public class HttpWorkerClientTests
     [InlineData(ToolCompleted, (int)HttpWorkerClient.TurnEvent.Other)]
     [InlineData(Text, (int)HttpWorkerClient.TurnEvent.Other)]
     [InlineData(KeepAlive, (int)HttpWorkerClient.TurnEvent.Other)]
-    [InlineData(Completed, (int)HttpWorkerClient.TurnEvent.Other)]
+    [InlineData(Completed, (int)HttpWorkerClient.TurnEvent.Message)]
     [InlineData("""{"CallId":"c1","Reason":"steered"}""", (int)HttpWorkerClient.TurnEvent.Other)]
     [InlineData("""{"Exception":{"Message":"boom"}}""", (int)HttpWorkerClient.TurnEvent.Error)]
     [InlineData("not json", (int)HttpWorkerClient.TurnEvent.Other)]
     public void Classify_TellsEventsApartByShape(string json, int expected)
     {
         Assert.Equal((HttpWorkerClient.TurnEvent)expected, HttpWorkerClient.Classify(json, out _));
+    }
+
+    /// <summary>A completed message as the worker writes it: by its runtime type, with default
+    /// options (Litos.Hosting TurnsEndpoints.SerializeEvent).</summary>
+    private static string AsWorkerSends(params Litos.Agent.Messages.ContentBlock[] content)
+    {
+        var evt = new Litos.Agent.Streaming.MessageCompleted(
+            new Litos.Agent.Messages.ChatMessage(Litos.Agent.Messages.Role.Assistant, content), new Litos.Agent.Streaming.UsageInfo(10, 5));
+        return JsonSerializer.Serialize(evt, evt.GetType(), new JsonSerializerOptions { WriteIndented = false });
+    }
+
+    /// <summary>A chat turn's answer is the text of its last message that had any.</summary>
+    [Fact]
+    public async Task RunTurnAsync_KeepsTheTextOfTheLastMessageThatHadAny()
+    {
+        var (client, handler) = Create();
+        handler.Enqueue(HttpStatusCode.OK, Sse(
+            AsWorkerSends(new Litos.Agent.Messages.TextBlock("Let me look.")),
+            ToolResult,
+            AsWorkerSends(new Litos.Agent.Messages.TextBlock("The export is in CsvWriter.cs."), new Litos.Agent.Messages.TextBlock("It quotes every field.")),
+            AsWorkerSends()), "text/event-stream");
+
+        var result = await client.RunTurnAsync("s", TurnKind.Chat, "brief", 200, default);
+
+        Assert.True(result.Completed);
+        Assert.Equal("The export is in CsvWriter.cs.\n\nIt quotes every field.", result.Reply);
+    }
+
+    [Fact]
+    public async Task RunTurnAsync_WithNoTextAnywhere_HasNoReply()
+    {
+        var (client, handler) = Create();
+        handler.Enqueue(HttpStatusCode.OK, Sse(Text, ToolResult, Completed), "text/event-stream");
+
+        Assert.Null((await client.RunTurnAsync("s", TurnKind.Chat, "brief", 200, default)).Reply);
+    }
+
+    /// <summary>A tool call in a message is not text: only text blocks make the reply.</summary>
+    [Fact]
+    public void Classify_ACompletedMessage_KeepsOnlyItsText()
+    {
+        var json = AsWorkerSends(
+            new Litos.Agent.Messages.TextBlock("Reading it now."),
+            new Litos.Agent.Messages.ToolUseBlock("c1", "read_file", JsonDocument.Parse("{}").RootElement));
+
+        Assert.Equal(HttpWorkerClient.TurnEvent.Message, HttpWorkerClient.Classify(json, out var text));
+        Assert.Equal("Reading it now.", text);
     }
 
     [Fact]

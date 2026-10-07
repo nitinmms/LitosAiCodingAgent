@@ -197,7 +197,9 @@ public interface IWorkerLauncher
 }
 
 /// <summary>What the host learned from one agent turn's event stream.</summary>
-public sealed record TurnStreamResult(bool Completed, int ToolCalls, string? Error);
+/// <param name="Reply">The text of the turn's last message that had any: a chat turn's answer.
+/// Other turns report what they achieved through their completion tools, never through this.</param>
+public sealed record TurnStreamResult(bool Completed, int ToolCalls, string? Error, string? Reply = null);
 
 /// <summary>The host's calls into a worker (§15).</summary>
 public interface IWorkerClient

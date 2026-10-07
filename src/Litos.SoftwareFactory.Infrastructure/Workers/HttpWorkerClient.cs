@@ -11,8 +11,9 @@ namespace Litos.SoftwareFactory.Infrastructure.Workers;
 /// §3). Every request carries the per-launch secret.
 ///
 /// The turn's event stream is read here only to know when the turn ends, to count tool calls
-/// against the per-turn cap, and to capture an error. What the turn *achieved* is never taken
-/// from it: that comes from the completion tools' own callbacks to the host.
+/// against the per-turn cap, to capture an error, and to keep the text of its last message, which
+/// is a chat turn's answer. What a work turn *achieved* is never taken from it: that comes from
+/// the completion tools' own callbacks to the host.
 /// </summary>
 public sealed class HttpWorkerClient : IWorkerClient
 {
@@ -45,6 +46,7 @@ public sealed class HttpWorkerClient : IWorkerClient
 
         var toolCalls = 0;
         string? error = null;
+        string? reply = null;
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
@@ -55,6 +57,9 @@ public sealed class HttpWorkerClient : IWorkerClient
 
             switch (Classify(line.AsSpan(5).Trim().ToString(), out var message))
             {
+                case TurnEvent.Message:
+                    reply = message ?? reply;
+                    break;
                 case TurnEvent.ToolResult:
                     toolCalls++;
                     if (toolCalls > maxToolCalls)
@@ -70,7 +75,7 @@ public sealed class HttpWorkerClient : IWorkerClient
             }
         }
 
-        return new TurnStreamResult(Completed: error is null, toolCalls, error);
+        return new TurnStreamResult(Completed: error is null, toolCalls, error, reply);
     }
 
     internal enum TurnEvent
@@ -78,12 +83,16 @@ public sealed class HttpWorkerClient : IWorkerClient
         Other,
         ToolResult,
         Error,
+
+        /// <summary>A model call's completed message; its text, when it has any, is the message.</summary>
+        Message,
     }
 
     /// <summary>
     /// The worker serializes each AgentEvent by its runtime type with no discriminator, so events
-    /// are told apart by shape: a tool result carries CallId and Result, and an error carries only
-    /// an Exception with a Message.
+    /// are told apart by shape: a tool result carries CallId and Result, an error carries only an
+    /// Exception with a Message, and a completed message carries Message and Usage. A completed
+    /// message's text is its text blocks joined; reasoning is never in them.
     /// </summary>
     internal static TurnEvent Classify(string json, out string? message)
     {
@@ -103,12 +112,49 @@ public sealed class HttpWorkerClient : IWorkerClient
                 return TurnEvent.Error;
             }
 
+            if (root.TryGetProperty("Message", out var completed) && root.TryGetProperty("Usage", out _))
+            {
+                message = TextOf(completed);
+                return TurnEvent.Message;
+            }
+
             return root.TryGetProperty("CallId", out _) && root.TryGetProperty("Result", out _) ? TurnEvent.ToolResult : TurnEvent.Other;
         }
         catch (JsonException)
         {
             return TurnEvent.Other;
         }
+    }
+
+    /// <summary>The text blocks of a serialized ChatMessage, joined; null when it has none.</summary>
+    private static string? TextOf(JsonElement message)
+    {
+        if (message.ValueKind != JsonValueKind.Object || !TryGet(message, "Content", out var content) || content.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var texts = content.EnumerateArray()
+            .Where(block => block.ValueKind == JsonValueKind.Object
+                && TryGet(block, "type", out var type) && type.GetString() == "text"
+                && TryGet(block, "Text", out _))
+            .Select(block => { TryGet(block, "Text", out var text); return text.GetString(); })
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .ToList();
+        return texts.Count == 0 ? null : string.Join("\n\n", texts);
+    }
+
+    private static bool TryGet(JsonElement element, string name, out JsonElement value)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
     }
 
     public async Task SteerAsync(string sessionId, string message, CancellationToken ct)
