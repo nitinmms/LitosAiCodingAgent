@@ -524,6 +524,72 @@ public class GitWorkspaceTests : IAsyncLifetime
         Assert.Equal(new[] { "README.md", "src/New File.cs" }.Order(), status.ChangedPaths.Order());
     }
 
+    // ---- Snapshot (the resume check, §16) ----
+
+    [Fact]
+    public async Task SnapshotAsync_HashesEachChangedFile_AndMarksDeletedOnes()
+    {
+        File.WriteAllText(InWorkspace("README.md"), "changed\n");
+        Directory.CreateDirectory(InWorkspace("src"));
+        File.WriteAllText(InWorkspace("src/New File.cs"), "new");
+
+        var snapshot = await _workspace.SnapshotAsync(default);
+
+        Assert.Equal("main", snapshot.Branch);
+        Assert.Equal((await _workspace.GetStatusAsync(default)).HeadCommit, snapshot.Head);
+        Assert.False(snapshot.Truncated);
+        Assert.Equal(new[] { "README.md", "src/New File.cs" }.Order(), snapshot.Files.Keys.Order());
+        Assert.Equal(
+            Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData("new"u8)), snapshot.Files["src/New File.cs"]);
+
+        File.Delete(InWorkspace("README.md"));
+        Assert.Equal(WorkspaceSnapshot.Deleted, (await _workspace.SnapshotAsync(default)).Files["README.md"]);
+    }
+
+    [Fact]
+    public async Task SnapshotAsync_ACleanWorkingCopy_HasNoFiles()
+    {
+        Assert.Empty((await _workspace.SnapshotAsync(default)).Files);
+    }
+
+    /// <summary>The same content gives the same hash, so an unchanged file is never reported, and
+    /// an edit always is.</summary>
+    [Fact]
+    public async Task SnapshotAsync_ChangesOnlyWhenTheContentDoes()
+    {
+        File.WriteAllText(InWorkspace("README.md"), "changed\n");
+        var first = await _workspace.SnapshotAsync(default);
+        var again = await _workspace.SnapshotAsync(default);
+        File.WriteAllText(InWorkspace("README.md"), "changed again\n");
+        var edited = await _workspace.SnapshotAsync(default);
+
+        Assert.Equal(first.Files["README.md"], again.Files["README.md"]);
+        Assert.NotEqual(first.Files["README.md"], edited.Files["README.md"]);
+    }
+
+    /// <summary>A symbolic link in the working copy is hashed by where it points, never followed:
+    /// nothing outside the working copy is read.</summary>
+    [Fact]
+    public async Task SnapshotAsync_DoesNotFollowALinkOutOfTheWorkingCopy()
+    {
+        var outside = _temp.Combine("outside-secret.txt");
+        File.WriteAllText(outside, "secret");
+        try
+        {
+            File.CreateSymbolicLink(InWorkspace("link.txt"), outside);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return; // creating links needs a privilege this machine does not grant; nothing to test
+        }
+
+        var snapshot = await _workspace.SnapshotAsync(default);
+
+        Assert.NotEqual(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData("secret"u8)), snapshot.Files["link.txt"]);
+        File.WriteAllText(outside, "changed secret");
+        Assert.Equal(snapshot.Files["link.txt"], (await _workspace.SnapshotAsync(default)).Files["link.txt"]);
+    }
+
     // ---- Diff ----
 
     [Fact]

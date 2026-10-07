@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Infrastructure.Processes;
@@ -79,6 +80,37 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
             .ToList();
 
         return new WorkspaceStatus(branch, head, changed.Count == 0, changed);
+    }
+
+    public async Task<WorkspaceSnapshot> SnapshotAsync(CancellationToken ct)
+    {
+        var status = await GetStatusAsync(ct);
+        var root = System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(options.Path)) + System.IO.Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var path in status.ChangedPaths.Take(WorkspaceSnapshot.MaxFiles))
+        {
+            var full = System.IO.Path.GetFullPath(System.IO.Path.Combine(options.Path, path));
+            if (full.StartsWith(root, comparison))
+                files[path] = await HashAsync(full, ct);
+        }
+
+        return new WorkspaceSnapshot(status.Branch, status.HeadCommit, files, Truncated: status.ChangedPaths.Count > WorkspaceSnapshot.MaxFiles);
+    }
+
+    /// <summary>A file's SHA-256. A symbolic link is hashed by where it points, never followed,
+    /// so nothing outside the working copy is read.</summary>
+    private static async Task<string> HashAsync(string path, CancellationToken ct)
+    {
+        var info = new FileInfo(path);
+        if (info.LinkTarget is { } target)
+            return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("link:" + target)));
+        if (!info.Exists)
+            return Directory.Exists(path) ? Convert.ToHexStringLower(SHA256.HashData("directory"u8)) : WorkspaceSnapshot.Deleted;
+
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));
     }
 
     public async Task<WorkspaceDiff> DiffAsync(string baseCommit, CancellationToken ct)

@@ -74,7 +74,7 @@ public sealed class RunExecutor(
                     return;
                 }
 
-                await store.SaveCheckpointAsync(run.Id, RunStateJson.Serialize(state), state.Stage, clock.UtcNow, CancellationToken.None);
+                await store.SaveCheckpointAsync(run.Id, RunStateJson.Serialize(state), state.Stage, clock.UtcNow, CancellationToken.None, context.Snapshot);
                 signals.EventsWritten();
 
                 // A stop asked for between steps is taken before the next one starts.
@@ -92,6 +92,10 @@ public sealed class RunExecutor(
                     HandoffStep => HandoffAsync(context, state, step),
                     _ => throw new InvalidOperationException($"Unknown step {transition.Step.GetType().Name}."),
                 });
+
+                // The working copy as the step left it, saved with the next checkpoint or the stop,
+                // so a resumed run can say what changed while it was stopped (§16).
+                context.Snapshot = await SnapshotAsync(context) ?? context.Snapshot;
             }
         }
         catch (OperationCanceledException) when (hostStopping.IsCancellationRequested)
@@ -171,6 +175,64 @@ public sealed class RunExecutor(
 
         /// <summary>What the handoff recorded, for the handoff message the stop posts.</summary>
         public HandoffEvidence? Handoff { get; set; }
+
+        /// <summary>The working copy after the last step (a WorkspaceSnapshot as JSON); null
+        /// keeps the one the run was claimed with.</summary>
+        public string? Snapshot { get; set; }
+
+        /// <summary>Set once preflight has compared the working copy with the last checkpoint.</summary>
+        public bool ResumeChecked { get; set; }
+
+        /// <summary>How the working copy differed from the last checkpoint when the run resumed,
+        /// for the resume brief; null when it did not.</summary>
+        public string? WorkspaceDrift { get; set; }
+    }
+
+    /// <summary>The working copy now, as JSON; null when it cannot be read (before the first clone).</summary>
+    private async Task<string?> SnapshotAsync(RunData data)
+    {
+        try
+        {
+            return JsonSerializer.Serialize(await data.Workspace.SnapshotAsync(CancellationToken.None), FactoryWire.Json);
+        }
+        catch (Exception ex) when (ex is WorkspaceException or IOException or UnauthorizedAccessException)
+        {
+            logger.LogDebug(ex, "The working copy of run {RunId} could not be snapshotted.", data.Run.Id);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The resume check (§16): compares the working copy with the snapshot the run last recorded
+    /// and says what differs, in the thread and in the resume brief. The run continues either way.
+    /// A run interrupted in the middle of a step lists that step's own edits too, since the last
+    /// snapshot was taken before it; the wording says what changed, not who changed it.
+    /// </summary>
+    private async Task CheckResumeAsync(RunData data, CancellationToken ct)
+    {
+        data.ResumeChecked = true;
+        if (data.Run.WorkspaceSnapshotJson is not { Length: > 0 } json)
+            return;
+
+        WorkspaceDrift drift;
+        try
+        {
+            var before = JsonSerializer.Deserialize<WorkspaceSnapshot>(json, FactoryWire.Json);
+            if (before is null)
+                return;
+            drift = WorkspaceDrift.Compare(before, await data.Workspace.SnapshotAsync(ct));
+        }
+        catch (Exception ex) when (ex is JsonException or WorkspaceException or IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Run {RunId} could not compare its working copy with its last checkpoint.", data.Run.Id);
+            return;
+        }
+
+        if (drift.IsEmpty)
+            return;
+
+        data.WorkspaceDrift = drift.Describe();
+        await NoteAsync(data, "Resuming. The working copy differs from where this run last recorded it:\n" + data.WorkspaceDrift);
     }
 
     // ---- Preflight ----
@@ -208,6 +270,8 @@ public sealed class RunExecutor(
                 if (status.Branch != data.Branch)
                     await workspace.CheckoutAsync(data.Branch, ct);
                 await store.SetRunCommitsAsync(data.Run.Id, data.BaseCommit, null, null, ct);
+                if (!data.ResumeChecked)
+                    await CheckResumeAsync(data, ct);
             }
 
             data.Baseline = await BaselineAsync(data, state, ct);
@@ -459,6 +523,7 @@ public sealed class RunExecutor(
         {
             VerificationSummary = string.Join("\n", data.Profile.Steps.SelectMany(s => s.Commands().Select(c => $"- {s.Name}: {c.Command.Display()}"))),
             CoverageThresholdPercent = data.Profile.Coverage?.ChangedLinesThresholdPercent,
+            WorkspaceDrift = data.WorkspaceDrift,
         };
 
         WorkspaceDiff? reviewDiff = null;
@@ -660,6 +725,7 @@ public sealed class RunExecutor(
         {
             StateJson = RunStateJson.Serialize(state),
             Stage = state.Stage,
+            WorkspaceSnapshotJson = data.Snapshot,
         };
 
         if (stop.Reason == StopReason.HandedOff && data.Handoff is { } evidence)

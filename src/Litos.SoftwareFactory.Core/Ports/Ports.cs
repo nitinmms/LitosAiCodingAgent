@@ -76,6 +76,10 @@ public interface IWorkspace
 
     Task<WorkspaceStatus> GetStatusAsync(CancellationToken ct);
 
+    /// <summary>The branch, the head commit and a hash of every file that differs from it, for
+    /// a resumed run to compare with (§16). Never follows a path outside the working copy.</summary>
+    Task<WorkspaceSnapshot> SnapshotAsync(CancellationToken ct);
+
     /// <summary>Everything that differs from the base commit, committed or not.</summary>
     Task<WorkspaceDiff> DiffAsync(string baseCommit, CancellationToken ct);
 

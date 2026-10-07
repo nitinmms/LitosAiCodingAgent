@@ -178,6 +178,13 @@ public sealed class FakeWorkspace : IWorkspace
 
     private List<string> Uncommitted { get; set; } = [];
 
+    /// <summary>Moves the head without the factory: what a person committing by hand does.</summary>
+    public void SetHead(string head) => Head = head;
+
+    public Task<WorkspaceSnapshot> SnapshotAsync(CancellationToken ct) => Task.FromResult(new WorkspaceSnapshot(
+        Branch, Head,
+        Uncommitted.ToDictionary(p => p, p => Files.TryGetValue(p, out var content) ? content : WorkspaceSnapshot.Deleted)));
+
     /// <summary>What the fake worker calls to "edit a file".</summary>
     public void Write(string path, string content)
     {
