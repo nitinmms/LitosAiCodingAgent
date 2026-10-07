@@ -143,6 +143,24 @@ Two differences from the plan above:
 
 **Migration.** The existing owner and actor columns stay bare UUIDs, without foreign keys to `AspNetUsers`, so a removed user never cascades into task history. Users are disabled, never deleted. The migration adds a `project_members` row for each existing project's creator.
 
+**Step 2 was completed on 2026-10-07** in these commits:
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `548a0a7` | Tables and store: `invitations`, `project_members`, `audit_events` (migration `M2Identity`) |
+| 2 | `5a7b866` | Membership checks: `ProjectAccess` as an endpoint filter on every thread, decision and finding route; filtered lists |
+| 3 | `8574846` | An audit row for every user action, including budget changes and stopping a running task |
+| 4 | `4828640` | Invitations API: create, list and revoke (Admin); look up and accept (anonymous, rate limited) |
+| 5 | `4ab5c25` | User administration, and sessions checked against their account every minute |
+| 6 | `104f18d` | Web: the people screen and the invitation page |
+
+Differences from the plan above:
+
+- **The invitation token never appears in a URL the host sees.** The link is `#/invite/<token>`, and the app sends the token to `POST /api/invitations/lookup` and `/accept` in the body.
+- **An Admin cannot disable their own account,** in addition to the last-Admin guard.
+- **A role change signs nobody out.** Disabling rotates the account's security stamp, which ends its sessions at the next check; a role change only refreshes the session's role at that check.
+- **Changing a task's budget is limited to the project's members** (by the membership check) and recorded with the old and new cap.
+
 ## 5. Chat before `@factory` and the spec stage (build steps 4 and 5)
 
 **Execution.** Two new `RunKind`s, `Chat` and `Spec`, go through the same claim, registry, worker and gateway path as Implement and Rework, so the per-run secret, metering and recovery all apply unchanged. They differ in three ways:
