@@ -31,6 +31,15 @@ public sealed record DispatchResult(DispatchOutcome Outcome, TaskThread Thread, 
 
 public sealed record ClaimedRun(TaskRun Run, TaskThread Thread, Project Project);
 
+/// <summary>The kinds of thing the API names by id that belong to a project, and so are only
+/// visible to its members (m2-architecture.md §4).</summary>
+public enum ProjectScoped
+{
+    Thread,
+    Decision,
+    Finding,
+}
+
 /// <summary>Everything needed to stop a run, applied in one transaction.</summary>
 public sealed record StopRunCommand(Guid RunId, LifecycleTrigger Trigger, StopReason Reason, string Message)
 {
@@ -241,6 +250,9 @@ public interface IFactoryStore
     //
     // Every change here writes its AuditEvent in the same transaction. Accounts themselves live in
     // Identity, which the host changes through its UserManager; it records those with AddAuditAsync.
+
+    /// <summary>The project a thread, decision or finding belongs to, or null when there is no such thing.</summary>
+    Task<Guid?> FindProjectIdAsync(ProjectScoped kind, Guid id, CancellationToken ct);
 
     /// <summary>The projects a user is a member of. Admins see every project whatever this says.</summary>
     Task<IReadOnlyList<Guid>> ListMemberProjectIdsAsync(Guid userId, CancellationToken ct);

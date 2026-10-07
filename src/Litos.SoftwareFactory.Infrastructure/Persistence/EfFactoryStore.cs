@@ -963,6 +963,27 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
     // ---- People and access ----
 
+    public async Task<Guid?> FindProjectIdAsync(ProjectScoped kind, Guid id, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return kind switch
+        {
+            ProjectScoped.Thread => await db.Threads.Where(t => t.Id == id).Select(t => (Guid?)t.ProjectId).FirstOrDefaultAsync(ct),
+            ProjectScoped.Decision => await (
+                from d in db.Decisions
+                join t in db.Threads on d.ThreadId equals t.Id
+                where d.Id == id
+                select (Guid?)t.ProjectId).FirstOrDefaultAsync(ct),
+            ProjectScoped.Finding => await (
+                from f in db.ReviewFindings
+                join r in db.Runs on f.RunId equals r.Id
+                join t in db.Threads on r.ThreadId equals t.Id
+                where f.Id == id
+                select (Guid?)t.ProjectId).FirstOrDefaultAsync(ct),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+        };
+    }
+
     public async Task<IReadOnlyList<Guid>> ListMemberProjectIdsAsync(Guid userId, CancellationToken ct)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);

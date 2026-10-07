@@ -598,6 +598,32 @@ public sealed class TestHost : IAsyncDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    public const string MemberPassword = "a-member-password";
+
+    /// <summary>A Member account, belonging to the given projects only.</summary>
+    public async Task<Guid> CreateMemberAsync(string userName, params Guid[] projectIds)
+    {
+        using var scope = App.Services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<FactoryUser>>();
+        var user = new FactoryUser { UserName = userName, DisplayName = userName };
+        var created = await users.CreateAsync(user, MemberPassword);
+        Assert.True(created.Succeeded, string.Join(" ", created.Errors.Select(e => e.Description)));
+        await users.AddToRoleAsync(user, FactoryRoles.Member);
+
+        var admin = await AdminIdAsync();
+        foreach (var projectId in projectIds)
+            await Store.AddMemberAsync(projectId, user.Id, admin, DateTimeOffset.UtcNow, default);
+        return user.Id;
+    }
+
+    /// <summary>A browser signed in as that Member.</summary>
+    public async Task<HttpClient> SignedInAsync(string userName)
+    {
+        var client = NewClient();
+        await SignInAsync(client, userName, MemberPassword);
+        return client;
+    }
+
     public async Task<Guid> AdminIdAsync()
     {
         using var response = await Client.GetAsync("api/auth/me");

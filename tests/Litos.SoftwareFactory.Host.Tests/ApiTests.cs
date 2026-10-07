@@ -383,10 +383,12 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AnswerDecision_Unknown_Is404_AndEmptyAnswerIs400()
+    /// <summary>An id nobody may see is not found whatever the request says; an empty answer to a
+    /// real decision is a 400 (RunTests).</summary>
+    public async Task AnswerDecision_Unknown_Is404_WhateverTheAnswer()
     {
         await _host.PostAsync($"api/decisions/{Guid.NewGuid()}/answer", new { answer = "yes" }, HttpStatusCode.NotFound);
-        await _host.PostAsync($"api/decisions/{Guid.NewGuid()}/answer", new { answer = " " }, HttpStatusCode.BadRequest);
+        await _host.PostAsync($"api/decisions/{Guid.NewGuid()}/answer", new { answer = " " }, HttpStatusCode.NotFound);
     }
 
     // ---- Events ----

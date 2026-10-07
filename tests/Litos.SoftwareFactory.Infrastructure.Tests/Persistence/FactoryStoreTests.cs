@@ -1438,6 +1438,31 @@ public abstract class FactoryStoreContract : IAsyncLifetime
 
     private async Task<IReadOnlyList<AuditEvent>> AuditAsync(Guid? projectId = null) => await Store.ListAuditAsync(projectId, 100, default);
 
+    /// <summary>The project behind an id the API is given, for the membership check.</summary>
+    [SkippableFact]
+    public async Task FindProjectId_OfAThreadADecisionAndAFinding_IsTheirProject()
+    {
+        var running = await RunningAsync();
+        var decision = await Store.OpenDecisionAsync(running.Run.Id, new DecisionSubmission("Q?", "w", ["a", "b"]), T0, default);
+        await Store.SaveFindingsAsync(running.Run.Id, [new ReviewFinding(FindingSeverity.Minor, "src/A.cs", 1, "x")], default);
+        var finding = Assert.Single(await Store.ListFindingsAsync(running.Thread.Id, default));
+
+        Assert.Equal(running.Project.Id, await Store.FindProjectIdAsync(ProjectScoped.Thread, running.Thread.Id, default));
+        Assert.Equal(running.Project.Id, await Store.FindProjectIdAsync(ProjectScoped.Decision, decision.Id, default));
+        Assert.Equal(running.Project.Id, await Store.FindProjectIdAsync(ProjectScoped.Finding, finding.Id, default));
+    }
+
+    [SkippableTheory]
+    [InlineData(ProjectScoped.Thread)]
+    [InlineData(ProjectScoped.Decision)]
+    [InlineData(ProjectScoped.Finding)]
+    public async Task FindProjectId_OfSomethingThatDoesNotExist_IsNull(ProjectScoped kind)
+    {
+        await RunningAsync();
+
+        Assert.Null(await Store.FindProjectIdAsync(kind, Guid.NewGuid(), default));
+    }
+
     [SkippableFact]
     public async Task Project_ItsCreatorIsAMember()
     {

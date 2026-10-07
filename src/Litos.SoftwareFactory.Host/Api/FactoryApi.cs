@@ -73,6 +73,12 @@ public static class FactoryApi
     {
         var api = app.MapGroup("/api").RequireAuthorization();
 
+        // Everything named by the id of a project's thread, decision or finding is checked once
+        // here: outside the project it is not found (m2-architecture.md §4).
+        var threadRoutes = api.MapGroup("/threads/{id:guid}").RequireProjectAccess(ProjectScoped.Thread);
+        var decisionRoutes = api.MapGroup("/decisions/{id:guid}").RequireProjectAccess(ProjectScoped.Decision);
+        var findingRoutes = api.MapGroup("/findings/{id:guid}").RequireProjectAccess(ProjectScoped.Finding);
+
         api.MapGet("/settings", (FactoryOptions options) => Results.Ok(new
         {
             options.Provider,
@@ -88,8 +94,11 @@ public static class FactoryApi
 
         // ---- Projects ----
 
-        api.MapGet("/projects", async (IFactoryStore store, CancellationToken ct) =>
-            Results.Ok((await store.ListProjectsAsync(ct)).Select(ProjectView)));
+        api.MapGet("/projects", async (ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, CancellationToken ct) =>
+        {
+            var visible = await access.VisibleProjectsAsync(user, ct);
+            return Results.Ok((await store.ListProjectsAsync(ct)).Where(p => visible?.Contains(p.Id) ?? true).Select(ProjectView));
+        });
 
         api.MapPost("/projects", async (RegisterProjectRequest request, ClaimsPrincipal user, IFactoryStore store, IClock clock, CancellationToken ct) =>
         {
@@ -138,11 +147,15 @@ public static class FactoryApi
 
         // ---- Threads ----
 
-        api.MapGet("/threads", async (Guid? projectId, IFactoryStore store, CancellationToken ct) =>
-            Results.Ok((await store.ListThreadsAsync(projectId, ct)).Select(ThreadView)));
+        api.MapGet("/threads", async (Guid? projectId, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, CancellationToken ct) =>
+            Results.Ok((await VisibleThreadsAsync(projectId, user, store, access, ct)).Select(ThreadView)));
 
-        api.MapPost("/threads", async (CreateThreadRequest request, ClaimsPrincipal user, IFactoryStore store, FactoryOptions options, IClock clock, CancellationToken ct) =>
+        api.MapPost("/threads", async (
+            CreateThreadRequest request, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, FactoryOptions options, IClock clock, CancellationToken ct) =>
         {
+            // Outside the project it is not found, as a project that does not exist.
+            if (!await access.CanSeeProjectAsync(user, request.ProjectId, ct))
+                return Results.NotFound(new { error = "The project does not exist." });
             if (string.IsNullOrWhiteSpace(request.Title))
                 return Problem("title is required.");
             if (!TaskTypes.Contains(request.TypeLabel))
@@ -174,7 +187,7 @@ public static class FactoryApi
             }
         });
 
-        api.MapGet("/threads/{id:guid}", async (Guid id, IFactoryStore store, CancellationToken ct) =>
+        threadRoutes.MapGet("", async (Guid id, IFactoryStore store, CancellationToken ct) =>
         {
             // Read before the thread itself: anything written in between is then replayed by the
             // event stream, never missed.
@@ -183,7 +196,7 @@ public static class FactoryApi
         });
 
         // The task's model calls, oldest first: what each reserved and what it was charged (§9).
-        api.MapGet("/threads/{id:guid}/usage", async (Guid id, IFactoryStore store, CancellationToken ct) =>
+        threadRoutes.MapGet("/usage", async (Guid id, IFactoryStore store, CancellationToken ct) =>
         {
             if (await store.GetThreadAsync(id, ct) is null)
                 return Results.NotFound();
@@ -208,7 +221,7 @@ public static class FactoryApi
             }));
         });
 
-        api.MapPost("/threads/{id:guid}/messages", async (
+        threadRoutes.MapPost("/messages", async (
             Guid id, PostMessageRequest request, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals,
             IClock clock, FactoryOptions options, CancellationToken ct) =>
         {
@@ -245,23 +258,23 @@ public static class FactoryApi
             return Results.Accepted(value: new { outcome = result.Outcome.ToString(), result.RunId, thread = ThreadView(result.Thread) });
         });
 
-        api.MapPost("/threads/{id:guid}/budget", (Guid id, SetBudgetRequest request, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        threadRoutes.MapPost("/budget", (Guid id, SetBudgetRequest request, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
             request.Cap is <= 0
                 ? Task.FromResult(Problem("cap must be positive, or null for no cap."))
                 : ActAsync(signals, () => store.SetBudgetCapAsync(id, request.Cap, clock.UtcNow, ct)));
 
-        api.MapPost("/threads/{id:guid}/accept", (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        threadRoutes.MapPost("/accept", (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
             ActAsync(signals, () => store.ApplyUserActionAsync(id, user.UserId(), LifecycleTrigger.Accept, clock.UtcNow, ct)));
 
-        api.MapPost("/threads/{id:guid}/pause", (Guid id, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        threadRoutes.MapPost("/pause", (Guid id, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals, IClock clock, CancellationToken ct) =>
             StopAsync(id, user, store, runs, signals, clock, StopRequest.Pause, LifecycleTrigger.Pause, ct));
 
-        api.MapPost("/threads/{id:guid}/cancel", (Guid id, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        threadRoutes.MapPost("/cancel", (Guid id, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals, IClock clock, CancellationToken ct) =>
             StopAsync(id, user, store, runs, signals, clock, StopRequest.Cancel, LifecycleTrigger.Cancel, ct));
 
         // Takes back a change request made after a handoff: the rework run is dropped, what it
         // had edited is discarded, and the task waits for testing on its last handoff again.
-        api.MapPost("/threads/{id:guid}/withdraw", async (
+        threadRoutes.MapPost("/withdraw", async (
             Guid id, ClaimsPrincipal user, IFactoryStore store, IWorkspaceProvider workspaces, FactorySignals signals, IClock clock,
             ILoggerFactory loggers, CancellationToken ct) =>
         {
@@ -309,7 +322,7 @@ public static class FactoryApi
         });
 
         // Where the task's pull request stands on GitHub now: merging and closing happen there.
-        api.MapGet("/threads/{id:guid}/pull-request", async (Guid id, IFactoryStore store, PullRequestStatus status, CancellationToken ct) =>
+        threadRoutes.MapGet("/pull-request", async (Guid id, IFactoryStore store, PullRequestStatus status, CancellationToken ct) =>
         {
             if (await store.GetThreadAsync(id, ct) is not { } details)
                 return Results.NotFound();
@@ -326,7 +339,7 @@ public static class FactoryApi
             });
         });
 
-        api.MapPost("/threads/{id:guid}/resume", async (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        threadRoutes.MapPost("/resume", async (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
         {
             if (await store.GetThreadAsync(id, ct) is not { } details)
                 return Results.NotFound();
@@ -349,7 +362,7 @@ public static class FactoryApi
         });
 
         // A person's verdict on a review finding: what review yield is measured from.
-        api.MapPost("/findings/{id:guid}/verdict", (Guid id, FindingVerdictRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        findingRoutes.MapPost("/verdict", (Guid id, FindingVerdictRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
         {
             FindingVerdict? verdict = null;
             if (!string.IsNullOrWhiteSpace(request.Verdict))
@@ -363,7 +376,7 @@ public static class FactoryApi
         });
 
         // What a task's reviews cost against what a person confirmed they found.
-        api.MapGet("/threads/{id:guid}/review-yield", async (Guid id, IFactoryStore store, CancellationToken ct) =>
+        threadRoutes.MapGet("/review-yield", async (Guid id, IFactoryStore store, CancellationToken ct) =>
         {
             if (await store.GetThreadAsync(id, ct) is null)
                 return Results.NotFound();
@@ -371,11 +384,11 @@ public static class FactoryApi
         });
 
         // The same for every task, one row each, and their total.
-        api.MapGet("/review-yield", async (Guid? projectId, IFactoryStore store, CancellationToken ct) =>
+        api.MapGet("/review-yield", async (Guid? projectId, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, CancellationToken ct) =>
         {
             var rows = new List<(TaskThread Thread, ReviewYield Yield)>();
-            foreach (var thread in await store.ListThreadsAsync(projectId, ct))
-                rows.Add((thread, ReviewYield.From(await store.ListUsageAsync(thread.Id, ct), await store.ListFindingsAsync(thread.Id, ct))));
+            foreach (var each in await VisibleThreadsAsync(projectId, user, store, access, ct))
+                rows.Add((each, ReviewYield.From(await store.ListUsageAsync(each.Id, ct), await store.ListFindingsAsync(each.Id, ct))));
 
             return Results.Ok(new
             {
@@ -384,7 +397,7 @@ public static class FactoryApi
             });
         });
 
-        api.MapPost("/decisions/{id:guid}/answer", async (Guid id, AnswerDecisionRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        decisionRoutes.MapPost("/answer", async (Guid id, AnswerDecisionRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.Answer))
                 return Problem("answer is required.");
@@ -432,6 +445,14 @@ public static class FactoryApi
         {
             return Results.Conflict(new { error = ex.Message });
         }
+    }
+
+    /// <summary>The threads of the projects the user may see; of one project when one is given.</summary>
+    private static async Task<IEnumerable<TaskThread>> VisibleThreadsAsync(
+        Guid? projectId, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, CancellationToken ct)
+    {
+        var visible = await access.VisibleProjectsAsync(user, ct);
+        return (await store.ListThreadsAsync(projectId, ct)).Where(t => visible?.Contains(t.ProjectId) ?? true);
     }
 
     private static IResult Problem(string message) => Results.BadRequest(new { error = message });

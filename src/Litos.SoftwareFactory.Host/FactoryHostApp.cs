@@ -46,6 +46,7 @@ public static class FactoryHostApp
             services.AddFactoryStore(options.ConnectionString);
         services.TryAddSingleton<IHostInstanceLock, NoHostInstanceLock>();
         services.AddFactoryAuth();
+        services.AddSingleton<ProjectAccess>();
 
         // The real providers, behind the gateway. The config is built from the host's own
         // settings: it is never loaded from, or saved to, the ~/.litos/config.json that the

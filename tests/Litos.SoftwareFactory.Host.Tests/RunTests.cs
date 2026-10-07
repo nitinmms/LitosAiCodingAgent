@@ -263,6 +263,7 @@ public sealed class RunTests : IAsyncLifetime
         });
         var (_, threadId) = await DelegatedAsync();
         var decision = Assert.Single((await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingDecision)).Decisions);
+        await _host.PostAsync($"api/decisions/{decision.Id}/answer", new { answer = " " }, HttpStatusCode.BadRequest);
         await _host.PostAsync($"api/decisions/{decision.Id}/answer", new { answer = "a" }, HttpStatusCode.OK);
 
         await _host.PostAsync($"api/decisions/{decision.Id}/answer", new { answer = "b" }, HttpStatusCode.Conflict);

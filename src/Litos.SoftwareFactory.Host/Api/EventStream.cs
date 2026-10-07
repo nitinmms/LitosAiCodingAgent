@@ -1,5 +1,6 @@
 using System.Text;
 using Litos.SoftwareFactory.Core.Store;
+using Litos.SoftwareFactory.Host.Auth;
 using Litos.SoftwareFactory.Host.Runs;
 
 namespace Litos.SoftwareFactory.Host.Api;
@@ -68,7 +69,7 @@ public static class EventStream
             {
                 // The client went away.
             }
-        }).RequireAuthorization();
+        }).RequireAuthorization().RequireProjectAccess(ProjectScoped.Thread);
 
         return app;
     }
