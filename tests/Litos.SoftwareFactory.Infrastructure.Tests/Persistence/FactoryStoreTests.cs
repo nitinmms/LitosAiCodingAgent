@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Litos.Agent.Streaming;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Budget;
@@ -1417,6 +1418,253 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         var messages = (await Store.GetThreadAsync(running.Thread.Id, default))!.Messages;
 
         Assert.Equal([1L, 2L, 3L, 4L, 5L], messages.Select(m => m.Sequence));
+    }
+
+    // ---- People and access (M2, m2-architecture.md §4) ----
+
+    protected static readonly Guid Ben = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    protected static readonly Guid Erin = Guid.Parse("33333333-3333-3333-3333-333333333333");
+
+    private async Task<Invitation> InviteAsync(string userName = "erin", DateTimeOffset? expires = null, params Guid[] projects) =>
+        await Store.AddInvitationAsync(new Invitation
+        {
+            UserName = userName,
+            TokenHash = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray()) + new string('0', 32),
+            ProjectIdsJson = JsonSerializer.Serialize(projects),
+            ExpiresAt = expires ?? T0.AddDays(7),
+            CreatedBy = Admin,
+            CreatedAt = T0,
+        }, default);
+
+    private async Task<IReadOnlyList<AuditEvent>> AuditAsync(Guid? projectId = null) => await Store.ListAuditAsync(projectId, 100, default);
+
+    [SkippableFact]
+    public async Task Project_ItsCreatorIsAMember()
+    {
+        var project = await AddProjectAsync();
+
+        Assert.True(await Store.IsMemberAsync(project.Id, Admin, default));
+        Assert.Equal([project.Id], await Store.ListMemberProjectIdsAsync(Admin, default));
+    }
+
+    [SkippableFact]
+    public async Task AddMember_RecordsTheMembershipAndItsAuditRow_AndASecondAddChangesNothing()
+    {
+        var project = await AddProjectAsync();
+
+        Assert.True(await Store.AddMemberAsync(project.Id, Ben, Admin, T0.AddMinutes(1), default));
+        Assert.False(await Store.AddMemberAsync(project.Id, Ben, Admin, T0.AddMinutes(2), default));
+
+        var member = Assert.Single(await Store.ListMembersAsync(project.Id, default), m => m.UserId == Ben);
+        Assert.Equal((Admin, T0.AddMinutes(1)), (member.CreatedBy, member.CreatedAt));
+        var row = Assert.Single(await AuditAsync());
+        Assert.Equal((Admin, AuditActions.MemberAdd, AuditTargets.User, (Guid?)Ben, (Guid?)project.Id), (row.ActorId, row.Action, row.TargetType, row.TargetId, row.ProjectId));
+    }
+
+    [SkippableFact]
+    public async Task AddMember_ToAProjectThatDoesNotExist_IsNotFound()
+    {
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.AddMemberAsync(Guid.NewGuid(), Ben, Admin, T0, default));
+        Assert.Empty(await AuditAsync());
+    }
+
+    [SkippableFact]
+    public async Task RemoveMember_EndsTheMembershipAndRecordsIt_OnlyOnce()
+    {
+        var project = await AddProjectAsync();
+        await Store.AddMemberAsync(project.Id, Ben, Admin, T0, default);
+
+        Assert.True(await Store.RemoveMemberAsync(project.Id, Ben, Admin, T0.AddMinutes(1), default));
+        Assert.False(await Store.RemoveMemberAsync(project.Id, Ben, Admin, T0.AddMinutes(2), default));
+
+        Assert.False(await Store.IsMemberAsync(project.Id, Ben, default));
+        Assert.Equal([AuditActions.MemberRemove, AuditActions.MemberAdd], (await AuditAsync()).Select(a => a.Action));
+    }
+
+    [SkippableFact]
+    public async Task Membership_IsPerProject()
+    {
+        var a = await AddProjectAsync("a");
+        var b = await AddProjectAsync("b");
+        await Store.AddMemberAsync(a.Id, Ben, Admin, T0, default);
+
+        Assert.Equal([a.Id], await Store.ListMemberProjectIdsAsync(Ben, default));
+        Assert.True(await Store.IsMemberAsync(a.Id, Ben, default));
+        Assert.False(await Store.IsMemberAsync(b.Id, Ben, default));
+    }
+
+    [SkippableFact]
+    public async Task Invitation_IsFoundByItsTokenHash_AndItsCreationIsRecorded()
+    {
+        var project = await AddProjectAsync();
+        var invitation = await InviteAsync(projects: project.Id);
+
+        var found = await Store.FindInvitationAsync(invitation.TokenHash, default);
+
+        Assert.Equal(invitation.Id, found!.Id);
+        Assert.Equal(AccountRole.Member, found.Role);
+        Assert.Null(await Store.FindInvitationAsync(new string('f', 64), default));
+        var row = Assert.Single(await AuditAsync());
+        Assert.Equal((Admin, AuditActions.InvitationCreate, (Guid?)invitation.Id), (row.ActorId, row.Action, row.TargetId));
+        Assert.Contains("erin", row.DetailsJson);
+        Assert.DoesNotContain(invitation.TokenHash, row.DetailsJson); // the audit never holds the token's hash
+    }
+
+    [SkippableFact]
+    public async Task Invitations_AreListedNewestFirst()
+    {
+        var older = await InviteAsync("older");
+        var newer = await Store.AddInvitationAsync(new Invitation
+        {
+            UserName = "newer", TokenHash = new string('a', 64), ExpiresAt = T0.AddDays(8), CreatedBy = Admin, CreatedAt = T0.AddDays(1),
+        }, default);
+
+        Assert.Equal([newer.Id, older.Id], (await Store.ListInvitationsAsync(default)).Select(i => i.Id));
+    }
+
+    [SkippableFact]
+    public async Task Accept_UsesTheInvitation_JoinsItsProjects_AndRecordsBoth()
+    {
+        var a = await AddProjectAsync("a");
+        var b = await AddProjectAsync("b");
+        var invitation = await InviteAsync(projects: [a.Id, b.Id]);
+
+        await Store.AcceptInvitationAsync(invitation.Id, Erin, T0.AddDays(1), default);
+
+        var used = await Store.FindInvitationAsync(invitation.TokenHash, default);
+        Assert.Equal((T0.AddDays(1), (Guid?)Erin), (used!.AcceptedAt, used.AcceptedUserId));
+        Assert.Equal(new[] { a.Id, b.Id }.Order(), (await Store.ListMemberProjectIdsAsync(Erin, default)).Order());
+        var rows = (await AuditAsync()).Where(r => r.ActorId == Erin).ToList();
+        Assert.Equal(1, rows.Count(r => r.Action == AuditActions.InvitationAccept));
+        Assert.Equal(new[] { a.Id, b.Id }.Order(), rows.Where(r => r.Action == AuditActions.MemberAdd).Select(r => r.ProjectId!.Value).Order());
+    }
+
+    /// <summary>A link works once: a second account cannot be made from it.</summary>
+    [SkippableFact]
+    public async Task Accept_Twice_IsAConflict_AndTheSecondAccountJoinsNothing()
+    {
+        var project = await AddProjectAsync();
+        var invitation = await InviteAsync(projects: project.Id);
+        await Store.AcceptInvitationAsync(invitation.Id, Erin, T0.AddDays(1), default);
+
+        var conflict = await Assert.ThrowsAsync<StoreConflictException>(() => Store.AcceptInvitationAsync(invitation.Id, Ben, T0.AddDays(1), default));
+
+        Assert.Equal("This invitation has already been used.", conflict.Message);
+        Assert.False(await Store.IsMemberAsync(project.Id, Ben, default));
+        Assert.Equal((Guid?)Erin, (await Store.FindInvitationAsync(invitation.TokenHash, default))!.AcceptedUserId);
+    }
+
+    [SkippableFact]
+    public async Task Accept_AfterItExpired_IsAConflict_SayingSo()
+    {
+        var invitation = await InviteAsync(expires: T0.AddDays(7));
+
+        var conflict = await Assert.ThrowsAsync<StoreConflictException>(() => Store.AcceptInvitationAsync(invitation.Id, Erin, T0.AddDays(7), default));
+
+        Assert.Contains("expired", conflict.Message);
+        Assert.Null((await Store.FindInvitationAsync(invitation.TokenHash, default))!.AcceptedAt);
+    }
+
+    [SkippableFact]
+    public async Task Accept_AfterItWasRevoked_IsAConflict_SayingSo()
+    {
+        var invitation = await InviteAsync();
+        await Store.RevokeInvitationAsync(invitation.Id, Admin, T0.AddHours(1), default);
+
+        var conflict = await Assert.ThrowsAsync<StoreConflictException>(() => Store.AcceptInvitationAsync(invitation.Id, Erin, T0.AddHours(2), default));
+
+        Assert.Contains("revoked", conflict.Message);
+    }
+
+    [SkippableFact]
+    public async Task Accept_AnUnknownInvitation_IsNotFound()
+    {
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.AcceptInvitationAsync(Guid.NewGuid(), Erin, T0, default));
+    }
+
+    /// <summary>A project removed after the invitation was made is skipped, not an error.</summary>
+    [SkippableFact]
+    public async Task Accept_SkipsAProjectThatNoLongerExists()
+    {
+        var project = await AddProjectAsync();
+        var invitation = await InviteAsync(projects: [project.Id, Guid.NewGuid()]);
+
+        await Store.AcceptInvitationAsync(invitation.Id, Erin, T0.AddDays(1), default);
+
+        Assert.Equal([project.Id], await Store.ListMemberProjectIdsAsync(Erin, default));
+    }
+
+    /// <summary>Two people opening the same link at the same moment: one account, never two.</summary>
+    [SkippableFact]
+    public async Task Accept_AtTheSameMomentTwice_SucceedsExactlyOnce()
+    {
+        var project = await AddProjectAsync();
+        var invitation = await InviteAsync(projects: project.Id);
+
+        var results = await Task.WhenAll(
+            Task.Run(() => TryAcceptAsync(invitation.Id, Erin)),
+            Task.Run(() => TryAcceptAsync(invitation.Id, Ben)));
+
+        Assert.Equal(1, results.Count(accepted => accepted));
+        Assert.Single(await Store.ListMembersAsync(project.Id, default), m => m.UserId == Erin || m.UserId == Ben);
+    }
+
+    private async Task<bool> TryAcceptAsync(Guid invitationId, Guid userId)
+    {
+        try
+        {
+            await Store.AcceptInvitationAsync(invitationId, userId, T0.AddDays(1), default);
+            return true;
+        }
+        catch (StoreConflictException)
+        {
+            return false;
+        }
+    }
+
+    [SkippableFact]
+    public async Task Revoke_StopsTheLink_RecordsWhoDidIt_AndCannotBeRepeated()
+    {
+        var invitation = await InviteAsync();
+
+        await Store.RevokeInvitationAsync(invitation.Id, Admin, T0.AddHours(1), default);
+
+        Assert.Equal(T0.AddHours(1), (await Store.FindInvitationAsync(invitation.TokenHash, default))!.RevokedAt);
+        Assert.Equal(AuditActions.InvitationRevoke, (await AuditAsync())[0].Action);
+        var again = await Assert.ThrowsAsync<StoreConflictException>(() => Store.RevokeInvitationAsync(invitation.Id, Admin, T0.AddHours(2), default));
+        Assert.Contains("already been revoked", again.Message);
+    }
+
+    [SkippableFact]
+    public async Task Revoke_AnInvitationAlreadyUsed_IsAConflict_AndChangesNothing()
+    {
+        var invitation = await InviteAsync();
+        await Store.AcceptInvitationAsync(invitation.Id, Erin, T0.AddHours(1), default);
+
+        var conflict = await Assert.ThrowsAsync<StoreConflictException>(() => Store.RevokeInvitationAsync(invitation.Id, Admin, T0.AddHours(2), default));
+
+        Assert.Contains("already been used", conflict.Message);
+        Assert.Null((await Store.FindInvitationAsync(invitation.TokenHash, default))!.RevokedAt);
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.RevokeInvitationAsync(Guid.NewGuid(), Admin, T0, default));
+    }
+
+    [SkippableFact]
+    public async Task Audit_IsListedNewestFirst_ByProjectOrEverything_UpToTheLimit()
+    {
+        var a = await AddProjectAsync("a");
+        var b = await AddProjectAsync("b");
+        await Store.AddMemberAsync(a.Id, Ben, Admin, T0.AddMinutes(1), default);
+        await Store.AddMemberAsync(b.Id, Ben, Admin, T0.AddMinutes(2), default);
+        await Store.AddAuditAsync(new AuditEvent
+        {
+            ActorId = Admin, Action = "user.disable", TargetType = AuditTargets.User, TargetId = Ben,
+            DetailsJson = """{"reason":"left the team"}""", CreatedAt = T0.AddMinutes(3),
+        }, default);
+
+        Assert.Equal(["user.disable", AuditActions.MemberAdd, AuditActions.MemberAdd], (await AuditAsync()).Select(r => r.Action));
+        Assert.Equal([(Guid?)a.Id], (await AuditAsync(a.Id)).Select(r => r.ProjectId));
+        Assert.Single(await Store.ListAuditAsync(null, 1, default));
+        Assert.Contains("left the team", (await AuditAsync())[0].DetailsJson);
     }
 }
 

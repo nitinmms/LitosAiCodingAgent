@@ -33,6 +33,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         if (project.Id == Guid.Empty)
             project.Id = Guid.NewGuid();
         db.Projects.Add(project);
+        // Whoever registers a project belongs to it.
+        db.ProjectMembers.Add(new ProjectMember { ProjectId = project.Id, UserId = project.CreatedBy, CreatedBy = project.CreatedBy, CreatedAt = project.CreatedAt });
         try
         {
             await db.SaveChangesAsync(ct);
@@ -958,6 +960,184 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             : await db.Threads.FirstOrDefaultAsync(t => t.Id == threadId, ct);
         return thread ?? throw new StoreNotFoundException("The thread does not exist.");
     }
+
+    // ---- People and access ----
+
+    public async Task<IReadOnlyList<Guid>> ListMemberProjectIdsAsync(Guid userId, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.ProjectMembers.AsNoTracking().Where(m => m.UserId == userId).Select(m => m.ProjectId).ToListAsync(ct);
+    }
+
+    public async Task<bool> IsMemberAsync(Guid projectId, Guid userId, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.ProjectMembers.AnyAsync(m => m.ProjectId == projectId && m.UserId == userId, ct);
+    }
+
+    public async Task<IReadOnlyList<ProjectMember>> ListMembersAsync(Guid projectId, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.ProjectMembers.AsNoTracking().Where(m => m.ProjectId == projectId).OrderBy(m => m.CreatedAt).ToListAsync(ct);
+    }
+
+    public async Task<bool> AddMemberAsync(Guid projectId, Guid userId, Guid actorId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        if (!await db.Projects.AnyAsync(p => p.Id == projectId, ct))
+            throw new StoreNotFoundException("The project does not exist.");
+        if (await db.ProjectMembers.AnyAsync(m => m.ProjectId == projectId && m.UserId == userId, ct))
+            return false;
+
+        db.ProjectMembers.Add(new ProjectMember { ProjectId = projectId, UserId = userId, CreatedBy = actorId, CreatedAt = now });
+        Audit(db, actorId, AuditActions.MemberAdd, AuditTargets.User, userId, projectId, null, now);
+        try
+        {
+            await write.CommitAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            // Added by someone else a moment ago: the outcome is the same.
+            return false;
+        }
+
+        return true;
+    }
+
+    public async Task<bool> RemoveMemberAsync(Guid projectId, Guid userId, Guid actorId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var member = await db.ProjectMembers.FirstOrDefaultAsync(m => m.ProjectId == projectId && m.UserId == userId, ct);
+        if (member is null)
+            return false;
+
+        db.ProjectMembers.Remove(member);
+        Audit(db, actorId, AuditActions.MemberRemove, AuditTargets.User, userId, projectId, null, now);
+        await write.CommitAsync(ct);
+        return true;
+    }
+
+    public async Task<Invitation> AddInvitationAsync(Invitation invitation, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        if (invitation.Id == Guid.Empty)
+            invitation.Id = Guid.NewGuid();
+        db.Invitations.Add(invitation);
+        Audit(db, invitation.CreatedBy, AuditActions.InvitationCreate, AuditTargets.Invitation, invitation.Id, null,
+            new { invitation.UserName, Role = invitation.Role.ToString(), ProjectIds = ProjectIdsOf(invitation), invitation.ExpiresAt }, invitation.CreatedAt);
+        await write.CommitAsync(ct);
+        return invitation;
+    }
+
+    public async Task<IReadOnlyList<Invitation>> ListInvitationsAsync(CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Invitations.AsNoTracking().OrderByDescending(i => i.CreatedAt).ToListAsync(ct);
+    }
+
+    public async Task<Invitation?> FindInvitationAsync(string tokenHash, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Invitations.AsNoTracking().FirstOrDefaultAsync(i => i.TokenHash == tokenHash, ct);
+    }
+
+    public async Task RevokeInvitationAsync(Guid invitationId, Guid actorId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+
+        // Conditional, so a revoke and an acceptance at the same moment cannot both succeed.
+        var revoked = await db.Invitations
+            .Where(i => i.Id == invitationId && i.AcceptedAt == null && i.RevokedAt == null)
+            .ExecuteUpdateAsync(set => set.SetProperty(i => i.RevokedAt, now), ct);
+        if (revoked == 0)
+        {
+            var invitation = await db.Invitations.AsNoTracking().FirstOrDefaultAsync(i => i.Id == invitationId, ct)
+                ?? throw new StoreNotFoundException("The invitation does not exist.");
+            throw new StoreConflictException(invitation.AcceptedAt is not null
+                ? "This invitation has already been used."
+                : "This invitation has already been revoked.");
+        }
+
+        Audit(db, actorId, AuditActions.InvitationRevoke, AuditTargets.Invitation, invitationId, null, null, now);
+        await write.CommitAsync(ct);
+    }
+
+    public async Task<Invitation> AcceptInvitationAsync(Guid invitationId, Guid userId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+
+        // Conditional, so only one acceptance of a link can ever succeed.
+        var accepted = await db.Invitations
+            .Where(i => i.Id == invitationId && i.AcceptedAt == null && i.RevokedAt == null && i.ExpiresAt > now)
+            .ExecuteUpdateAsync(set => set.SetProperty(i => i.AcceptedAt, now).SetProperty(i => i.AcceptedUserId, userId), ct);
+        var invitation = await db.Invitations.AsNoTracking().FirstOrDefaultAsync(i => i.Id == invitationId, ct)
+            ?? throw new StoreNotFoundException("The invitation does not exist.");
+        if (accepted == 0)
+            throw new StoreConflictException(UnusableReason(invitation, now));
+
+        Audit(db, userId, AuditActions.InvitationAccept, AuditTargets.Invitation, invitationId, null,
+            new { invitation.UserName, Role = invitation.Role.ToString() }, now);
+
+        // A project deleted since the invitation was made is skipped, not an error.
+        var wanted = ProjectIdsOf(invitation);
+        var projects = await db.Projects.Where(p => wanted.Contains(p.Id)).Select(p => p.Id).ToListAsync(ct);
+        foreach (var projectId in projects)
+        {
+            db.ProjectMembers.Add(new ProjectMember { ProjectId = projectId, UserId = userId, CreatedBy = invitation.CreatedBy, CreatedAt = now });
+            Audit(db, userId, AuditActions.MemberAdd, AuditTargets.User, userId, projectId, new { FromInvitation = invitationId }, now);
+        }
+
+        await write.CommitAsync(ct);
+        return invitation;
+    }
+
+    /// <summary>Why an invitation's link no longer works, in words for the person holding it.</summary>
+    internal static string UnusableReason(Invitation invitation, DateTimeOffset now) =>
+        invitation.AcceptedAt is not null ? "This invitation has already been used."
+        : invitation.RevokedAt is not null ? "This invitation was revoked. Ask an Admin for a new one."
+        : invitation.ExpiresAt <= now ? "This invitation has expired. Ask an Admin for a new one."
+        : "This invitation cannot be used.";
+
+    public async Task AddAuditAsync(AuditEvent auditEvent, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        if (auditEvent.Id == Guid.Empty)
+            auditEvent.Id = Guid.NewGuid();
+        db.AuditEvents.Add(auditEvent);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<AuditEvent>> ListAuditAsync(Guid? projectId, int limit, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var events = db.AuditEvents.AsNoTracking();
+        if (projectId is { } id)
+            events = events.Where(a => a.ProjectId == id);
+        return await events.OrderByDescending(a => a.CreatedAt).ThenByDescending(a => a.Id).Take(limit).ToListAsync(ct);
+    }
+
+    private static IReadOnlyList<Guid> ProjectIdsOf(Invitation invitation) =>
+        JsonSerializer.Deserialize<List<Guid>>(invitation.ProjectIdsJson) ?? [];
+
+    /// <summary>Adds an audit row to the transaction under way, so it commits with the change it records.</summary>
+    private static void Audit(
+        FactoryDbContext db, Guid actorId, string action, string targetType, Guid? targetId, Guid? projectId, object? details, DateTimeOffset now) =>
+        db.AuditEvents.Add(new AuditEvent
+        {
+            Id = Guid.NewGuid(),
+            ActorId = actorId,
+            Action = action,
+            TargetType = targetType,
+            TargetId = targetId,
+            ProjectId = projectId,
+            DetailsJson = details is null ? null : JsonSerializer.Serialize(details, FactoryWire.Json),
+            CreatedAt = now,
+        });
 
     private async Task<WriteScope> BeginWriteAsync(CancellationToken ct, bool claim = false)
     {

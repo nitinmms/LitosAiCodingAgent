@@ -34,6 +34,9 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<HandoffRecord> Handoffs => Set<HandoffRecord>();
     public DbSet<WorkspaceLease> Leases => Set<WorkspaceLease>();
     public DbSet<OutboxEvent> Outbox => Set<OutboxEvent>();
+    public DbSet<Invitation> Invitations => Set<Invitation>();
+    public DbSet<ProjectMember> ProjectMembers => Set<ProjectMember>();
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configuration)
     {
@@ -84,6 +87,8 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             // Board queries and the coordinator's search for queued work.
             e.HasIndex(t => new { t.ProjectId, t.Stage, t.State });
             e.HasIndex(t => t.State);
+            // The board's owner filter and "awaiting you".
+            e.HasIndex(t => t.OwnerId);
         });
 
         model.Entity<ThreadMessage>(e =>
@@ -184,6 +189,36 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(o => o.Type).HasMaxLength(40);
             Json(e.Property(o => o.PayloadJson));
             e.HasIndex(o => new { o.ThreadId, o.Sequence });
+        });
+
+        model.Entity<Invitation>(e =>
+        {
+            e.ToTable("invitations");
+            e.Property(i => i.UserName).HasMaxLength(100);
+            e.Property(i => i.Email).HasMaxLength(256);
+            e.Property(i => i.TokenHash).HasMaxLength(64);
+            Json(e.Property(i => i.ProjectIdsJson));
+            e.HasIndex(i => i.TokenHash).IsUnique();
+            e.HasIndex(i => i.UserName);
+        });
+
+        model.Entity<ProjectMember>(e =>
+        {
+            e.ToTable("project_members");
+            e.HasKey(m => new { m.ProjectId, m.UserId });
+            e.HasOne<Project>().WithMany().HasForeignKey(m => m.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            // Which projects a user belongs to: asked on every project-scoped call.
+            e.HasIndex(m => m.UserId);
+        });
+
+        model.Entity<AuditEvent>(e =>
+        {
+            e.ToTable("audit_events");
+            e.Property(a => a.Action).HasMaxLength(80);
+            e.Property(a => a.TargetType).HasMaxLength(40);
+            Json(e.Property(a => a.DetailsJson));
+            e.HasIndex(a => new { a.ProjectId, a.CreatedAt });
+            e.HasIndex(a => a.CreatedAt);
         });
     }
 }

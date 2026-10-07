@@ -6,8 +6,8 @@ using Litos.SoftwareFactory.Core.Verification;
 
 namespace Litos.SoftwareFactory.Core.Store;
 
-// The factory's persisted records for M1 (ReadMe_LitosSoftwareFactory_V1.md §14,
-// docs/software-factory/m1-architecture.md §7). Plain classes with no persistence attributes:
+// The factory's persisted records (ReadMe_LitosSoftwareFactory_V1.md §14,
+// docs/software-factory/m1-architecture.md §7, m2-architecture.md §4). Plain classes with no persistence attributes:
 // the mapping to tables lives in Infrastructure. Primary keys are UUIDs, timestamps are UTC,
 // token counts and caps are 64-bit.
 
@@ -367,6 +367,104 @@ public sealed class OutboxEvent
     public required string Type { get; set; }
     public required string PayloadJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+// ---- People and access (M2, docs/software-factory/m2-architecture.md §4) ----
+
+/// <summary>An account's factory-wide role (§13.3). Stored by name; the names are the Identity roles.</summary>
+public enum AccountRole
+{
+    /// <summary>Works in the projects they belong to: threads, delegation, decisions, acceptance.</summary>
+    Member,
+
+    /// <summary>Runs the factory: people, projects, credentials and limits. Sees every project.</summary>
+    Admin,
+}
+
+/// <summary>
+/// A one-time invitation to create an account (§13.3: no self-service sign-up). Only the SHA-256
+/// of the link's token is kept, so the link cannot be recovered from the database.
+/// </summary>
+public sealed class Invitation
+{
+    public Guid Id { get; set; }
+
+    /// <summary>The name the invitee signs in with.</summary>
+    public required string UserName { get; set; }
+
+    /// <summary>For the Admin's reference only; nothing is sent to it.</summary>
+    public string? Email { get; set; }
+    public AccountRole Role { get; set; } = AccountRole.Member;
+
+    /// <summary>The projects the invitee joins on accepting: a JSON array of project ids.</summary>
+    public string ProjectIdsJson { get; set; } = "[]";
+
+    /// <summary>Lower-case hex SHA-256 of the link's token.</summary>
+    public required string TokenHash { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public Guid CreatedBy { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? AcceptedAt { get; set; }
+    public Guid? AcceptedUserId { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+
+    /// <summary>Whether the link still creates an account at <paramref name="now"/>.</summary>
+    public bool IsUsable(DateTimeOffset now) => AcceptedAt is null && RevokedAt is null && now < ExpiresAt;
+}
+
+/// <summary>A Member's place in a project (§14). Admins need none: they see every project.</summary>
+public sealed class ProjectMember
+{
+    public Guid ProjectId { get; set; }
+    public Guid UserId { get; set; }
+    public Guid CreatedBy { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
+/// One change a person made, written in the same transaction as the change (§13.3: every action
+/// records the acting user). Reads are not recorded.
+/// </summary>
+public sealed class AuditEvent
+{
+    public Guid Id { get; set; }
+
+    /// <summary>Who acted.</summary>
+    public Guid ActorId { get; set; }
+
+    /// <summary>What they did, as a dotted name: see <see cref="AuditActions"/>.</summary>
+    public required string Action { get; set; }
+
+    /// <summary>The kind of thing acted on: see <see cref="AuditTargets"/>.</summary>
+    public required string TargetType { get; set; }
+    public Guid? TargetId { get; set; }
+
+    /// <summary>The project it happened in; null for a factory-wide change.</summary>
+    public Guid? ProjectId { get; set; }
+
+    /// <summary>What changed, as JSON (before and after where there is one).</summary>
+    public string? DetailsJson { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+public static class AuditTargets
+{
+    public const string Project = "project";
+    public const string Thread = "thread";
+    public const string Decision = "decision";
+    public const string Finding = "finding";
+    public const string User = "user";
+    public const string Invitation = "invitation";
+}
+
+public static class AuditActions
+{
+    public const string ProjectRegister = "project.register";
+    public const string MemberAdd = "project.member.add";
+    public const string MemberRemove = "project.member.remove";
+    public const string InvitationCreate = "invitation.create";
+    public const string InvitationRevoke = "invitation.revoke";
+    public const string InvitationAccept = "invitation.accept";
 }
 
 public static class EventTypes

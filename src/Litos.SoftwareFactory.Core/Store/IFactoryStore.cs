@@ -236,4 +236,53 @@ public interface IFactoryStore
     /// <summary>The sequence number of the thread's newest event, or 0 when it has none: where a
     /// client that has just loaded the thread starts listening from.</summary>
     Task<long> LastEventSequenceAsync(Guid threadId, CancellationToken ct);
+
+    // ---- People and access (docs/software-factory/m2-architecture.md §4) ----
+    //
+    // Every change here writes its AuditEvent in the same transaction. Accounts themselves live in
+    // Identity, which the host changes through its UserManager; it records those with AddAuditAsync.
+
+    /// <summary>The projects a user is a member of. Admins see every project whatever this says.</summary>
+    Task<IReadOnlyList<Guid>> ListMemberProjectIdsAsync(Guid userId, CancellationToken ct);
+
+    Task<bool> IsMemberAsync(Guid projectId, Guid userId, CancellationToken ct);
+
+    Task<IReadOnlyList<ProjectMember>> ListMembersAsync(Guid projectId, CancellationToken ct);
+
+    /// <summary>Makes the user a member of the project. False, and nothing recorded, when they
+    /// already are.</summary>
+    /// <exception cref="StoreNotFoundException">The project does not exist.</exception>
+    Task<bool> AddMemberAsync(Guid projectId, Guid userId, Guid actorId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Ends the user's membership. False, and nothing recorded, when they had none.</summary>
+    Task<bool> RemoveMemberAsync(Guid projectId, Guid userId, Guid actorId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Records a new invitation, made by its CreatedBy.</summary>
+    Task<Invitation> AddInvitationAsync(Invitation invitation, CancellationToken ct);
+
+    /// <summary>Every invitation, newest first.</summary>
+    Task<IReadOnlyList<Invitation>> ListInvitationsAsync(CancellationToken ct);
+
+    /// <summary>The invitation whose link's token hashes to this, or null.</summary>
+    Task<Invitation?> FindInvitationAsync(string tokenHash, CancellationToken ct);
+
+    /// <summary>Makes an unused invitation's link stop working.</summary>
+    /// <exception cref="StoreNotFoundException">There is no such invitation.</exception>
+    /// <exception cref="StoreConflictException">It was already accepted or revoked.</exception>
+    Task RevokeInvitationAsync(Guid invitationId, Guid actorId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// Uses up an invitation for the account just created for it, and makes that account a member
+    /// of the invitation's projects that still exist. Only one acceptance can ever succeed.
+    /// </summary>
+    /// <exception cref="StoreNotFoundException">There is no such invitation.</exception>
+    /// <exception cref="StoreConflictException">It was accepted, revoked or has expired; the
+    /// message says which.</exception>
+    Task<Invitation> AcceptInvitationAsync(Guid invitationId, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Records a change made outside the store, such as to an Identity account.</summary>
+    Task AddAuditAsync(AuditEvent auditEvent, CancellationToken ct);
+
+    /// <summary>The newest audit rows, of one project or of everything.</summary>
+    Task<IReadOnlyList<AuditEvent>> ListAuditAsync(Guid? projectId, int limit, CancellationToken ct);
 }
