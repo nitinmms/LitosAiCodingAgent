@@ -73,6 +73,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         db.Threads.Add(thread);
         Audit(db, thread.OwnerId, AuditActions.ThreadCreate, AuditTargets.Thread, thread.Id, thread.ProjectId,
             new { thread.Title, thread.TypeLabel, thread.BudgetCap }, thread.CreatedAt);
+        // Announced, so every board showing the project sees the new card.
+        Touch(db, thread, thread.CreatedAt);
         await db.SaveChangesAsync(ct);
         return thread;
     }
@@ -923,6 +925,36 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             .OrderBy(e => e.Sequence)
             .Take(limit)
             .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<OutboxEvent>> ReadBoardEventsAsync(
+        IReadOnlySet<Guid>? projectIds, long afterSequence, int limit, CancellationToken ct)
+    {
+        if (projectIds is { Count: 0 })
+            return [];
+
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var events = db.Outbox.AsNoTracking()
+            .Where(e => e.Sequence > afterSequence && (e.Type == EventTypes.StateChanged || e.Type == EventTypes.UsageChanged));
+        if (projectIds is not null)
+        {
+            var ids = projectIds.ToList();
+            events = events.Where(e => ids.Contains(e.ProjectId));
+        }
+
+        return await events.OrderBy(e => e.Sequence).Take(limit).ToListAsync(ct);
+    }
+
+    public async Task<long> LastEventSequenceAsync(CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Outbox.AsNoTracking().OrderByDescending(e => e.Sequence).Select(e => e.Sequence).FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<TaskThread?> FindThreadAsync(Guid threadId, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Threads.AsNoTracking().FirstOrDefaultAsync(t => t.Id == threadId, ct);
     }
 
     public async Task<long> LastEventSequenceAsync(Guid threadId, CancellationToken ct)

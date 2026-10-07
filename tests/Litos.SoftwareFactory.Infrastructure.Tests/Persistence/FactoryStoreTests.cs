@@ -159,7 +159,8 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.False(string.IsNullOrEmpty(details.LatestRun.PromptRevision));
 
         var events = await Store.ReadEventsAsync(thread.Id, 0, 100, default);
-        Assert.Equal([EventTypes.MessageAdded, EventTypes.StateChanged], events.Select(e => e.Type));
+        // The thread's creation, then the delegation's message and state.
+        Assert.Equal([EventTypes.StateChanged, EventTypes.MessageAdded, EventTypes.StateChanged], events.Select(e => e.Type));
     }
 
     /// <summary>Acceptance scenario 19: a double-click or a network retry creates one assignment.</summary>
@@ -1406,6 +1407,49 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         await Store.AddFactoryMessageAsync(a.Thread.Id, MessageKind.Status, "only for a", null, T0, default);
 
         Assert.DoesNotContain(await Store.ReadEventsAsync(b.Thread.Id, 0, 100, default), e => e.PayloadJson.Contains("only for a"));
+    }
+
+    /// <summary>A board hears its projects' state and usage changes, and no messages.</summary>
+    [SkippableFact]
+    public async Task BoardEvents_AreTheStateAndUsageEventsOfTheGivenProjects()
+    {
+        var a = await RunningAsync("a");
+        var b = await RunningAsync("b");
+        await Store.AddFactoryMessageAsync(a.Thread.Id, MessageKind.Status, "a note", null, T0, default);
+        await Store.SetBudgetCapAsync(a.Thread.Id, 400_000, Admin, T0, default);
+
+        var onlyA = await Store.ReadBoardEventsAsync(new HashSet<Guid> { a.Project.Id }, 0, 100, default);
+        var all = await Store.ReadBoardEventsAsync(null, 0, 100, default);
+
+        Assert.All(onlyA, e => Assert.Equal(a.Project.Id, e.ProjectId));
+        Assert.Contains(onlyA, e => e.Type == EventTypes.UsageChanged);
+        Assert.DoesNotContain(all, e => e.Type == EventTypes.MessageAdded);
+        Assert.Contains(all, e => e.ProjectId == b.Project.Id);
+        Assert.Equal(all.Select(e => e.Sequence).Order(), all.Select(e => e.Sequence));
+        Assert.Empty(await Store.ReadBoardEventsAsync(new HashSet<Guid>(), 0, 100, default));
+        Assert.Empty(await Store.ReadBoardEventsAsync(null, all[^1].Sequence, 100, default));
+    }
+
+    [SkippableFact]
+    public async Task ANewThread_IsAnnounced_SoBoardsSeeIt()
+    {
+        var project = await AddProjectAsync();
+        var thread = await AddThreadAsync(project);
+
+        var announced = Assert.Single(await Store.ReadBoardEventsAsync(null, 0, 100, default));
+
+        Assert.Equal((thread.Id, EventTypes.StateChanged), (announced.ThreadId, announced.Type));
+        Assert.Equal(announced.Sequence, await Store.LastEventSequenceAsync(default));
+    }
+
+    [SkippableFact]
+    public async Task FindThread_ReturnsTheRowAlone_OrNull()
+    {
+        var project = await AddProjectAsync();
+        var thread = await AddThreadAsync(project);
+
+        Assert.Equal(thread.Title, (await Store.FindThreadAsync(thread.Id, default))!.Title);
+        Assert.Null(await Store.FindThreadAsync(Guid.NewGuid(), default));
     }
 
     [SkippableFact]

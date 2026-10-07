@@ -420,13 +420,15 @@ public sealed class ApiTests : IAsyncLifetime
         await _host.DelegateAsync(threadId);
 
         using var response = await _host.Client.GetAsync($"api/threads/{threadId}/events", HttpCompletionOption.ResponseHeadersRead);
-        var events = await ReadEventsAsync(response, 2, TimeSpan.FromSeconds(10));
+        var events = await ReadEventsAsync(response, 3, TimeSpan.FromSeconds(10));
 
         Assert.Equal("text/event-stream", response.Content.Headers.ContentType!.MediaType);
-        Assert.Equal(["message", "state"], events.Select(e => e.Type));
-        Assert.True(events[0].Id < events[1].Id);
-        Assert.Equal("Add CSV export for Orders.", events[0].Data.GetProperty("text").GetString());
-        Assert.Equal("Queued", events[1].Data.GetProperty("state").GetString());
+        // The thread's creation, then the delegation's message and state.
+        Assert.Equal(["state", "message", "state"], events.Select(e => e.Type));
+        Assert.True(events[0].Id < events[1].Id && events[1].Id < events[2].Id);
+        Assert.Equal("Draft", events[0].Data.GetProperty("state").GetString());
+        Assert.Equal("Add CSV export for Orders.", events[1].Data.GetProperty("text").GetString());
+        Assert.Equal("Queued", events[2].Data.GetProperty("state").GetString());
     }
 
     /// <summary>§12: a reconnecting client replays everything after its last seen event.</summary>
@@ -454,12 +456,13 @@ public sealed class ApiTests : IAsyncLifetime
     {
         var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
         using var response = await _host.Client.GetAsync($"api/threads/{threadId}/events", HttpCompletionOption.ResponseHeadersRead);
-        var reading = ReadEventsAsync(response, 2, TimeSpan.FromSeconds(15));
+        var reading = ReadEventsAsync(response, 3, TimeSpan.FromSeconds(15));
 
         await Task.Delay(300); // the stream is open and idle
         await _host.DelegateAsync(threadId);
 
-        Assert.Equal(["message", "state"], (await reading).Select(e => e.Type));
+        // The creation was replayed when the stream opened; the rest arrived live.
+        Assert.Equal(["state", "message", "state"], (await reading).Select(e => e.Type));
     }
 
     /// <summary>A browser that reconnects by itself repeats the URL it first opened, so its
@@ -495,7 +498,9 @@ public sealed class ApiTests : IAsyncLifetime
     public async Task GetThread_CarriesTheEventCursor_AndListeningFromItHearsOnlyWhatFollows()
     {
         var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
-        Assert.Equal(0, (await _host.GetAsync($"api/threads/{threadId}")).GetProperty("eventCursor").GetInt64());
+        // A new thread has one event: its creation.
+        var created = (await _host.GetAsync($"api/threads/{threadId}")).GetProperty("eventCursor").GetInt64();
+        Assert.Equal(Assert.Single(await _host.Store.ReadEventsAsync(threadId, 0, 100, default)).Sequence, created);
 
         await _host.DelegateAsync(threadId);
         var all = await _host.Store.ReadEventsAsync(threadId, 0, 100, default);
@@ -518,10 +523,13 @@ public sealed class ApiTests : IAsyncLifetime
         var projectId = await _host.RegisterProjectAsync();
         var busy = await _host.CreateThreadAsync(projectId);
         var quiet = await _host.CreateThreadAsync(projectId, "Another task");
+        var quietBefore = await _host.Store.LastEventSequenceAsync(quiet, default);
+        var busyBefore = await _host.Store.LastEventSequenceAsync(busy, default);
         await _host.DelegateAsync(busy);
 
-        Assert.True(await _host.Store.LastEventSequenceAsync(busy, default) > 0);
-        Assert.Equal(0, await _host.Store.LastEventSequenceAsync(quiet, default));
+        Assert.True(await _host.Store.LastEventSequenceAsync(busy, default) > busyBefore);
+        Assert.Equal(quietBefore, await _host.Store.LastEventSequenceAsync(quiet, default));
+        Assert.Equal(0, await _host.Store.LastEventSequenceAsync(Guid.NewGuid(), default));
     }
 
     // ---- Usage ----

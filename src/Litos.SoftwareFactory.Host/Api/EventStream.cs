@@ -29,11 +29,7 @@ public static class EventStream
             }
 
             var cursor = StartCursor(after, context.Request.Headers["Last-Event-ID"]);
-
-            context.Response.Headers.ContentType = "text/event-stream";
-            context.Response.Headers.CacheControl = "no-cache";
-            // Tell a reverse proxy not to buffer the stream (§13.3).
-            context.Response.Headers["X-Accel-Buffering"] = "no";
+            StartStream(context);
             await context.Response.Body.FlushAsync(ct);
 
             try
@@ -71,8 +67,71 @@ public static class EventStream
             }
         }).RequireAuthorization().RequireProjectAccess(ProjectScoped.Thread);
 
+        // The board's stream (m2-architecture.md §6): every thread change in the projects the
+        // user can see, as the thread's whole current view, so a board never has to re-fetch.
+        // Who can see what is asked again on every pass, so a membership change takes effect.
+        app.MapGet("/api/events", async (
+            long? after, HttpContext context, IFactoryStore store, ProjectAccess access, FactorySignals signals, CancellationToken ct) =>
+        {
+            var cursor = StartCursor(after, context.Request.Headers["Last-Event-ID"]);
+            StartStream(context);
+            await context.Response.Body.FlushAsync(ct);
+
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    var woken = signals.NextEvents;
+                    var visible = await access.VisibleProjectsAsync(context.User, ct);
+                    var events = await store.ReadBoardEventsAsync(visible, cursor, PageSize, ct);
+
+                    // A thread changed several times in one page is sent once, as it is now.
+                    foreach (var latest in events.GroupBy(e => e.ThreadId).Select(g => g.Last()).OrderBy(e => e.Sequence))
+                    {
+                        if (await store.FindThreadAsync(latest.ThreadId, ct) is { } thread)
+                            await context.Response.WriteAsync(FormatThread(latest.Sequence, thread), ct);
+                    }
+
+                    if (events.Count > 0)
+                    {
+                        cursor = events[^1].Sequence;
+                        // An id-only comment moves Last-Event-ID past events this user may not see.
+                        await context.Response.WriteAsync($"id: {cursor}\n\n", ct);
+                        await context.Response.Body.FlushAsync(ct);
+                        if (events.Count == PageSize)
+                            continue;
+                    }
+
+                    if (await Task.WhenAny(woken, Task.Delay(idle, ct)) != woken)
+                    {
+                        await context.Response.WriteAsync(": keep-alive\n\n", ct);
+                        await context.Response.Body.FlushAsync(ct);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // The client went away.
+            }
+        }).RequireAuthorization();
+
         return app;
     }
+
+    private static void StartStream(HttpContext context)
+    {
+        context.Response.Headers.ContentType = "text/event-stream";
+        context.Response.Headers.CacheControl = "no-cache";
+        // Tell a reverse proxy not to buffer the stream (§13.3).
+        context.Response.Headers["X-Accel-Buffering"] = "no";
+    }
+
+    /// <summary>A board event: the thread's whole current view, as the API returns it.</summary>
+    internal static string FormatThread(long sequence, TaskThread thread) => new StringBuilder()
+        .Append("id: ").Append(sequence).Append('\n')
+        .Append("event: thread\n")
+        .Append("data: ").Append(System.Text.Json.JsonSerializer.Serialize(FactoryApi.ThreadView(thread), System.Text.Json.JsonSerializerOptions.Web)).Append("\n\n")
+        .ToString();
 
     /// <summary>
     /// Where a stream starts: after the later of ?after= and Last-Event-ID. A browser that

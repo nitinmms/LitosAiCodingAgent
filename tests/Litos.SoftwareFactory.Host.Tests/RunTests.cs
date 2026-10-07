@@ -623,7 +623,7 @@ public sealed class RunTests : IAsyncLifetime
             .Distinct().ToList();
 
         Assert.Equal(
-            ["Implement/Queued", "Implement/Running", "Verify/Running", "Review/Running", "Handoff/Running", "Handoff/AwaitingHumanTesting"],
+            ["Discuss/Draft", "Implement/Queued", "Implement/Running", "Verify/Running", "Review/Running", "Handoff/Running", "Handoff/AwaitingHumanTesting"],
             states);
         Assert.Contains(events, e => e.Type == EventTypes.MessageAdded && e.PayloadJson.Contains("Ready for human testing."));
     }

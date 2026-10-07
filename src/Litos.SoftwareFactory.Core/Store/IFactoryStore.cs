@@ -249,6 +249,19 @@ public interface IFactoryStore
     /// client that has just loaded the thread starts listening from.</summary>
     Task<long> LastEventSequenceAsync(Guid threadId, CancellationToken ct);
 
+    /// <summary>
+    /// The state and usage events of the given projects after a sequence number, oldest first:
+    /// what a board listens to. Null projects means every project (an Admin).
+    /// </summary>
+    Task<IReadOnlyList<OutboxEvent>> ReadBoardEventsAsync(IReadOnlySet<Guid>? projectIds, long afterSequence, int limit, CancellationToken ct);
+
+    /// <summary>The newest event's sequence number across every thread, or 0: where a client that
+    /// has just loaded the thread list starts listening from.</summary>
+    Task<long> LastEventSequenceAsync(CancellationToken ct);
+
+    /// <summary>One thread's row alone, without its messages and records; null when there is none.</summary>
+    Task<TaskThread?> FindThreadAsync(Guid threadId, CancellationToken ct);
+
     // ---- People and access (docs/software-factory/m2-architecture.md §4) ----
     //
     // Every change here writes its AuditEvent in the same transaction. Accounts themselves live in

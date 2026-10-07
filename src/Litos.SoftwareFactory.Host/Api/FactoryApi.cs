@@ -71,6 +71,9 @@ public static class FactoryMention
 
 public static class FactoryApi
 {
+    /// <summary>On the thread list: where the board's event stream starts from.</summary>
+    public const string EventCursorHeader = "X-Event-Cursor";
+
     public static IEndpointRouteBuilder MapFactoryApi(this IEndpointRouteBuilder app)
     {
         var api = app.MapGroup("/api").RequireAuthorization();
@@ -158,11 +161,17 @@ public static class FactoryApi
                 .Select(u => new { u.Id, Name = string.IsNullOrWhiteSpace(u.DisplayName) ? u.UserName : u.DisplayName }));
         });
 
-        api.MapGet("/threads", async (Guid? projectId, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, CancellationToken ct) =>
-            Results.Ok((await VisibleThreadsAsync(projectId, user, store, access, ct)).Select(ThreadView)));
+        api.MapGet("/threads", async (
+            Guid? projectId, ClaimsPrincipal user, HttpResponse response, IFactoryStore store, ProjectAccess access, CancellationToken ct) =>
+        {
+            // Read before the list: GET /api/events?after= this cursor then misses nothing.
+            response.Headers[EventCursorHeader] = (await store.LastEventSequenceAsync(ct)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return Results.Ok((await VisibleThreadsAsync(projectId, user, store, access, ct)).Select(ThreadView));
+        });
 
         api.MapPost("/threads", async (
-            CreateThreadRequest request, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, FactoryOptions options, IClock clock, CancellationToken ct) =>
+            CreateThreadRequest request, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, FactoryOptions options, FactorySignals signals,
+            IClock clock, CancellationToken ct) =>
         {
             // Outside the project it is not found, as a project that does not exist.
             if (!await access.CanSeeProjectAsync(user, request.ProjectId, ct))
@@ -190,6 +199,7 @@ public static class FactoryApi
                     CreatedAt = now,
                     UpdatedAt = now,
                 }, ct);
+                signals.EventsWritten(); // boards showing the project hear of the new thread
                 return Results.Created($"/api/threads/{thread.Id}", ThreadView(thread));
             }
             catch (StoreNotFoundException ex)
