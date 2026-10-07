@@ -410,7 +410,7 @@ public static class FactoryApi
         {
             return runs.RequestStop(id, request)
                 ? Results.Accepted(value: new { thread = ThreadView(details.Thread), stopping = true })
-                : Results.Conflict(new { error = "The task is marked as running, but no run is active in this host. Recover it after a restart." });
+                : Results.Conflict(new { error = "The task is marked as running, but this host is not running it. It is marked Interrupted within a minute; recover it then." });
         }
 
         return await ActAsync(signals, () => store.ApplyUserActionAsync(id, user.UserId(), trigger, clock.UtcNow, ct));

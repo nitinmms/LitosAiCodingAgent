@@ -14,6 +14,7 @@ public static class FactoryDatabase
     {
         services.AddDbContextFactory<FactoryDbContext>(options => options.UseNpgsql(connectionString));
         services.AddSingleton<Core.Store.IFactoryStore, EfFactoryStore>();
+        services.AddSingleton<Core.Ports.IHostInstanceLock>(_ => new PostgresHostInstanceLock(connectionString));
         return services;
     }
 

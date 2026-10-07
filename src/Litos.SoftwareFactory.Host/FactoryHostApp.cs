@@ -13,6 +13,7 @@ using Litos.SoftwareFactory.Infrastructure.Verification;
 using Litos.SoftwareFactory.Infrastructure.Workers;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Litos.SoftwareFactory.Host;
 
@@ -43,6 +44,7 @@ public static class FactoryHostApp
 
         if (!string.IsNullOrWhiteSpace(options.ConnectionString))
             services.AddFactoryStore(options.ConnectionString);
+        services.TryAddSingleton<IHostInstanceLock, NoHostInstanceLock>();
         services.AddFactoryAuth();
 
         // The real providers, behind the gateway. The config is built from the host's own
@@ -69,6 +71,7 @@ public static class FactoryHostApp
 
         services.AddSingleton<RunSupervisor>();
         services.AddSingleton<IRunControl>(sp => sp.GetRequiredService<RunSupervisor>());
+        services.AddSingleton<RunLiveness>();
         services.AddSingleton<RunCoordinator>();
         services.AddHostedService(sp => sp.GetRequiredService<RunCoordinator>());
 
@@ -100,8 +103,8 @@ public static class FactoryHostApp
     }
 
     /// <summary>
-    /// Checks the database is at this build's schema, then creates the first account if there is
-    /// none. Returns the reason the host must not start, or null.
+    /// Checks the database is at this build's schema, takes the one-host-per-database lock, then
+    /// creates the first account if there is none. Returns the reason the host must not start, or null.
     /// </summary>
     public static async Task<string?> PrepareAsync(WebApplication app, FactoryOptions options, CancellationToken ct)
     {
@@ -115,6 +118,10 @@ public static class FactoryHostApp
                     return $"The database schema is behind this build ({pending.Count} pending migration(s): {string.Join(", ", pending)}). Run the host once with --migrate.";
             }
         }
+
+        // Before anything reads the runs: startup recovery would interrupt another host's tasks.
+        if (await app.Services.GetRequiredService<IHostInstanceLock>().AcquireAsync(ct) is { } held)
+            return held;
 
         Directory.CreateDirectory(options.DataDirectory);
         return await FactoryAuth.SeedAdminAsync(app.Services, options);

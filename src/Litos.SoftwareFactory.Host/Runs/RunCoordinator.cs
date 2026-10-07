@@ -1,20 +1,18 @@
-using Litos.SoftwareFactory.Core.Lifecycle;
-using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
-using Litos.SoftwareFactory.Infrastructure.Workers;
 
 namespace Litos.SoftwareFactory.Host.Runs;
 
 /// <summary>
 /// The coordinator (ReadMe_LitosSoftwareFactory_V1.md §7, §8): it wakes when work is queued or
 /// on a poll, claims runs under the slot cap, and hands each to the <see cref="RunSupervisor"/>.
-/// The runs the registry holds are the busy slots. On startup it marks every run that was in
-/// progress when the host last stopped as Interrupted — work is never blindly re-run.
+/// The runs the registry holds are the busy slots. On startup, and on a sweep while it runs, it
+/// marks every Running run no executor owns as Interrupted (<see cref="RunLiveness"/>) — work is
+/// never blindly re-run.
 /// </summary>
 public sealed class RunCoordinator(
-    IFactoryStore store, RunSupervisor supervisor, RunRegistry registry, FactoryOptions options, FactorySignals signals, IClock clock,
-    ILogger<RunCoordinator> logger) : BackgroundService
+    IFactoryStore store, RunSupervisor supervisor, RunRegistry registry, RunLiveness liveness, FactoryOptions options,
+    FactorySignals signals, IClock clock, ILogger<RunCoordinator> logger) : BackgroundService
 {
     /// <summary>Completes once startup recovery is done and the coordinator is claiming work.</summary>
     public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -26,10 +24,18 @@ public sealed class RunCoordinator(
             await RecoverAsync(stoppingToken);
             Started.TrySetResult();
 
+            var lastSweep = clock.UtcNow;
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
+                    // On this loop, so a run claimed below is always registered before a sweep looks.
+                    if (clock.UtcNow - lastSweep >= options.LivenessInterval)
+                    {
+                        lastSweep = clock.UtcNow;
+                        await liveness.SweepAsync(stoppingToken);
+                    }
+
                     // Asked even with every slot busy, so each queued thread says what it waits for.
                     if (await store.ClaimNextRunAsync(options.SlotCap, clock.UtcNow, stoppingToken, registry.RunIds) is { } claimed)
                     {
@@ -58,51 +64,6 @@ public sealed class RunCoordinator(
         }
     }
 
-    /// <summary>
-    /// Runs still marked Running belong to a host that is gone. Their workers exit with their
-    /// host, but a worker that somehow survived is killed first — liveness is checked by process
-    /// id and start time together, because ids are reused (§16).
-    /// </summary>
-    internal async Task RecoverAsync(CancellationToken ct)
-    {
-        foreach (var claimed in await store.ListRunningAsync(ct))
-        {
-            var run = claimed.Run;
-            if (run.WorkerProcessId is { } processId && run.WorkerStartTime is { } startTime && WorkerLiveness.IsAlive(processId, startTime))
-            {
-                try
-                {
-                    using var process = System.Diagnostics.Process.GetProcessById(processId);
-                    process.Kill(entireProcessTree: true);
-                }
-                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-                {
-                }
-            }
-
-            try
-            {
-                await store.StopRunAsync(
-                    new StopRunCommand(run.Id, LifecycleTrigger.Interrupt, StopReason.Interrupted,
-                        "The factory host stopped while this task was running. The working copy and the branch were left as they were. Recover the task to continue.")
-                    {
-                        Stage = claimed.Thread.Stage,
-                    },
-                    clock.UtcNow, ct);
-                logger.LogWarning("Run {RunId} was in progress at the last shutdown and is now Interrupted.", run.Id);
-            }
-            catch (StoreConflictException ex)
-            {
-                logger.LogWarning(ex, "Run {RunId} could not be marked Interrupted.", run.Id);
-            }
-        }
-
-        // Model calls a previous host had in flight can never report their usage now. Left
-        // alone, their reservations would hold part of each task's budget for ever.
-        var reconciled = await store.ReconcileUsageAsync(runId: null, clock.UtcNow, ct);
-        if (reconciled > 0)
-            logger.LogWarning("{Count} model call(s) left without reported usage were charged their input estimate.", reconciled);
-
-        signals.EventsWritten();
-    }
+    /// <summary>Runs still marked Running belong to a host that is gone (§16).</summary>
+    internal Task RecoverAsync(CancellationToken ct) => liveness.RecoverAtStartupAsync(ct);
 }

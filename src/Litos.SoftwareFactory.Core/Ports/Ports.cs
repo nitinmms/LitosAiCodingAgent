@@ -201,3 +201,30 @@ public interface IWorkerClient
 
     Task ShutdownAsync(CancellationToken ct);
 }
+
+// ---- One host per database ----
+
+/// <summary>
+/// Held by the one host that may use the factory database. Startup recovery marks every Running
+/// run of a previous host Interrupted, which would break the live runs of a second host on the
+/// same database, so a second host must refuse to start (docs/software-factory/m2-architecture.md §3.5).
+/// </summary>
+public interface IHostInstanceLock : IAsyncDisposable
+{
+    /// <summary>Takes the lock for this host's lifetime. Returns why the host must not start, or null.</summary>
+    Task<string?> AcquireAsync(CancellationToken ct);
+
+    /// <summary>Whether the lock is still held; false once its connection has been lost, when
+    /// another host may have taken it.</summary>
+    Task<bool> IsHeldAsync(CancellationToken ct);
+}
+
+/// <summary>For a database only this process can reach (the tests' SQLite): nothing to guard.</summary>
+public sealed class NoHostInstanceLock : IHostInstanceLock
+{
+    public Task<string?> AcquireAsync(CancellationToken ct) => Task.FromResult<string?>(null);
+
+    public Task<bool> IsHeldAsync(CancellationToken ct) => Task.FromResult(true);
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
