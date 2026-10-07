@@ -112,16 +112,29 @@ public sealed class FakeWorkspace : IWorkspace
 
     public Queue<Exception> FailPush { get; } = new();
 
-    public Task EnsureClonedAsync(CancellationToken ct)
+    /// <summary>Awaited before "clone", "fetch" and "push" with that operation's token, so a test
+    /// can hold the operation open; a cancelled token stops it, as it stops git.</summary>
+    public Func<string, CancellationToken, Task>? Hold { get; set; }
+
+    private async Task HoldAsync(string operation, CancellationToken ct)
     {
-        Calls.Add("clone");
-        return Task.CompletedTask;
+        if (Hold is { } hold)
+            await hold(operation, ct);
+        ct.ThrowIfCancellationRequested();
     }
 
-    public Task FetchAsync(CancellationToken ct)
+    public async Task EnsureClonedAsync(CancellationToken ct)
     {
+        await HoldAsync("clone", ct);
+        Calls.Add("clone");
+    }
+
+    public async Task FetchAsync(CancellationToken ct)
+    {
+        await HoldAsync("fetch", ct);
         Calls.Add("fetch");
-        return FailFetch is null ? Task.CompletedTask : Task.FromException(FailFetch);
+        if (FailFetch is not null)
+            throw FailFetch;
     }
 
     /// <summary>As the real working copy does: it will not switch branches over uncommitted edits.</summary>
@@ -194,12 +207,12 @@ public sealed class FakeWorkspace : IWorkspace
         return Task.FromResult<string?>(Head);
     }
 
-    public Task PushAsync(string branch, string defaultBranch, CancellationToken ct)
+    public async Task PushAsync(string branch, string defaultBranch, CancellationToken ct)
     {
+        await HoldAsync("push", ct);
         if (FailPush.TryDequeue(out var failure))
-            return Task.FromException(failure);
+            throw failure;
         Pushed.Add($"{branch}@{Head}");
-        return Task.CompletedTask;
     }
 
     public List<string> SetAside { get; } = [];
@@ -263,12 +276,19 @@ public sealed class ScriptedVerifier : IVerifier
 
     public VerificationOutcome Baseline { get; set; } = Passing("Existing.Test");
 
-    public Task<VerificationOutcome> VerifyAsync(VerificationRequest request, CancellationToken ct)
+    /// <summary>Awaited before answering, with the verification's token, so a test can hold a
+    /// verification open; a cancelled token stops it, as it kills the real commands.</summary>
+    public Func<VerificationRequest, CancellationToken, Task>? Hold { get; set; }
+
+    public async Task<VerificationOutcome> VerifyAsync(VerificationRequest request, CancellationToken ct)
     {
         Requests.Add(request);
+        if (Hold is { } hold)
+            await hold(request, ct);
+        ct.ThrowIfCancellationRequested();
         if (request.ChangedFiles is null)
-            return Task.FromResult(Baseline);
-        return Task.FromResult(Outcomes.Count > 0 ? Outcomes.Dequeue() : Passing("Existing.Test", "New.Test"));
+            return Baseline;
+        return Outcomes.Count > 0 ? Outcomes.Dequeue() : Passing("Existing.Test", "New.Test");
     }
 
     public static VerificationOutcome Passing(params string[] tests) => new(

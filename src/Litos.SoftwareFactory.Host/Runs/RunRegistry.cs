@@ -22,8 +22,13 @@ public enum StopRequest
 public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string provider, string model)
 {
     private readonly Lock _lock = new();
+    private readonly CancellationTokenSource _stop = new();
     private CancellationTokenSource? _turn;
     private Submission? _submission;
+
+    /// <summary>Cancelled once a person pauses or cancels the run, whatever step it is in: the
+    /// turn, or the work between turns (preflight, verification, handoff).</summary>
+    public CancellationToken StopToken => _stop.Token;
 
     public Guid RunId { get; } = runId;
 
@@ -110,7 +115,8 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
         lock (_lock)
         {
             _turn?.Dispose();
-            _turn = CancellationTokenSource.CreateLinkedTokenSource(runToken);
+            // A stop asked for before the turn began ends it at once.
+            _turn = CancellationTokenSource.CreateLinkedTokenSource(runToken, _stop.Token);
             TurnKind = kind;
             WorkKind = workKind;
             SessionId = sessionId;
@@ -253,14 +259,18 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             BudgetRefusal = reason;
     }
 
-    /// <summary>Asks the turn in progress to stop, for a pause or a cancel.</summary>
+    /// <summary>Asks the run to stop, for a pause or a cancel, in whatever step it is. A cancel
+    /// is never turned back into a pause by a later request.</summary>
     public void RequestStop(StopRequest request)
     {
         lock (_lock)
         {
-            StopRequest = request;
+            if (StopRequest != StopRequest.Cancel)
+                StopRequest = request;
             CancelTurnLocked();
         }
+
+        _stop.Cancel();
     }
 
     /// <summary>Ends the turn in progress without marking the run as stopped by a user — used once

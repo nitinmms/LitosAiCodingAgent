@@ -76,14 +76,21 @@ public sealed class RunExecutor(
                 await store.SaveCheckpointAsync(run.Id, RunStateJson.Serialize(state), state.Stage, clock.UtcNow, CancellationToken.None);
                 signals.EventsWritten();
 
-                outcome = transition.Step switch
+                // A stop asked for between steps is taken before the next one starts.
+                if (active.StopRequest != StopRequest.None)
                 {
-                    PreflightStep => await PreflightAsync(context, state, hostStopping),
-                    StartTurnStep turn => await RunTurnAsync(context, session, state, turn, hostStopping),
-                    VerifyStep => await VerifyAsync(context, state, hostStopping),
-                    HandoffStep => await HandoffAsync(context, state, hostStopping),
+                    outcome = new StepStopped(active.StopRequest == StopRequest.Cancel);
+                    continue;
+                }
+
+                outcome = await GuardedStepAsync(active, hostStopping, step => transition.Step switch
+                {
+                    PreflightStep => PreflightAsync(context, state, step, hostStopping),
+                    StartTurnStep turn => RunTurnAsync(context, session, state, turn, step, hostStopping),
+                    VerifyStep => VerifyAsync(context, state, step),
+                    HandoffStep => HandoffAsync(context, state, step),
                     _ => throw new InvalidOperationException($"Unknown step {transition.Step.GetType().Name}."),
-                };
+                });
             }
         }
         catch (OperationCanceledException) when (hostStopping.IsCancellationRequested)
@@ -114,6 +121,26 @@ public sealed class RunExecutor(
         }
     }
 
+    /// <summary>
+    /// Runs one step so that a person's pause or cancel stops it where it is, not only at the end
+    /// of the next model turn. Nothing a stopped step produced is recorded (§16: an interrupted
+    /// test run is never evidence), and the orchestrator resumes the run into that step again.
+    /// The host shutting down is not a stop: it still propagates.
+    /// </summary>
+    private static async Task<StepOutcome> GuardedStepAsync(
+        ActiveRun active, CancellationToken hostStopping, Func<CancellationToken, Task<StepOutcome>> step)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(hostStopping, active.StopToken);
+        try
+        {
+            return await step(linked.Token);
+        }
+        catch (OperationCanceledException) when (!hostStopping.IsCancellationRequested && active.StopRequest != StopRequest.None)
+        {
+            return new StepStopped(active.StopRequest == StopRequest.Cancel);
+        }
+    }
+
     /// <summary>The fixed inputs of one run, gathered once.</summary>
     private sealed record RunData(ClaimedRun Claimed, IWorkspace Workspace, VerificationProfile Profile)
     {
@@ -138,12 +165,15 @@ public sealed class RunExecutor(
 
     // ---- Preflight ----
 
-    private async Task<StepOutcome> PreflightAsync(RunData data, RunState state, CancellationToken ct)
+    /// <param name="ct">Cancelled by a person's stop as well as by the host stopping.</param>
+    /// <param name="hostStopping">For the first clone only: a clone cut short leaves a working
+    /// copy that would later look complete, so a person's stop waits for it to finish.</param>
+    private async Task<StepOutcome> PreflightAsync(RunData data, RunState state, CancellationToken ct, CancellationToken hostStopping)
     {
         try
         {
             var workspace = data.Workspace;
-            await workspace.EnsureClonedAsync(ct);
+            await workspace.EnsureClonedAsync(hostStopping);
             await workspace.FetchAsync(ct);
             await SetAsideLeftoversAsync(data, ct);
 
@@ -151,8 +181,10 @@ public sealed class RunExecutor(
             {
                 data.Branch = BranchName(data.Thread);
                 data.BaseCommit = await workspace.CreateTaskBranchAsync(data.Branch, data.Project.DefaultBranch, ct);
-                await store.SetThreadBranchAsync(data.Thread.Id, data.Branch, data.BaseCommit, ct);
-                await store.SetRunCommitsAsync(data.Run.Id, data.BaseCommit, null, null, ct);
+                // The branch exists now: record it even if a stop has just been asked for, or a
+                // resumed run would try to create it again.
+                await store.SetThreadBranchAsync(data.Thread.Id, data.Branch, data.BaseCommit, CancellationToken.None);
+                await store.SetRunCommitsAsync(data.Run.Id, data.BaseCommit, null, null, CancellationToken.None);
                 await NoteAsync(data,
                     $"Assigned. Project: {data.Project.Name} (github.com/{data.Project.GitHubOwner}/{data.Project.GitHubRepository}), " +
                     $"branch {data.Branch} from {data.Project.DefaultBranch}. I will make the change, write unit tests and run the verification profile. " +
@@ -242,10 +274,14 @@ public sealed class RunExecutor(
 
     // ---- Agent turns ----
 
-    private async Task<StepOutcome> RunTurnAsync(RunData data, WorkerSession session, RunState state, StartTurnStep step, CancellationToken hostStopping)
+    /// <param name="ct">For the work before the turn (starting the worker, compaction, the brief),
+    /// which a person's stop cuts short. The turn itself is stopped through
+    /// <see cref="ActiveRun.BeginTurn"/>, and reports the stop as its end.</param>
+    private async Task<StepOutcome> RunTurnAsync(
+        RunData data, WorkerSession session, RunState state, StartTurnStep step, CancellationToken ct, CancellationToken hostStopping)
     {
         var active = session.Active;
-        var client = await session.ClientAsync(hostStopping);
+        var client = await session.ClientAsync(ct);
 
         var sessionId = step.Session switch
         {
@@ -262,7 +298,7 @@ public sealed class RunExecutor(
         {
             try
             {
-                if (await client.CompactAsync(sessionId, BriefComposer.CompactionInstruction(), hostStopping))
+                if (await client.CompactAsync(sessionId, BriefComposer.CompactionInstruction(), ct))
                     active.Baselines.TryRemove(sessionId, out _);
             }
             catch (HttpRequestException ex)
@@ -271,22 +307,22 @@ public sealed class RunExecutor(
             }
         }
 
-        var (context, diff) = await BriefContextAsync(data, step, hostStopping);
-        var (phase, allowance) = await ReviewAllowanceAsync(data, state, step, diff, hostStopping);
+        var (context, diff) = await BriefContextAsync(data, step, ct);
+        var (phase, allowance) = await ReviewAllowanceAsync(data, state, step, diff, ct);
         if (phase == NoReviewPhase)
             return new ReviewNotNeeded();
         if (phase == "LightReview")
             context = context with { ReviewDepth = ReviewDepth.Light };
 
         var brief = BriefComposer.Compose(step, context, state with { Baseline = data.Baseline ?? state.Baseline }, options.Limits);
-        var before = await FingerprintAsync(data, hostStopping);
+        var before = await FingerprintAsync(data, ct);
 
         using var timeout = new CancellationTokenSource(options.Limits.TurnTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(hostStopping, timeout.Token);
         // Once the task has had a decision, in this run or an earlier one, a limitation may say
         // exactly what the person chose; it is not sent back as a question.
         var hadDecision = state.Decisions.Count > 0 || state.DecisionsAsked > 0
-            || (await store.GetThreadAsync(data.Thread.Id, hostStopping))?.Decisions.Count > 0;
+            || (await store.GetThreadAsync(data.Thread.Id, ct))?.Decisions.Count > 0;
         var turnToken = active.BeginTurn(
             step.Kind, state.WorkTurn, sessionId, linked.Token, phase, allowance, askAboutBreakingLimitations: !hadDecision);
 
@@ -465,6 +501,8 @@ public sealed class RunExecutor(
 
     // ---- Verify ----
 
+    /// <param name="ct">Cancelled by a person's stop: the commands' process trees are killed and
+    /// nothing is recorded, since an interrupted run is never evidence (§16).</param>
     private async Task<StepOutcome> VerifyAsync(RunData data, RunState state, CancellationToken ct)
     {
         var diff = await data.Workspace.DiffAsync(data.BaseCommit, ct);
@@ -524,6 +562,9 @@ public sealed class RunExecutor(
             var head = (await workspace.GetStatusAsync(ct)).HeadCommit;
             await workspace.PushAsync(data.Branch, data.Project.DefaultBranch, ct);
 
+            // From here the branch is pushed, so the rest of the handoff is finished even if a
+            // stop has been asked for: a pushed branch always gets its handoff record.
+
             // The handoff is the pushed branch. A draft PR that cannot be opened is reported in
             // the handoff, not treated as the handoff failing.
             PullRequestRef? pullRequest = null;
@@ -536,7 +577,7 @@ public sealed class RunExecutor(
                         new PullRequestDraft(
                             data.Project.GitHubOwner, data.Project.GitHubRepository, data.Branch, data.Project.DefaultBranch,
                             data.Thread.Title, summary ?? data.Thread.Title),
-                        ct);
+                        CancellationToken.None);
                 }
                 catch (Exception ex) when (ex is HttpRequestException or Infrastructure.GitHub.GitHubException)
                 {
@@ -556,7 +597,7 @@ public sealed class RunExecutor(
                 }
             }
 
-            var thread = (await store.GetThreadAsync(data.Thread.Id, ct))!.Thread;
+            var thread = (await store.GetThreadAsync(data.Thread.Id, CancellationToken.None))!.Thread;
             var evidence = HandoffComposer.Evidence(state, new HandoffFacts(data.Branch, head, pullRequest?.Number, pullRequest?.Url)
             {
                 CoverageThresholdPercent = data.Profile.Coverage?.ChangedLinesThresholdPercent,
@@ -566,9 +607,9 @@ public sealed class RunExecutor(
                 Notes = notes,
             });
 
-            await store.SetRunCommitsAsync(data.Run.Id, null, head, null, ct);
+            await store.SetRunCommitsAsync(data.Run.Id, null, head, null, CancellationToken.None);
             if (state.Review == ReviewStatus.FindingsFixed)
-                await store.SetFindingsStatusAsync(data.Run.Id, FindingSeverity.Blocking, FindingStatus.Fixed, ct);
+                await store.SetFindingsStatusAsync(data.Run.Id, FindingSeverity.Blocking, FindingStatus.Fixed, CancellationToken.None);
             await store.SaveHandoffAsync(new HandoffRecord
             {
                 RunId = data.Run.Id,
@@ -579,7 +620,7 @@ public sealed class RunExecutor(
                 PullRequestUrl = pullRequest?.Url,
                 EvidenceJson = JsonSerializer.Serialize(evidence, FactoryWire.Json),
                 CreatedAt = clock.UtcNow,
-            }, ct);
+            }, CancellationToken.None);
             data.Handoff = evidence;
             return new HandoffCompleted(true);
         }
