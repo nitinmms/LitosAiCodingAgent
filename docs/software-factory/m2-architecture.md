@@ -32,6 +32,8 @@ Made with the user on 2026-10-06, before any M2 code:
 - **Queue order:** first in, first out by when a run was last queued, not when it was created, so a resumed old run does not jump ahead of newer work.
 - **Chat and spec turns** are light `TaskRun` kinds (§5). They reuse the worker, gateway and registry, take a slot, and take no repository lease.
 - **Invitations** are one-time links the Admin copies and sends by any channel (§4).
+- **Admins see every project** without a membership row (decided 2026-10-07).
+- **Outside a project, its resources are "not found":** a signed-in user who is not a member gets 404 for its threads, decisions, findings and events, never 403, so its ids are not confirmed to exist. Factory-wide actions a Member may not take still answer 403 (decided 2026-10-07).
 - **Carried open item from M1:** the decision scan still asks existing-data questions that the request settles (blueprint §18, M1 result). It is fixed alongside M2, not before it.
 
 ## 3. Concurrency and recovery (build step 1)
