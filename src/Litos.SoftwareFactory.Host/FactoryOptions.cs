@@ -70,6 +70,10 @@ public sealed class FactoryOptions
     /// <summary>How long an invitation's link works.</summary>
     public TimeSpan InvitationLifetime { get; set; } = TimeSpan.FromDays(7);
 
+    /// <summary>How often a signed-in session is checked against its account: a disabled
+    /// account's open sessions end within this, and a changed role takes effect within it.</summary>
+    public TimeSpan SessionCheckInterval { get; set; } = TimeSpan.FromMinutes(1);
+
     public string WorkspacesDirectory => Path.Combine(DataDirectory, "workspaces");
 
     public string RunDirectory(Guid runId) => Path.Combine(DataDirectory, "runs", runId.ToString("N"));

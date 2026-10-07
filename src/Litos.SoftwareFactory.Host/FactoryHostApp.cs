@@ -46,6 +46,9 @@ public static class FactoryHostApp
             services.AddFactoryStore(options.ConnectionString);
         services.TryAddSingleton<IHostInstanceLock, NoHostInstanceLock>();
         services.AddFactoryAuth();
+        // A session is checked against its account this often: disabling an account rotates its
+        // security stamp, so its open sessions end at the next check.
+        services.Configure<Microsoft.AspNetCore.Identity.SecurityStampValidatorOptions>(o => o.ValidationInterval = options.SessionCheckInterval);
         services.AddSingleton<ProjectAccess>();
 
         // The real providers, behind the gateway. The config is built from the host's own
@@ -93,6 +96,7 @@ public static class FactoryHostApp
         app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
         app.MapFactoryAuth();
         app.MapFactoryInvitations();
+        app.MapFactoryUsers();
         app.MapFactoryApi();
         app.MapFactoryEvents();
         app.MapWorkerCallbacks();

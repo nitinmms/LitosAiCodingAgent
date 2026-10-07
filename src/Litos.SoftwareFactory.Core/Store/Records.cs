@@ -472,6 +472,9 @@ public static class AuditActions
     public const string InvitationCreate = "invitation.create";
     public const string InvitationRevoke = "invitation.revoke";
     public const string InvitationAccept = "invitation.accept";
+    public const string UserDisable = "user.disable";
+    public const string UserEnable = "user.enable";
+    public const string UserRole = "user.role";
 
     public const string ThreadCreate = "thread.create";
 
