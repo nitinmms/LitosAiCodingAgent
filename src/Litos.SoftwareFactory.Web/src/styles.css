@@ -250,3 +250,6 @@ fieldset.checks legend{padding:0;margin-bottom:4px;font-weight:600}
 .card-budget{display:grid;gap:3px}
 .card-budget .bar{display:block;height:4px;border-radius:2px;background:var(--surface-2);overflow:hidden}
 .card-budget .bar span{display:block;height:100%;background:var(--petrol)}
+.th-edit{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:10px;align-items:end}
+.th-edit .btn-row,.th-edit .error{grid-column:1/-1}
+@media (max-width:600px){.th-edit{grid-template-columns:minmax(0,1fr)}}

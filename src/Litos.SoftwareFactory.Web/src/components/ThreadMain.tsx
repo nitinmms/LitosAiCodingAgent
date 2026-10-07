@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
 import type { CurrentUser, Message, PullRequestState, Settings, ThreadDetails } from '../api/types';
 import { initials } from '../domain/format';
@@ -13,7 +13,7 @@ import {
   stateName,
   withMention,
 } from '../domain/task';
-import { Rail, Rich, SafeLink, TurnPill } from './bits';
+import { ErrorNote, Rail, Rich, SafeLink, TurnPill } from './bits';
 import { DecisionCard, HandoffCard, StopPanel } from './cards';
 
 /** How often GitHub is asked where the task's pull request stands; the host caches the answer too. */
@@ -45,6 +45,9 @@ export function ThreadMain({
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [editing, setEditing] = useState(false);
+  // Renaming or re-filing a thread is its owner's, or an admin's.
+  const canEdit = thread.ownerId === user.id || user.roles.includes('Admin');
   const textarea = useRef<HTMLTextAreaElement>(null);
   const end = useRef<HTMLDivElement>(null);
   // The id sent with the current draft, kept so that sending the same text again after a
@@ -215,11 +218,30 @@ export function ThreadMain({
   return (
     <div className="center">
       <section className="th-head">
-        <div className="th-title">
-          <h1>{thread.title}</h1>
-          <TurnPill turn={thread.turn} />
-          <span className="tag">{thread.typeLabel}</span>
-        </div>
+        {editing ? (
+          <EditThread
+            api={api}
+            threadId={thread.id}
+            title={thread.title}
+            typeLabel={thread.typeLabel}
+            types={settings?.taskTypes ?? [thread.typeLabel]}
+            onDone={async (changed) => {
+              setEditing(false);
+              if (changed) await reload();
+            }}
+          />
+        ) : (
+          <div className="th-title">
+            <h1>{thread.title}</h1>
+            <TurnPill turn={thread.turn} />
+            <span className="tag">{thread.typeLabel}</span>
+            {canEdit ? (
+              <button className="btn ghost small" onClick={() => setEditing(true)}>
+                Rename or change type
+              </button>
+            ) : null}
+          </div>
+        )}
         <div className="th-sub">
           <span>
             {project.name} ({project.gitHub})
@@ -395,4 +417,78 @@ function StateHint({ state, branch }: { state: ThreadDetails['thread']['state'];
     default:
       return null;
   }
+}
+
+/** Renames the thread or files it under another task type (PATCH /api/threads/{id}). */
+function EditThread({
+  api,
+  threadId,
+  title,
+  typeLabel,
+  types,
+  onDone,
+}: {
+  api: FactoryApi;
+  threadId: string;
+  title: string;
+  typeLabel: string;
+  types: string[];
+  onDone: (changed: boolean) => void | Promise<void>;
+}) {
+  const [newTitle, setNewTitle] = useState(title);
+  const [newType, setNewType] = useState(typeLabel);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
+    const trimmed = newTitle.trim();
+    if (!trimmed) {
+      setError('The title cannot be empty.');
+      return;
+    }
+    if (trimmed === title && newType === typeLabel) {
+      await onDone(false);
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await api.editThread(threadId, { title: trimmed === title ? undefined : trimmed, typeLabel: newType === typeLabel ? undefined : newType });
+      await onDone(true);
+    } catch (failure) {
+      setError(failure instanceof ApiError ? failure.message : 'The thread could not be changed.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="th-edit" onSubmit={save} aria-label="Rename or change type">
+      <div className="field">
+        <label htmlFor="te-title">Title</label>
+        <input id="te-title" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} maxLength={300} autoFocus />
+      </div>
+      <div className="field">
+        <label htmlFor="te-type">Type</label>
+        <select id="te-type" value={newType} onChange={(e) => setNewType(e.target.value)}>
+          {types.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </div>
+      <ErrorNote message={error} />
+      <div className="btn-row">
+        <button className="btn primary small" type="submit" disabled={busy}>
+          Save
+        </button>
+        <button className="btn ghost small" type="button" onClick={() => void onDone(false)}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
 }

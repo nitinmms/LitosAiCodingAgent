@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, createApi, type FactoryApi } from './api/client';
-import type { EventSourceFactory } from './api/events';
+import { subscribeToBoard, type EventSourceFactory } from './api/events';
 import type { CurrentUser, Project, Settings, Thread } from './api/types';
 import { BoardPage } from './components/BoardPage';
 import { InvitePage } from './components/InvitePage';
@@ -12,8 +12,6 @@ import { TopBar } from './components/TopBar';
 import { navigate, useRoute, type Route } from './domain/route';
 import { awaitsYou, newer } from './domain/task';
 
-/** How often the thread list is refreshed; the open thread itself is kept live by its stream. */
-const LIST_REFRESH_MS = 15_000;
 const NOTICE_MS = 6_000;
 
 export interface AppProps {
@@ -31,6 +29,8 @@ export function App({ createClient, openEvents }: AppProps) {
   /** Owner names by user id: only owners of threads this user can see (GET /api/directory). */
   const [names, setNames] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
+  /** Where the board's live stream starts: read by the host before the thread list. */
+  const [boardCursor, setBoardCursor] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const route = useRoute();
@@ -92,34 +92,31 @@ export function App({ createClient, openEvents }: AppProps) {
         setProblem(failure instanceof ApiError ? failure.message : 'The factory could not be loaded.');
     };
 
-    Promise.all([api.settings(), api.projects(), api.threads(), api.directory()])
-      .then(([s, p, t, d]) => {
+    Promise.all([api.settings(), api.projects(), api.threadList(), api.directory()])
+      .then(([s, p, list, d]) => {
         if (stopped) return;
         setSettings(s);
         setProjects(p);
-        setThreads(t);
+        setThreads(list.threads);
+        setBoardCursor(list.cursor);
         setNames(Object.fromEntries(d.map((e) => [e.id, e.name])));
         setProblem(null);
         setLoaded(true);
       })
       .catch(fail);
 
-    const timer = setInterval(() => {
-      api
-        .threads()
-        .then((list) => {
-          if (stopped) return;
-          setThreads((current) => list.map((t) => newer(current.find((c) => c.id === t.id), t)));
-          setProblem(null);
-        })
-        .catch(fail);
-    }, LIST_REFRESH_MS);
-
     return () => {
       stopped = true;
-      clearInterval(timer);
+      setBoardCursor(null);
     };
   }, [api, signedIn]);
+
+  // Every thread the user can see stays live (GET /api/events): a change made anywhere, or a new
+  // thread, arrives as the thread's whole view and replaces an older copy.
+  useEffect(() => {
+    if (!signedIn || boardCursor === null) return;
+    return subscribeToBoard(boardCursor, mergeThread, openEvents);
+  }, [signedIn, boardCursor, mergeThread, openEvents]);
 
   // A thread from someone not seen before (a new thread, a newly joined project) needs their name.
   const unknownOwner = threads.some((t) => !(t.ownerId in names));

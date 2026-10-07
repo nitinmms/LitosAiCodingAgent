@@ -52,6 +52,10 @@ export interface FactoryApi {
   projects(): Promise<Project[]>;
   registerProject(request: RegisterProject): Promise<Project>;
   threads(): Promise<Thread[]>;
+  /** The thread list with where the board's live stream starts, read before the list. */
+  threadList(): Promise<{ threads: Thread[]; cursor: number }>;
+  /** Renames a thread or files it under another type: its owner or an admin. */
+  editThread(id: string, change: { title?: string; typeLabel?: string }): Promise<Thread>;
   /** The names of the owners of the threads this user can see. */
   directory(): Promise<DirectoryEntry[]>;
   createThread(request: CreateThread): Promise<Thread>;
@@ -94,6 +98,10 @@ export interface FactoryApi {
  */
 export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSignedOut: () => void = () => {}): FactoryApi {
   async function send<T>(method: string, path: string, body?: unknown, quiet401 = false): Promise<T> {
+    return (await request<T>(method, path, body, quiet401)).json;
+  }
+
+  async function request<T>(method: string, path: string, body?: unknown, quiet401 = false): Promise<{ json: T; headers?: Headers }> {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (method !== 'GET') headers[CSRF_HEADER] = '1';
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -127,7 +135,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
       );
     }
 
-    return json as T;
+    return { json: json as T, headers: response.headers };
   }
 
   const thread = (id: string) => `/api/threads/${encodeURIComponent(id)}`;
@@ -147,6 +155,11 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     projects: () => send<Project[]>('GET', '/api/projects'),
     registerProject: (request) => send<Project>('POST', '/api/projects', request),
     threads: () => send<Thread[]>('GET', '/api/threads'),
+    async threadList() {
+      const { json, headers } = await request<Thread[]>('GET', '/api/threads');
+      return { threads: json, cursor: Number(headers?.get('X-Event-Cursor') ?? 0) || 0 };
+    },
+    editThread: (id, change) => send<Thread>('PATCH', thread(id), change),
     directory: () => send<DirectoryEntry[]>('GET', '/api/directory'),
     createThread: (request) => send<Thread>('POST', '/api/threads', request),
     thread: (id) => send<ThreadDetails>('GET', thread(id)),

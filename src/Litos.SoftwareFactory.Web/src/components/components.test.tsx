@@ -96,8 +96,8 @@ describe('links', () => {
 describe('the thread list', () => {
   afterEach(() => vi.useRealTimers());
 
+  /** The board's stream (GET /api/events) keeps every visible thread live; nothing is polled. */
   it('picks up threads that change or appear elsewhere, without a reload', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
     const host = new FakeHost();
     host.signedIn = true;
     const project = host.addProject();
@@ -108,15 +108,33 @@ describe('the thread list', () => {
     render(<App createClient={createClient} openEvents={host.openEvents} />);
     await screen.findByRole('heading', { level: 1, name: 'Open thread' });
     expect(screen.getByRole('button', { name: '0 awaiting you' })).toBeDisabled();
+    await waitFor(() => expect(host.boardSources).toHaveLength(1));
+    // The board listens from where the list it loaded left off.
+    expect(host.boardSources[0]!.url).toBe(`/api/events?after=${host.lastSequence}`);
 
-    // Neither change is announced on the open thread's stream.
-    host.details(other.id).thread = { ...host.details(other.id).thread, state: 'AwaitingHumanTesting', turn: 'AwaitingYou', revision: 2 };
-    host.addThread(project, { title: 'Made in another tab' });
-    await act(() => vi.advanceTimersByTimeAsync(15_000));
+    // Neither change is announced on the open thread's stream, only on the board's.
+    act(() => {
+      host.change(other.id, { state: 'AwaitingHumanTesting', stage: 'Handoff' });
+      host.addThread(project, { title: 'Made in another tab' });
+    });
 
     expect(await screen.findByRole('button', { name: /Made in another tab/ })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: '1 awaiting you' })).toBeEnabled());
     expect(host.details(open.id).thread.state).toBe('Draft');
+    expect(host.sent('GET', '/api/threads').filter((r) => r.path === '/api/threads')).toHaveLength(1);
+  });
+
+  it('stops listening to the board when signed out', async () => {
+    const host = new FakeHost();
+    host.signedIn = true;
+    host.addProject();
+    const createClient = (onSignedOut: () => void) => createApi(host.fetch, onSignedOut);
+    render(<App createClient={createClient} openEvents={host.openEvents} />);
+    await waitFor(() => expect(host.boardSources).toHaveLength(1));
+
+    act(() => screen.getByRole('button', { name: 'Sign out' }).click());
+
+    await waitFor(() => expect(host.boardSources[0]!.closed).toBe(true));
   });
 });
 

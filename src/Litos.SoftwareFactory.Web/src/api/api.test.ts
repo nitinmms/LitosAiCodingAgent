@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FakeEventSource } from '../test/fakeHost';
 import { ApiError, createApi, CSRF_HEADER, type Fetch } from './client';
-import { subscribeToThread, type ThreadEvent } from './events';
+import { subscribeToBoard, subscribeToThread, type ThreadEvent } from './events';
 
 function fetchReturning(status: number, body?: unknown) {
   const calls: { path: string; init: RequestInit }[] = [];
@@ -243,5 +243,47 @@ describe('people and invitations', () => {
       'DELETE /api/projects/p1/members/u1',
     ]);
     expect(JSON.parse(String(calls[7]!.init.body))).toEqual({ userId: 'u1' });
+  });
+});
+
+describe('the board', () => {
+  it('reads where the board stream starts from the thread list', async () => {
+    const fetcher: Fetch = async () =>
+      ({ ok: true, status: 200, text: async () => '[]', headers: new Headers({ 'X-Event-Cursor': '42' }) }) as Response;
+
+    expect(await createApi(fetcher).threadList()).toEqual({ threads: [], cursor: 42 });
+  });
+
+  it('starts from the beginning when the host gives no cursor', async () => {
+    const { fetcher } = fetchReturning(200, []);
+
+    expect((await createApi(fetcher).threadList()).cursor).toBe(0);
+  });
+
+  it('renames or re-files a thread with PATCH, sending only what changed', async () => {
+    const { fetcher, calls } = fetchReturning(200, {});
+
+    await createApi(fetcher).editThread('t 1', { typeLabel: 'bug' });
+
+    expect([calls[0]!.init.method, calls[0]!.path]).toEqual(['PATCH', '/api/threads/t%201']);
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ typeLabel: 'bug' });
+    expect(CSRF_HEADER in headersOf(calls[0]!.init)).toBe(true);
+  });
+
+  it('hears each thread the board stream sends, and stops when asked', () => {
+    let source: FakeEventSource | undefined;
+    const heard: string[] = [];
+    const stop = subscribeToBoard(
+      7,
+      (thread) => heard.push(thread.title),
+      (url) => (source = new FakeEventSource(url)),
+    );
+
+    source!.emit('thread', { id: 't', title: 'Add CSV export', revision: 3 }, 8);
+    expect(source!.url).toBe('/api/events?after=7');
+    expect(heard).toEqual(['Add CSV export']);
+
+    stop();
+    expect(source!.closed).toBe(true);
   });
 });

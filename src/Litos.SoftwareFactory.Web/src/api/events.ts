@@ -1,4 +1,4 @@
-import type { ThreadChange } from './types';
+import type { Thread, ThreadChange } from './types';
 
 export type ThreadEvent =
   | { type: 'message'; sequence: number }
@@ -45,5 +45,22 @@ export function subscribeToThread(
     });
   }
 
+  return () => source.close();
+}
+
+/**
+ * Listens to the board's stream (GET /api/events) from `after` onward: every change to a thread
+ * the user can see, as the thread's whole current view. The caller keeps the newer copy by
+ * revision, so a repeat or a late event never undoes a newer one. Returns the function that stops.
+ */
+export function subscribeToBoard(after: number, onThread: (thread: Thread) => void, open: EventSourceFactory = browserEventSource): () => void {
+  const source = open(`/api/events?after=${after}`);
+  source.addEventListener('thread', (event) => {
+    try {
+      onThread(JSON.parse(String(event.data)) as Thread);
+    } catch {
+      // Not a thread: ignored.
+    }
+  });
   return () => source.close();
 }

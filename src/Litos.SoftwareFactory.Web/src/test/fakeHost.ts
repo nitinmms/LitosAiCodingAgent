@@ -129,11 +129,19 @@ export class FakeHost {
   /** Where each thread's pull request stands "on GitHub"; a draft unless a test says otherwise. */
   readonly pullRequestStates = new Map<string, PullRequestState>();
   readonly requests: RecordedRequest[] = [];
+  /** The open threads' streams (GET /api/threads/{id}/events). */
   readonly sources: FakeEventSource[] = [];
+  /** The board's streams (GET /api/events). */
+  readonly boardSources: FakeEventSource[] = [];
   /** Answers the next matching request with this instead of handling it. */
   private readonly failures: { match: (r: RecordedRequest) => boolean; status: number; error?: string }[] = [];
   private sequence = 0;
   private ids = 0;
+
+  /** The newest event's sequence number, as the host's X-Event-Cursor reports it. */
+  get lastSequence(): number {
+    return this.sequence;
+  }
   /** Everyone with an account; the signed-in user is one of them. */
   readonly people: Person[] = [
     { id: ADMIN.id, userName: ADMIN.userName, displayName: ADMIN.displayName, role: 'Admin', disabled: false, projectIds: [] },
@@ -163,12 +171,14 @@ export class FakeHost {
     if (failure >= 0) this.failures.splice(failure, 1);
 
     const text = body === undefined ? '' : JSON.stringify(body);
-    return { ok: status >= 200 && status < 300, status, text: async () => text } as Response;
+    const headers = new Headers();
+    if (request.method === 'GET' && request.path === '/api/threads') headers.set('X-Event-Cursor', String(this.sequence));
+    return { ok: status >= 200 && status < 300, status, text: async () => text, headers } as Response;
   };
 
   readonly openEvents: EventSourceFactory = (url) => {
     const source = new FakeEventSource(url);
-    this.sources.push(source);
+    (url.startsWith('/api/events') ? this.boardSources : this.sources).push(source);
     return source;
   };
 
@@ -225,6 +235,7 @@ export class FakeHost {
       ...overrides,
     };
     if (!overrides.turn) thread.turn = turnOf(thread.state);
+    this.announce(thread);
     this.threads.set(thread.id, {
       eventCursor: 0,
       thread,
@@ -320,7 +331,14 @@ export class FakeHost {
       branch: t.branch,
       pullRequestUrl: t.pullRequestUrl,
     });
+    this.announce(t);
     return t;
+  }
+
+  /** Sends the thread's whole view to every open board stream (GET /api/events). */
+  announce(thread: Thread): void {
+    const id = ++this.sequence;
+    for (const source of this.boardSources) source.emit('thread', thread, id);
   }
 
   say(threadId: string, message: Partial<Message> & { text: string }): Message {
@@ -516,6 +534,16 @@ export class FakeHost {
     switch (`${method} ${route[2] ?? ''}`) {
       case 'GET ':
         return [200, details];
+      case 'PATCH ': {
+        if (details.thread.ownerId !== this.user.id && !this.user.roles.includes('Admin'))
+          return [403, { error: "Only the thread's owner or an Admin can change it." }];
+        const title = typeof data.title === 'string' ? data.title.trim() : undefined;
+        if (title !== undefined && !title) return [400, { error: 'title must be 1 to 300 characters.' }];
+        const typeLabel = data.typeLabel as string | undefined;
+        if (typeLabel !== undefined && !this.settings.taskTypes.includes(typeLabel))
+          return [400, { error: `typeLabel must be one of: ${this.settings.taskTypes.join(', ')}.` }];
+        return [200, this.change(id, { ...(title ? { title } : {}), ...(typeLabel ? { typeLabel } : {}) })];
+      }
       case 'GET usage':
         return [200, this.usage.get(id) ?? []];
       case 'POST messages':

@@ -5,6 +5,7 @@ The browser app for the software factory: React, Vite and TypeScript. It talks o
 ## Screens
 
 - Sign-in.
+- Board (M2, where the app opens): every task you can see in a column per stage, each card saying whose move it is, with filters by project, type, owner and turn.
 - Projects: the registered GitHub repositories, and registration for an admin.
 - Threads: the thread list by project, and for the open thread the stage rail, the conversation with decision and handoff cards, the composer with `@factory`, and the budget, verification and changed-files panels.
 - People (M2, admins only): invite someone with a one-time link, see and revoke invitations, and for each person change their role, disable or re-enable them, and choose their projects.
@@ -45,7 +46,8 @@ The tests run the whole app against `src/test/fakeHost.ts`, an in-memory host wi
 - The thread snapshot (`GET /api/threads/{id}`) carries an `eventCursor`. The app opens the thread's event stream from that cursor, so it hears everything after the snapshot and replays nothing before it.
 - `state` and `usage` events carry the thread's state and budget figures and are applied directly. A `message` event, or a change of state, makes the app fetch the thread again.
 - Every thread copy carries the server's `revision`; the app always keeps the newer one, so a late response can never undo a live event.
-- Only the open thread has a stream. The thread list is refreshed every 15 seconds.
+- The board, the thread list and the "awaiting you" count stay live through one more stream, `GET /api/events`, opened from the `X-Event-Cursor` the thread list returns. Each event is a thread's whole current view, kept if it is newer. Nothing is polled.
+- Whose move a task is comes from the host (`turn` on every thread); the app does not work it out from the state. "Awaiting you" counts only the waiting tasks you own.
 - The pull request label ("Draft PR #12", "PR #12 merged") comes from `GET /api/threads/{id}/pull-request`, asked when the task changes state and once a minute: merging and closing happen on GitHub, not in the factory.
 
 ## Things to know

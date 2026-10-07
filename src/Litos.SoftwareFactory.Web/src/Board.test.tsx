@@ -157,3 +157,81 @@ describe('the board', () => {
     expect(await screen.findByText('SalesApp · Someone')).toBeInTheDocument();
   });
 });
+
+describe('renaming and re-filing a thread', () => {
+  async function onThread(host: FakeHost, threadId: string) {
+    window.location.hash = `#/threads/${threadId}`;
+    const user = start(host);
+    await screen.findByRole('heading', { level: 1 });
+    return user;
+  }
+
+  it('its owner renames it and changes its type, and the board follows', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { title: 'Add CSV export' });
+    const user = await onThread(host, thread.id);
+
+    await user.click(screen.getByRole('button', { name: 'Rename or change type' }));
+    await user.clear(screen.getByLabelText('Title'));
+    await user.type(screen.getByLabelText('Title'), 'Export orders as CSV');
+    await user.selectOptions(screen.getByLabelText('Type'), 'bug');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Export orders as CSV' })).toBeInTheDocument();
+    expect(host.sent('PATCH', `/api/threads/${thread.id}`)[0]!.body).toEqual({ title: 'Export orders as CSV', typeLabel: 'bug' });
+
+    await user.click(screen.getByRole('button', { name: 'Board' }));
+    const card = within(await screen.findByRole('button', { name: 'Export orders as CSV' }));
+    expect(card.getByText('bug')).toBeInTheDocument();
+  });
+
+  it('sends nothing when nothing changed', async () => {
+    const host = new FakeHost();
+    const thread = host.addThread(host.addProject());
+    const user = await onThread(host, thread.id);
+
+    await user.click(screen.getByRole('button', { name: 'Rename or change type' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(host.sent('PATCH', '/api/threads')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Rename or change type' })).toBeInTheDocument();
+  });
+
+  it('refuses an empty title without asking the host', async () => {
+    const host = new FakeHost();
+    const thread = host.addThread(host.addProject());
+    const user = await onThread(host, thread.id);
+
+    await user.click(screen.getByRole('button', { name: 'Rename or change type' }));
+    await user.clear(screen.getByLabelText('Title'));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The title cannot be empty.');
+    expect(host.sent('PATCH', '/api/threads')).toHaveLength(0);
+  });
+
+  /** Another member sees the thread but cannot change it, so they are not offered to. */
+  it('is not offered to a member who does not own the thread', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project);
+    host.signInAs(host.addPerson({ projectIds: [project.id] }));
+    await onThread(host, thread.id);
+
+    expect(screen.queryByRole('button', { name: 'Rename or change type' })).not.toBeInTheDocument();
+  });
+
+  it("shows the host's reason when it refuses", async () => {
+    const host = new FakeHost();
+    const thread = host.addThread(host.addProject());
+    host.failNext('PATCH', `/api/threads/${thread.id}`, 403, "Only the thread's owner or an Admin can change it.");
+    const user = await onThread(host, thread.id);
+
+    await user.click(screen.getByRole('button', { name: 'Rename or change type' }));
+    await user.selectOptions(screen.getByLabelText('Type'), 'chore');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent("Only the thread's owner or an Admin can change it.");
+  });
+});

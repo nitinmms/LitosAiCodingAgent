@@ -393,7 +393,7 @@ describe('live updates', () => {
 
     await screen.findByText('Reading the code.');
     await waitFor(() => expect(host.sources).toHaveLength(1));
-    expect(host.sources[0]!.url).toBe(`/api/threads/${thread.id}/events?after=2`);
+    expect(host.sources[0]!.url).toBe(`/api/threads/${thread.id}/events?after=${host.details(thread.id).eventCursor}`);
   });
 
   it('shows progress, stage changes and budget use as they happen', async () => {
