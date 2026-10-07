@@ -1805,6 +1805,42 @@ public abstract class FactoryStoreContract : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task EditingAThread_ChangesItsTitleOrType_AnnouncesIt_AndIsRecorded()
+    {
+        var project = await AddProjectAsync();
+        var thread = await AddThreadAsync(project);
+        var events = (await Store.ReadEventsAsync(thread.Id, 0, 100, default)).Count;
+
+        var edited = await Store.EditThreadAsync(thread.Id, "Export orders as CSV", "bug", Ben, T0.AddMinutes(1), default);
+
+        Assert.Equal(("Export orders as CSV", "bug"), (edited.Title, edited.TypeLabel));
+        Assert.Equal(thread.Revision + 1, edited.Revision);
+        Assert.Equal(events + 1, (await Store.ReadEventsAsync(thread.Id, 0, 100, default)).Count);
+        var row = Assert.Single(await RowsAsync(AuditActions.ThreadEdit));
+        Assert.Equal((Ben, (Guid?)thread.Id), (row.ActorId, row.TargetId));
+        Assert.Contains("Add CSV export", row.DetailsJson);
+        Assert.Contains("Export orders as CSV", row.DetailsJson);
+    }
+
+    [SkippableFact]
+    public async Task EditingAThread_ToWhatItAlreadyIs_ChangesNothing()
+    {
+        var project = await AddProjectAsync();
+        var thread = await AddThreadAsync(project);
+
+        var same = await Store.EditThreadAsync(thread.Id, thread.Title, null, Ben, T0, default);
+
+        Assert.Equal(thread.Revision, same.Revision);
+        Assert.Empty(await RowsAsync(AuditActions.ThreadEdit));
+    }
+
+    [SkippableFact]
+    public async Task EditingAThreadThatDoesNotExist_IsNotFound()
+    {
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.EditThreadAsync(Guid.NewGuid(), "x", null, Ben, T0, default));
+    }
+
+    [SkippableFact]
     public async Task AnsweringADecision_IsRecorded_WithTheQuestionAndTheAnswer()
     {
         var running = await RunningAsync();

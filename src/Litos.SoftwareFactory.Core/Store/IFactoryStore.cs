@@ -142,6 +142,9 @@ public interface IFactoryStore
     /// <summary>Changes the task's cap. Raising a cap changes the maximum, not the accounting history.</summary>
     Task<TaskThread> SetBudgetCapAsync(Guid threadId, long? cap, Guid userId, DateTimeOffset now, CancellationToken ct);
 
+    /// <summary>Renames a thread or changes its task type; null leaves that one as it is.</summary>
+    Task<TaskThread> EditThreadAsync(Guid threadId, string? title, string? typeLabel, Guid userId, DateTimeOffset now, CancellationToken ct);
+
     Task<Decision> OpenDecisionAsync(Guid runId, DecisionSubmission submission, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>Records the answer and re-queues the run so the same work continues with it.</summary>

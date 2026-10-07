@@ -383,6 +383,25 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         return thread;
     }
 
+    public async Task<TaskThread> EditThreadAsync(
+        Guid threadId, string? title, string? typeLabel, Guid userId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var thread = await LockThreadAsync(write.Db, threadId, ct);
+        var newTitle = title ?? thread.Title;
+        var newType = typeLabel ?? thread.TypeLabel;
+        if (newTitle == thread.Title && newType == thread.TypeLabel)
+            return thread;
+
+        Audit(write.Db, userId, AuditActions.ThreadEdit, AuditTargets.Thread, threadId, thread.ProjectId,
+            new { From = new { thread.Title, thread.TypeLabel }, To = new { Title = newTitle, TypeLabel = newType } }, now);
+        thread.Title = newTitle;
+        thread.TypeLabel = newType;
+        Touch(write.Db, thread, now);
+        await write.CommitAsync(ct);
+        return thread;
+    }
+
     public async Task<Decision> OpenDecisionAsync(Guid runId, DecisionSubmission submission, DateTimeOffset now, CancellationToken ct)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);

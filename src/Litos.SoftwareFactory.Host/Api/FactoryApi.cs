@@ -9,7 +9,9 @@ using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Host.Auth;
 using Litos.SoftwareFactory.Host.Runs;
 using Litos.SoftwareFactory.Infrastructure.GitHub;
+using Litos.SoftwareFactory.Infrastructure.Persistence;
 using Litos.SoftwareFactory.Infrastructure.Verification;
+using Microsoft.AspNetCore.Identity;
 
 namespace Litos.SoftwareFactory.Host.Api;
 
@@ -28,6 +30,8 @@ public sealed record AnswerDecisionRequest(string Answer);
 public sealed record FindingVerdictRequest(string? Verdict);
 
 public sealed record SetBudgetRequest(long? Cap);
+
+public sealed record EditThreadRequest(string? Title, string? TypeLabel);
 
 /// <summary>What the host can do to a run that is executing right now.</summary>
 public interface IRunControl
@@ -67,8 +71,6 @@ public static class FactoryMention
 
 public static class FactoryApi
 {
-    private static readonly string[] TaskTypes = ["bug", "feature", "refactor", "chore"];
-
     public static IEndpointRouteBuilder MapFactoryApi(this IEndpointRouteBuilder app)
     {
         var api = app.MapGroup("/api").RequireAuthorization();
@@ -88,7 +90,7 @@ public static class FactoryApi
             // What fraction of a cached input token counts against a task's budget (§9).
             options.Budget.CachedInputWeight,
             Presets = VerificationPresets.Names,
-            TaskTypes,
+            TaskTypes = TaskTypes.All,
             PromptRevision = Core.Briefs.BriefComposer.Revision,
         }));
 
@@ -147,6 +149,15 @@ public static class FactoryApi
 
         // ---- Threads ----
 
+        // The names of the people who own the threads this user can see, for the board's cards.
+        api.MapGet("/directory", async (
+            ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, UserManager<FactoryUser> users, CancellationToken ct) =>
+        {
+            var owners = (await VisibleThreadsAsync(null, user, store, access, ct)).Select(t => t.OwnerId).Append(user.UserId()).ToHashSet();
+            return Results.Ok(users.Users.Where(u => owners.Contains(u.Id)).ToList()
+                .Select(u => new { u.Id, Name = string.IsNullOrWhiteSpace(u.DisplayName) ? u.UserName : u.DisplayName }));
+        });
+
         api.MapGet("/threads", async (Guid? projectId, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, CancellationToken ct) =>
             Results.Ok((await VisibleThreadsAsync(projectId, user, store, access, ct)).Select(ThreadView)));
 
@@ -158,8 +169,8 @@ public static class FactoryApi
                 return Results.NotFound(new { error = "The project does not exist." });
             if (string.IsNullOrWhiteSpace(request.Title))
                 return Problem("title is required.");
-            if (!TaskTypes.Contains(request.TypeLabel))
-                return Problem($"typeLabel must be one of: {string.Join(", ", TaskTypes)}.");
+            if (!TaskTypes.IsKnown(request.TypeLabel))
+                return Problem($"typeLabel must be one of: {string.Join(", ", TaskTypes.All)}.");
             if (request.BudgetCap is <= 0)
                 return Problem("budgetCap must be positive.");
 
@@ -193,6 +204,23 @@ public static class FactoryApi
             // event stream, never missed.
             var cursor = await store.LastEventSequenceAsync(id, ct);
             return await store.GetThreadAsync(id, ct) is { } details ? Results.Ok(DetailsView(details, cursor)) : Results.NotFound();
+        });
+
+        // Renaming a thread, or filing it under another type: its owner or an Admin.
+        threadRoutes.MapPatch("", async (
+            Guid id, EditThreadRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        {
+            var title = request.Title?.Trim();
+            if (title is { Length: 0 or > 300 })
+                return Problem("title must be 1 to 300 characters.");
+            if (request.TypeLabel is not null && !TaskTypes.IsKnown(request.TypeLabel))
+                return Problem($"typeLabel must be one of: {string.Join(", ", TaskTypes.All)}.");
+
+            var thread = (await store.GetThreadAsync(id, ct))!.Thread;
+            if (thread.OwnerId != user.UserId() && !ProjectAccess.IsAdmin(user))
+                return Results.Json(new { error = "Only the thread's owner or an Admin can change it." }, statusCode: StatusCodes.Status403Forbidden);
+
+            return await ActAsync(signals, () => store.EditThreadAsync(id, title, request.TypeLabel, user.UserId(), clock.UtcNow, ct));
         });
 
         // The task's model calls, oldest first: what each reserved and what it was charged (§9).
@@ -485,8 +513,11 @@ public static class FactoryApi
     {
         thread.Id,
         thread.ProjectId,
+        thread.OwnerId,
         thread.Title,
         thread.TypeLabel,
+        // Whose move it is (§7.1): computed here so every client agrees.
+        Turn = TurnLabels.For(thread.State).ToString(),
         Stage = thread.Stage.ToString(),
         State = thread.State.ToString(),
         thread.StateReason,

@@ -478,6 +478,9 @@ public static class AuditActions
 
     public const string ThreadCreate = "thread.create";
 
+    /// <summary>A thread renamed, or filed under another task type.</summary>
+    public const string ThreadEdit = "thread.edit";
+
     /// <summary>The first @factory: the task is handed to the factory.</summary>
     public const string ThreadDelegate = "thread.delegate";
 
