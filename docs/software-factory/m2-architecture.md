@@ -183,6 +183,7 @@ Differences from the plan above:
 | 2 | `241a5a6` | Worker client: a turn's last message text is kept as its reply |
 | 3 | `3638750` | Host: the reading copy, `ChatExecutor`, chat on the messages API, liveness for chat runs, `FACTORY_CHAT_TURN_CAP`, the chat brief (revision `m2.2`) |
 | 4 | `f060dd4` | Web: asking a question, the pending answer, chat after acceptance; a plain message is marked as such |
+| 5 | `a759e1a` | An answer in progress is shown: a `chat` event (activity, lookups, model calls, start time) at most once a second, and a running clock in the page |
 
 Differences from the plan above:
 
@@ -193,6 +194,7 @@ Differences from the plan above:
 - **One answer at a time per thread:** a second plain message while one is being answered is refused with 409. Pause, cancel and steering reach the task's run only, never a chat run.
 - **An answer is cut off after 30 tool calls or 10 minutes.** Neither is a setting yet.
 - **An orphaned chat run is finished, not interrupted:** the liveness rule posts a note that there is no answer, and the task's state is untouched.
+- **An answer in progress reports what it is doing,** added after the first real question sat for a minute with nothing to show. The `chat` events stay in the outbox like any other event; the board's stream never carries them.
 - **The store marks a plain message** with the payload `{"plain":true}`, because an `@factory` message is stored without its mention. The app shows the mention only on delegations. `@factory` with nothing after it is refused with 400.
 
 **Spec.**
