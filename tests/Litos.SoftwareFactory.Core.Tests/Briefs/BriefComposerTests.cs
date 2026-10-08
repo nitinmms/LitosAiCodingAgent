@@ -843,7 +843,8 @@ public class BriefComposerTests
         // m1.11: the decision scan brief, and the plan section of the run brief.
         // m2.1: the resume brief states how the working copy changed since the last checkpoint.
         // m2.2: the chat brief, for a read-only answer to a plain message.
-        Assert.Equal("m2.2", BriefComposer.Revision);
+        // m2.3: the spec brief; approved criteria reported on in their own words.
+        Assert.Equal("m2.3", BriefComposer.Revision);
     }
 
     [Theory]
@@ -859,6 +860,7 @@ public class BriefComposerTests
     [InlineData("resume")]
     [InlineData("compaction")]
     [InlineData("chat")]
+    [InlineData("spec")]
     public void Templates_AreEmbedded(string name)
     {
         Assert.False(string.IsNullOrWhiteSpace(BriefComposer.LoadTemplate(name)));
@@ -990,5 +992,81 @@ public class BriefComposerTests
         var brief = BriefComposer.Chat(Chat(question: "First line.\nSecond line."));
 
         Assert.Contains("> First line.\n> Second line.", brief);
+    }
+
+    // ---- Spec (m2-architecture.md §5) ----
+
+    private static readonly SpecDraft Draft = new(
+        2, "Administrators can export orders as CSV.", ["An Export button is shown to administrators.", "Others get a 403."],
+        ["src/Orders/OrdersController.cs"], "Unit tests cover the 403; the button is checked by hand.", ["Include cancelled orders?"]);
+
+    private static SpecContext SpecFor(SpecDraft? previous = null, IReadOnlyList<ChatLine>? conversation = null) => new(
+        "SalesApp", "the default branch `main`", "Add CSV export", "Export the orders list.", previous, conversation ?? []);
+
+    [Fact]
+    public void Spec_StatesTheTaskWhatWasAsked_AndThatNothingIsBuiltYet()
+    {
+        var brief = BriefComposer.Spec(SpecFor());
+
+        Assert.Contains("**SalesApp**", brief);
+        Assert.Contains("**Add CSV export**", brief);
+        Assert.Contains("> Export the orders list.", brief);
+        Assert.Contains("the default branch `main`", brief);
+        Assert.Contains("You do not implement it.", brief);
+        Assert.Contains("`submit_spec`", brief);
+        Assert.DoesNotContain("The draft to revise", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void Spec_ARevision_CarriesTheDraftItRevises_InFull()
+    {
+        var brief = BriefComposer.Spec(SpecFor(Draft));
+
+        Assert.Contains("## The draft to revise (revision 2)", brief);
+        Assert.Contains("Keep what the request does not ask to change.", brief);
+        Assert.Contains("**Summary.** Administrators can export orders as CSV.", brief);
+        Assert.Contains("1. An Export button is shown to administrators.\n2. Others get a 403.", brief);
+        Assert.Contains("- src/Orders/OrdersController.cs", brief);
+        Assert.Contains("**Test plan.** Unit tests cover the 403", brief);
+        Assert.Contains("- Include cancelled orders?", brief);
+    }
+
+    [Fact]
+    public void Spec_CarriesTheThreadSoFar()
+    {
+        var brief = BriefComposer.Spec(SpecFor(conversation: [new ChatLine("Person", "Only admins should export.")]));
+
+        Assert.Contains("## The thread so far", brief);
+        Assert.Contains("**Person:**\n> Only admins should export.", brief);
+    }
+
+    [Fact]
+    public void DescribeSpec_LeavesOutEmptySections()
+    {
+        var text = BriefComposer.DescribeSpec(Draft with { AffectedAreas = [], OpenQuestions = [], TestPlan = " " });
+
+        Assert.DoesNotContain("Affected areas", text);
+        Assert.DoesNotContain("Open questions", text);
+        Assert.DoesNotContain("Test plan", text);
+    }
+
+    [Fact]
+    public void ARunWithApprovedCriteria_IsToldToReportOnEachInItsOwnWords()
+    {
+        var brief = BriefComposer.Compose(
+            new StartTurnStep(TurnKind.Implement, BriefKind.Run, SessionScope.Thread), Context, State(), Limits);
+
+        Assert.Contains("1. Administrators can export.", brief);
+        Assert.Contains("each in exactly the words written here", brief);
+    }
+
+    [Fact]
+    public void ARunWithoutCriteria_IsNotToldAboutThem()
+    {
+        var brief = BriefComposer.Compose(
+            new StartTurnStep(TurnKind.Implement, BriefKind.Run, SessionScope.Thread), Context with { AcceptanceCriteria = [] }, State(), Limits);
+
+        Assert.DoesNotContain("each in exactly the words written here", brief);
     }
 }

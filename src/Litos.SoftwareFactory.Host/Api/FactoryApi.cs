@@ -536,7 +536,7 @@ public static class FactoryApi
         thread.Title,
         thread.TypeLabel,
         // Whose move it is (§7.1): computed here so every client agrees.
-        Turn = TurnLabels.For(thread.State).ToString(),
+        Turn = TurnLabels.For(thread.State, thread.Stage).ToString(),
         Stage = thread.Stage.ToString(),
         State = thread.State.ToString(),
         thread.StateReason,

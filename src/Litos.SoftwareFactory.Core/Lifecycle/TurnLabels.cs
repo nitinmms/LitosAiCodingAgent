@@ -23,13 +23,14 @@ public enum TurnLabel
 
 /// <summary>
 /// The §7.1 table from lifecycle state to turn label, kept here so the host and every client
-/// agree. Draft is not in that table: it is "not started" (m2-architecture.md §6).
+/// agree. Draft is not in that table: it is "not started" (m2-architecture.md §6), unless a
+/// specification has been proposed, which waits for a person to approve it or delegate (§5).
 /// </summary>
 public static class TurnLabels
 {
-    public static TurnLabel For(LifecycleState state) => state switch
+    public static TurnLabel For(LifecycleState state, Stage stage) => state switch
     {
-        LifecycleState.Draft => TurnLabel.NotStarted,
+        LifecycleState.Draft => stage == Stage.Spec ? TurnLabel.AwaitingYou : TurnLabel.NotStarted,
         LifecycleState.Queued => TurnLabel.AwaitingAgent,
         LifecycleState.Running => TurnLabel.AgentWorking,
         LifecycleState.PausedUser => TurnLabel.Paused,

@@ -21,6 +21,8 @@ public class TaskLifecycleTests
         (LifecycleState.AwaitingHumanTesting, LifecycleTrigger.RequestChanges, LifecycleState.Queued),
         (LifecycleState.AwaitingHumanTesting, LifecycleTrigger.Accept, LifecycleState.Accepted),
         (LifecycleState.Running, LifecycleTrigger.Interrupt, LifecycleState.Interrupted),
+        // A spec run's proposal puts the task back in Draft, at the Spec stage (m2-architecture.md §5).
+        (LifecycleState.Running, LifecycleTrigger.ProposeSpec, LifecycleState.Draft),
         (LifecycleState.Interrupted, LifecycleTrigger.Recover, LifecycleState.Queued),
         (LifecycleState.Queued, LifecycleTrigger.Cancel, LifecycleState.Cancelled),
         (LifecycleState.Running, LifecycleTrigger.Cancel, LifecycleState.Cancelled),

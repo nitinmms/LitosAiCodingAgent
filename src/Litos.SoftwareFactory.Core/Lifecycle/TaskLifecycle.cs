@@ -81,6 +81,10 @@ public enum LifecycleTrigger
     /// <summary>The tester took back a change request before it produced a new handoff: the
     /// rework run is dropped and the task waits for testing on its last handoff again.</summary>
     WithdrawChanges,
+
+    /// <summary>A spec run proposed a specification: the task is a draft again, at the Spec
+    /// stage, until a person approves it and delegates (m2-architecture.md §5).</summary>
+    ProposeSpec,
 }
 
 public sealed class InvalidLifecycleTransitionException(LifecycleState from, LifecycleTrigger trigger)
@@ -110,6 +114,7 @@ public static class TaskLifecycle
         [(LifecycleState.Running, LifecycleTrigger.Block)] = LifecycleState.Blocked,
         [(LifecycleState.Running, LifecycleTrigger.Handoff)] = LifecycleState.AwaitingHumanTesting,
         [(LifecycleState.Running, LifecycleTrigger.Interrupt)] = LifecycleState.Interrupted,
+        [(LifecycleState.Running, LifecycleTrigger.ProposeSpec)] = LifecycleState.Draft,
 
         [(LifecycleState.AwaitingDecision, LifecycleTrigger.AnswerDecision)] = LifecycleState.Queued,
         [(LifecycleState.PausedBudget, LifecycleTrigger.RaiseBudgetAndResume)] = LifecycleState.Queued,

@@ -125,6 +125,13 @@ public enum RunKind
     /// change to the task's state, and a budget of its own rather than the task's.
     /// </summary>
     Chat,
+
+    /// <summary>
+    /// One read-only turn that proposes a specification (m2-architecture.md §5). Task work, so it
+    /// is charged to the task's budget and moves the task through Queued and Running, but it
+    /// takes no repository lease: it reads the project's reading copy.
+    /// </summary>
+    Spec,
 }
 
 /// <summary>Which template a turn's prompt is composed from.</summary>

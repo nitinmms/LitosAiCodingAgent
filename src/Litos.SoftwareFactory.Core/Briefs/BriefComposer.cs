@@ -55,6 +55,16 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
     public string? WorkspaceDrift { get; init; }
 }
 
+/// <summary>A specification as a person approves it: one revision of what a task will build.</summary>
+public sealed record SpecDraft(
+    int Revision, string Summary, IReadOnlyList<string> AcceptanceCriteria, IReadOnlyList<string> AffectedAreas,
+    string TestPlan, IReadOnlyList<string> OpenQuestions);
+
+/// <summary>What a spec turn is told: the task, what was asked, the draft it revises, if any,
+/// and the thread so far.</summary>
+public sealed record SpecContext(
+    string Project, string Branch, string Title, string Request, SpecDraft? Previous, IReadOnlyList<ChatLine> Conversation);
+
 /// <summary>One earlier message of a thread, as a chat brief shows it.</summary>
 public sealed record ChatLine(string Speaker, string Text);
 
@@ -77,8 +87,9 @@ public static partial class BriefComposer
     /// m1.13: implementation turns get cost notes, and test-run output is cut to failures and summary;
     /// m1.14: the scan re-checks the questions not yet asked against each answer;
     /// m2.1: a resumed run is told how the working copy changed since its last checkpoint;
-    /// m2.2: chat, a read-only answer to a plain message).</summary>
-    public const string Revision = "m2.2";
+    /// m2.2: chat, a read-only answer to a plain message;
+    /// m2.3: the spec brief, and an approved specification's criteria reported on in their own words).</summary>
+    public const string Revision = "m2.3";
 
     private const int CharsPerToken = 4;
 
@@ -106,11 +117,40 @@ public static partial class BriefComposer
     /// <summary>Each earlier message in a chat brief is cut to this many characters.</summary>
     public const int ChatMessageChars = 2_000;
 
-    /// <summary>A chat turn (m2-architecture.md §5): a fresh session each time, so the thread so
-    /// far is carried in the brief.</summary>
-    public static string Chat(ChatContext context)
+    /// <summary>A spec turn (m2-architecture.md §5): a fresh session, like chat, so the thread so
+    /// far and the draft being revised are carried in the brief.</summary>
+    public static string Spec(SpecContext context) => Render("spec", new()
     {
-        var earlier = context.Conversation.TakeLast(ChatConversationMessages).ToList();
+        ["project"] = context.Project,
+        ["branch"] = context.Branch,
+        ["title"] = context.Title.Trim(),
+        ["request"] = Quote(context.Request),
+        ["previous"] = context.Previous is { } previous
+            ? Section(
+                $"The draft to revise (revision {previous.Revision})",
+                "Revise it as asked above. Keep what the request does not ask to change.\n\n" + DescribeSpec(previous))
+            : "",
+        ["conversation"] = Conversation(context.Conversation),
+    });
+
+    /// <summary>A specification as the briefs show it.</summary>
+    internal static string DescribeSpec(SpecDraft spec)
+    {
+        var parts = new List<string> { "**Summary.** " + spec.Summary.Trim() };
+        parts.Add("**Acceptance criteria.**\n" + string.Join('\n', spec.AcceptanceCriteria.Select((c, i) => $"{i + 1}. {c.Trim()}")));
+        if (spec.AffectedAreas.Count > 0)
+            parts.Add("**Affected areas.**\n" + Bullets(spec.AffectedAreas.Select(a => a.Trim())));
+        if (!string.IsNullOrWhiteSpace(spec.TestPlan))
+            parts.Add("**Test plan.** " + spec.TestPlan.Trim());
+        if (spec.OpenQuestions.Count > 0)
+            parts.Add("**Open questions.**\n" + Bullets(spec.OpenQuestions.Select(q => q.Trim())));
+        return string.Join("\n\n", parts);
+    }
+
+    /// <summary>The newest messages of a thread, for a brief whose session starts empty.</summary>
+    private static string Conversation(IReadOnlyList<ChatLine> conversation)
+    {
+        var earlier = conversation.TakeLast(ChatConversationMessages).ToList();
         var lines = earlier.Select(m =>
         {
             var text = m.Text.Trim();
@@ -118,10 +158,17 @@ public static partial class BriefComposer
                 text = text[..ChatMessageChars] + " [...]";
             return $"**{m.Speaker}:**\n> {Quote(text)}";
         });
-        var omitted = context.Conversation.Count - earlier.Count;
-        var conversation = earlier.Count == 0 ? "" : Section(
+        var omitted = conversation.Count - earlier.Count;
+        return earlier.Count == 0 ? "" : Section(
             "The thread so far",
             (omitted > 0 ? $"({omitted} earlier message(s) not shown.)\n\n" : "") + string.Join("\n\n", lines));
+    }
+
+    /// <summary>A chat turn (m2-architecture.md §5): a fresh session each time, so the thread so
+    /// far is carried in the brief.</summary>
+    public static string Chat(ChatContext context)
+    {
+        var conversation = Conversation(context.Conversation);
 
         return Render("chat", new()
         {
@@ -382,6 +429,8 @@ public static partial class BriefComposer
             text.AppendLine("## Acceptance criteria").AppendLine();
             for (var i = 0; i < context.AcceptanceCriteria.Count; i++)
                 text.AppendLine($"{i + 1}. {context.AcceptanceCriteria[i]}");
+            // The handoff checks each approved criterion was reported on, by its words.
+            text.AppendLine().AppendLine("Report on every criterion above in `criteria`, each in exactly the words written here.");
         }
 
         return text.ToString().TrimEnd();
