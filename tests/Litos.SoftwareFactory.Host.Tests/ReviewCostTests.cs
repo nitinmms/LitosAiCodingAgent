@@ -108,7 +108,8 @@ public sealed class GatewayAllowanceTests : IAsyncLifetime
     {
         public ConcurrentQueue<(string Session, string Message)> Steered { get; } = new();
 
-        public Task<TurnStreamResult> RunTurnAsync(string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct) =>
+        public Task<TurnStreamResult> RunTurnAsync(
+            string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null) =>
             throw new NotSupportedException();
 
         public Task SteerAsync(string sessionId, string message, CancellationToken ct)

@@ -1646,6 +1646,62 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.FinishChatRunAsync(Guid.NewGuid(), "x", null, T0, default));
     }
 
+    /// <summary>A chat answer in progress tells the thread's stream what it is doing, and the
+    /// thread's view carries the latest report while the answer is under way.</summary>
+    [SkippableFact]
+    public async Task ChatProgress_IsOnTheThreadsStream_AndInItsView_UntilTheAnswerArrives()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        var runId = (await ChatAsync(thread.Id)).RunId!.Value;
+        var before = await Store.LastEventSequenceAsync(default);
+
+        await Store.AnnounceChatProgressAsync(new ChatProgress(runId, T0, 1, 0, "Thinking"), T0, default);
+        await Store.AnnounceChatProgressAsync(new ChatProgress(runId, T0, 2, 1, "Read src/Orders.cs"), T0, default);
+
+        var events = (await Store.ReadEventsAsync(thread.Id, before, 50, default)).Where(e => e.Type == EventTypes.ChatProgress).ToList();
+        Assert.Equal(2, events.Count);
+        var payload = JsonDocument.Parse(events[1].PayloadJson).RootElement;
+        Assert.Equal(("Read src/Orders.cs", 2, 1), (payload.GetProperty("activity").GetString(), payload.GetProperty("modelCalls").GetInt32(), payload.GetProperty("toolCalls").GetInt32()));
+        Assert.Equal(new ChatProgress(runId, T0, 2, 1, "Read src/Orders.cs"), (await Store.GetThreadAsync(thread.Id, default))!.ChatProgress);
+
+        // Never on the board: it says nothing about where the task stands.
+        Assert.DoesNotContain(await Store.ReadBoardEventsAsync(null, before, 50, default), e => e.Type == EventTypes.ChatProgress);
+
+        await Store.FinishChatRunAsync(runId, "In CsvWriter.cs.", null, T0, default);
+        Assert.Null((await Store.GetThreadAsync(thread.Id, default))!.ChatProgress);
+    }
+
+    [SkippableFact]
+    public async Task ChatProgress_AfterTheAnswer_IsDropped_SoItNeverFollowsTheReply()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        var runId = (await ChatAsync(thread.Id)).RunId!.Value;
+        await Store.FinishChatRunAsync(runId, "Done.", null, T0, default);
+        var after = await Store.LastEventSequenceAsync(default);
+
+        await Store.AnnounceChatProgressAsync(new ChatProgress(runId, T0, 3, 2, "Thinking"), T0, default);
+
+        Assert.Empty(await Store.ReadEventsAsync(thread.Id, after, 50, default));
+        await Assert.ThrowsAsync<StoreNotFoundException>(
+            () => Store.AnnounceChatProgressAsync(new ChatProgress(Guid.NewGuid(), T0, 0, 0, "Thinking"), T0, default));
+    }
+
+    /// <summary>A report from an earlier answer is not shown as the progress of the next one.</summary>
+    [SkippableFact]
+    public async Task ChatProgress_OfAnEarlierAnswer_IsNotTheNextOnes()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        var first = (await ChatAsync(thread.Id)).RunId!.Value;
+        await Store.AnnounceChatProgressAsync(new ChatProgress(first, T0, 1, 1, "Thinking"), T0, default);
+        await Store.FinishChatRunAsync(first, "Done.", null, T0, default);
+
+        await ChatAsync(thread.Id, "And then?");
+
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.NotNull(details.ChatRun);
+        Assert.Null(details.ChatProgress);
+    }
+
     /// <summary>§5: chat tokens are not charged to the task's budget, but to the chat's own.</summary>
     [SkippableFact]
     public async Task AChatsModelCalls_AreChargedToItsOwnBudget_NeverTheTasks()

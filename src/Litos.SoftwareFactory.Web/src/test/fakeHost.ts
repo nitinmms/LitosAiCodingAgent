@@ -2,6 +2,7 @@ import { CSRF_HEADER, type Fetch } from '../api/client';
 import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
   AccountRole,
+  ChatProgress,
   CurrentUser,
   Decision,
   Finding,
@@ -247,6 +248,7 @@ export class FakeHost {
       findings: [],
       handoff: null,
       chatPending: false,
+      chatProgress: null,
     });
     this.usage.set(thread.id, []);
     return thread;
@@ -777,8 +779,19 @@ export class FakeHost {
 
   /** Litos's reply to a plain message: posted, and the thread no longer waits for it. */
   answerChat(threadId: string, reply: string, kind: 'Text' | 'Status' = 'Text'): Message {
-    this.details(threadId).chatPending = false;
+    const details = this.details(threadId);
+    details.chatPending = false;
+    details.chatProgress = null;
     return this.say(threadId, { author: 'Factory', kind, text: reply });
+  }
+
+  /** What the answer in progress is doing, as the host's "chat" event says it. */
+  reportChat(threadId: string, progress: Partial<ChatProgress> & { activity: string }): ChatProgress {
+    const details = this.details(threadId);
+    const full: ChatProgress = { runId: 'r-chat', startedAt: new Date().toISOString(), modelCalls: 0, toolCalls: 0, ...progress };
+    details.chatProgress = full;
+    this.emit(threadId, 'chat', full);
+    return full;
   }
 
   private judge(findingId: string, verdict: string | null): [number, unknown?] {

@@ -83,6 +83,54 @@ describe('asking a question', () => {
     expect(conversation().getByText('Reading the code to answer...')).toBeInTheDocument();
   });
 
+  it('shows what Litos is doing while it answers, and drops it once the answer arrives', async () => {
+    const { host, thread, user } = await withThread();
+    await user.type(composer(), 'Where are orders exported?{Enter}');
+    const waiting = () => screen.getByLabelText('Litos is answering');
+    await screen.findByLabelText('Litos is answering');
+
+    act(() => void host.reportChat(thread.id, { activity: 'Search "Export" in src', modelCalls: 1 }));
+    expect(await within(waiting()).findByText('Search "Export" in src...')).toBeInTheDocument();
+    expect(within(waiting()).getByText('1 model call so far')).toBeInTheDocument();
+
+    act(() => void host.reportChat(thread.id, { activity: 'Read src/Orders.cs', modelCalls: 2, toolCalls: 1 }));
+    expect(await within(waiting()).findByText('Read src/Orders.cs...')).toBeInTheDocument();
+    expect(within(waiting()).getByText('1 lookup, 2 model calls so far')).toBeInTheDocument();
+    // Applied straight from the event: nothing is fetched again for it.
+    const fetches = host.sent('GET', `/api/threads/${thread.id}`).length;
+    act(() => void host.reportChat(thread.id, { activity: 'Thinking', modelCalls: 2, toolCalls: 1 }));
+    await within(waiting()).findByText('Thinking...');
+    expect(host.sent('GET', `/api/threads/${thread.id}`)).toHaveLength(fetches);
+
+    act(() => void host.answerChat(thread.id, 'In src/Orders.cs.'));
+    await conversation().findByText('In src/Orders.cs.');
+    await waitFor(() => expect(screen.queryByLabelText('Litos is answering')).not.toBeInTheDocument());
+  });
+
+  it('counts the time since the answer started', async () => {
+    const startedAt = new Date(Date.now() - 65_000).toISOString();
+    await withThread({}, (host, threadId) => {
+      host.say(threadId, { author: 'User', kind: 'Text', text: 'Asked a minute ago?', payload: { plain: true } });
+      host.details(threadId).chatPending = true;
+      host.details(threadId).chatProgress = { runId: 'r', startedAt, modelCalls: 3, toolCalls: 2, activity: 'Thinking' };
+    });
+
+    // Opened mid-answer: the last report is shown at once.
+    const waiting = within(screen.getByLabelText('Litos is answering'));
+    expect(waiting.getByText('Thinking...')).toBeInTheDocument();
+    expect(waiting.getByText('2 lookups, 3 model calls so far')).toBeInTheDocument();
+    expect(waiting.getByText(/^1:0[5-9]$/)).toBeInTheDocument();
+  });
+
+  it('ignores a report when no answer is awaited', async () => {
+    const { host, thread } = await withThread();
+
+    act(() => void host.reportChat(thread.id, { activity: 'Thinking' }));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByLabelText('Litos is answering')).not.toBeInTheDocument();
+  });
+
   it('shows why there is no answer', async () => {
     const { host, thread, user } = await withThread();
     await user.type(composer(), 'What does this do?{Enter}');

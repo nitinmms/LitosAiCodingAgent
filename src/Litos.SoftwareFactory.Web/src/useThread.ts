@@ -112,6 +112,12 @@ export function useThread(
           }
 
           const previous = shown.current;
+          // What a chat answer is doing changes nothing else, so it is shown as it comes.
+          if (event.type === 'chat') {
+            if (previous && previous.thread.id === threadId && previous.chatPending) show({ ...previous, chatProgress: event.progress });
+            return;
+          }
+
           if (previous && previous.thread.id === threadId) {
             const thread = applyChange(previous.thread, event.change);
             if (thread !== previous.thread) show({ ...previous, thread });

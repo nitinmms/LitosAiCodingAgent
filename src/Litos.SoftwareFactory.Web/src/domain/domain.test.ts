@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LifecycleState, Thread, ThreadChange, Turn } from '../api/types';
-import { fmt, initials, pct, shortSha, toneOf, words } from './format';
+import { elapsed, fmt, initials, pct, shortSha, toneOf, words } from './format';
 import { parseRoute, routeHash } from './route';
 import {
   applyChange,
@@ -11,6 +11,7 @@ import {
   canPause,
   canResume,
   canWithdraw,
+  chatWork,
   isBareMention,
   isClosed,
   isPlainMessage,
@@ -75,6 +76,24 @@ const change = (overrides: Partial<ThreadChange> = {}): ThreadChange => ({
   branch: 'factory/x',
   pullRequestUrl: null,
   ...overrides,
+});
+
+describe('a chat answer in progress', () => {
+  it.each([
+    [0, '0:00'],
+    [7.9, '0:07'],
+    [65, '1:05'],
+    [725, '12:05'],
+    [-3, '0:00'],
+  ])('%d seconds reads %s', (seconds, expected) => expect(elapsed(seconds)).toBe(expected));
+
+  it('says what it has done, and nothing before it has done anything', () => {
+    expect(chatWork(null)).toBe('');
+    expect(chatWork({ modelCalls: 0, toolCalls: 0 })).toBe('');
+    expect(chatWork({ modelCalls: 1, toolCalls: 0 })).toBe('1 model call');
+    expect(chatWork({ modelCalls: 3, toolCalls: 1 })).toBe('1 lookup, 3 model calls');
+    expect(chatWork({ modelCalls: 2, toolCalls: 4 })).toBe('4 lookups, 2 model calls');
+  });
 });
 
 describe('chat mirrors the host (m2-architecture.md §5)', () => {

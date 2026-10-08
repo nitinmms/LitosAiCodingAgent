@@ -162,6 +162,15 @@ describe('the event stream', () => {
     expect(events).toEqual([{ type: 'message', sequence: 50 }]);
   });
 
+  it('delivers what a chat answer is doing, and skips a report it cannot read', () => {
+    const { source, events } = open();
+    const progress = { runId: 'r', startedAt: '2026-10-08T09:00:00Z', modelCalls: 2, toolCalls: 1, activity: 'Read src/Orders.cs' };
+
+    source.emit('chat', progress, 60);
+
+    expect(events).toEqual([{ type: 'chat', sequence: 60, progress }]);
+  });
+
   it('drops an event whose data is not JSON', () => {
     const opened: FakeEventSource[] = [];
     const events: ThreadEvent[] = [];

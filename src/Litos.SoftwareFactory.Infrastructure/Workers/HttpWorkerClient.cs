@@ -29,7 +29,8 @@ public sealed class HttpWorkerClient : IWorkerClient
         _http.DefaultRequestHeaders.Add(FactoryWire.SecretHeader, secret);
     }
 
-    public async Task<TurnStreamResult> RunTurnAsync(string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct)
+    public async Task<TurnStreamResult> RunTurnAsync(
+        string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, TurnsPath(sessionId))
         {
@@ -55,13 +56,18 @@ public sealed class HttpWorkerClient : IWorkerClient
             if (!line.StartsWith("data:", StringComparison.Ordinal))
                 continue;
 
-            switch (Classify(line.AsSpan(5).Trim().ToString(), out var message))
+            switch (Classify(line.AsSpan(5).Trim().ToString(), out var message, out var arguments))
             {
                 case TurnEvent.Message:
                     reply = message ?? reply;
+                    onProgress?.Invoke(new TurnProgress(TurnProgressKind.ModelReply));
+                    break;
+                case TurnEvent.ToolCall:
+                    onProgress?.Invoke(new TurnProgress(TurnProgressKind.ToolCall, message, arguments));
                     break;
                 case TurnEvent.ToolResult:
                     toolCalls++;
+                    onProgress?.Invoke(new TurnProgress(TurnProgressKind.ToolResult));
                     if (toolCalls > maxToolCalls)
                     {
                         await CancelAsync(sessionId, CancellationToken.None);
@@ -86,17 +92,24 @@ public sealed class HttpWorkerClient : IWorkerClient
 
         /// <summary>A model call's completed message; its text, when it has any, is the message.</summary>
         Message,
+
+        /// <summary>The model asked for a tool; the message is the tool's name.</summary>
+        ToolCall,
     }
+
+    internal static TurnEvent Classify(string json, out string? message) => Classify(json, out message, out _);
 
     /// <summary>
     /// The worker serializes each AgentEvent by its runtime type with no discriminator, so events
     /// are told apart by shape: a tool result carries CallId and Result, an error carries only an
     /// Exception with a Message, and a completed message carries Message and Usage. A completed
-    /// message's text is its text blocks joined; reasoning is never in them.
+    /// message's text is its text blocks joined; reasoning is never in them. A tool call carries
+    /// CallId, ToolName and Arguments; its result carries Result as well.
     /// </summary>
-    internal static TurnEvent Classify(string json, out string? message)
+    internal static TurnEvent Classify(string json, out string? message, out JsonElement arguments)
     {
         message = null;
+        arguments = default;
         try
         {
             using var document = JsonDocument.Parse(json);
@@ -118,7 +131,19 @@ public sealed class HttpWorkerClient : IWorkerClient
                 return TurnEvent.Message;
             }
 
-            return root.TryGetProperty("CallId", out _) && root.TryGetProperty("Result", out _) ? TurnEvent.ToolResult : TurnEvent.Other;
+            if (!root.TryGetProperty("CallId", out _))
+                return TurnEvent.Other;
+            if (root.TryGetProperty("Result", out _))
+                return TurnEvent.ToolResult;
+            if (root.TryGetProperty("ToolName", out var toolName) && toolName.ValueKind == JsonValueKind.String
+                && root.TryGetProperty("Arguments", out var args))
+            {
+                message = toolName.GetString();
+                arguments = args.Clone();
+                return TurnEvent.ToolCall;
+            }
+
+            return TurnEvent.Other;
         }
         catch (JsonException)
         {

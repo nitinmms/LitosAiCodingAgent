@@ -563,6 +563,8 @@ public static class FactoryApi
         Project = ProjectView(details.Project),
         // A plain message is being answered: the composer waits for the reply.
         ChatPending = details.ChatRun is not null,
+        // What that answer is doing, as its last "chat" event said; null until it says anything.
+        details.ChatProgress,
         Messages = details.Messages.Select(m => new
         {
             m.Id,

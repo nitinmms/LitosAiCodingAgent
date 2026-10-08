@@ -208,6 +208,18 @@ export interface ThreadDetails {
   handoff: Handoff | null;
   /** A plain message is being answered; another waits until the reply arrives. */
   chatPending: boolean;
+  /** What that answer is doing, as it last said; null until it says anything. */
+  chatProgress: ChatProgress | null;
+}
+
+/** What a chat answer in progress has done so far (the host's ChatProgress). */
+export interface ChatProgress {
+  runId: string;
+  startedAt: string;
+  modelCalls: number;
+  toolCalls: number;
+  /** What it is doing now, in a few words: "Thinking", "Read src/Orders.cs". */
+  activity: string;
 }
 
 export interface UsageCall {

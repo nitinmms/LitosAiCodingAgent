@@ -89,6 +89,9 @@ public sealed class FactoryOptions
     /// <summary>...or after this long.</summary>
     public TimeSpan ChatTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
+    /// <summary>How often, at most, a chat answer in progress tells the thread what it is doing.</summary>
+    public TimeSpan ChatProgressInterval { get; set; } = TimeSpan.FromSeconds(1);
+
     public string RunDirectory(Guid runId) => Path.Combine(DataDirectory, "runs", runId.ToString("N"));
 
     /// <summary>The run's own TEMP, TMP and TMPDIR, so concurrent runs never share temporary files.</summary>

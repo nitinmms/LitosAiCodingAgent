@@ -68,6 +68,15 @@ export const canMessage = (state: LifecycleState): boolean =>
 export const canChat = (state: LifecycleState): boolean =>
   state === 'Draft' || state === 'AwaitingHumanTesting' || state === 'Accepted';
 
+/** What a chat answer has done so far, in a few words: "2 lookups, 3 model calls". Empty before it has done anything. */
+export function chatWork(progress: { modelCalls: number; toolCalls: number } | null): string {
+  if (!progress) return '';
+  const parts: string[] = [];
+  if (progress.toolCalls > 0) parts.push(`${progress.toolCalls} ${progress.toolCalls === 1 ? 'lookup' : 'lookups'}`);
+  if (progress.modelCalls > 0) parts.push(`${progress.modelCalls} model ${progress.modelCalls === 1 ? 'call' : 'calls'}`);
+  return parts.join(', ');
+}
+
 /** Whether a message was sent without @factory: the host marks it, since it stores a delegation without its mention. */
 export const isPlainMessage = (message: { payload: unknown }): boolean =>
   typeof message.payload === 'object' && message.payload !== null && (message.payload as { plain?: unknown }).plain === true;

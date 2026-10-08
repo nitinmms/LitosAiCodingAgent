@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
-import type { CurrentUser, Message, PullRequestState, Settings, ThreadDetails } from '../api/types';
-import { initials } from '../domain/format';
+import type { ChatProgress, CurrentUser, Message, PullRequestState, Settings, ThreadDetails } from '../api/types';
+import { elapsed, initials } from '../domain/format';
 import {
   canCancel,
   canChat,
   canMessage,
   canPause,
   canWithdraw,
+  chatWork,
   isBareMention,
   isClosed,
   isPlainMessage,
@@ -287,14 +288,7 @@ export function ThreadMain({
           </div>
         ) : null}
         {messages.map(renderMessage)}
-        {waitingForAnswer ? (
-          <div className="m" role="status">
-            <div className="m-who">
-              <b>Litos</b>
-            </div>
-            <div className="bubble muted">Reading the code to answer...</div>
-          </div>
-        ) : null}
+        {waitingForAnswer ? <ChatWaiting progress={details.chatProgress} /> : null}
         <StopPanel
           key={`${thread.state}-${thread.budgetCap}`}
           thread={thread}
@@ -428,6 +422,35 @@ export function ThreadMain({
             </p>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The answer on its way: what Litos is doing now, what it has done, and for how long. The host
+ * reports at most once a second; the clock runs here between reports.
+ */
+function ChatWaiting({ progress }: { progress: ChatProgress | null }) {
+  // Until the first report, the time counts from when this appeared.
+  const [shownAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const started = progress ? Date.parse(progress.startedAt) : shownAt;
+  const work = chatWork(progress);
+  return (
+    <div className="m" aria-label="Litos is answering">
+      <div className="m-who">
+        <b>Litos</b>
+        <span className="small muted">{elapsed((now - (Number.isNaN(started) ? shownAt : started)) / 1000)}</span>
+      </div>
+      <div className="bubble muted">
+        <div>{progress ? `${progress.activity}...` : 'Reading the code to answer...'}</div>
+        {work ? <div className="small">{work} so far</div> : null}
       </div>
     </div>
   );

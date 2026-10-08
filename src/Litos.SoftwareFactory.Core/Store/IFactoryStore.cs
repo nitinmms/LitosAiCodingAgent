@@ -92,6 +92,9 @@ public sealed record ThreadDetails(
     /// <summary>A chat run still answering, if there is one. Chat runs are never the LatestRun:
     /// that is the task's own work.</summary>
     public TaskRun? ChatRun { get; init; }
+
+    /// <summary>What <see cref="ChatRun"/> last said it was doing, if it has said anything.</summary>
+    public ChatProgress? ChatProgress { get; init; }
 }
 
 /// <summary>
@@ -159,6 +162,10 @@ public interface IFactoryStore
     /// </summary>
     Task<DispatchResult> ChatAsync(
         Guid threadId, Guid userId, string dispatchKey, string text, long chatTurnCap, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Tells the thread's stream what a chat answer in progress is doing. Does nothing
+    /// once the run has finished, so a late report never follows the reply.</summary>
+    Task AnnounceChatProgressAsync(ChatProgress progress, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>Ends a chat run: posts its reply, or says why there is none.</summary>
     Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct);

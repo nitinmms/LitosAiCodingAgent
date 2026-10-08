@@ -8,6 +8,12 @@ export const fmt = (value: number): string => numbers.format(value);
 export const pct = (value: number): string => `${percents.format(value)}%`;
 
 /** "BelowThreshold" → "Below threshold". The host sends enum names; people read words. */
+/** A running time as a clock shows it: "0:07", "1:42", "12:05". Negative counts as zero. */
+export function elapsed(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
 export function words(name: string): string {
   const spaced = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);

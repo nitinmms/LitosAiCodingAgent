@@ -36,6 +36,9 @@ public sealed class ChatExecutor(
         string? failure = null;
         var readingCopy = _readingCopies.GetOrAdd(project.Id, _ => new SemaphoreSlim(1, 1));
         var holding = false;
+        var progress = new ChatProgressTracker(run.Id, run.StartedAt ?? clock.UtcNow);
+        using var stopReporting = new CancellationTokenSource();
+        var reporting = ReportProgressAsync(progress, stopReporting.Token);
         try
         {
             using var timeout = new CancellationTokenSource(options.ChatTimeout);
@@ -48,6 +51,7 @@ public sealed class ChatExecutor(
             var details = await store.GetThreadAsync(thread.Id, ct) ?? throw new InvalidOperationException("The thread no longer exists.");
             var workspace = workspaces.ReadingCopyFor(project);
             var branch = await CheckOutAsync(workspace, details, ct);
+            progress.Set(ChatProgressTracker.Starting);
 
             handle = await launcher.LaunchAsync(
                 new WorkerLaunch(
@@ -66,7 +70,8 @@ public sealed class ChatExecutor(
             var brief = BriefComposer.Chat(new ChatContext(
                 project.Name, branch, thread.Title, details.LatestRun?.Request, Conversation(details, run), run.Request));
             var turnToken = active.BeginTurn(TurnKind.Chat, TurnKind.Chat, sessionId, ct, phase: "Chat");
-            var result = await client.RunTurnAsync(sessionId, TurnKind.Chat, brief, options.ChatMaxToolCalls, turnToken);
+            progress.Set(ChatProgressTracker.Thinking);
+            var result = await client.RunTurnAsync(sessionId, TurnKind.Chat, brief, options.ChatMaxToolCalls, turnToken, progress.Apply);
 
             if (!string.IsNullOrWhiteSpace(result.Reply))
                 reply = result.Reply;
@@ -97,6 +102,10 @@ public sealed class ChatExecutor(
         }
         finally
         {
+            // Before the reply: the store also refuses a report on a finished run.
+            await stopReporting.CancelAsync();
+            await reporting;
+
             active.Client = null;
             if (client is not null)
                 await TryAsync(() => client.ShutdownAsync(CancellationToken.None));
@@ -133,6 +142,42 @@ public sealed class ChatExecutor(
             }
 
             signals.EventsWritten();
+        }
+    }
+
+    /// <summary>
+    /// Tells the thread what the answer is doing: at once, then whenever it has changed, at most
+    /// once per <see cref="FactoryOptions.ChatProgressInterval"/>. A report that cannot be written
+    /// is skipped; the answer itself does not depend on it.
+    /// </summary>
+    private async Task ReportProgressAsync(ChatProgressTracker progress, CancellationToken ct)
+    {
+        var reported = -1;
+        try
+        {
+            while (true)
+            {
+                var version = progress.Version;
+                if (version != reported)
+                {
+                    try
+                    {
+                        await store.AnnounceChatProgressAsync(progress.Snapshot, clock.UtcNow, ct);
+                        signals.EventsWritten();
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        logger.LogDebug(ex, "Progress of chat run {RunId} could not be reported.", progress.Snapshot.RunId);
+                    }
+
+                    reported = version;
+                }
+
+                await Task.Delay(options.ChatProgressInterval, ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 

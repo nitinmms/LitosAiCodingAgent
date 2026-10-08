@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Verification;
 
@@ -208,10 +209,29 @@ public interface IWorkerLauncher
 /// Other turns report what they achieved through their completion tools, never through this.</param>
 public sealed record TurnStreamResult(bool Completed, int ToolCalls, string? Error, string? Reply = null);
 
+public enum TurnProgressKind
+{
+    /// <summary>The model asked for a tool: <see cref="TurnProgress.ToolName"/> and its arguments.</summary>
+    ToolCall,
+
+    /// <summary>A tool call finished.</summary>
+    ToolResult,
+
+    /// <summary>A model call finished.</summary>
+    ModelReply,
+}
+
+/// <summary>One thing a turn did, as its worker streamed it.</summary>
+/// <param name="Arguments">A tool call's arguments; undefined for the other kinds.</param>
+public sealed record TurnProgress(TurnProgressKind Kind, string? ToolName = null, JsonElement Arguments = default);
+
 /// <summary>The host's calls into a worker (§15).</summary>
 public interface IWorkerClient
 {
-    Task<TurnStreamResult> RunTurnAsync(string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct);
+    /// <param name="onProgress">Told of each tool call, tool result and model reply as they
+    /// stream in, for showing what the turn is doing (chat, m2-architecture.md §5).</param>
+    Task<TurnStreamResult> RunTurnAsync(
+        string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null);
 
     /// <summary>Sends a steering message to the turn in progress.</summary>
     Task SteerAsync(string sessionId, string message, CancellationToken ct);

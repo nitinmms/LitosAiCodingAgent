@@ -114,7 +114,22 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             findings = await db.ReviewFindings.AsNoTracking().Where(f => f.RunId == latestRun.Id).ToListAsync(ct);
         }
 
-        return new ThreadDetails(thread, project, messages, decisions, latestRun, handoff, verification, findings) { ChatRun = chatRun };
+        ChatProgress? chatProgress = null;
+        if (chatRun is not null)
+        {
+            var reported = await db.Outbox.AsNoTracking()
+                .Where(e => e.ThreadId == threadId && e.Type == EventTypes.ChatProgress)
+                .OrderByDescending(e => e.Sequence).Select(e => e.PayloadJson).FirstOrDefaultAsync(ct);
+            chatProgress = reported is null ? null : JsonSerializer.Deserialize<ChatProgress>(reported, FactoryWire.Json);
+            if (chatProgress?.RunId != chatRun.Id)
+                chatProgress = null;
+        }
+
+        return new ThreadDetails(thread, project, messages, decisions, latestRun, handoff, verification, findings)
+        {
+            ChatRun = chatRun,
+            ChatProgress = chatProgress,
+        };
     }
 
     public async Task<TaskRun?> GetRunAsync(Guid runId, CancellationToken ct)
@@ -304,6 +319,28 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
     /// <summary>The payload of a message sent without @factory.</summary>
     public const string PlainMessagePayload = """{"plain":true}""";
+
+    public async Task AnnounceChatProgressAsync(ChatProgress progress, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var run = await db.Runs.AsNoTracking().FirstOrDefaultAsync(r => r.Id == progress.RunId && r.Kind == RunKind.Chat, ct)
+            ?? throw new StoreNotFoundException("The chat run does not exist.");
+        // The thread is locked so the report cannot land after the reply that finishes the run.
+        var thread = await LockThreadAsync(db, run.ThreadId, ct);
+        if (await db.Runs.AnyAsync(r => r.Id == run.Id && r.Status == RunStatus.Finished, ct))
+            return;
+
+        db.Outbox.Add(new OutboxEvent
+        {
+            ThreadId = thread.Id,
+            ProjectId = thread.ProjectId,
+            Type = EventTypes.ChatProgress,
+            PayloadJson = JsonSerializer.Serialize(progress, FactoryWire.Json),
+            CreatedAt = now,
+        });
+        await write.CommitAsync(ct);
+    }
 
     public async Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct)
     {

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
@@ -193,6 +194,82 @@ public sealed class ChatTests
 
         // Ordered by sequence, cut at the last time the question was said, and without the status note.
         Assert.Equal([new Core.Briefs.ChatLine("Person", "Same words")], lines);
+    }
+
+    // ---- Showing it working ----
+
+    [Fact]
+    public async Task WhileAnswering_TheThreadIsToldWhatItIsDoing_AndTheProgressGoesWithTheAnswer()
+    {
+        var (host, _, threadId) = await StartAsync(o => o.ChatProgressInterval = TimeSpan.FromMilliseconds(20));
+        await using var _ = host;
+        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Workers.Script.Enqueue(async call =>
+        {
+            call.Report(new TurnProgress(TurnProgressKind.ToolCall, "search_code", JsonDocument.Parse("""{"pattern":"Export"}""").RootElement));
+            call.Report(new TurnProgress(TurnProgressKind.ModelReply));
+            call.Report(new TurnProgress(TurnProgressKind.ToolResult));
+            call.Report(new TurnProgress(TurnProgressKind.ToolCall, "read_file", JsonDocument.Parse("""{"path":"src/Orders.cs"}""").RootElement));
+            call.Report(new TurnProgress(TurnProgressKind.ModelReply));
+            reading.SetResult();
+            await release.Task.WaitAsync(call.Token);
+            return new TurnStreamResult(true, 2, null, "In src/Orders.cs.");
+        });
+
+        await SayAsync(host, threadId);
+        await reading.Task.WaitAsync(TimeSpan.FromSeconds(20));
+
+        // The thread's view says what the answer is doing, once the next report is written.
+        System.Text.Json.JsonElement progress = default;
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            var view = await host.GetAsync($"api/threads/{threadId}");
+            progress = view.GetProperty("chatProgress");
+            if (progress.ValueKind == JsonValueKind.Object && progress.GetProperty("activity").GetString() != ChatProgressTracker.Thinking
+                && progress.GetProperty("modelCalls").GetInt32() == 2)
+            {
+                break;
+            }
+
+            await Task.Delay(30);
+        }
+
+        Assert.Equal("Read src/Orders.cs", progress.GetProperty("activity").GetString());
+        Assert.Equal((2, 1), (progress.GetProperty("modelCalls").GetInt32(), progress.GetProperty("toolCalls").GetInt32()));
+
+        release.SetResult();
+        var (details, answer) = await AnswerAsync(host, threadId);
+        Assert.Equal("In src/Orders.cs.", answer.Text);
+        Assert.Null(details.ChatProgress);
+
+        // Every report on the stream came before the reply, and the first said where it started.
+        var events = await host.Store.ReadEventsAsync(threadId, 0, 500, default);
+        var reports = events.Where(e => e.Type == EventTypes.ChatProgress).ToList();
+        Assert.NotEmpty(reports);
+        Assert.Equal(ChatProgressTracker.Fetching, JsonDocument.Parse(reports[0].PayloadJson).RootElement.GetProperty("activity").GetString());
+        var reply = events.Last(e => e.Type == EventTypes.MessageAdded);
+        Assert.True(reports.Max(e => e.Sequence) < reply.Sequence);
+    }
+
+    [Fact]
+    public async Task ATurnThatSaysNothing_IsReportedOnlyWhenSomethingChanges()
+    {
+        var (host, _, threadId) = await StartAsync(o => o.ChatProgressInterval = TimeSpan.FromMilliseconds(20));
+        await using var _ = host;
+        host.Workers.Script.Enqueue(async call =>
+        {
+            await Task.Delay(400, call.Token);
+            return new TurnStreamResult(true, 0, null, "Quick.");
+        });
+
+        await SayAsync(host, threadId);
+        await AnswerAsync(host, threadId);
+
+        // Getting the code, starting, thinking: then nothing new for 400 ms, so nothing more written.
+        var reports = (await host.Store.ReadEventsAsync(threadId, 0, 500, default)).Count(e => e.Type == EventTypes.ChatProgress);
+        Assert.InRange(reports, 1, 3);
     }
 
     // ---- When there is no answer ----
@@ -450,5 +527,66 @@ public sealed class ChatRegistryTests
         Assert.Same(task, registry.FindByThread(threadId));
         Assert.True(chat.IsChat);
         Assert.False(task.IsChat);
+    }
+}
+
+/// <summary>How a chat answer's worker events become what the person waiting is shown.</summary>
+public sealed class ChatProgressTrackerTests
+{
+    private static readonly DateTimeOffset T0 = new(2026, 10, 8, 9, 0, 0, TimeSpan.Zero);
+
+    private static TurnProgress Call(string tool, string arguments) => new(TurnProgressKind.ToolCall, tool, JsonDocument.Parse(arguments).RootElement);
+
+    [Fact]
+    public void Starts_ByGettingTheLatestCode()
+    {
+        var runId = Guid.NewGuid();
+
+        Assert.Equal(new ChatProgress(runId, T0, 0, 0, ChatProgressTracker.Fetching), new ChatProgressTracker(runId, T0).Snapshot);
+    }
+
+    [Fact]
+    public void CountsModelCallsAndToolCalls_AndSaysWhatItIsDoing()
+    {
+        var tracker = new ChatProgressTracker(Guid.NewGuid(), T0);
+
+        tracker.Apply(Call("read_file", """{"path":"src/Orders.cs"}"""));
+        Assert.Equal("Read src/Orders.cs", tracker.Snapshot.Activity);
+        tracker.Apply(new TurnProgress(TurnProgressKind.ModelReply));
+        tracker.Apply(new TurnProgress(TurnProgressKind.ToolResult));
+
+        var snapshot = tracker.Snapshot;
+        Assert.Equal((1, 1, ChatProgressTracker.Thinking), (snapshot.ModelCalls, snapshot.ToolCalls, snapshot.Activity));
+    }
+
+    [Fact]
+    public void EveryChange_MovesTheVersion()
+    {
+        var tracker = new ChatProgressTracker(Guid.NewGuid(), T0);
+        var start = tracker.Version;
+
+        tracker.Set(ChatProgressTracker.Starting);
+        tracker.Apply(new TurnProgress(TurnProgressKind.ModelReply));
+
+        Assert.Equal(start + 2, tracker.Version);
+    }
+
+    [Theory]
+    [InlineData("search_code", """{"pattern":"Export"}""", "Search")]
+    [InlineData("list_directory", """{"path":"src"}""", "List src")]
+    [InlineData("run_kernel_code", """{"code":"var x = 1;"}""", ChatProgressTracker.RunningCode)]
+    [InlineData("some_new_tool", "{}", "some_new_tool")]
+    public void Describe_UsesTheWordsTheOtherFacesUse(string tool, string arguments, string expected)
+    {
+        Assert.StartsWith(expected, ChatProgressTracker.Describe(Call(tool, arguments)));
+    }
+
+    [Fact]
+    public void Describe_AVeryLongCall_IsCut()
+    {
+        var described = ChatProgressTracker.Describe(Call("read_file", $$"""{"path":"{{new string('a', 500)}}"}"""));
+
+        Assert.EndsWith("...", described);
+        Assert.True(described.Length <= 123);
     }
 }

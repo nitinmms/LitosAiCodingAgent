@@ -365,6 +365,11 @@ public sealed record TurnCall(FakeWorker Worker, string SessionId, TurnKind Kind
 {
     /// <summary>The tool-call limit the host started the turn with.</summary>
     public int MaxToolCalls { get; init; }
+
+    /// <summary>What the host listens to for the turn's progress; a script reports through it as the real worker's stream would.</summary>
+    public Action<TurnProgress>? OnProgress { get; init; }
+
+    public void Report(TurnProgress progress) => OnProgress?.Invoke(progress);
 }
 
 /// <summary>
@@ -426,9 +431,10 @@ public sealed class FakeWorker(WorkerLaunch launch, FakeWorkerLauncher owner) : 
         return [.. body.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonSerializer.Deserialize<GatewayEvent>(line, FactoryWire.Json)!)];
     }
 
-    public async Task<TurnStreamResult> RunTurnAsync(string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct)
+    public async Task<TurnStreamResult> RunTurnAsync(
+        string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null)
     {
-        var call = new TurnCall(this, sessionId, kind, brief, ct) { MaxToolCalls = maxToolCalls };
+        var call = new TurnCall(this, sessionId, kind, brief, ct) { MaxToolCalls = maxToolCalls, OnProgress = onProgress };
         owner.Turns.Enqueue(call);
         var behaviour = owner.Script.TryDequeue(out var scripted) ? scripted : owner.Default;
         return await behaviour(call);

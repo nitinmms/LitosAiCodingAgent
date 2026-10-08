@@ -1,9 +1,10 @@
-import type { Thread, ThreadChange } from './types';
+import type { ChatProgress, Thread, ThreadChange } from './types';
 
 export type ThreadEvent =
   | { type: 'message'; sequence: number }
   | { type: 'state'; sequence: number; change: ThreadChange }
-  | { type: 'usage'; sequence: number; change: ThreadChange };
+  | { type: 'usage'; sequence: number; change: ThreadChange }
+  | { type: 'chat'; sequence: number; progress: ChatProgress };
 
 /** The part of EventSource this app uses, so tests can supply their own. */
 export interface EventSourceLike {
@@ -44,6 +45,14 @@ export function subscribeToThread(
       if (change) onEvent({ type, sequence: sequenceOf(event), change });
     });
   }
+
+  source.addEventListener('chat', (event) => {
+    try {
+      onEvent({ type: 'chat', sequence: sequenceOf(event), progress: JSON.parse(String(event.data)) as ChatProgress });
+    } catch {
+      // A report that cannot be read is skipped; the next one replaces it.
+    }
+  });
 
   return () => source.close();
 }

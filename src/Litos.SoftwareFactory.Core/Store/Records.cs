@@ -509,4 +509,11 @@ public static class EventTypes
     public const string MessageAdded = "message";
     public const string StateChanged = "state";
     public const string UsageChanged = "usage";
+
+    /// <summary>What a chat answer in progress is doing (<see cref="ChatProgress"/>). Never on the board's stream.</summary>
+    public const string ChatProgress = "chat";
 }
+
+/// <summary>What a chat answer in progress has done so far, for the person waiting for it.</summary>
+/// <param name="Activity">What it is doing now, in a few words: "Thinking", "Read src/Orders.cs".</param>
+public sealed record ChatProgress(Guid RunId, DateTimeOffset StartedAt, int ModelCalls, int ToolCalls, string Activity);

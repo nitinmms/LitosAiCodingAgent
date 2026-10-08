@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
+using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Infrastructure.Workers;
 
 namespace Litos.SoftwareFactory.Infrastructure.Tests.Workers;
@@ -136,7 +137,7 @@ public class HttpWorkerClientTests
     [Theory]
     [InlineData(ToolResult, (int)HttpWorkerClient.TurnEvent.ToolResult)]
     [InlineData(ToolStarted, (int)HttpWorkerClient.TurnEvent.Other)]
-    [InlineData(ToolCompleted, (int)HttpWorkerClient.TurnEvent.Other)]
+    [InlineData(ToolCompleted, (int)HttpWorkerClient.TurnEvent.ToolCall)]
     [InlineData(Text, (int)HttpWorkerClient.TurnEvent.Other)]
     [InlineData(KeepAlive, (int)HttpWorkerClient.TurnEvent.Other)]
     [InlineData(Completed, (int)HttpWorkerClient.TurnEvent.Message)]
@@ -193,6 +194,43 @@ public class HttpWorkerClientTests
 
         Assert.Equal(HttpWorkerClient.TurnEvent.Message, HttpWorkerClient.Classify(json, out var text));
         Assert.Equal("Reading it now.", text);
+    }
+
+    [Fact]
+    public void Classify_AToolCall_GivesItsNameAndArguments()
+    {
+        Assert.Equal(HttpWorkerClient.TurnEvent.ToolCall, HttpWorkerClient.Classify(ToolCompleted, out var name, out var arguments));
+
+        Assert.Equal("read_file", name);
+        Assert.Equal("a.txt", arguments.GetProperty("path").GetString());
+    }
+
+    /// <summary>Chat shows what a turn is doing (m2-architecture.md §5): each tool call, tool result
+    /// and model reply is reported as it streams in, in order.</summary>
+    [Fact]
+    public async Task RunTurnAsync_ReportsEachToolCallResultAndReply_AsTheyStreamIn()
+    {
+        var (client, handler) = Create();
+        handler.Enqueue(HttpStatusCode.OK, Sse(Text, ToolStarted, ToolCompleted, Completed, ToolResult, KeepAlive, Completed), "text/event-stream");
+        var reported = new List<TurnProgress>();
+
+        var result = await client.RunTurnAsync("s", TurnKind.Chat, "brief", 200, default, reported.Add);
+
+        Assert.True(result.Completed);
+        Assert.Equal(
+            [TurnProgressKind.ToolCall, TurnProgressKind.ModelReply, TurnProgressKind.ToolResult, TurnProgressKind.ModelReply],
+            reported.Select(p => p.Kind));
+        Assert.Equal("read_file", reported[0].ToolName);
+        Assert.Equal("a.txt", reported[0].Arguments.GetProperty("path").GetString());
+    }
+
+    [Fact]
+    public async Task RunTurnAsync_WithNoOneListening_StillCountsToolCalls()
+    {
+        var (client, handler) = Create();
+        handler.Enqueue(HttpStatusCode.OK, Sse(ToolCompleted, ToolResult, Completed), "text/event-stream");
+
+        Assert.Equal(1, (await client.RunTurnAsync("s", TurnKind.Chat, "brief", 200, default)).ToolCalls);
     }
 
     [Fact]
