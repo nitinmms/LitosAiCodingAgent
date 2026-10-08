@@ -175,6 +175,26 @@ Differences from the plan above:
 - Chat is allowed in Draft, AwaitingHumanTesting and Accepted. In other states the composer either steers the running task (Queued, Running) or says why it cannot chat.
 - **Metering:** the usage rows of a chat turn have phase `Chat` and the author as user. They are shown separately and not charged to the task budget (blueprint §5). Each chat turn is bounded by `FACTORY_CHAT_TURN_CAP`. Per-user quotas arrive with the M3 limits; until then chat usage is recorded per user but not refused.
 
+**Step 4 (chat) was completed on 2026-10-08** in these commits:
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `8a5f222` | Store: `RunKind.Chat`, queued by a plain message, with its own budget on the run; the `M2Chat` migration |
+| 2 | `241a5a6` | Worker client: a turn's last message text is kept as its reply |
+| 3 | `3638750` | Host: the reading copy, `ChatExecutor`, chat on the messages API, liveness for chat runs, `FACTORY_CHAT_TURN_CAP`, the chat brief (revision `m2.2`) |
+| 4 | `f060dd4` | Web: asking a question, the pending answer, chat after acceptance; a plain message is marked as such |
+
+Differences from the plan above:
+
+- **Each answer has a session of its own** (`chat-<runId>`), not a turn on the thread's session, which is the task agent's and would carry every question into the work. The brief carries the thread so far instead: the newest 20 messages, each cut to 2,000 characters.
+- **The chat budget lives on the run** (`ChatBudgetCap`, `ChatTokensUsed`, `ChatTokensReserved`). The gateway reserves against it exactly as it reserves against a task's, so a chat over its cap is refused before the model is called. Its usage rows have phase `Chat`.
+- **The reading-copy lock is held for the whole answer,** not only the fetch and checkout, because each answer checks out the branch it reads. Two answers on one project take turns.
+- **A task branch gone from the remote** (deleted after its merge) falls back to the default branch, and the brief says so.
+- **One answer at a time per thread:** a second plain message while one is being answered is refused with 409. Pause, cancel and steering reach the task's run only, never a chat run.
+- **An answer is cut off after 30 tool calls or 10 minutes.** Neither is a setting yet.
+- **An orphaned chat run is finished, not interrupted:** the liveness rule posts a note that there is no answer, and the task's state is untouched.
+- **The store marks a plain message** with the payload `{"plain":true}`, because an `@factory` message is stored without its mention. The app shows the mention only on delegations. `@factory` with nothing after it is refused with 400.
+
 **Spec.**
 - `@factory spec <text>` queues a `Spec` run from Draft.
 - Its `submit_spec` payload is stored as a new `Specification` revision. The table gains `AffectedAreasJson`, `TestPlan` and `OpenQuestionsJson`.
