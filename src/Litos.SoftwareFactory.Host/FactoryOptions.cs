@@ -89,6 +89,12 @@ public sealed class FactoryOptions
     /// <summary>...or after this long.</summary>
     public TimeSpan ChatTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
+    /// <summary>A spec turn is cut off after this many tool calls...</summary>
+    public int SpecMaxToolCalls { get; set; } = 40;
+
+    /// <summary>...or after this long.</summary>
+    public TimeSpan SpecTimeout { get; set; } = TimeSpan.FromMinutes(15);
+
     /// <summary>How often, at most, a chat answer in progress tells the thread what it is doing.</summary>
     public TimeSpan ChatProgressInterval { get; set; } = TimeSpan.FromSeconds(1);
 

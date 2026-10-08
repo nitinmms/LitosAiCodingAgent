@@ -69,6 +69,32 @@ public static class FactoryMention
     }
 }
 
+/// <summary>
+/// "@factory spec ..." asks for a specification rather than the work (m2-architecture.md §5).
+/// Given what follows the mention, gives what the specification is for.
+/// </summary>
+public static class SpecMention
+{
+    private const string Word = "spec";
+
+    /// <returns>True when the request starts with the word "spec"; <paramref name="request"/> is
+    /// then what follows it, which is empty when nothing does.</returns>
+    public static bool TryParse(string text, out string request)
+    {
+        request = "";
+        if (!text.StartsWith(Word, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // "@factory specify the export" is a request for work, not for a specification.
+        var rest = text[Word.Length..];
+        if (rest.Length > 0 && !char.IsWhiteSpace(rest[0]))
+            return false;
+
+        request = rest.Trim();
+        return true;
+    }
+}
+
 public static class FactoryApi
 {
     /// <summary>On the thread list: where the board's event stream starts from.</summary>
@@ -276,12 +302,19 @@ public static class FactoryApi
             if (!mentioned && text.Equals("@factory", StringComparison.OrdinalIgnoreCase))
                 return Problem("Say what you want done after @factory.");
 
+            var specRequest = "";
+            var asksForSpec = mentioned && SpecMention.TryParse(text, out specRequest);
+            if (asksForSpec && specRequest.Length == 0)
+                return Problem("Say what the specification is for after @factory spec.");
+
             DispatchResult result;
             try
             {
-                result = mentioned
-                    ? await store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct, options.Budget.ReworkTopUpShare)
-                    : await store.ChatAsync(id, user.UserId(), request.MessageId, text, options.ChatTurnCap, clock.UtcNow, ct);
+                result = asksForSpec
+                    ? await store.RequestSpecAsync(id, user.UserId(), request.MessageId, specRequest, clock.UtcNow, ct)
+                    : mentioned
+                        ? await store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct, options.Budget.ReworkTopUpShare)
+                        : await store.ChatAsync(id, user.UserId(), request.MessageId, text, options.ChatTurnCap, clock.UtcNow, ct);
             }
             catch (StoreNotFoundException)
             {
@@ -303,6 +336,26 @@ public static class FactoryApi
             }
 
             return Results.Accepted(value: new { outcome = result.Outcome.ToString(), result.RunId, thread = ThreadView(result.Thread) });
+        });
+
+        // Approves a specification revision; the revision in the path is the one the person read.
+        threadRoutes.MapPost("/spec/{revision:int}/approve", async (
+            Guid id, int revision, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        {
+            try
+            {
+                var spec = await store.ApproveSpecAsync(id, revision, user.UserId(), clock.UtcNow, ct);
+                signals.EventsWritten();
+                return Results.Ok(SpecView(spec));
+            }
+            catch (StoreNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (StoreConflictException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
         });
 
         threadRoutes.MapPost("/budget", (Guid id, SetBudgetRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
@@ -555,6 +608,14 @@ public static class FactoryApi
         thread.UpdatedAt,
     };
 
+    private static object SpecView(Specification spec) => new
+    {
+        spec.Revision,
+        Approved = spec.ApprovedAt is not null,
+        spec.ApprovedBy,
+        spec.ApprovedAt,
+    };
+
     private static object DetailsView(ThreadDetails details, long eventCursor) => new
     {
         // Pass to GET .../events?after= to hear everything that happened after this snapshot.
@@ -563,6 +624,8 @@ public static class FactoryApi
         Project = ProjectView(details.Project),
         // A plain message is being answered: the composer waits for the reply.
         ChatPending = details.ChatRun is not null,
+        // The newest specification revision; its full text is on its Spec message.
+        Spec = details.LatestSpec is null ? null : SpecView(details.LatestSpec),
         // What that answer is doing, as its last "chat" event said; null until it says anything.
         details.ChatProgress,
         Messages = details.Messages.Select(m => new

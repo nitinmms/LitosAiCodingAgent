@@ -527,11 +527,15 @@ public sealed class RunExecutor(
         // request for a specification.
         var firstRequest = details?.TaskRequest ?? data.Run.Request;
 
+        var spec = ApprovedSpec(details, data.Run);
         var context = new RunContext(data.Project.Name, data.Branch, data.Project.DefaultBranch, data.Run.Kind == RunKind.Rework ? firstRequest : data.Run.Request)
         {
             VerificationSummary = string.Join("\n", data.Profile.Steps.SelectMany(s => s.Commands().Select(c => $"- {s.Name}: {c.Command.Display()}"))),
             CoverageThresholdPercent = data.Profile.Coverage?.ChangedLinesThresholdPercent,
             WorkspaceDrift = data.WorkspaceDrift,
+            // The approved specification the run builds (m2-architecture.md §5), if it builds one.
+            SpecificationSummary = spec?.Summary,
+            AcceptanceCriteria = spec?.AcceptanceCriteria ?? [],
         };
 
         WorkspaceDiff? reviewDiff = null;
@@ -691,7 +695,9 @@ public sealed class RunExecutor(
                 }
             }
 
-            var thread = (await store.GetThreadAsync(data.Thread.Id, CancellationToken.None))!.Thread;
+            var current = (await store.GetThreadAsync(data.Thread.Id, CancellationToken.None))!;
+            var thread = current.Thread;
+            var spec = ApprovedSpec(current, data.Run);
             var evidence = HandoffComposer.Evidence(state, new HandoffFacts(data.Branch, head, pullRequest?.Number, pullRequest?.Url)
             {
                 CoverageThresholdPercent = data.Profile.Coverage?.ChangedLinesThresholdPercent,
@@ -699,6 +705,8 @@ public sealed class RunExecutor(
                 BudgetCap = thread.BudgetCap,
                 ChangedFiles = [.. diff.Files.Select(f => f.Path)],
                 Notes = notes,
+                SpecificationRevision = spec?.Revision,
+                ApprovedCriteria = spec?.AcceptanceCriteria ?? [],
             });
 
             await store.SetRunCommitsAsync(data.Run.Id, null, head, null, CancellationToken.None);
@@ -835,4 +843,11 @@ public sealed class RunExecutor(
 
     /// <summary>The address workers call back on; set once the host is listening.</summary>
     public string HostUrl { get; set; } = "";
+
+    /// <summary>The approved specification revision the run was queued to build, if any. A task's
+    /// specification cannot change once it is delegated, so that is the thread's newest one.</summary>
+    private static SpecDraft? ApprovedSpec(ThreadDetails? details, TaskRun run) =>
+        run.SpecificationRevision is { } revision && details?.LatestSpec is { ApprovedAt: not null } spec && spec.Revision == revision
+            ? SpecExecutor.Draft(spec)
+            : null;
 }

@@ -69,7 +69,9 @@ public static class FactoryHostApp
             sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
             sp.GetRequiredService<VerificationGate>()));
         services.AddSingleton<VerificationGate>();
+        services.AddSingleton<ReadingCopies>();
         services.AddSingleton<ChatExecutor>();
+        services.AddSingleton<SpecExecutor>();
         if (!string.IsNullOrWhiteSpace(options.GitHubToken))
             services.AddSingleton<IGitHub>(_ => new GitHubClient(GitHubClient.CreateHttpClient(options.GitHubToken)));
 
@@ -109,6 +111,7 @@ public static class FactoryHostApp
             var hostUrl = $"http://127.0.0.1:{address.Port}";
             app.Services.GetRequiredService<RunExecutor>().HostUrl = hostUrl;
             app.Services.GetRequiredService<ChatExecutor>().HostUrl = hostUrl;
+            app.Services.GetRequiredService<SpecExecutor>().HostUrl = hostUrl;
         });
         return app;
     }

@@ -710,6 +710,12 @@ public sealed class TestHost : IAsyncDisposable
 
     public const string DefaultChatReply = "Orders are exported from src/Orders.cs.";
 
+    /// <summary>What a spec turn proposes when the script is empty.</summary>
+    public static readonly SpecSubmission DefaultSpec = new(
+        "Administrators can export the orders list as CSV.",
+        ["Administrators can export.", "Others get a 403."],
+        ["src/Orders/OrdersController.cs"], "Unit tests cover both criteria.", []);
+
     /// <summary>The behaviour of a well-behaved agent: do the work for the kind of turn it is.</summary>
     public async Task<TurnStreamResult> DefaultTurnAsync(TurnCall call)
     {
@@ -723,6 +729,9 @@ public sealed class TestHost : IAsyncDisposable
                 break;
             case TurnKind.Chat:
                 return new TurnStreamResult(true, 1, null, DefaultChatReply);
+            case TurnKind.Spec:
+                await call.Worker.SubmitAsync(call.SessionId, DefaultSpec);
+                break;
             default:
                 Workers.WorkspaceOf(call.Worker).Write("src/Orders.cs", $"edit {Interlocked.Increment(ref _edits)}\n");
                 await call.Worker.SubmitAsync(call.SessionId, FakeWorkerLauncher.Work());

@@ -18,6 +18,12 @@ public sealed record HandoffFacts(string Branch, string? CommitSha, int? PullReq
     /// <summary>Things that went wrong around the handoff itself, such as a draft PR that could
     /// not be opened.</summary>
     public IReadOnlyList<string> Notes { get; init; } = [];
+
+    /// <summary>The approved specification revision the run built, if any (m2-architecture.md §5).</summary>
+    public int? SpecificationRevision { get; init; }
+
+    /// <summary>That revision's acceptance criteria, each of which the work must report on.</summary>
+    public IReadOnlyList<string> ApprovedCriteria { get; init; } = [];
 }
 
 /// <summary>The handoff as structured evidence, stored with the thread and shown as a card.</summary>
@@ -48,7 +54,8 @@ public sealed record HandoffEvidence(
     IReadOnlyList<string> ChangedFiles,
     IReadOnlyList<AnsweredDecision> Decisions,
     long TokensUsed,
-    long? BudgetCap);
+    long? BudgetCap,
+    int? SpecificationRevision = null);
 
 /// <summary>
 /// Composes the handoff (ReadMe_LitosSoftwareFactory_V1.md §11) deterministically, with no
@@ -84,14 +91,33 @@ public static class HandoffComposer
             Findings: state.Findings,
             Criteria: submission?.Criteria ?? [],
             TestsAdded: submission?.TestsAdded ?? [],
-            // The scan's assumptions are choices made without asking; the tester sees each one.
-            KnownLimitations: [.. (submission?.KnownLimitations ?? []).Concat(state.Assumptions.Select(a => $"Assumed, not asked: {a}")).Concat(state.Disclosures).Concat(facts.Notes)],
+            // The scan's assumptions are choices made without asking; the tester sees each one, and
+            // each approved criterion the work did not report on.
+            KnownLimitations: [.. (submission?.KnownLimitations ?? [])
+                .Concat(state.Assumptions.Select(a => $"Assumed, not asked: {a}"))
+                .Concat(Unreported(facts.ApprovedCriteria, submission?.Criteria ?? []).Select(c => $"Approved criterion not reported on: {c}"))
+                .Concat(state.Disclosures)
+                .Concat(facts.Notes)],
             ManualTestSteps: submission?.ManualTestSteps ?? [],
             Commands: [.. (verification?.Commands ?? []).Select(c => $"{c.Command} — {(c.Succeeded ? "ok" : c.TimedOut ? "timed out" : $"exit {c.ExitCode}")} in {c.Duration.TotalSeconds:0.#}s")],
             ChangedFiles: facts.ChangedFiles,
             Decisions: state.Decisions,
             TokensUsed: facts.TokensUsed,
-            BudgetCap: facts.BudgetCap);
+            BudgetCap: facts.BudgetCap,
+            SpecificationRevision: facts.SpecificationRevision);
+    }
+
+    /// <summary>
+    /// The approved criteria no reported criterion matches. The run is told to report on each in
+    /// its own words; case, spacing and a closing full stop are not held against it.
+    /// </summary>
+    public static IReadOnlyList<string> Unreported(IReadOnlyList<string> approved, IReadOnlyList<CriterionCoverage> reported)
+    {
+        var said = reported.Select(c => Normal(c.Criterion)).ToHashSet();
+        return [.. approved.Where(a => !said.Contains(Normal(a)))];
+
+        static string Normal(string text) =>
+            string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).TrimEnd('.').ToLowerInvariant();
     }
 
     /// <summary>The handoff message posted to the thread.</summary>

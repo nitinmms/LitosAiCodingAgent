@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Briefs;
 using Litos.SoftwareFactory.Core.Ports;
@@ -13,16 +12,12 @@ namespace Litos.SoftwareFactory.Host.Runs;
 /// budget, not the task's.
 /// </summary>
 public sealed class ChatExecutor(
-    IFactoryStore store, FactoryOptions options, IWorkspaceProvider workspaces, IWorkerLauncher launcher,
+    IFactoryStore store, FactoryOptions options, ReadingCopies readingCopies, IWorkerLauncher launcher,
     IWorkerClientFactory clients, FactorySignals signals, IClock clock, ILogger<ChatExecutor> logger)
 {
     internal const string Failed = "Litos could not answer that. Send the message again.";
     internal const string NoAnswer = "Litos read the code but did not write an answer. Ask again, perhaps more narrowly.";
     internal const string Stopped = "Litos stopped before answering, because the factory host was stopping. Send the message again.";
-
-    /// <summary>One reader per project's reading copy: two answers on the same project take turns,
-    /// since each checks out the branch it reads.</summary>
-    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _readingCopies = new();
 
     /// <summary>The address workers call back on; set with <see cref="RunExecutor.HostUrl"/>.</summary>
     public string HostUrl { get; set; } = "";
@@ -30,12 +25,10 @@ public sealed class ChatExecutor(
     public async Task ExecuteAsync(ClaimedRun claimed, ActiveRun active, CancellationToken hostStopping)
     {
         var (run, thread, project) = claimed;
-        IWorkerHandle? handle = null;
-        IWorkerClient? client = null;
+        IDisposable? holding = null;
+        ReadingWorker? worker = null;
         string? reply = null;
         string? failure = null;
-        var readingCopy = _readingCopies.GetOrAdd(project.Id, _ => new SemaphoreSlim(1, 1));
-        var holding = false;
         var progress = new ChatProgressTracker(run.Id, run.StartedAt ?? clock.UtcNow);
         using var stopReporting = new CancellationTokenSource();
         var reporting = ReportProgressAsync(progress, stopReporting.Token);
@@ -45,33 +38,22 @@ public sealed class ChatExecutor(
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(hostStopping, timeout.Token, active.StopToken);
             var ct = linked.Token;
 
-            await readingCopy.WaitAsync(ct);
-            holding = true;
+            // Each answer checks out the branch it reads, so answers on one project take turns.
+            holding = await readingCopies.HoldAsync(project.Id, ct);
 
             var details = await store.GetThreadAsync(thread.Id, ct) ?? throw new InvalidOperationException("The thread no longer exists.");
-            var workspace = workspaces.ReadingCopyFor(project);
+            var workspace = readingCopies.For(project);
             var branch = await CheckOutAsync(workspace, details, ct);
             progress.Set(ChatProgressTracker.Starting);
 
-            handle = await launcher.LaunchAsync(
-                new WorkerLaunch(
-                    run.Id.ToString("N"), workspace.Path, thread.Provider, thread.Model,
-                    options.ContextLength, options.DataDirectory, HostUrl, active.Secret)
-                {
-                    PtcEnabled = options.PtcEnabled,
-                    TempDirectory = options.RunTempDirectory(run.Id),
-                },
-                ct);
-            await store.SetRunWorkerAsync(run.Id, handle.ProcessId, handle.StartTime, CancellationToken.None);
-            client = clients.Create(handle.BaseAddress, active.Secret);
-            active.Client = client;
+            worker = await ReadingWorker.StartAsync(launcher, clients, store, options, HostUrl, claimed, active, workspace.Path, ct);
 
             var sessionId = $"chat-{run.Id:N}";
             var brief = BriefComposer.Chat(new ChatContext(
                 project.Name, branch, thread.Title, details.TaskRequest, Conversation(details, run), run.Request));
             var turnToken = active.BeginTurn(TurnKind.Chat, TurnKind.Chat, sessionId, ct, phase: "Chat");
             progress.Set(ChatProgressTracker.Thinking);
-            var result = await client.RunTurnAsync(sessionId, TurnKind.Chat, brief, options.ChatMaxToolCalls, turnToken, progress.Apply);
+            var result = await worker.Client.RunTurnAsync(sessionId, TurnKind.Chat, brief, options.ChatMaxToolCalls, turnToken, progress.Apply);
 
             if (!string.IsNullOrWhiteSpace(result.Reply))
                 reply = result.Reply;
@@ -106,13 +88,9 @@ public sealed class ChatExecutor(
             await stopReporting.CancelAsync();
             await reporting;
 
-            active.Client = null;
-            if (client is not null)
-                await TryAsync(() => client.ShutdownAsync(CancellationToken.None));
-            if (handle is not null)
-                await handle.DisposeAsync();
-            if (holding)
-                readingCopy.Release();
+            if (worker is not null)
+                await worker.DisposeAsync();
+            holding?.Dispose();
 
             try
             {
@@ -211,28 +189,5 @@ public sealed class ChatExecutor(
     }
 
     /// <summary>The thread before the question: what people said and what the factory reported.</summary>
-    internal static IReadOnlyList<ChatLine> Conversation(ThreadDetails details, TaskRun run)
-    {
-        var messages = details.Messages.OrderBy(m => m.Sequence).ToList();
-
-        // The question itself is the brief's own section, not part of the thread so far.
-        var question = messages.FindLastIndex(m => m.Author == MessageAuthor.User && m.Kind == MessageKind.Text && m.Text == run.Request);
-        if (question >= 0)
-            messages.RemoveRange(question, messages.Count - question);
-
-        return [.. messages
-            .Where(m => m.Kind is MessageKind.Text or MessageKind.Decision or MessageKind.DecisionAnswer or MessageKind.Handoff)
-            .Select(m => new ChatLine(m.Author == MessageAuthor.User ? "Person" : "Factory", m.Text))];
-    }
-
-    private static async Task TryAsync(Func<Task> action)
-    {
-        try
-        {
-            await action();
-        }
-        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
-        {
-        }
-    }
+    internal static IReadOnlyList<ChatLine> Conversation(ThreadDetails details, TaskRun run) => ReadingWorker.Conversation(details, run.Request);
 }
