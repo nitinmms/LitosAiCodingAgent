@@ -1409,6 +1409,69 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.DoesNotContain(await Store.ReadEventsAsync(b.Thread.Id, 0, 100, default), e => e.PayloadJson.Contains("only for a"));
     }
 
+    /// <summary>
+    /// m2-architecture.md §7, the ordering invariant: a stream moves its cursor past every event it
+    /// reads, so an event committed later with a lower sequence would never reach it. Writers on one
+    /// thread run concurrently while a reader follows the thread's stream; it must miss nothing.
+    /// </summary>
+    [SkippableFact]
+    public async Task ConcurrentWritersOnOneThread_NeverCommitAnEventBehindAReader()
+    {
+        var running = await RunningAsync();
+        var start = await Store.LastEventSequenceAsync(running.Thread.Id, default);
+
+        var writing = Task.WhenAll(Enumerable.Range(0, 6).Select(writer => Task.Run(async () =>
+        {
+            for (var i = 0; i < 15; i++)
+                await Store.AddFactoryMessageAsync(running.Thread.Id, MessageKind.Status, $"writer {writer} note {i}", null, T0, default);
+        })));
+
+        await AssertReaderMissesNothingAsync(start, writing, after => Store.ReadEventsAsync(running.Thread.Id, after, 500, default));
+    }
+
+    /// <summary>The board reads across threads, so the invariant must hold across threads too, not
+    /// only within one: each writer here changes a different thread.</summary>
+    [SkippableFact]
+    public async Task ConcurrentWritersOnDifferentThreads_NeverCommitABoardEventBehindAReader()
+    {
+        var project = await AddProjectAsync();
+        var threads = new List<TaskThread>();
+        for (var i = 0; i < 8; i++)
+            threads.Add(await AddThreadAsync(project, $"Task {i}"));
+        var start = await Store.LastEventSequenceAsync(default);
+
+        var writing = Task.WhenAll(threads.Select(thread => Task.Run(async () =>
+        {
+            for (var i = 0; i < 15; i++)
+                await Store.SetBudgetCapAsync(thread.Id, 100_000 + i, Admin, T0, default);
+        })));
+
+        await AssertReaderMissesNothingAsync(start, writing, after => Store.ReadBoardEventsAsync(null, after, 500, default));
+    }
+
+    /// <summary>Follows a stream the way the host does — read after the cursor, move the cursor to
+    /// the last event read — until the writers finish, then checks it saw every event written.</summary>
+    private static async Task AssertReaderMissesNothingAsync(
+        long start, Task writing, Func<long, Task<IReadOnlyList<OutboxEvent>>> read)
+    {
+        var seen = new List<long>();
+        var cursor = start;
+        while (true)
+        {
+            var done = writing.IsCompleted;
+            var events = await read(cursor);
+            seen.AddRange(events.Select(e => e.Sequence));
+            if (events.Count > 0)
+                cursor = events[^1].Sequence;
+            else if (done)
+                break;
+        }
+
+        await writing;
+        var written = (await read(start)).Select(e => e.Sequence).ToList();
+        Assert.Equal(written, seen);
+    }
+
     /// <summary>A board hears its projects' state and usage changes, and no messages.</summary>
     [SkippableFact]
     public async Task BoardEvents_AreTheStateAndUsageEventsOfTheGivenProjects()
@@ -2521,6 +2584,23 @@ public sealed class PostgresFactoryStoreTests : FactoryStoreContract
 
         await FactoryDatabase.MigrateAsync(Admin(_database), default);
         return new TestContextFactory(new DbContextOptionsBuilder<FactoryDbContext>().UseNpgsql(Admin(_database)).Options);
+    }
+
+    /// <summary>An event written around the store's write scope skips the outbox lock, so it
+    /// could commit behind a stream's cursor; on PostgreSQL that write is refused.</summary>
+    [SkippableFact]
+    public async Task AnEventWrittenWithoutTheOutboxLock_IsRefused()
+    {
+        var project = await AddProjectAsync();
+        var thread = await AddThreadAsync(project);
+
+        await using var db = await Contexts.CreateDbContextAsync();
+        db.Outbox.Add(new OutboxEvent
+        {
+            ThreadId = thread.Id, ProjectId = project.Id, Type = EventTypes.StateChanged, PayloadJson = "{}", CreatedAt = T0,
+        });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
     }
 
     protected override async Task DropDatabaseAsync()

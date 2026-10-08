@@ -38,6 +38,21 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<ProjectMember> ProjectMembers => Set<ProjectMember>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
+    /// <summary>Set by the store once this context's transaction holds the outbox lock.</summary>
+    internal bool HoldsOutboxLock { get; set; }
+
+    /// <summary>
+    /// On PostgreSQL, outbox events are written only under the outbox lock, which keeps their
+    /// sequence order the order they commit in (EfFactoryStore's write scope takes it). A writer
+    /// that skipped it would let a stream miss an event, so it fails here instead.
+    /// </summary>
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        if (!HoldsOutboxLock && Database.IsNpgsql() && ChangeTracker.Entries<OutboxEvent>().Any(e => e.State == EntityState.Added))
+            throw new InvalidOperationException("Outbox events must be written through the store's write scope, which orders them.");
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configuration)
     {
         // Enums are stored by name: a row is readable on its own, and adding a member can never

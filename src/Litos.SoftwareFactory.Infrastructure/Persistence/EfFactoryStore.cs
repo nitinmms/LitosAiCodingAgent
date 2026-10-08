@@ -22,6 +22,15 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
     /// <summary>The advisory lock every claim transaction takes; any fixed value works.</summary>
     private const long ClaimLockKey = 0x4C49544F53464143; // "LITOSFAC"
 
+    /// <summary>
+    /// The advisory lock a transaction takes just before it writes outbox events, held until it
+    /// commits. A sequence is handed out when its row is inserted, not when it commits, so without
+    /// it two threads' writers could commit out of sequence order, and a stream reading across
+    /// threads (the board) would move its cursor past an event that had not committed yet and never
+    /// send it (m2-architecture.md §7). The thread row lock gives that order within one thread only.
+    /// </summary>
+    private const long OutboxLockKey = 0x4C49544F534F5554; // "LITOSOUT"
+
     /// <summary>Stands in for row and advisory locks on providers that have neither (SQLite, in tests).</summary>
     private static readonly SemaphoreSlim FallbackWriteLock = new(1, 1);
 
@@ -63,7 +72,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
     public async Task<TaskThread> AddThreadAsync(TaskThread thread, CancellationToken ct)
     {
-        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
         if (!await db.Projects.AnyAsync(p => p.Id == thread.ProjectId, ct))
             throw new StoreNotFoundException("The project does not exist.");
 
@@ -75,7 +85,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             new { thread.Title, thread.TypeLabel, thread.BudgetCap }, thread.CreatedAt);
         // Announced, so every board showing the project sees the new card.
         Touch(db, thread, thread.CreatedAt);
-        await db.SaveChangesAsync(ct);
+        await write.CommitAsync(ct);
         return thread;
     }
 
@@ -1598,6 +1608,13 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
         public async Task CommitAsync(CancellationToken ct)
         {
+            // Taken last, after every row lock, and held only for the insert and the commit.
+            if (heldLock is null && db.ChangeTracker.Entries<OutboxEvent>().Any(e => e.State == EntityState.Added))
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({OutboxLockKey})", ct);
+                db.HoldsOutboxLock = true;
+            }
+
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
         }
