@@ -366,6 +366,20 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal("Cancelled", cancelled.GetProperty("state").GetString());
     }
 
+    /// <summary>m2-architecture.md §7: a draft can be cancelled, and then takes no work.</summary>
+    [Fact]
+    public async Task CancelADraft_ClosesIt_AndThenRefusesWork()
+    {
+        var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
+
+        var cancelled = await _host.PostAsync($"api/threads/{threadId}/cancel", null, HttpStatusCode.OK);
+
+        Assert.Equal(("Cancelled", "Done"), (cancelled.GetProperty("state").GetString(), cancelled.GetProperty("turn").GetString()));
+        Assert.Equal("Cancelled before it was delegated.", Assert.Single((await _host.ThreadAsync(threadId)).Messages).Text);
+        await _host.DelegateAsync(threadId, expected: HttpStatusCode.Conflict);
+        await _host.PostAsync($"api/threads/{threadId}/cancel", null, HttpStatusCode.Conflict);
+    }
+
     [Theory]
     [InlineData("accept")]
     [InlineData("resume")]

@@ -24,6 +24,8 @@ public class TaskLifecycleTests
         // A spec run's proposal puts the task back in Draft, at the Spec stage (m2-architecture.md §5).
         (LifecycleState.Running, LifecycleTrigger.ProposeSpec, LifecycleState.Draft),
         (LifecycleState.Interrupted, LifecycleTrigger.Recover, LifecycleState.Queued),
+        // A draft can be closed without ever being delegated (m2-architecture.md §7).
+        (LifecycleState.Draft, LifecycleTrigger.Cancel, LifecycleState.Cancelled),
         (LifecycleState.Queued, LifecycleTrigger.Cancel, LifecycleState.Cancelled),
         (LifecycleState.Running, LifecycleTrigger.Cancel, LifecycleState.Cancelled),
 
@@ -158,6 +160,16 @@ public class TaskLifecycleTests
             new[] { LifecycleTrigger.RaiseBudgetAndResume, LifecycleTrigger.Cancel, LifecycleTrigger.WithdrawChanges }.Order(),
             outOf.Select(t => t.Trigger).Order());
         Assert.Equal(LifecycleTrigger.RaiseBudgetAndResume, Assert.Single(outOf, t => t.To == LifecycleState.Queued).Trigger);
+    }
+
+    /// <summary>A draft leaves only by being delegated, by a spec run (which delegates it too), or
+    /// by being cancelled; it cannot be paused or accepted.</summary>
+    [Fact]
+    public void Draft_IsDelegatedOrCancelled_AndNothingElse()
+    {
+        var outOf = TaskLifecycle.All.Where(t => t.From == LifecycleState.Draft).Select(t => t.Trigger).Order();
+
+        Assert.Equal(new[] { LifecycleTrigger.Delegate, LifecycleTrigger.Cancel }.Order(), outOf);
     }
 
     /// <summary>Running is entered only by a claim, so no path skips the lock, slot and worker.</summary>

@@ -131,6 +131,9 @@ public static class TaskLifecycle
         // they can be cancelled but not paused.
         [(LifecycleState.Queued, LifecycleTrigger.Pause)] = LifecycleState.PausedUser,
 
+        // A draft that will not be delegated can be closed (m2-architecture.md §7), so it leaves
+        // the board instead of waiting there for ever.
+        [(LifecycleState.Draft, LifecycleTrigger.Cancel)] = LifecycleState.Cancelled,
         [(LifecycleState.Queued, LifecycleTrigger.Cancel)] = LifecycleState.Cancelled,
         [(LifecycleState.Running, LifecycleTrigger.Cancel)] = LifecycleState.Cancelled,
         [(LifecycleState.AwaitingDecision, LifecycleTrigger.Cancel)] = LifecycleState.Cancelled,

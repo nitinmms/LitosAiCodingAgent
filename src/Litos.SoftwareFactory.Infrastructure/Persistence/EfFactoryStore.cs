@@ -548,7 +548,10 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 }
 
                 await ReleaseLeaseAsync(db, threadId, ct);
-                note = "Cancelled. Edits, the branch and the evidence are kept.";
+                // A draft has no work to keep; a chat being answered is left to finish.
+                note = thread.State == LifecycleState.Draft
+                    ? "Cancelled before it was delegated."
+                    : "Cancelled. Edits, the branch and the evidence are kept.";
                 break;
 
             case LifecycleTrigger.Pause:

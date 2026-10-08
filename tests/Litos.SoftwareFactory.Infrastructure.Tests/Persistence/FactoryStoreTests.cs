@@ -681,6 +681,43 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Empty(await db.Leases.ToListAsync());
     }
 
+    /// <summary>m2-architecture.md §7: a draft that will not be delegated can be closed.</summary>
+    [SkippableFact]
+    public async Task Cancel_ADraft_ClosesIt_WithANoteThatNothingWasDelegated()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        var before = await Store.LastEventSequenceAsync(thread.Id, default);
+
+        var cancelled = await Store.ApplyUserActionAsync(thread.Id, Admin, LifecycleTrigger.Cancel, T0.AddMinutes(1), default);
+
+        Assert.Equal(LifecycleState.Cancelled, cancelled.State);
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Null(details.LatestRun);
+        var note = Assert.Single(details.Messages);
+        Assert.Equal((MessageAuthor.User, MessageKind.Status, "Cancelled before it was delegated."), (note.Author, note.Kind, note.Text));
+        // Its board card and its own page both hear of it.
+        Assert.Contains(await Store.ReadEventsAsync(thread.Id, before, 10, default), e => e.Type == EventTypes.StateChanged);
+        var late = await Store.DispatchAsync(thread.Id, Admin, "late", "Add CSV export.", T0.AddMinutes(2), default);
+        Assert.Equal(DispatchOutcome.Rejected, late.Outcome);
+    }
+
+    /// <summary>A draft at the Spec stage, with a revision waiting and a question being answered,
+    /// cancels the same way: the finished spec run is untouched and the chat is left to finish.</summary>
+    [SkippableFact]
+    public async Task Cancel_ADraftWithASpecWaiting_LeavesTheSpecRunAndAChatAlone()
+    {
+        var thread = await SpecProposedAsync();
+        var chat = await ChatAsync(thread.Id);
+
+        var cancelled = await Store.ApplyUserActionAsync(thread.Id, Admin, LifecycleTrigger.Cancel, T0.AddMinutes(1), default);
+
+        Assert.Equal((LifecycleState.Cancelled, Stage.Spec), (cancelled.State, cancelled.Stage));
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Equal((RunKind.Spec, RunStatus.Finished), (details.LatestRun!.Kind, details.LatestRun.Status));
+        Assert.NotEqual(StopReason.Cancelled, details.LatestRun.StopReason);
+        Assert.Equal(RunStatus.Queued, (await Store.GetRunAsync(chat.RunId!.Value, default))!.Status);
+    }
+
     [SkippableFact]
     public async Task UserAction_OnARunningTask_IsLeftToTheCoordinator()
     {
