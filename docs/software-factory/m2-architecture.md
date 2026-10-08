@@ -264,6 +264,24 @@ Differences from the plan above:
   - a Draft thread can be cancelled, which needs a `Draft → Cancelled` transition;
   - Resume is offered for Blocked and Interrupted beside the composer.
 
+**Step 6 was completed on 2026-10-08** in these commits:
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `d5a17f9` | Store: outbox events commit in sequence order across threads (the outbox lock), with Postgres-gated tests of concurrent writers |
+| 2 | `c0c7d05` | Core, store and host: `Draft → Cancelled` |
+| 3 | `2e89681` | Web: streams report reconnecting, drop repeats, and are replaced from a fresh snapshot when the host closes them; "Pausing…"/"Cancelling…" after a 202; a draft can be cancelled; Resume beside the composer |
+
+Differences from the plan above:
+
+- **The ordering invariant did not hold across threads.** The thread row lock orders one thread's events, but a sequence is handed out at insert, not at commit, so two threads' writers could commit out of order. The board's stream, which reads across threads, then moved its cursor past an event not yet committed and never sent it; so could the thread list's `X-Event-Cursor`. A Postgres test with eight concurrent writers showed it (sequence 55 committed after 56). Every transaction that writes outbox events now takes a transaction-level advisory lock just before its insert, after its row locks, and holds it to commit. That makes sequence order the commit order everywhere. `FactoryDbContext` refuses an outbox write on PostgreSQL that skipped the lock, so a new writer cannot forget it. Creating a thread, the one writer outside a write scope, now uses one.
+- **A stream the host closes for good is replaced, not just reported.** After a refusal (a 401, a 404, a restart that answers with an error), the page waits 1, 2, 5, 10, then every 30 seconds and takes a fresh snapshot. A 401 on that snapshot already sends the client to sign-in. After signing in, the page re-snapshots and resubscribes as on first load, on the same thread. A 403 or 404 ends the attempts and shows the reason. Anything else keeps trying.
+- **The board's fresh snapshot replaces the list,** so a thread in a project the user has left now disappears once its stream is reopened. Before, it stayed until a reload. The step 3 known limit is narrowed, not gone: a stream that stays open still keeps the thread.
+- **Repeats are dropped by sequence** in the client, per stream, from the cursor it was opened at.
+- **"Stopping…" is shown as "Pausing…" or "Cancelling…"** and only while the task is still Running. A state event that arrives before the 202 has been read therefore never leaves it showing.
+- **Resume beside the composer** covers PausedUser, Blocked and Interrupted ("Recover and resume"). A budget-paused task resumes from its panel, where the cap can be raised.
+- **A cancelled draft** has the note "Cancelled before it was delegated." A question being answered is left to finish, as for any cancel.
+
 ## 8. Schema changes
 
 | Step | Migration | Change |
