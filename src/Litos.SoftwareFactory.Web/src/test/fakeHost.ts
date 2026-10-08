@@ -14,6 +14,8 @@ import type {
   Project,
   PullRequestState,
   Settings,
+  SpecPayload,
+  Stage,
   Thread,
   ThreadDetails,
   Turn,
@@ -52,10 +54,11 @@ export class FakeEventSource implements EventSourceLike {
 const NOW = '2026-10-01T09:00:00Z';
 
 /** The host's turn-label table (Core/Lifecycle/TurnLabels.cs): the fake answers as the host does. */
-export function turnOf(state: LifecycleState): Turn {
+export function turnOf(state: LifecycleState, stage: Stage = 'Discuss'): Turn {
   switch (state) {
     case 'Draft':
-      return 'NotStarted';
+      // A proposed specification waits for the person (TurnLabels.For).
+      return stage === 'Spec' ? 'AwaitingYou' : 'NotStarted';
     case 'Queued':
       return 'AwaitingAgent';
     case 'Running':
@@ -235,7 +238,7 @@ export class FakeHost {
       updatedAt: NOW,
       ...overrides,
     };
-    if (!overrides.turn) thread.turn = turnOf(thread.state);
+    if (!overrides.turn) thread.turn = turnOf(thread.state, thread.stage);
     this.announce(thread);
     this.threads.set(thread.id, {
       eventCursor: 0,
@@ -249,6 +252,7 @@ export class FakeHost {
       handoff: null,
       chatPending: false,
       chatProgress: null,
+      spec: null,
     });
     this.usage.set(thread.id, []);
     return thread;
@@ -309,7 +313,7 @@ export class FakeHost {
   change(threadId: string, patch: Partial<Thread>, eventType: 'state' | 'usage' = 'state'): Thread {
     const details = this.details(threadId);
     details.thread = { ...details.thread, ...patch, revision: details.thread.revision + 1 };
-    details.thread.turn = turnOf(details.thread.state);
+    details.thread.turn = turnOf(details.thread.state, details.thread.stage);
     const t = details.thread;
     // The run follows the task: queued, running, stopped where it can continue, or over.
     if (details.run && patch.state) {
@@ -526,6 +530,9 @@ export class FakeHost {
     const verdict = /^\/api\/findings\/([^/]+)\/verdict$/.exec(path);
     if (verdict && method === 'POST') return this.judge(verdict[1]!, (data.verdict as string | null | undefined) ?? null);
 
+    const approve = /^\/api\/threads\/([^/]+)\/spec\/(\d+)\/approve$/.exec(path);
+    if (approve && method === 'POST') return this.approveSpec(approve[1]!, Number(approve[2]));
+
     const route = /^\/api\/threads\/([^/?]+)(?:\/([\w-]+))?$/.exec(path);
     if (!route) return [404];
     const details = this.threads.get(route[1]!);
@@ -733,6 +740,10 @@ export class FakeHost {
     const details = this.details(threadId);
     if (this.dispatched.has(messageId)) return [202, { outcome: 'Duplicate', runId: null, thread: details.thread }];
     if (!match) return this.chat(threadId, messageId, text.trim());
+    const spec = /^spec(?:\s+([\s\S]*))?$/i.exec(match[1]!.trim());
+    if (spec) return this.requestSpec(threadId, messageId, (spec[1] ?? '').trim());
+    if (details.thread.state === 'Draft' && details.spec && !details.spec.approved)
+      return [409, { error: `Specification revision ${details.spec.revision} is waiting for approval. Approve it, or ask for changes with @factory spec, before delegating the work.` }];
 
     const state = details.thread.state;
     const queues = state === 'Draft' || state === 'AwaitingHumanTesting';
@@ -772,6 +783,51 @@ export class FakeHost {
     if (chats) details.chatPending = true;
     this.say(threadId, { author: 'User', kind: 'Text', text, payload: { plain: true } });
     return [202, { outcome: working ? 'FollowUp' : 'Chat', runId: working ? 'r-1' : this.nextId('r'), thread: details.thread }];
+  }
+
+  /** "@factory spec ...", as the host's RequestSpecAsync takes it. The test proposes with proposeSpec. */
+  private requestSpec(threadId: string, messageId: string, request: string): [number, unknown] {
+    if (!request) return [400, { error: 'Say what the specification is for after @factory spec.' }];
+    const details = this.details(threadId);
+    if (details.thread.state !== 'Draft')
+      return [409, { error: 'A specification is written before the work starts. This task has already been delegated.', thread: details.thread }];
+    this.dispatched.add(messageId);
+    details.run = { id: this.nextId('r'), kind: 'Spec', status: 'Queued', stopReason: null, baselineCommit: null, headCommit: null, promptRevision: this.settings.promptRevision };
+    this.say(threadId, { author: 'User', kind: 'Text', text: `spec ${request}` });
+    const thread = this.change(threadId, { state: 'Queued', stage: 'Spec', stateReason: null });
+    return [202, { outcome: 'Queued', runId: details.run.id, thread }];
+  }
+
+  /** A spec run's proposal: the next revision, posted as a Spec message; the task is a draft again. */
+  proposeSpec(threadId: string, overrides: Partial<SpecPayload> = {}): SpecPayload {
+    const details = this.details(threadId);
+    const payload: SpecPayload = {
+      revision: (details.spec?.revision ?? 0) + 1,
+      summary: 'Administrators can export the orders list as CSV.',
+      acceptanceCriteria: ['Administrators see an Export button.', 'Others get a 403.'],
+      affectedAreas: ['src/Orders/OrdersController.cs'],
+      testPlan: 'Unit tests cover the 403; the button is checked by hand.',
+      openQuestions: [],
+      ...overrides,
+    };
+    details.spec = { revision: payload.revision, approved: false, approvedBy: null, approvedAt: null };
+    if (details.run) details.run = { ...details.run, status: 'Finished' };
+    this.say(threadId, { author: 'Factory', kind: 'Spec', text: payload.summary, payload });
+    this.change(threadId, { state: 'Draft', stage: 'Spec' });
+    return payload;
+  }
+
+  private approveSpec(threadId: string, revision: number): [number, unknown?] {
+    const details = this.threads.get(threadId);
+    if (!details?.spec || revision > details.spec.revision || revision < 1) return [404];
+    if (details.spec.approved && details.spec.revision === revision) return [200, details.spec];
+    if (revision !== details.spec.revision)
+      return [409, { error: `Revision ${revision} has been replaced by revision ${details.spec.revision}. Read that one before approving.` }];
+    if (details.thread.state !== 'Draft') return [409, { error: 'A specification is approved before the work is delegated.' }];
+    details.spec = { ...details.spec, approved: true, approvedBy: this.user.id, approvedAt: NOW };
+    this.say(threadId, { author: 'User', text: `Approved specification revision ${revision}. @factory now builds it.` });
+    this.change(threadId, {});
+    return [200, details.spec];
   }
 
   /** Every plain message sent, in order. */

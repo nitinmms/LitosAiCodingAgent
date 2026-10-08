@@ -17,6 +17,7 @@ import {
   isPlainMessage,
   newer,
   parseMention,
+  parseSpec,
   pullRequestLabel,
   stateName,
   turnLabel,
@@ -112,6 +113,18 @@ describe('chat mirrors the host (m2-architecture.md §5)', () => {
   it.each(['@factory', '  @Factory  ', '@FACTORY\n'])('%j is a bare mention', (text) => expect(isBareMention(text)).toBe(true));
 
   it.each(['@factory do it', '@factoryx', 'factory', ''])('%j is not a bare mention', (text) => expect(isBareMention(text)).toBe(false));
+});
+
+describe('parseSpec mirrors the host (SpecMention)', () => {
+  it.each([
+    ['spec Export orders', 'Export orders'],
+    ['SPEC  Export orders  ', 'Export orders'],
+    ['spec', ''],
+  ])('%j asks for a specification of %j', (text, expected) => expect(parseSpec(text)).toBe(expected));
+
+  it.each(['specify the export', 'special characters', 'Add a spec page'])('%j asks for the work', (text) =>
+    expect(parseSpec(text)).toBeNull(),
+  );
 });
 
 describe('parseMention mirrors the host', () => {

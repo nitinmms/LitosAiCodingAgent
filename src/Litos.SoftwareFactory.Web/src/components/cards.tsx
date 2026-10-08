@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Decision, HandoffEvidence, Message, PullRequestState, Thread } from '../api/types';
+import type { Decision, HandoffEvidence, Message, PullRequestState, SpecPayload, SpecStatus, Thread } from '../api/types';
 import { fmt, pct, shortSha, words } from '../domain/format';
 import { pullRequestLabel } from '../domain/task';
 import { SafeLink } from './bits';
@@ -172,6 +172,110 @@ function reviewLine(e: HandoffEvidence): string {
  * The handoff: what was built, the evidence the host measured, and what is left for a person
  * to test. Only the newest handoff of a task waiting for testing can be accepted.
  */
+/**
+ * A proposed specification (m2-architecture.md §5): what the task will build, for a person to
+ * approve or ask to change. Only the newest revision can be approved, and only before the work
+ * is delegated.
+ */
+export function SpecCard({
+  message,
+  status,
+  thread,
+  busy,
+  onApprove,
+  onRevise,
+  onBuild,
+}: {
+  message: Message;
+  /** The thread's newest revision; this card is that revision or an older one. */
+  status: SpecStatus | null;
+  thread: Thread;
+  busy: boolean;
+  onApprove: (revision: number) => void;
+  onRevise: () => void;
+  onBuild: () => void;
+}) {
+  const spec = message.payload as SpecPayload | null;
+  if (!spec) {
+    return (
+      <div className="panel">
+        <h2>Specification</h2>
+        <p>{message.text}</p>
+      </div>
+    );
+  }
+
+  const newest = status?.revision === spec.revision;
+  const approved = newest && !!status?.approved;
+  const deciding = newest && !approved && thread.state === 'Draft';
+  const ready = approved && thread.state === 'Draft';
+  return (
+    <div className={`panel${deciding || ready ? ' you' : approved ? ' okp' : ''}`} role="group" aria-label={`Specification revision ${spec.revision}`}>
+      <div className="panel-head">
+        <h2>Specification, revision {spec.revision}</h2>
+        <span className={`pill ${deciding || ready ? 'you' : approved ? 'done' : 'neutral'}`}>
+          {deciding ? 'Awaiting your approval' : approved ? 'Approved' : newest ? 'Not approved' : 'Superseded'}
+        </span>
+      </div>
+      <p>{spec.summary}</p>
+      <h3>Acceptance criteria</h3>
+      <ol>
+        {spec.acceptanceCriteria.map((criterion, i) => (
+          <li key={i}>{criterion}</li>
+        ))}
+      </ol>
+      {spec.affectedAreas.length ? (
+        <>
+          <h3>Affected areas</h3>
+          <ul>
+            {spec.affectedAreas.map((area, i) => (
+              <li key={i} className="mono">
+                {area}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {spec.testPlan ? (
+        <>
+          <h3>Test plan</h3>
+          <p>{spec.testPlan}</p>
+        </>
+      ) : null}
+      {spec.openQuestions.length ? (
+        <>
+          <h3>Open questions</h3>
+          <ul>
+            {spec.openQuestions.map((question, i) => (
+              <li key={i}>{question}</li>
+            ))}
+          </ul>
+          {deciding ? <p className="small muted">Answer these in your request for changes, or approve if the criteria already settle them.</p> : null}
+        </>
+      ) : null}
+      {deciding ? (
+        <div className="btn-row">
+          <button className="btn primary" disabled={busy} onClick={() => onApprove(spec.revision)}>
+            Approve
+          </button>
+          <button className="btn" disabled={busy} onClick={onRevise}>
+            Ask for changes
+          </button>
+        </div>
+      ) : ready ? (
+        <div className="btn-row">
+          <button className="btn primary" disabled={busy} onClick={onBuild}>
+            Build it
+          </button>
+          <button className="btn" disabled={busy} onClick={onRevise}>
+            Ask for changes
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function HandoffCard({
   message,
   thread,
@@ -241,6 +345,12 @@ export function HandoffCard({
         <dd>{coverageLine(e)}</dd>
         <dt>Agent review</dt>
         <dd>{reviewLine(e)}</dd>
+        {e.specificationRevision ? (
+          <>
+            <dt>Specification</dt>
+            <dd>Built against approved revision {e.specificationRevision}</dd>
+          </>
+        ) : null}
         <dt>Tokens</dt>
         <dd className="num">
           {fmt(e.tokensUsed)}

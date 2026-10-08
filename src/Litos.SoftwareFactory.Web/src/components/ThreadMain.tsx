@@ -13,12 +13,13 @@ import {
   isClosed,
   isPlainMessage,
   parseMention,
+  parseSpec,
   pullRequestLabel,
   stateName,
   withMention,
 } from '../domain/task';
 import { ErrorNote, Rail, Rich, SafeLink, TurnPill } from './bits';
-import { DecisionCard, HandoffCard, StopPanel } from './cards';
+import { DecisionCard, HandoffCard, SpecCard, StopPanel } from './cards';
 
 /** How often GitHub is asked where the task's pull request stands; the host caches the answer too. */
 const PULL_REQUEST_REFRESH_MS = 60_000;
@@ -100,16 +101,23 @@ export function ThreadMain({
   const closed = isClosed(thread.state) && !chatting;
   const acceptsText = answering || canMessage(thread.state) || chatting;
   const request = parseMention(draft);
+  // "@factory spec ...": a specification, not the work (m2-architecture.md §5).
+  const specRequest = request === null ? null : parseSpec(request);
+  const asksForSpec = specRequest !== null;
+  const specWaiting = thread.state === 'Draft' && details.spec !== null && !details.spec.approved;
+  const specApproved = thread.state === 'Draft' && details.spec?.approved === true;
   // Without @factory, a message is a question (or, to a working task, guidance for its agent).
   const asking = !answering && request === null && draft.trim().length > 0 && !isBareMention(draft);
   const waitingForAnswer = details.chatPending && chatting;
   const sendable = answering
     ? draft.trim().length > 0
-    : request !== null
-      ? canMessage(thread.state)
-      : asking && (working || (chatting && !waitingForAnswer));
+    : asksForSpec
+      ? thread.state === 'Draft' && specRequest.length > 0
+      : request !== null
+        ? canMessage(thread.state) && !specWaiting
+        : asking && (working || (chatting && !waitingForAnswer));
   // After a handoff an @factory message is a change request: it starts a rework run.
-  const requestingChanges = !answering && thread.state === 'AwaitingHumanTesting' && request !== null;
+  const requestingChanges = !answering && thread.state === 'AwaitingHumanTesting' && request !== null && !asksForSpec;
   // A rework run that has not produced its own handoff yet can be taken back.
   const reworkUnderWay = run?.kind === 'Rework' && run.status !== 'Finished' && handoff !== null;
   const userName = user.displayName || user.userName;
@@ -162,6 +170,21 @@ export function ThreadMain({
     textarea.current?.focus();
   };
 
+  /** Puts "@factory spec " in front of the draft, to ask for a revision of the specification. */
+  const startRevision = () => {
+    setDraft((current) => {
+      const rest = current.trim();
+      return parseMention(current) !== null ? current : `@factory spec ${rest}`.trimEnd() + ' ';
+    });
+    textarea.current?.focus();
+  };
+
+  /** After approval: the request that builds it, ready to send. */
+  const startBuild = () => {
+    setDraft('@factory Build the approved specification.');
+    textarea.current?.focus();
+  };
+
   const renderMessage = (m: Message) => {
     switch (m.kind) {
       case 'Decision':
@@ -172,6 +195,19 @@ export function ThreadMain({
             decision={decisions.find((d) => d.id === m.decisionId)}
             busy={busy}
             onAnswer={(decisionId, answer) => void act(() => api.answerDecision(decisionId, answer))}
+          />
+        );
+      case 'Spec':
+        return (
+          <SpecCard
+            key={m.id}
+            message={m}
+            status={details.spec}
+            thread={thread}
+            busy={busy}
+            onApprove={(revision) => void act(() => api.approveSpec(thread.id, revision), `Specification revision ${revision} approved. Send @factory to build it.`)}
+            onRevise={startRevision}
+            onBuild={startBuild}
           />
         );
       case 'Handoff':
@@ -283,7 +319,8 @@ export function ThreadMain({
             </p>
             <p>
               Not sure yet? Ask a question without <span className="mention">@factory</span>: Litos reads the code and answers,
-              and changes nothing.
+              and changes nothing. Or start with <span className="mention">@factory spec</span> to have Litos write a
+              specification you approve before anything is built.
             </p>
           </div>
         ) : null}
@@ -392,13 +429,29 @@ export function ThreadMain({
                 }}
               />
               <button className="btn primary" onClick={() => void send()} disabled={!sendable || busy}>
-                {answering ? 'Answer' : requestingChanges ? 'Send change request' : asking && chatting ? 'Ask' : 'Send'}
+                {answering ? 'Answer' : asksForSpec ? 'Ask for a spec' : requestingChanges ? 'Send change request' : asking && chatting ? 'Ask' : 'Send'}
               </button>
             </div>
             <p className="compose-hint">
               {!answering && isBareMention(draft) ? <span className="warn">Say what you want done after @factory. </span> : null}
-              {!answering && request !== null && !canMessage(thread.state) ? (
+              {!answering && asksForSpec && !specRequest && thread.state === 'Draft' ? (
+                <span className="warn">Say what the specification is for after @factory spec. </span>
+              ) : null}
+              {!answering && asksForSpec && thread.state !== 'Draft' ? (
+                <span className="warn">A specification is written before the work starts; this task has been delegated. </span>
+              ) : null}
+              {!answering && request !== null && !asksForSpec && specWaiting ? (
+                <span className="warn">
+                  Approve specification revision {details.spec?.revision}, or ask for changes with @factory spec, before delegating.{' '}
+                </span>
+              ) : null}
+              {!answering && request !== null && !asksForSpec && !canMessage(thread.state) ? (
                 <span className="warn">This task is closed to new work; ask without @factory. </span>
+              ) : null}
+              {specApproved && !draft.trim() ? (
+                <span>
+                  Specification revision {details.spec?.revision} is approved: <b>@factory</b> builds it.{' '}
+                </span>
               ) : null}
               {waitingForAnswer ? <span className="warn">Litos is still answering your last question. </span> : null}
               {working ? (
@@ -412,8 +465,8 @@ export function ThreadMain({
                 <>Litos answers questions about the code. Nothing is changed. </>
               ) : (
                 <>
-                  <b>@factory</b> delegates within the task budget. Without it, Litos answers questions about the code and
-                  changes nothing.{' '}
+                  <b>@factory</b> delegates within the task budget; <b>@factory spec</b> asks for a specification first. Without
+                  it, Litos answers questions about the code and changes nothing.{' '}
                 </>
               )}
               Model: <span className="mono">{thread.model}</span> on{' '}

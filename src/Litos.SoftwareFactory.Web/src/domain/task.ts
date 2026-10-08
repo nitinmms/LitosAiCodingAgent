@@ -152,6 +152,17 @@ export function parseMention(text: string): string | null {
   return request.length > 0 ? request : null;
 }
 
+/**
+ * Mirrors the host's SpecMention: given what follows @factory, whether it asks for a
+ * specification ("spec" as a word of its own), and what for. Null when it asks for the work.
+ */
+export function parseSpec(request: string): string | null {
+  if (!request.toLowerCase().startsWith('spec')) return null;
+  const rest = request.slice(4);
+  if (rest.length > 0 && !/^\s/.test(rest)) return null;
+  return rest.trim();
+}
+
 /** "@factory" with nothing after it: neither a delegation nor a question. */
 export const isBareMention = (text: string): boolean => text.trim().toLowerCase() === MENTION;
 

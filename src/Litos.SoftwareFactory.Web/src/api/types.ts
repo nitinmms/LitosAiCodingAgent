@@ -90,7 +90,7 @@ export interface CreateThread {
 }
 
 export type MessageAuthor = 'User' | 'Factory';
-export type MessageKind = 'Text' | 'Status' | 'Decision' | 'DecisionAnswer' | 'Handoff';
+export type MessageKind = 'Text' | 'Status' | 'Decision' | 'DecisionAnswer' | 'Handoff' | 'Spec';
 
 export interface Message {
   id: string;
@@ -118,7 +118,7 @@ export interface Decision {
 
 export interface Run {
   id: string;
-  kind: 'Implement' | 'Rework';
+  kind: 'Implement' | 'Rework' | 'Spec';
   status: 'Queued' | 'Running' | 'Suspended' | 'Finished';
   stopReason: string | null;
   baselineCommit: string | null;
@@ -185,6 +185,26 @@ export interface HandoffEvidence {
   decisions: { question: string; answer: string }[];
   tokensUsed: number;
   budgetCap: number | null;
+  /** The approved specification revision the work built, if it built one. */
+  specificationRevision?: number | null;
+}
+
+/** A proposed specification, in full: a Spec message's payload (m2-architecture.md §5). */
+export interface SpecPayload {
+  revision: number;
+  summary: string;
+  acceptanceCriteria: string[];
+  affectedAreas: string[];
+  testPlan: string;
+  openQuestions: string[];
+}
+
+/** The newest specification revision of a thread, and whether it is approved. */
+export interface SpecStatus {
+  revision: number;
+  approved: boolean;
+  approvedBy: string | null;
+  approvedAt: string | null;
 }
 
 export interface Handoff {
@@ -210,6 +230,8 @@ export interface ThreadDetails {
   chatPending: boolean;
   /** What that answer is doing, as it last said; null until it says anything. */
   chatProgress: ChatProgress | null;
+  /** The newest specification revision; null when none was proposed. */
+  spec: SpecStatus | null;
 }
 
 /** What a chat answer in progress has done so far (the host's ChatProgress). */

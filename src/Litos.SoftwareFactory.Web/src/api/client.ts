@@ -10,6 +10,7 @@ import type {
   Invitation,
   InvitationPreview,
   Person,
+  SpecStatus,
   Project,
   PullRequestInfo,
   RegisterProject,
@@ -62,6 +63,8 @@ export interface FactoryApi {
   thread(id: string): Promise<ThreadDetails>;
   usage(id: string): Promise<UsageCall[]>;
   postMessage(id: string, messageId: string, text: string): Promise<DispatchResult>;
+  /** Approves the specification revision the person read; a newer one makes this a 409. */
+  approveSpec(id: string, revision: number): Promise<SpecStatus>;
   setBudget(id: string, cap: number | null): Promise<Thread>;
   accept(id: string): Promise<Thread>;
   pause(id: string): Promise<void>;
@@ -165,6 +168,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     thread: (id) => send<ThreadDetails>('GET', thread(id)),
     usage: (id) => send<UsageCall[]>('GET', `${thread(id)}/usage`),
     postMessage: (id, messageId, text) => send<DispatchResult>('POST', `${thread(id)}/messages`, { messageId, text }),
+    approveSpec: (id, revision) => send<SpecStatus>('POST', `${thread(id)}/spec/${revision}/approve`),
     setBudget: (id, cap) => send<Thread>('POST', `${thread(id)}/budget`, { cap }),
     accept: (id) => send<Thread>('POST', `${thread(id)}/accept`),
     // Pausing or cancelling a running task answers 202 before the task has stopped; the new
