@@ -205,6 +205,26 @@ Differences from the plan above:
 - The first Implement run snapshots the approved revision into its `RunContext`. That turns on the brief's approved-spec section, which M1 already renders but never fills, and the handoff's criteria checklist. The decision scan is told which questions the spec's open questions and criteria already settle.
 - A spec run is charged to the task budget, as task work.
 
+**Step 5 (spec) was completed on 2026-10-08** in these commits:
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `04d58a0` | Core: `RunKind.Spec`, the `ProposeSpec` transition (Running to Draft), the turn label of a draft at the Spec stage, the spec brief (revision `m2.3`) |
+| 2 | `6439698` | Store: request, propose and approve; `@factory` refused while a revision waits; each run records the revision it builds; migration `M2Spec`. Also fixes the task's request being taken from the first message |
+| 3 | `0cd1bbd` | Host: `SpecExecutor`, `@factory spec`, the approve endpoint, the approved spec in the run's brief and the handoff's criteria check; chat and spec share `ReadingCopies` and `ReadingWorker` |
+| 4 | `ad7f059` | Web: the spec card with Approve, Ask for changes and Build it; the composer's spec hints; the handoff's revision line |
+
+Differences from the plan above, and choices the plan left open:
+
+- **A spec is optional.** `@factory <work>` from a draft with no specification starts the work as before.
+- **A spec run stops like any run.** Paused, Blocked, PausedBudget and Interrupted all apply, at the Spec stage, and resuming writes the specification again from the start (it is one turn). A turn that proposes nothing blocks the task rather than retrying on its own.
+- **A revision is asked for with `@factory spec <changes>`**, which may follow an approved revision too; the new revision must be approved again. A plain message is a question about it, answered as chat. "@factory specify ..." is a request for the work: "spec" must be a word of its own.
+- **Only the newest revision can be approved,** and only while the task is a draft at the Spec stage; the endpoint takes the revision the person read, so a newer one makes it a 409.
+- **The run's revision is fixed when it is queued** (`task_runs.SpecificationRevision`), and a change request carries the same revision. A task's specification cannot change once delegated, since `@factory spec` is refused outside a draft.
+- **The handoff's criteria check** lists each approved criterion the work did not report on under known limitations ("Approved criterion not reported on: ..."), matching words without regard to case, spacing or a closing full stop; the run's brief asks it to report on each in exactly the approved words. The handoff also records the revision it built.
+- **The decision scan needed no change:** its brief already shows the approved specification and criteria, now that the run's context carries them.
+- **The task's request** given to a change request's review is now its first implement run's request. It had been the thread's first message, which since chat could be a question.
+
 ## 6. Board, whose-turn labels and task types (build step 3)
 
 - **Turn label in Core.** `TurnLabels.For(state, specPending)` implements blueprint §7.1. Draft is "Not started", or "Awaiting you" when a spec awaits approval. The API sends the label with each thread, so the app no longer keeps its own copy.
