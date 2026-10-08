@@ -68,7 +68,7 @@ public sealed class ChatExecutor(
 
             var sessionId = $"chat-{run.Id:N}";
             var brief = BriefComposer.Chat(new ChatContext(
-                project.Name, branch, thread.Title, details.LatestRun?.Request, Conversation(details, run), run.Request));
+                project.Name, branch, thread.Title, details.TaskRequest, Conversation(details, run), run.Request));
             var turnToken = active.BeginTurn(TurnKind.Chat, TurnKind.Chat, sessionId, ct, phase: "Chat");
             progress.Set(ChatProgressTracker.Thinking);
             var result = await client.RunTurnAsync(sessionId, TurnKind.Chat, brief, options.ChatMaxToolCalls, turnToken, progress.Apply);

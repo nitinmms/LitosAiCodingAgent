@@ -95,6 +95,9 @@ public enum MessageKind
     Decision,
     DecisionAnswer,
     Handoff,
+
+    /// <summary>A proposed specification; its payload is the revision in full (m2-architecture.md §5).</summary>
+    Spec,
 }
 
 public sealed class ThreadMessage
@@ -121,9 +124,15 @@ public sealed class Specification
 {
     public Guid Id { get; set; }
     public Guid ThreadId { get; set; }
+
+    /// <summary>The spec run that proposed it.</summary>
+    public Guid? RunId { get; set; }
     public int Revision { get; set; }
     public required string Summary { get; set; }
     public required string AcceptanceCriteriaJson { get; set; }
+    public string AffectedAreasJson { get; set; } = "[]";
+    public string TestPlan { get; set; } = "";
+    public string OpenQuestionsJson { get; set; } = "[]";
     public Guid? ApprovedBy { get; set; }
     public DateTimeOffset? ApprovedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -164,6 +173,10 @@ public sealed class TaskRun
 
     /// <summary>The request this run works on: the @factory message, or the tester's feedback.</summary>
     public required string Request { get; set; }
+
+    /// <summary>The approved specification revision this run builds, fixed when it was queued; null
+    /// when the task has none (m2-architecture.md §5).</summary>
+    public int? SpecificationRevision { get; set; }
     public string? BaselineCommit { get; set; }
     public string? HeadCommit { get; set; }
 
@@ -492,6 +505,12 @@ public static class AuditActions
 
     /// <summary>An @factory after a handoff: the tester asks for changes.</summary>
     public const string ThreadChangeRequest = "thread.change_request";
+
+    /// <summary>An @factory spec: a specification is asked for, or a revision of one.</summary>
+    public const string ThreadSpecRequest = "thread.spec_request";
+
+    /// <summary>A specification revision approved, so the task can be delegated against it.</summary>
+    public const string SpecApprove = "spec.approve";
     public const string ThreadAccept = "thread.accept";
     public const string ThreadPause = "thread.pause";
     public const string ThreadCancel = "thread.cancel";

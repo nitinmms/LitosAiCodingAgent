@@ -1479,6 +1479,245 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal([1L, 2L, 3L, 4L, 5L], messages.Select(m => m.Sequence));
     }
 
+    // ---- The spec stage (M2, m2-architecture.md §5) ----
+
+    private static readonly SpecSubmission Proposal = new(
+        " Administrators can export orders as CSV. ", ["An Export button is shown to administrators.", " ", "Others get a 403."],
+        ["src/Orders/OrdersController.cs"], "Unit tests cover the 403.", []);
+
+    private Task<DispatchResult> RequestSpecAsync(Guid threadId, string request = "Export the orders list.", string? key = null) =>
+        Store.RequestSpecAsync(threadId, Admin, key ?? Guid.NewGuid().ToString(), request, T0, default);
+
+    /// <summary>A draft whose spec run has been claimed.</summary>
+    private async Task<(TaskThread Thread, ClaimedRun Run)> SpecRunningAsync(Project? project = null)
+    {
+        var thread = await AddThreadAsync(project ?? await AddProjectAsync());
+        await RequestSpecAsync(thread.Id);
+        var claimed = (await Store.ClaimNextRunAsync(slotCap: 5, T0, default))!;
+        return (thread, claimed);
+    }
+
+    /// <summary>A draft with a proposed specification, revision 1, not yet approved.</summary>
+    private async Task<TaskThread> SpecProposedAsync()
+    {
+        var (thread, run) = await SpecRunningAsync();
+        await Store.ProposeSpecAsync(run.Run.Id, Proposal, T0, default);
+        return thread;
+    }
+
+    [SkippableFact]
+    public async Task RequestSpec_FromADraft_QueuesASpecRun_AtTheSpecStage()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+
+        var result = await RequestSpecAsync(thread.Id, key: "m-1");
+
+        Assert.Equal(DispatchOutcome.Queued, result.Outcome);
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Equal((LifecycleState.Queued, Stage.Spec), (details.Thread.State, details.Thread.Stage));
+        Assert.Equal((result.RunId, RunKind.Spec, "Export the orders list."), (details.LatestRun!.Id, details.LatestRun.Kind, details.LatestRun.Request));
+        var message = Assert.Single(details.Messages);
+        Assert.Equal((MessageAuthor.User, "spec Export the orders list."), (message.Author, message.Text));
+        Assert.Contains(await Store.ListAuditAsync(null, 50, default), a => a.Action == AuditActions.ThreadSpecRequest && a.TargetId == thread.Id);
+        Assert.Null(details.TaskRequest); // nothing has been delegated yet
+
+        // The same message again does nothing more.
+        Assert.Equal(DispatchOutcome.Duplicate, (await RequestSpecAsync(thread.Id, key: "m-1")).Outcome);
+        Assert.Single((await Store.GetThreadAsync(thread.Id, default))!.Messages);
+    }
+
+    [SkippableFact]
+    public async Task RequestSpec_AfterTheWorkWasDelegated_IsRejected_AndNothingIsRecorded()
+    {
+        var (_, thread, _) = await QueuedAsync();
+
+        var result = await RequestSpecAsync(thread.Id);
+
+        Assert.Equal(DispatchOutcome.Rejected, result.Outcome);
+        Assert.Contains("already been delegated", result.Reason);
+        Assert.Single((await Store.GetThreadAsync(thread.Id, default))!.Messages);
+    }
+
+    /// <summary>A spec run reads a copy of its own: it takes no lease, so a task holding the
+    /// repository does not hold it up, and it waits only for a slot.</summary>
+    [SkippableFact]
+    public async Task ASpecRun_TakesNoLease_AndWaitsOnlyForASlot()
+    {
+        var holder = await RunningAsync();
+        var thread = await AddThreadAsync(holder.Project, "Another task");
+        var spec = (await RequestSpecAsync(thread.Id)).RunId;
+
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 1, T0, default));
+        Assert.Contains("Waiting for a free slot", (await ThreadAsync(thread.Id)).StateReason);
+
+        var claimed = (await Store.ClaimNextRunAsync(slotCap: 2, T0, default))!;
+        Assert.Equal(spec, claimed.Run.Id);
+        Assert.Equal(LifecycleState.Running, (await ThreadAsync(thread.Id)).State);
+        Assert.Equal(0, await LeasesAsync(thread.Id));
+        Assert.Equal(1, await LeasesAsync(holder.Thread.Id));
+    }
+
+    [SkippableFact]
+    public async Task ProposeSpec_RecordsARevision_AndTheTaskWaitsForApproval()
+    {
+        var (thread, run) = await SpecRunningAsync();
+        var before = await Store.LastEventSequenceAsync(default);
+
+        var spec = await Store.ProposeSpecAsync(run.Run.Id, Proposal, T0, default);
+
+        Assert.Equal((1, run.Run.Id, "Administrators can export orders as CSV."), (spec.Revision, spec.RunId, spec.Summary));
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Equal((LifecycleState.Draft, Stage.Spec), (details.Thread.State, details.Thread.Stage));
+        Assert.Equal(RunStatus.Finished, details.LatestRun!.Status);
+        Assert.Equal(1, details.LatestSpec!.Revision);
+        Assert.Null(details.LatestSpec.ApprovedAt);
+
+        // Posted as a Spec message whose payload is the revision in full, blanks dropped.
+        var message = details.Messages.OrderBy(m => m.Sequence).Last();
+        Assert.Equal((MessageAuthor.Factory, MessageKind.Spec), (message.Author, message.Kind));
+        var payload = JsonDocument.Parse(message.PayloadJson!).RootElement;
+        Assert.Equal(1, payload.GetProperty("revision").GetInt32());
+        Assert.Equal(
+            ["An Export button is shown to administrators.", "Others get a 403."],
+            payload.GetProperty("acceptanceCriteria").EnumerateArray().Select(c => c.GetString()));
+        Assert.Equal("Unit tests cover the 403.", payload.GetProperty("testPlan").GetString());
+        Assert.Equal(0, payload.GetProperty("openQuestions").GetArrayLength());
+
+        // Whose turn: the person's, on every client.
+        var state = (await Store.ReadEventsAsync(thread.Id, before, 50, default)).Last(e => e.Type == EventTypes.StateChanged);
+        Assert.Equal("AwaitingYou", JsonDocument.Parse(state.PayloadJson).RootElement.GetProperty("turn").GetString());
+    }
+
+    [SkippableFact]
+    public async Task ProposeSpec_ByAnythingButARunningSpecRun_IsAConflict()
+    {
+        var running = await RunningAsync();
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.ProposeSpecAsync(running.Run.Id, Proposal, T0, default));
+
+        var thread = await AddThreadAsync(running.Project, "Queued only");
+        var queued = (await RequestSpecAsync(thread.Id)).RunId!.Value;
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.ProposeSpecAsync(queued, Proposal, T0, default));
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.ProposeSpecAsync(Guid.NewGuid(), Proposal, T0, default));
+    }
+
+    [SkippableFact]
+    public async Task ASecondSpecRequest_RevisesIt_AsTheNextRevision()
+    {
+        var thread = await SpecProposedAsync();
+
+        await RequestSpecAsync(thread.Id, "Leave cancelled orders out.");
+        var claimed = (await Store.ClaimNextRunAsync(slotCap: 5, T0, default))!;
+        var second = await Store.ProposeSpecAsync(claimed.Run.Id, Proposal with { Summary = "Revised." }, T0, default);
+
+        Assert.Equal(2, second.Revision);
+        Assert.Equal("Revised.", (await Store.GetThreadAsync(thread.Id, default))!.LatestSpec!.Summary);
+    }
+
+    [SkippableFact]
+    public async Task Delegating_WhileASpecWaitsForApproval_IsRejected()
+    {
+        var thread = await SpecProposedAsync();
+        var before = (await Store.GetThreadAsync(thread.Id, default))!.Messages.Count;
+
+        var result = await Store.DispatchAsync(thread.Id, Admin, Guid.NewGuid().ToString(), "Build it.", T0, default);
+
+        Assert.Equal(DispatchOutcome.Rejected, result.Outcome);
+        Assert.Contains("revision 1 is waiting for approval", result.Reason);
+        Assert.Equal(before, (await Store.GetThreadAsync(thread.Id, default))!.Messages.Count);
+    }
+
+    [SkippableFact]
+    public async Task Approving_ThenDelegating_BuildsTheApprovedRevision()
+    {
+        var thread = await SpecProposedAsync();
+
+        var approved = await Store.ApproveSpecAsync(thread.Id, 1, Ben, T0, default);
+
+        Assert.Equal((Ben, T0), (approved.ApprovedBy, approved.ApprovedAt));
+        Assert.Contains(await Store.ListAuditAsync(null, 50, default), a => a.Action == AuditActions.SpecApprove && a.ActorId == Ben);
+        var afterApproval = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Equal((LifecycleState.Draft, Stage.Spec), (afterApproval.Thread.State, afterApproval.Thread.Stage));
+        Assert.Contains("Approved specification revision 1", afterApproval.Messages.OrderBy(m => m.Sequence).Last().Text);
+
+        var dispatch = await Store.DispatchAsync(thread.Id, Admin, Guid.NewGuid().ToString(), "Build it.", T0.AddMinutes(1), default);
+
+        Assert.Equal(DispatchOutcome.Queued, dispatch.Outcome);
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Equal((Stage.Implement, RunKind.Implement, (int?)1), (details.Thread.Stage, details.LatestRun!.Kind, details.LatestRun.SpecificationRevision));
+        Assert.Equal("Build it.", details.TaskRequest);
+    }
+
+    [SkippableFact]
+    public async Task Approving_IsOnlyForTheNewestRevision_OnADraft_AndTwiceIsOnce()
+    {
+        var thread = await SpecProposedAsync();
+        await RequestSpecAsync(thread.Id, "Revise it.");
+        await Store.ProposeSpecAsync((await Store.ClaimNextRunAsync(slotCap: 5, T0, default))!.Run.Id, Proposal, T0, default);
+
+        var stale = await Assert.ThrowsAsync<StoreConflictException>(() => Store.ApproveSpecAsync(thread.Id, 1, Admin, T0, default));
+        Assert.Contains("replaced by revision 2", stale.Message);
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.ApproveSpecAsync(thread.Id, 9, Admin, T0, default));
+
+        await Store.ApproveSpecAsync(thread.Id, 2, Admin, T0, default);
+        var count = (await Store.GetThreadAsync(thread.Id, default))!.Messages.Count;
+        await Store.ApproveSpecAsync(thread.Id, 2, Ben, T0.AddMinutes(1), default);
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Equal((Admin, (DateTimeOffset?)T0), (details.LatestSpec!.ApprovedBy, details.LatestSpec.ApprovedAt));
+        Assert.Equal(count, details.Messages.Count);
+    }
+
+    /// <summary>An unapproved revision cannot be approved once the task has left the draft.</summary>
+    [SkippableFact]
+    public async Task Approving_WhileTheSpecIsBeingRevised_IsAConflict()
+    {
+        var thread = await SpecProposedAsync();
+        await RequestSpecAsync(thread.Id, "Revise it.");
+
+        var refused = await Assert.ThrowsAsync<StoreConflictException>(() => Store.ApproveSpecAsync(thread.Id, 1, Admin, T0, default));
+
+        Assert.Contains("before the work is delegated", refused.Message);
+    }
+
+    [SkippableFact]
+    public async Task Delegating_WithoutASpec_BuildsNone()
+    {
+        var (_, thread, _) = await QueuedAsync();
+
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Null(details.LatestRun!.SpecificationRevision);
+        Assert.Null(details.LatestSpec);
+    }
+
+    /// <summary>A change request builds against the same approved revision as the work it changes.</summary>
+    [SkippableFact]
+    public async Task AChangeRequest_CarriesTheApprovedRevision()
+    {
+        var thread = await SpecProposedAsync();
+        await Store.ApproveSpecAsync(thread.Id, 1, Admin, T0, default);
+        await Store.DispatchAsync(thread.Id, Admin, Guid.NewGuid().ToString(), "Build it.", T0.AddMinutes(1), default);
+        var run = (await Store.ClaimNextRunAsync(slotCap: 5, T0.AddMinutes(1), default))!;
+        await Store.StopRunAsync(Stop(run.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0.AddMinutes(2), default);
+
+        await Store.DispatchAsync(thread.Id, Admin, Guid.NewGuid().ToString(), "Quote the fields.", T0.AddMinutes(3), default);
+
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Equal((RunKind.Rework, (int?)1), (details.LatestRun!.Kind, details.LatestRun.SpecificationRevision));
+        Assert.Equal("Build it.", details.TaskRequest); // the task's request, not the change request
+    }
+
+    /// <summary>The task's request is what it was delegated to do, never a question asked first.</summary>
+    [SkippableFact]
+    public async Task TaskRequest_IsTheFirstDelegation_NotTheFirstMessage()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        await Store.ChatAsync(thread.Id, Admin, Guid.NewGuid().ToString(), "Is there an export already?", 100_000, T0, default);
+        await Store.FinishChatRunAsync((await Store.GetThreadAsync(thread.Id, default))!.ChatRun!.Id, "No.", null, T0, default);
+
+        await Store.DispatchAsync(thread.Id, Admin, Guid.NewGuid().ToString(), "Add CSV export.", T0, default);
+
+        Assert.Equal("Add CSV export.", (await Store.GetThreadAsync(thread.Id, default))!.TaskRequest);
+    }
+
     // ---- Chat before @factory (M2, m2-architecture.md §5) ----
 
     private const long ChatCap = 100_000;

@@ -272,6 +272,28 @@ public sealed class ChatTests
         Assert.InRange(reports, 1, 3);
     }
 
+    /// <summary>A question asked before delegating is not what the task was asked to do: a change
+    /// request's brief carries the delegation as the original request.</summary>
+    [Fact]
+    public async Task AQuestionAskedFirst_IsNeverTakenForTheTasksRequest()
+    {
+        var (host, _, threadId) = await StartAsync();
+        await using var _ = host;
+        await SayAsync(host, threadId, "Is there an export already?");
+        await AnswerAsync(host, threadId);
+        await host.DelegateAsync(threadId, "@factory Add CSV export for Orders.");
+        await host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+        var turns = host.Workers.Turns.Count;
+
+        await host.DelegateAsync(threadId, "@factory Quote fields that contain commas.");
+        await host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        // The rework's review is told what the task was for: the delegation, not the question.
+        var review = host.Workers.Turns.Skip(turns).First(t => t.Kind == TurnKind.Review);
+        Assert.Contains("Add CSV export for Orders.", review.Brief);
+        Assert.DoesNotContain("Is there an export already?", review.Brief);
+    }
+
     // ---- When there is no answer ----
 
     [Fact]

@@ -95,6 +95,13 @@ public sealed record ThreadDetails(
 
     /// <summary>What <see cref="ChatRun"/> last said it was doing, if it has said anything.</summary>
     public ChatProgress? ChatProgress { get; init; }
+
+    /// <summary>The newest specification revision, approved or not; null when none was proposed.</summary>
+    public Specification? LatestSpec { get; init; }
+
+    /// <summary>What the task was delegated to do: its first implement run's request. Not the
+    /// first message, which may be a question or a request for a specification.</summary>
+    public string? TaskRequest { get; init; }
 }
 
 /// <summary>
@@ -162,6 +169,26 @@ public interface IFactoryStore
     /// </summary>
     Task<DispatchResult> ChatAsync(
         Guid threadId, Guid userId, string dispatchKey, string text, long chatTurnCap, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// An @factory spec (m2-architecture.md §5): from Draft, queues a spec run for
+    /// <paramref name="request"/> and moves the task to the Spec stage. Rejected in any other state.
+    /// The dispatch key makes a retried message safe.
+    /// </summary>
+    Task<DispatchResult> RequestSpecAsync(Guid threadId, Guid userId, string dispatchKey, string request, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// A spec run's proposal: recorded as the thread's next specification revision and posted as a
+    /// Spec message; the run finishes and the task is a draft at the Spec stage again. Throws
+    /// <see cref="StoreConflictException"/> when the run is not a running spec run.
+    /// </summary>
+    Task<Specification> ProposeSpecAsync(Guid runId, Contracts.SpecSubmission submission, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// Approves <paramref name="revision"/>, which must be the newest, on a draft at the Spec stage.
+    /// Approving it again does nothing. Throws <see cref="StoreConflictException"/> otherwise.
+    /// </summary>
+    Task<Specification> ApproveSpecAsync(Guid threadId, int revision, Guid userId, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>Tells the thread's stream what a chat answer in progress is doing. Does nothing
     /// once the run has finished, so a late report never follows the reply.</summary>

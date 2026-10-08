@@ -523,7 +523,9 @@ public sealed class RunExecutor(
     private async Task<(RunContext Context, WorkspaceDiff? Diff)> BriefContextAsync(RunData data, StartTurnStep step, CancellationToken ct)
     {
         var details = await store.GetThreadAsync(data.Thread.Id, ct);
-        var firstRequest = details?.Messages.FirstOrDefault(m => m.Author == MessageAuthor.User && m.Kind == MessageKind.Text)?.Text ?? data.Run.Request;
+        // What the task was delegated to do: not its first message, which may be a question or a
+        // request for a specification.
+        var firstRequest = details?.TaskRequest ?? data.Run.Request;
 
         var context = new RunContext(data.Project.Name, data.Branch, data.Project.DefaultBranch, data.Run.Kind == RunKind.Rework ? firstRequest : data.Run.Request)
         {

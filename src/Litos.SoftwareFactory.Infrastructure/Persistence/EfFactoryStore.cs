@@ -125,10 +125,17 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 chatProgress = null;
         }
 
+        var latestSpec = await db.Specifications.AsNoTracking().Where(s => s.ThreadId == threadId)
+            .OrderByDescending(s => s.Revision).FirstOrDefaultAsync(ct);
+        var taskRequest = await db.Runs.AsNoTracking().Where(r => r.ThreadId == threadId && r.Kind == RunKind.Implement)
+            .OrderBy(r => r.CreatedAt).Select(r => r.Request).FirstOrDefaultAsync(ct);
+
         return new ThreadDetails(thread, project, messages, decisions, latestRun, handoff, verification, findings)
         {
             ChatRun = chatRun,
             ChatProgress = chatProgress,
+            LatestSpec = latestSpec,
+            TaskRequest = taskRequest,
         };
     }
 
@@ -155,6 +162,12 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         DispatchOutcome outcome;
         string? action = null;
         long topUp = 0;
+        // A proposed specification is approved before the work is delegated against it (§5).
+        var spec = await db.Specifications.AsNoTracking().Where(s => s.ThreadId == threadId)
+            .OrderByDescending(s => s.Revision).FirstOrDefaultAsync(ct);
+        if (thread.State == LifecycleState.Draft && spec is { ApprovedAt: null })
+            return new DispatchResult(DispatchOutcome.Rejected, thread, null, SpecAwaitsApproval(spec.Revision));
+
         switch (thread.State)
         {
             case LifecycleState.Draft:
@@ -189,6 +202,11 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         {
             thread.Stage = Stage.Implement;
             thread.StateReason = null;
+
+            // The run builds the newest approved revision, fixed now: a later revision is for later work.
+            var approved = await db.Specifications.AsNoTracking().Where(s => s.ThreadId == threadId && s.ApprovedAt != null)
+                .OrderByDescending(s => s.Revision).Select(s => (int?)s.Revision).FirstOrDefaultAsync(ct);
+            db.Runs.Local.First(r => r.Id == runId).SpecificationRevision = approved;
 
             // A follow-up is only a message, and the message records its author.
             Audit(db, userId, action!, AuditTargets.Thread, threadId, thread.ProjectId, new { RunId = runId, BudgetTopUp = topUp }, now);
@@ -263,6 +281,126 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
     /// <summary>The task's own run that is not finished. A chat run is never it.</summary>
     private static Task<TaskRun?> ActiveRunAsync(FactoryDbContext db, Guid threadId, CancellationToken ct) =>
         db.Runs.FirstOrDefaultAsync(r => r.ThreadId == threadId && r.Status != RunStatus.Finished && r.Kind != RunKind.Chat, ct);
+
+    private static string SpecAwaitsApproval(int revision) =>
+        $"Specification revision {revision} is waiting for approval. Approve it, or ask for changes with @factory spec, before delegating the work.";
+
+    public async Task<DispatchResult> RequestSpecAsync(
+        Guid threadId, Guid userId, string dispatchKey, string request, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var thread = await LockThreadAsync(db, threadId, ct);
+
+        if (await db.Messages.AsNoTracking().AnyAsync(m => m.DispatchKey == dispatchKey, ct))
+            return new DispatchResult(DispatchOutcome.Duplicate, thread, await ActiveRunIdAsync(db, threadId, ct));
+        if (thread.State != LifecycleState.Draft)
+        {
+            return new DispatchResult(
+                DispatchOutcome.Rejected, thread, null,
+                "A specification is written before the work starts. This task has already been delegated.");
+        }
+
+        thread.State = TaskLifecycle.Apply(thread.State, LifecycleTrigger.Delegate);
+        thread.Stage = Stage.Spec;
+        thread.StateReason = null;
+        var runId = AddRun(db, thread, userId, RunKind.Spec, request, now);
+        Audit(db, userId, AuditActions.ThreadSpecRequest, AuditTargets.Thread, threadId, thread.ProjectId, new { RunId = runId }, now);
+        // Shown as typed: the client puts the mention in front of an @factory message.
+        AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, $"spec {request}", now, dispatchKey: dispatchKey);
+        Touch(db, thread, now);
+        try
+        {
+            await write.CommitAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            return new DispatchResult(DispatchOutcome.Duplicate, thread, null);
+        }
+
+        return new DispatchResult(DispatchOutcome.Queued, thread, runId);
+    }
+
+    public async Task<Specification> ProposeSpecAsync(Guid runId, SpecSubmission submission, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var run = await db.Runs.FirstOrDefaultAsync(r => r.Id == runId, ct) ?? throw new StoreNotFoundException("The run does not exist.");
+        var thread = await LockThreadAsync(db, run.ThreadId, ct);
+        if (run.Kind != RunKind.Spec || run.Status != RunStatus.Running || thread.State != LifecycleState.Running)
+            throw new StoreConflictException("Only a running spec run can propose a specification.");
+
+        var revision = (await db.Specifications.Where(s => s.ThreadId == thread.Id).MaxAsync(s => (int?)s.Revision, ct) ?? 0) + 1;
+        var spec = new Specification
+        {
+            Id = Guid.NewGuid(),
+            ThreadId = thread.Id,
+            RunId = run.Id,
+            Revision = revision,
+            Summary = submission.Summary.Trim(),
+            AcceptanceCriteriaJson = JsonSerializer.Serialize(Clean(submission.AcceptanceCriteria), FactoryWire.Json),
+            AffectedAreasJson = JsonSerializer.Serialize(Clean(submission.AffectedAreas), FactoryWire.Json),
+            TestPlan = submission.TestPlan.Trim(),
+            OpenQuestionsJson = JsonSerializer.Serialize(Clean(submission.OpenQuestions), FactoryWire.Json),
+            CreatedAt = now,
+        };
+        db.Specifications.Add(spec);
+
+        run.Status = RunStatus.Finished;
+        run.EndedAt = now;
+        run.WorkerProcessId = null;
+        run.WorkerStartTime = null;
+        thread.State = TaskLifecycle.Apply(thread.State, LifecycleTrigger.ProposeSpec);
+        thread.Stage = Stage.Spec;
+        thread.StateReason = null;
+
+        AddMessage(db, thread, MessageAuthor.Factory, null, MessageKind.Spec, spec.Summary, now, payloadJson: SpecPayload(spec));
+        Touch(db, thread, now);
+        await write.CommitAsync(ct);
+        return spec;
+
+        static List<string> Clean(IReadOnlyList<string> items) => [.. items.Select(i => i.Trim()).Where(i => i.Length > 0)];
+    }
+
+    /// <summary>A Spec message's payload: the revision in full, as the card shows it.</summary>
+    private static string SpecPayload(Specification spec) => JsonSerializer.Serialize(
+        new
+        {
+            spec.Revision,
+            spec.Summary,
+            AcceptanceCriteria = JsonSerializer.Deserialize<List<string>>(spec.AcceptanceCriteriaJson, FactoryWire.Json),
+            AffectedAreas = JsonSerializer.Deserialize<List<string>>(spec.AffectedAreasJson, FactoryWire.Json),
+            spec.TestPlan,
+            OpenQuestions = JsonSerializer.Deserialize<List<string>>(spec.OpenQuestionsJson, FactoryWire.Json),
+        },
+        FactoryWire.Json);
+
+    public async Task<Specification> ApproveSpecAsync(Guid threadId, int revision, Guid userId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var thread = await LockThreadAsync(db, threadId, ct);
+        var spec = await db.Specifications.FirstOrDefaultAsync(s => s.ThreadId == threadId && s.Revision == revision, ct)
+            ?? throw new StoreNotFoundException("The thread has no such specification revision.");
+        if (spec.ApprovedAt is not null)
+            return spec;
+
+        var newest = await db.Specifications.Where(s => s.ThreadId == threadId).MaxAsync(s => s.Revision, ct);
+        if (newest != revision)
+            throw new StoreConflictException($"Revision {revision} has been replaced by revision {newest}. Read that one before approving.");
+        if (thread.State != LifecycleState.Draft || thread.Stage != Stage.Spec)
+            throw new StoreConflictException("A specification is approved before the work is delegated.");
+
+        spec.ApprovedBy = userId;
+        spec.ApprovedAt = now;
+        Audit(db, userId, AuditActions.SpecApprove, AuditTargets.Thread, threadId, thread.ProjectId, new { Revision = revision }, now);
+        AddMessage(
+            db, thread, MessageAuthor.User, userId, MessageKind.Status,
+            $"Approved specification revision {revision}. @factory now builds it.", now);
+        Touch(db, thread, now);
+        await write.CommitAsync(ct);
+        return spec;
+    }
 
     /// <summary>Where a plain message can start a chat (m2-architecture.md §5).</summary>
     private static bool CanChat(LifecycleState state) =>
@@ -617,6 +755,33 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 continue;
 
             var project = await db.Projects.FirstAsync(p => p.Id == thread.ProjectId, ct);
+            if (run.Kind == RunKind.Spec)
+            {
+                // Task work, so it moves the task to Running, but it reads a copy of its own and
+                // takes no lease: it waits only for a slot (m2-architecture.md §5).
+                if (full)
+                {
+                    var waiting = $"Waiting for a free slot ({held.Count} of {slotCap} busy).";
+                    if (thread.StateReason != waiting)
+                    {
+                        thread.StateReason = waiting;
+                        Touch(db, thread, now);
+                    }
+
+                    continue;
+                }
+
+                thread.State = TaskLifecycle.Apply(thread.State, LifecycleTrigger.Claim);
+                thread.StateReason = null;
+                run.Status = RunStatus.Running;
+                run.StartedAt ??= now;
+                run.HeartbeatAt = now;
+                run.StopReason = null;
+                Touch(db, thread, now);
+                await write.CommitAsync(ct);
+                return new ClaimedRun(run, thread, project);
+            }
+
             var lockIdentity = LockIdentity(project);
             var lease = await db.Leases.FirstOrDefaultAsync(l => l.LockIdentity == lockIdentity, ct);
 

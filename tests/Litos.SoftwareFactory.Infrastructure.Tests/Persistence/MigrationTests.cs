@@ -77,4 +77,42 @@ public sealed class MigrationTests : IAsyncLifetime
         var member = await db.ProjectMembers.SingleAsync();
         Assert.Equal((project, creator, creator), (member.ProjectId, member.UserId, member.CreatedBy));
     }
+
+    /// <summary>
+    /// A revision written before M2Spec has no affected areas, test plan or open questions; it
+    /// reads back with empty ones, which jsonb holds as [] (an empty string is not JSON).
+    /// </summary>
+    [SkippableFact]
+    public async Task M2Spec_GivesEarlierRevisionsEmptyListsAndNoTestPlan()
+    {
+        Skip.If(_database is null, $"Set {PostgresFactoryStoreTests.Variable} to run the migration tests against PostgreSQL.");
+        await MigrateToAsync("20261007120738_M2Chat");
+        var project = Guid.NewGuid();
+        var thread = Guid.NewGuid();
+        await ExecuteAsync($$"""
+            INSERT INTO projects ("Id", "Name", "GitHubOwner", "GitHubRepository", "DefaultBranch", "Mode", "PullRequestEnabled",
+                                  "VerificationProfileJson", "ProfileRevision", "CreatedBy", "CreatedAt")
+            VALUES ('{{project}}', 'salesapp', 'acme', 'salesapp', 'main', 'Clone', true, '{"profileVersion":2,"steps":[]}', 1, '{{Guid.NewGuid()}}', '2026-10-01T09:00:00Z');
+            """);
+        await using (var before = Context())
+        {
+            before.Threads.Add(new Core.Store.TaskThread
+            {
+                Id = thread, ProjectId = project, OwnerId = Guid.NewGuid(), Title = "Export", SessionId = "s", Provider = "openrouter", Model = "m",
+            });
+            await before.SaveChangesAsync();
+        }
+
+        await ExecuteAsync($$"""
+            INSERT INTO specifications ("Id", "ThreadId", "Revision", "Summary", "AcceptanceCriteriaJson", "CreatedAt")
+            VALUES ('{{Guid.NewGuid()}}', '{{thread}}', 1, 'Export orders.', '["One row per order."]', '2026-10-01T09:00:00Z');
+            """);
+
+        await MigrateToAsync("M2Spec");
+
+        await using var db = Context();
+        var spec = await db.Specifications.SingleAsync();
+        Assert.Equal(("[]", "[]", "", (Guid?)null), (spec.AffectedAreasJson.Replace(" ", ""), spec.OpenQuestionsJson.Replace(" ", ""), spec.TestPlan, spec.RunId));
+        Assert.Null((await db.Runs.ToListAsync()).FirstOrDefault()?.SpecificationRevision);
+    }
 }
