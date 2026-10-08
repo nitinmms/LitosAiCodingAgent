@@ -4,10 +4,13 @@ import type { CurrentUser, Message, PullRequestState, Settings, ThreadDetails } 
 import { initials } from '../domain/format';
 import {
   canCancel,
+  canChat,
   canMessage,
   canPause,
   canWithdraw,
+  isBareMention,
   isClosed,
+  isPlainMessage,
   parseMention,
   pullRequestLabel,
   stateName,
@@ -89,13 +92,23 @@ export function ThreadMain({
 
   const openDecision = thread.state === 'AwaitingDecision' ? decisions.find((d) => d.status === 'Open') : undefined;
   const lastHandoff = [...messages].reverse().find((m) => m.kind === 'Handoff');
-  const closed = isClosed(thread.state);
   const answering = !!openDecision;
-  const acceptsText = answering || canMessage(thread.state);
+  const chatting = canChat(thread.state);
+  const working = thread.state === 'Queued' || thread.state === 'Running';
+  // An accepted task takes no more work, but can still be asked about.
+  const closed = isClosed(thread.state) && !chatting;
+  const acceptsText = answering || canMessage(thread.state) || chatting;
   const request = parseMention(draft);
-  const sendable = answering ? draft.trim().length > 0 : request !== null;
+  // Without @factory, a message is a question (or, to a working task, guidance for its agent).
+  const asking = !answering && request === null && draft.trim().length > 0 && !isBareMention(draft);
+  const waitingForAnswer = details.chatPending && chatting;
+  const sendable = answering
+    ? draft.trim().length > 0
+    : request !== null
+      ? canMessage(thread.state)
+      : asking && (working || (chatting && !waitingForAnswer));
   // After a handoff an @factory message is a change request: it starts a rework run.
-  const requestingChanges = !answering && thread.state === 'AwaitingHumanTesting';
+  const requestingChanges = !answering && thread.state === 'AwaitingHumanTesting' && request !== null;
   // A rework run that has not produced its own handoff yet can be taken back.
   const reworkUnderWay = run?.kind === 'Rework' && run.status !== 'Finished' && handoff !== null;
   const userName = user.displayName || user.userName;
@@ -133,6 +146,7 @@ export function ThreadMain({
     const sent = await act(async () => {
       const result = await api.postMessage(thread.id, id, text);
       if (result.outcome === 'FollowUp') onNotice('Sent to the agent. It reads the message at its next safe point.');
+      else if (result.outcome === 'Chat') onNotice('Litos is reading the code to answer. Nothing is changed.');
       else if (requestingChanges && result.outcome === 'Queued')
         onNotice('Change request sent: a rework run starts on the same branch. You can withdraw it if that is not what you meant.');
     });
@@ -206,8 +220,8 @@ export function ThreadMain({
               {m.kind === 'DecisionAnswer' ? <span>answered the decision</span> : null}
             </div>
             <div className="bubble">
-              {/* The host stores the request without its leading mention. */}
-              {m.kind === 'Text' ? <span className="mention">@factory </span> : null}
+              {/* The host stores a request without its leading mention, and marks a plain message. */}
+              {m.kind === 'Text' && !isPlainMessage(m) ? <span className="mention">@factory </span> : null}
               <Rich text={m.text} />
             </div>
           </div>
@@ -266,9 +280,21 @@ export function ThreadMain({
               {project.gitHub}, builds, tests and reviews the change, then hands it back for you to test. It never merges or
               pushes to <span className="mono">{project.defaultBranch}</span>.
             </p>
+            <p>
+              Not sure yet? Ask a question without <span className="mention">@factory</span>: Litos reads the code and answers,
+              and changes nothing.
+            </p>
           </div>
         ) : null}
         {messages.map(renderMessage)}
+        {waitingForAnswer ? (
+          <div className="m" role="status">
+            <div className="m-who">
+              <b>Litos</b>
+            </div>
+            <div className="bubble muted">Reading the code to answer...</div>
+          </div>
+        ) : null}
         <StopPanel
           key={`${thread.state}-${thread.budgetCap}`}
           thread={thread}
@@ -342,7 +368,7 @@ export function ThreadMain({
         {closed ? null : (
           <>
             <div className="compose-box">
-              <button className="btn ghost" title="Delegate to the factory" onClick={startRequest} disabled={answering || !acceptsText}>
+              <button className="btn ghost" title="Delegate to the factory" onClick={startRequest} disabled={answering || !canMessage(thread.state)}>
                 <span className="mention">@factory</span>
               </button>
               <textarea
@@ -355,9 +381,13 @@ export function ThreadMain({
                 placeholder={
                   answering
                     ? 'Answer the decision in your own words, or pick an option above'
-                    : acceptsText
-                      ? 'Start with @factory, then say what you want done'
-                      : 'Resume the task before sending it anything'
+                    : working
+                      ? 'Guidance for the agent, with or without @factory'
+                      : chatting && !canMessage(thread.state)
+                        ? 'Ask a question about the code'
+                        : acceptsText
+                          ? 'Ask a question, or start with @factory to say what you want done'
+                          : 'Resume the task before sending it anything'
                 }
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -368,21 +398,28 @@ export function ThreadMain({
                 }}
               />
               <button className="btn primary" onClick={() => void send()} disabled={!sendable || busy}>
-                {answering ? 'Answer' : requestingChanges ? 'Send change request' : 'Send'}
+                {answering ? 'Answer' : requestingChanges ? 'Send change request' : asking && chatting ? 'Ask' : 'Send'}
               </button>
             </div>
             <p className="compose-hint">
-              {!answering && draft.trim() && request === null ? (
-                <span className="warn">Start the message with @factory followed by what you want done. </span>
+              {!answering && isBareMention(draft) ? <span className="warn">Say what you want done after @factory. </span> : null}
+              {!answering && request !== null && !canMessage(thread.state) ? (
+                <span className="warn">This task is closed to new work; ask without @factory. </span>
               ) : null}
-              {requestingChanges ? (
+              {waitingForAnswer ? <span className="warn">Litos is still answering your last question. </span> : null}
+              {working ? (
+                <>Anything you send now reaches the agent at its next safe point. </>
+              ) : thread.state === 'AwaitingHumanTesting' ? (
                 <>
-                  After a handoff, <b>@factory</b> asks for changes: it starts a rework run on this branch. It cannot
-                  answer questions yet; the handoff above lists what to test and how.{' '}
+                  After a handoff, <b>@factory</b> asks for changes: it starts a rework run on this branch. Without it, Litos
+                  answers questions about the branch and changes nothing.{' '}
                 </>
+              ) : chatting && !canMessage(thread.state) ? (
+                <>Litos answers questions about the code. Nothing is changed. </>
               ) : (
                 <>
-                  <b>@factory</b> delegates within the task budget.{' '}
+                  <b>@factory</b> delegates within the task budget. Without it, Litos answers questions about the code and
+                  changes nothing.{' '}
                 </>
               )}
               Model: <span className="mono">{thread.model}</span> on{' '}

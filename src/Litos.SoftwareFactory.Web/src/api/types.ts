@@ -206,6 +206,8 @@ export interface ThreadDetails {
   verification: Verification | null;
   findings: Finding[];
   handoff: Handoff | null;
+  /** A plain message is being answered; another waits until the reply arrives. */
+  chatPending: boolean;
 }
 
 export interface UsageCall {
@@ -236,7 +238,8 @@ export interface PullRequestInfo {
   state: PullRequestState;
 }
 
-export type DispatchOutcome = 'Queued' | 'FollowUp' | 'Duplicate' | 'Rejected';
+/** Chat: a plain message that Litos answers without starting work (m2-architecture.md §5). */
+export type DispatchOutcome = 'Queued' | 'FollowUp' | 'Chat' | 'Duplicate' | 'Rejected';
 
 export interface DispatchResult {
   outcome: DispatchOutcome;

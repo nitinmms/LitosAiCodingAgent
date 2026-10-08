@@ -1483,6 +1483,10 @@ public abstract class FactoryStoreContract : IAsyncLifetime
 
     private const long ChatCap = 100_000;
 
+    /// <summary>PostgreSQL stores the payload as jsonb, which does not keep its spelling.</summary>
+    private static bool IsPlain(string? payloadJson) =>
+        payloadJson is not null && JsonDocument.Parse(payloadJson).RootElement.GetProperty("plain").GetBoolean();
+
     private Task<DispatchResult> ChatAsync(Guid threadId, string text = "Where is the CSV export done?", string? key = null) =>
         Store.ChatAsync(threadId, Ben, key ?? Guid.NewGuid().ToString(), text, ChatCap, T0, default);
 
@@ -1501,6 +1505,7 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal((result.RunId, RunKind.Chat, RunStatus.Queued, (long?)ChatCap), (chat.Id, chat.Kind, chat.Status, chat.ChatBudgetCap));
         var message = Assert.Single(details.Messages);
         Assert.Equal((MessageAuthor.User, MessageKind.Text, "Where is the CSV export done?"), (message.Author, message.Kind, message.Text));
+        Assert.True(IsPlain(message.PayloadJson)); // not an @factory message
     }
 
     [SkippableTheory]
@@ -1525,7 +1530,9 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         var result = await ChatAsync(thread.Id, "Also handle an empty result.");
 
         Assert.Equal((DispatchOutcome.FollowUp, (Guid?)runId), (result.Outcome, result.RunId));
-        Assert.Null((await Store.GetThreadAsync(thread.Id, default))!.ChatRun);
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        Assert.Null(details.ChatRun);
+        Assert.True(IsPlain(details.Messages.OrderBy(m => m.Sequence).Last().PayloadJson));
     }
 
     [SkippableTheory]

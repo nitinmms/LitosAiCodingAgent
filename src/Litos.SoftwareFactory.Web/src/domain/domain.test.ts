@@ -6,11 +6,14 @@ import {
   applyChange,
   awaitsYou,
   canCancel,
+  canChat,
   canMessage,
   canPause,
   canResume,
   canWithdraw,
+  isBareMention,
   isClosed,
+  isPlainMessage,
   newer,
   parseMention,
   pullRequestLabel,
@@ -72,6 +75,24 @@ const change = (overrides: Partial<ThreadChange> = {}): ThreadChange => ({
   branch: 'factory/x',
   pullRequestUrl: null,
   ...overrides,
+});
+
+describe('chat mirrors the host (m2-architecture.md §5)', () => {
+  it('a plain message is answered as chat before delegating, after a handoff and after acceptance only', () => {
+    expect(ALL_STATES.filter(canChat).sort()).toEqual(['Accepted', 'AwaitingHumanTesting', 'Draft']);
+  });
+
+  it('a message the host marked plain is one; anything else is not', () => {
+    expect(isPlainMessage({ payload: { plain: true } })).toBe(true);
+    expect(isPlainMessage({ payload: { plain: 'yes' } })).toBe(false);
+    expect(isPlainMessage({ payload: {} })).toBe(false);
+    expect(isPlainMessage({ payload: null })).toBe(false);
+    expect(isPlainMessage({ payload: 'plain' })).toBe(false);
+  });
+
+  it.each(['@factory', '  @Factory  ', '@FACTORY\n'])('%j is a bare mention', (text) => expect(isBareMention(text)).toBe(true));
+
+  it.each(['@factory do it', '@factoryx', 'factory', ''])('%j is not a bare mention', (text) => expect(isBareMention(text)).toBe(false));
 });
 
 describe('parseMention mirrors the host', () => {

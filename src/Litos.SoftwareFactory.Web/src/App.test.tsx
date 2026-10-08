@@ -324,13 +324,24 @@ describe('delegating', () => {
     expect(screen.queryByRole('heading', { name: 'Delegate this task' })).not.toBeInTheDocument();
   });
 
-  it('will not send a message that does not start with @factory, and says why', async () => {
-    const { host, user } = await withThread();
+  it('a message without @factory is a question, and does not delegate', async () => {
+    const { host, thread, user } = await withThread();
 
     await user.type(composer(), 'Add CSV export');
 
+    expect(screen.getByRole('button', { name: 'Ask' })).toBeEnabled();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(host.sent('POST', '/messages')).toHaveLength(1));
+    expect(host.details(thread.id).thread.state).toBe('Draft');
+  });
+
+  it('will not send @factory with nothing after it, and says why', async () => {
+    const { host, user } = await withThread();
+
+    await user.type(composer(), '@factory ');
+
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
-    expect(screen.getByText(/Start the message with @factory/)).toBeInTheDocument();
+    expect(screen.getByText(/Say what you want done after @factory/)).toBeInTheDocument();
     await user.keyboard('{Enter}');
     expect(host.sent('POST', '/messages')).toHaveLength(0);
   });
@@ -691,7 +702,9 @@ describe('a handoff', () => {
     expect(await card.findByText('Accepted')).toBeInTheDocument();
     expect(host.details(thread.id).thread.state).toBe('Accepted');
     expect(card.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    // Closed to work, but it can still be asked about (Chat.test.tsx).
+    expect(composer()).toHaveAttribute('placeholder', 'Ask a question about the code');
+    expect(screen.getByRole('button', { name: '@factory' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Cancel task' })).not.toBeInTheDocument();
     expect(screen.getByText(/This task is closed; the branch is yours to merge/)).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Verification' })).getByText('Accepted')).toBeInTheDocument();
@@ -740,13 +753,19 @@ describe('after a handoff, @factory is a change request', () => {
   }
 
   /** The first real task's mistake: a question, sent with @factory, became a rework run. */
-  it('says so before anything is sent', async () => {
-    await handedOff();
+  it('says so before anything is sent, and a question without @factory is asked instead', async () => {
+    const { user } = await handedOff();
 
     expect(screen.getByText(/asks for changes: it starts a rework run on this branch/)).toBeInTheDocument();
-    expect(screen.getByText(/It cannot answer questions yet/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Send change request' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
+    expect(screen.getByText(/Without it, Litos answers questions about the branch/)).toBeInTheDocument();
+
+    await user.type(composer(), '@factory Quote the fields');
+    expect(screen.getByRole('button', { name: 'Send change request' })).toBeEnabled();
+
+    await user.clear(composer());
+    await user.type(composer(), 'Why are the fields not quoted?');
+    expect(screen.getByRole('button', { name: 'Ask' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Send change request' })).not.toBeInTheDocument();
   });
 
   it('a draft does not talk about change requests', async () => {

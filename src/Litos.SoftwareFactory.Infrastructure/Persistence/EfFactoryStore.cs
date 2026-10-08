@@ -287,7 +287,9 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             outcome = DispatchOutcome.Chat;
         }
 
-        AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, text, now, dispatchKey: dispatchKey);
+        // Marked, because an @factory message is stored without its mention: the client shows
+        // which of the two a person sent.
+        AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, text, now, dispatchKey: dispatchKey, payloadJson: PlainMessagePayload);
         try
         {
             await write.CommitAsync(ct);
@@ -299,6 +301,9 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
 
         return new DispatchResult(outcome, thread, runId);
     }
+
+    /// <summary>The payload of a message sent without @factory.</summary>
+    public const string PlainMessagePayload = """{"plain":true}""";
 
     public async Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct)
     {

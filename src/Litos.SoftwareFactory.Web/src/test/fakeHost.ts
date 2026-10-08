@@ -246,6 +246,7 @@ export class FakeHost {
       verification: null,
       findings: [],
       handoff: null,
+      chatPending: false,
     });
     this.usage.set(thread.id, []);
     return thread;
@@ -723,11 +724,13 @@ export class FakeHost {
 
   private dispatch(threadId: string, messageId: string, text: string): [number, unknown] {
     if (!messageId) return [400, { error: 'messageId is required: it makes a retried request safe.' }];
+    if (!text.trim()) return [400, { error: 'The message is empty.' }];
+    if (/^\s*@factory\s*$/i.test(text)) return [400, { error: 'Say what you want done after @factory.' }];
     const match = /^\s*@factory\s+(\S[\s\S]*)$/i.exec(text);
-    if (!match) return [400, { error: 'Start the message with @factory followed by what you want done.' }];
 
     const details = this.details(threadId);
     if (this.dispatched.has(messageId)) return [202, { outcome: 'Duplicate', runId: null, thread: details.thread }];
+    if (!match) return this.chat(threadId, messageId, text.trim());
 
     const state = details.thread.state;
     const queues = state === 'Draft' || state === 'AwaitingHumanTesting';
@@ -750,6 +753,32 @@ export class FakeHost {
     this.say(threadId, { author: 'User', kind: 'Text', text: match[1]!.trim() });
     const thread = queues ? this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: null }) : details.thread;
     return [202, { outcome: queues ? 'Queued' : 'FollowUp', runId: 'r-1', thread }];
+  }
+
+  /** A plain message, as the host's ChatAsync takes it. The test answers it with answerChat. */
+  private chat(threadId: string, messageId: string, text: string): [number, unknown] {
+    const details = this.details(threadId);
+    const state = details.thread.state;
+    const working = state === 'Queued' || state === 'Running';
+    const chats = state === 'Draft' || state === 'AwaitingHumanTesting' || state === 'Accepted';
+    if (!working && !chats) return [409, { error: `A task that is ${state} cannot take new work.`, thread: details.thread }];
+    if (chats && details.chatPending)
+      return [409, { error: 'Litos is still answering your last message. Wait for the reply, then send this.', thread: details.thread }];
+
+    this.dispatched.add(messageId);
+    this.chatsSent.push(text);
+    if (chats) details.chatPending = true;
+    this.say(threadId, { author: 'User', kind: 'Text', text, payload: { plain: true } });
+    return [202, { outcome: working ? 'FollowUp' : 'Chat', runId: working ? 'r-1' : this.nextId('r'), thread: details.thread }];
+  }
+
+  /** Every plain message sent, in order. */
+  readonly chatsSent: string[] = [];
+
+  /** Litos's reply to a plain message: posted, and the thread no longer waits for it. */
+  answerChat(threadId: string, reply: string, kind: 'Text' | 'Status' = 'Text'): Message {
+    this.details(threadId).chatPending = false;
+    return this.say(threadId, { author: 'Factory', kind, text: reply });
   }
 
   private judge(findingId: string, verdict: string | null): [number, unknown?] {

@@ -60,6 +60,18 @@ export const canPause = (state: LifecycleState): boolean => state === 'Running' 
 export const canMessage = (state: LifecycleState): boolean =>
   state === 'Draft' || state === 'AwaitingHumanTesting' || state === 'Queued' || state === 'Running';
 
+/**
+ * The states in which a plain message, without @factory, is answered as chat (the host's
+ * ChatAsync): before delegating, after a handoff and after acceptance. While the task is queued
+ * or running a plain message is a follow-up for its agent instead.
+ */
+export const canChat = (state: LifecycleState): boolean =>
+  state === 'Draft' || state === 'AwaitingHumanTesting' || state === 'Accepted';
+
+/** Whether a message was sent without @factory: the host marks it, since it stores a delegation without its mention. */
+export const isPlainMessage = (message: { payload: unknown }): boolean =>
+  typeof message.payload === 'object' && message.payload !== null && (message.payload as { plain?: unknown }).plain === true;
+
 export const canCancel = (state: LifecycleState): boolean => !isClosed(state) && state !== 'Draft';
 
 /**
@@ -130,6 +142,9 @@ export function parseMention(text: string): string | null {
   const request = rest.trim();
   return request.length > 0 ? request : null;
 }
+
+/** "@factory" with nothing after it: neither a delegation nor a question. */
+export const isBareMention = (text: string): boolean => text.trim().toLowerCase() === MENTION;
 
 /** Puts the mention in front of a draft that does not have one yet. */
 export const withMention = (draft: string): string =>
