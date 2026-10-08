@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Api;
 
@@ -11,7 +12,8 @@ namespace Litos.SoftwareFactory.Host.Runs;
 /// reconciled. A run paused and resumed in the meantime therefore waits for the old executor to
 /// be gone before the claim can start it again (docs/software-factory/m2-architecture.md §3.2).
 /// </summary>
-public sealed class RunSupervisor(RunRegistry registry, RunExecutor executor, FactorySignals signals, ILogger<RunSupervisor> logger)
+public sealed class RunSupervisor(
+    RunRegistry registry, RunExecutor executor, ChatExecutor chat, FactorySignals signals, ILogger<RunSupervisor> logger)
     : IRunControl
 {
     private readonly ConcurrentDictionary<ActiveRun, Task> _running = new();
@@ -23,7 +25,7 @@ public sealed class RunSupervisor(RunRegistry registry, RunExecutor executor, Fa
     public Task Start(ClaimedRun claimed, CancellationToken hostStopping)
     {
         var (run, thread, _) = claimed;
-        var active = new ActiveRun(run.Id, thread.Id, run.RequestedBy, thread.Provider, thread.Model);
+        var active = new ActiveRun(run.Id, thread.Id, run.RequestedBy, thread.Provider, thread.Model, isChat: run.Kind == RunKind.Chat);
         if (!registry.TryAdd(active))
             throw new InvalidOperationException($"Run {run.Id} was claimed while this host still holds it.");
 
@@ -40,7 +42,10 @@ public sealed class RunSupervisor(RunRegistry registry, RunExecutor executor, Fa
     {
         try
         {
-            await executor.ExecuteAsync(claimed, active, hostStopping);
+            if (active.IsChat)
+                await chat.ExecuteAsync(claimed, active, hostStopping);
+            else
+                await executor.ExecuteAsync(claimed, active, hostStopping);
         }
         catch (Exception ex)
         {

@@ -22,6 +22,9 @@ public sealed class RunLiveness(
     internal const string StartupMessage =
         "The factory host stopped while this task was running. The working copy and the branch were left as they were. Recover the task to continue.";
 
+    internal const string ChatMessage =
+        "Litos stopped before answering, because the factory host stopped or lost track of it. Send the message again.";
+
     internal const string SweepMessage =
         "The factory lost track of this task while it was running. The working copy and the branch were left as they were. Recover the task to continue.";
 
@@ -91,6 +94,23 @@ public sealed class RunLiveness(
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
             {
             }
+        }
+
+        // A chat run has no task state to stop: it ends with a note that there is no answer.
+        if (run.Kind == RunKind.Chat)
+        {
+            try
+            {
+                await store.FinishChatRunAsync(run.Id, reply: null, ChatMessage, clock.UtcNow, ct);
+            }
+            catch (StoreNotFoundException ex)
+            {
+                logger.LogWarning(ex, "Chat run {RunId} could not be finished.", run.Id);
+                return false;
+            }
+
+            await store.ReconcileUsageAsync(run.Id, clock.UtcNow, ct, includeInFlight: true);
+            return true;
         }
 
         try

@@ -74,6 +74,13 @@ public interface IWorkspace
     /// <summary>Checks out an existing task branch, for rework and resume.</summary>
     Task CheckoutAsync(string branch, CancellationToken ct);
 
+    /// <summary>
+    /// For a reading copy only (chat, m2-architecture.md §5): puts the working copy at the remote's
+    /// <paramref name="branch"/> as fetched, detached, discarding anything a previous reader left.
+    /// Never used on a task's working copy, whose edits it would throw away.
+    /// </summary>
+    Task CheckoutForReadingAsync(string branch, CancellationToken ct);
+
     Task<WorkspaceStatus> GetStatusAsync(CancellationToken ct);
 
     /// <summary>The branch, the head commit and a hash of every file that differs from it, for

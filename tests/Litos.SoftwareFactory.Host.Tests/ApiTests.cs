@@ -281,19 +281,34 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal("Add CSV export for Orders.", details.LatestRun.Request); // the mention itself is not part of the request
     }
 
-    /// <summary>Acceptance scenario 1: a normal chat message never starts work.</summary>
+    /// <summary>Acceptance scenario 1: a normal chat message never starts work. Since M2 it is
+    /// answered as chat (m2-architecture.md §5), and the task stays a draft.</summary>
     [Theory]
     [InlineData("Add CSV export for Orders.")]
     [InlineData("Please could @factory add CSV export")]
-    public async Task Message_WithoutALeadingMention_Is400_AndStartsNothing(string text)
+    public async Task Message_WithoutALeadingMention_IsChat_AndStartsNoWork(string text)
+    {
+        var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
+
+        var result = await _host.DelegateAsync(threadId, text);
+
+        Assert.Equal("Chat", result.GetProperty("outcome").GetString());
+        var details = await _host.ThreadAsync(threadId);
+        Assert.Equal(LifecycleState.Draft, details.Thread.State);
+        Assert.Null(details.LatestRun);
+    }
+
+    [Theory]
+    [InlineData("@factory")]
+    [InlineData("  @Factory  ")]
+    [InlineData("   ")]
+    public async Task Message_ThatSaysNothing_Is400(string text)
     {
         var threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
 
         await _host.DelegateAsync(threadId, text, expected: HttpStatusCode.BadRequest);
 
-        var details = await _host.ThreadAsync(threadId);
-        Assert.Equal(LifecycleState.Draft, details.Thread.State);
-        Assert.Null(details.LatestRun);
+        Assert.DoesNotContain((await _host.ThreadAsync(threadId)).Messages, m => m.Author == MessageAuthor.User);
     }
 
     [Fact]
@@ -742,6 +757,26 @@ public class FactoryOptionsTests
         Assert.Equal(2, problems.Count);
         Assert.Contains(problems, p => p.Contains("FACTORY_SLOT_CAP"));
         Assert.Contains(problems, p => p.Contains("FACTORY_VERIFY_CONCURRENCY"));
+    }
+
+    [Fact]
+    public void From_ReadsTheChatTurnCap_AndDefaultsIt()
+    {
+        Assert.Equal(100_000, From().ChatTurnCap);
+        Assert.Equal(25_000, From(("FACTORY_CHAT_TURN_CAP", "25000")).ChatTurnCap);
+        Assert.Equal(100_000, From(("FACTORY_CHAT_TURN_CAP", "lots")).ChatTurnCap);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-5")]
+    public void Validate_RefusesAChatTurnCapBelowOne(string value)
+    {
+        var options = From(
+            ("ConnectionStrings:FactoryState", "Host=127.0.0.1"), ("FACTORY_DATA_DIR", "data"), ("OPENROUTER_API_KEY", "key"),
+            ("FACTORY_CHAT_TURN_CAP", value));
+
+        Assert.Contains(options.Validate(), p => p.Contains("FACTORY_CHAT_TURN_CAP"));
     }
 
     [Fact]

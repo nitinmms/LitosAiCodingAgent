@@ -110,6 +110,9 @@ public sealed class FakeWorkspace : IWorkspace
 
     public Exception? FailFetch { get; set; }
 
+    /// <summary>Branches the remote does not have: a reading checkout of one fails.</summary>
+    public HashSet<string> MissingBranches { get; } = [];
+
     public Queue<Exception> FailPush { get; } = new();
 
     /// <summary>Awaited before "clone", "fetch" and "push" with that operation's token, so a test
@@ -161,6 +164,17 @@ public sealed class FakeWorkspace : IWorkspace
         RequireClean();
         Calls.Add($"checkout {branch}");
         Branch = branch;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>As the real reading copy does: the remote's branch, detached, whatever was left over.</summary>
+    public Task CheckoutForReadingAsync(string branch, CancellationToken ct)
+    {
+        if (MissingBranches.Contains(branch))
+            throw new WorkspaceException($"'origin/{branch}' is not a branch the remote has.");
+        Calls.Add($"read {branch}");
+        Branch = branch;
+        Uncommitted = [];
         return Task.CompletedTask;
     }
 
@@ -272,6 +286,12 @@ public sealed class FakeWorkspaceProvider : IWorkspaceProvider
     public IWorkspace For(Project project) => Workspaces.GetOrAdd(project.Id, _ => new FakeWorkspace());
 
     public FakeWorkspace Of(Guid projectId) => Workspaces.GetOrAdd(projectId, _ => new FakeWorkspace());
+
+    public ConcurrentDictionary<Guid, FakeWorkspace> ReadingCopies { get; } = new();
+
+    public IWorkspace ReadingCopyFor(Project project) => ReadingOf(project.Id);
+
+    public FakeWorkspace ReadingOf(Guid projectId) => ReadingCopies.GetOrAdd(projectId, _ => new FakeWorkspace());
 }
 
 /// <summary>Answers each verification from a queue; the default passes.</summary>
@@ -682,6 +702,8 @@ public sealed class TestHost : IAsyncDisposable
         }
     }
 
+    public const string DefaultChatReply = "Orders are exported from src/Orders.cs.";
+
     /// <summary>The behaviour of a well-behaved agent: do the work for the kind of turn it is.</summary>
     public async Task<TurnStreamResult> DefaultTurnAsync(TurnCall call)
     {
@@ -693,6 +715,8 @@ public sealed class TestHost : IAsyncDisposable
             case TurnKind.Scan:
                 await call.Worker.SubmitAsync(call.SessionId, new PlanSubmission("Change Orders.", ["src/Orders.cs"], []));
                 break;
+            case TurnKind.Chat:
+                return new TurnStreamResult(true, 1, null, DefaultChatReply);
             default:
                 Workers.WorkspaceOf(call.Worker).Write("src/Orders.cs", $"edit {Interlocked.Increment(ref _edits)}\n");
                 await call.Worker.SubmitAsync(call.SessionId, FakeWorkerLauncher.Work());

@@ -19,7 +19,7 @@ public enum StopRequest
 /// present, the turn in progress, and what that turn has reported. It lives in memory only —
 /// everything that must survive a restart is in the store.
 /// </summary>
-public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string provider, string model)
+public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string provider, string model, bool isChat = false)
 {
     private readonly Lock _lock = new();
     private readonly CancellationTokenSource _stop = new();
@@ -40,6 +40,9 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
     public string Provider { get; } = provider;
 
     public string Model { get; } = model;
+
+    /// <summary>A chat run: an answer to a plain message, beside the task's own work, never it.</summary>
+    public bool IsChat { get; } = isChat;
 
     /// <summary>Generated per launch; the worker's callbacks and the host's calls both carry it.</summary>
     public string Secret { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -312,7 +315,9 @@ public sealed class RunRegistry
 
     public ActiveRun? Find(Guid runId) => _byRun.GetValueOrDefault(runId);
 
-    public ActiveRun? FindByThread(Guid threadId) => _byRun.Values.FirstOrDefault(r => r.ThreadId == threadId);
+    /// <summary>The task's own run on a thread: what a pause, a cancel or a follow-up reaches.
+    /// A chat run answering beside it is never that.</summary>
+    public ActiveRun? FindByThread(Guid threadId) => _byRun.Values.FirstOrDefault(r => r.ThreadId == threadId && !r.IsChat);
 
     /// <summary>The runs held now: the busy slots, which the claim must not start again.</summary>
     public IReadOnlySet<Guid> RunIds => _byRun.Keys.ToHashSet();

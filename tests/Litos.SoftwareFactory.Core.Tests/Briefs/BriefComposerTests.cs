@@ -842,7 +842,8 @@ public class BriefComposerTests
         // m1.3: never stop processes by name.
         // m1.11: the decision scan brief, and the plan section of the run brief.
         // m2.1: the resume brief states how the working copy changed since the last checkpoint.
-        Assert.Equal("m2.1", BriefComposer.Revision);
+        // m2.2: the chat brief, for a read-only answer to a plain message.
+        Assert.Equal("m2.2", BriefComposer.Revision);
     }
 
     [Theory]
@@ -857,6 +858,7 @@ public class BriefComposerTests
     [InlineData("proceed")]
     [InlineData("resume")]
     [InlineData("compaction")]
+    [InlineData("chat")]
     public void Templates_AreEmbedded(string name)
     {
         Assert.False(string.IsNullOrWhiteSpace(BriefComposer.LoadTemplate(name)));
@@ -909,5 +911,84 @@ public class BriefComposerTests
         Assert.Contains("1. Is a partial response kept? (category `existing-data`; options: Discard it / Keep it)", brief);
         Assert.Contains("**quoted exactly**", brief);
         Assert.Contains("Do not add new questions", brief);
+    }
+
+    // ---- Chat (m2-architecture.md §5) ----
+
+    private static ChatContext Chat(IReadOnlyList<ChatLine>? conversation = null, string question = "Where are orders exported?") => new(
+        "SalesApp", "the default branch `main`", "Add CSV export", "Add CSV export for Orders.", conversation ?? [], question);
+
+    [Fact]
+    public void Chat_StatesTheProjectTheTaskWhereItReads_AndTheQuestion()
+    {
+        var brief = BriefComposer.Chat(Chat());
+
+        Assert.Contains("**SalesApp**", brief);
+        Assert.Contains("the default branch `main`", brief);
+        Assert.Contains("**Add CSV export**", brief);
+        Assert.Contains("Add CSV export for Orders.", brief);
+        Assert.Contains("> Where are orders exported?", brief);
+    }
+
+    [Fact]
+    public void Chat_SaysItIsReadOnly_AndThatOnlyAtFactoryStartsWork()
+    {
+        var brief = BriefComposer.Chat(Chat());
+
+        Assert.Contains("read-only tools", brief);
+        Assert.Contains("cannot edit files", brief);
+        Assert.Contains("`@factory`", brief);
+        Assert.Contains("Your last message is posted to the thread as your answer", brief);
+    }
+
+    [Fact]
+    public void Chat_WithNoEarlierMessages_HasNoThreadSection_AndATaskWithNoRequestSaysNone()
+    {
+        var brief = BriefComposer.Chat(Chat() with { Request = null });
+
+        Assert.DoesNotContain("The thread so far", brief);
+        Assert.Contains("(none)", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void Chat_CarriesTheThreadSoFar_InOrder_WithWhoSaidIt()
+    {
+        var brief = BriefComposer.Chat(Chat([new ChatLine("Person", "Is there an export already?"), new ChatLine("Factory", "No.\nOnly an import.")]));
+
+        Assert.Contains("## The thread so far", brief);
+        var person = brief.IndexOf("**Person:**\n> Is there an export already?", StringComparison.Ordinal);
+        var factory = brief.IndexOf("**Factory:**\n> No.\n> Only an import.", StringComparison.Ordinal);
+        Assert.True(person >= 0 && factory > person, brief);
+    }
+
+    [Fact]
+    public void Chat_KeepsOnlyTheNewestMessages_AndSaysHowManyItLeftOut()
+    {
+        var lines = Enumerable.Range(1, BriefComposer.ChatConversationMessages + 5).Select(i => new ChatLine("Person", $"message {i}.")).ToList();
+
+        var brief = BriefComposer.Chat(Chat(lines));
+
+        Assert.Contains("(5 earlier message(s) not shown.)", brief);
+        Assert.DoesNotContain("message 5.", brief);
+        Assert.Contains("message 6.", brief);
+        Assert.Contains($"message {BriefComposer.ChatConversationMessages + 5}.", brief);
+    }
+
+    [Fact]
+    public void Chat_CutsALongEarlierMessage()
+    {
+        var brief = BriefComposer.Chat(Chat([new ChatLine("Factory", new string('x', BriefComposer.ChatMessageChars + 100))]));
+
+        Assert.Contains(new string('x', BriefComposer.ChatMessageChars) + " [...]", brief);
+        Assert.DoesNotContain(new string('x', BriefComposer.ChatMessageChars + 1), brief);
+    }
+
+    [Fact]
+    public void Chat_AMultiLineQuestion_StaysInsideTheQuote()
+    {
+        var brief = BriefComposer.Chat(Chat(question: "First line.\nSecond line."));
+
+        Assert.Contains("> First line.\n> Second line.", brief);
     }
 }

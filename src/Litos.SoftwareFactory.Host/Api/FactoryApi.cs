@@ -265,14 +265,23 @@ public static class FactoryApi
         {
             if (string.IsNullOrWhiteSpace(request.MessageId))
                 return Problem("messageId is required: it makes a retried request safe.");
-            // M1 has no chat before delegation: every message is an assignment or a follow-up.
-            if (!FactoryMention.TryParse(request.Text, out var text))
-                return Problem("Start the message with @factory followed by what you want done.");
+            if (string.IsNullOrWhiteSpace(request.Text))
+                return Problem("The message is empty.");
+
+            // @factory assigns the work; anything else is chat (m2-architecture.md §5), or a
+            // follow-up while the task is working.
+            var mentioned = FactoryMention.TryParse(request.Text, out var text);
+            if (!mentioned)
+                text = request.Text.Trim();
+            if (!mentioned && text.Equals("@factory", StringComparison.OrdinalIgnoreCase))
+                return Problem("Say what you want done after @factory.");
 
             DispatchResult result;
             try
             {
-                result = await store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct, options.Budget.ReworkTopUpShare);
+                result = mentioned
+                    ? await store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct, options.Budget.ReworkTopUpShare)
+                    : await store.ChatAsync(id, user.UserId(), request.MessageId, text, options.ChatTurnCap, clock.UtcNow, ct);
             }
             catch (StoreNotFoundException)
             {
@@ -284,7 +293,7 @@ public static class FactoryApi
             {
                 case DispatchOutcome.Rejected:
                     return Results.Conflict(new { error = result.Reason, thread = ThreadView(result.Thread) });
-                case DispatchOutcome.Queued:
+                case DispatchOutcome.Queued or DispatchOutcome.Chat:
                     signals.WorkQueued();
                     break;
                 case DispatchOutcome.FollowUp:
@@ -552,6 +561,8 @@ public static class FactoryApi
         EventCursor = eventCursor,
         Thread = ThreadView(details.Thread),
         Project = ProjectView(details.Project),
+        // A plain message is being answered: the composer waits for the reply.
+        ChatPending = details.ChatRun is not null,
         Messages = details.Messages.Select(m => new
         {
             m.Id,

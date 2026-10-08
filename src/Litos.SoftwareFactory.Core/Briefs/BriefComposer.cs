@@ -55,6 +55,16 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
     public string? WorkspaceDrift { get; init; }
 }
 
+/// <summary>One earlier message of a thread, as a chat brief shows it.</summary>
+public sealed record ChatLine(string Speaker, string Text);
+
+/// <summary>What a chat turn is told: the task, where it reads, the thread so far and the question.</summary>
+/// <param name="Branch">Where the reading copy is, as the brief says it, for example "the task branch
+/// `factory/abc` as last handed off".</param>
+/// <param name="Request">The task's first request, if it has one.</param>
+public sealed record ChatContext(
+    string Project, string Branch, string Title, string? Request, IReadOnlyList<ChatLine> Conversation, string Question);
+
 /// <summary>
 /// Renders each turn's prompt from a versioned template. The templates are embedded resources,
 /// and every run records <see cref="Revision"/>, so an evaluation result can be tied to the
@@ -66,8 +76,9 @@ public static partial class BriefComposer
     /// a run is given change (m1.12: review depth is scored, and a small safe change gets none;
     /// m1.13: implementation turns get cost notes, and test-run output is cut to failures and summary;
     /// m1.14: the scan re-checks the questions not yet asked against each answer;
-    /// m2.1: a resumed run is told how the working copy changed since its last checkpoint).</summary>
-    public const string Revision = "m2.1";
+    /// m2.1: a resumed run is told how the working copy changed since its last checkpoint;
+    /// m2.2: chat, a read-only answer to a plain message).</summary>
+    public const string Revision = "m2.2";
 
     private const int CharsPerToken = 4;
 
@@ -88,6 +99,40 @@ public static partial class BriefComposer
 
     /// <summary>The instruction for compaction before a large turn (§8.6): what must survive.</summary>
     public static string CompactionInstruction() => Render("compaction", []);
+
+    /// <summary>The most earlier messages a chat brief carries, newest kept.</summary>
+    public const int ChatConversationMessages = 20;
+
+    /// <summary>Each earlier message in a chat brief is cut to this many characters.</summary>
+    public const int ChatMessageChars = 2_000;
+
+    /// <summary>A chat turn (m2-architecture.md §5): a fresh session each time, so the thread so
+    /// far is carried in the brief.</summary>
+    public static string Chat(ChatContext context)
+    {
+        var earlier = context.Conversation.TakeLast(ChatConversationMessages).ToList();
+        var lines = earlier.Select(m =>
+        {
+            var text = m.Text.Trim();
+            if (text.Length > ChatMessageChars)
+                text = text[..ChatMessageChars] + " [...]";
+            return $"**{m.Speaker}:**\n> {Quote(text)}";
+        });
+        var omitted = context.Conversation.Count - earlier.Count;
+        var conversation = earlier.Count == 0 ? "" : Section(
+            "The thread so far",
+            (omitted > 0 ? $"({omitted} earlier message(s) not shown.)\n\n" : "") + string.Join("\n\n", lines));
+
+        return Render("chat", new()
+        {
+            ["project"] = context.Project,
+            ["branch"] = context.Branch,
+            ["title"] = context.Title.Trim(),
+            ["request"] = OrNone(context.Request),
+            ["conversation"] = conversation,
+            ["question"] = Quote(context.Question),
+        });
+    }
 
     private static string Run(RunContext context, RunState state) => Render("run", new()
     {

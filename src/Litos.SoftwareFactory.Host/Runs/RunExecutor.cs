@@ -15,6 +15,12 @@ namespace Litos.SoftwareFactory.Host.Runs;
 public interface IWorkspaceProvider
 {
     IWorkspace For(Project project);
+
+    /// <summary>
+    /// The project's reading copy: a clone of its own that chat reads (m2-architecture.md §5), so
+    /// answering a question never touches, or waits for, a task's working copy.
+    /// </summary>
+    IWorkspace ReadingCopyFor(Project project);
 }
 
 public interface IWorkerClientFactory

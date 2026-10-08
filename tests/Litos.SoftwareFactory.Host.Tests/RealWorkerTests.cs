@@ -26,6 +26,9 @@ public sealed class RealWorkerTests : IAsyncLifetime
     {
         public IWorkspace For(Project project) =>
             new GitWorkspace(new GitWorkspaceOptions(Path.Combine(options.WorkspacesDirectory, project.Id.ToString("N")), remote));
+
+        public IWorkspace ReadingCopyFor(Project project) =>
+            new GitWorkspace(new GitWorkspaceOptions(Path.Combine(options.ReadingDirectory, project.Id.ToString("N")), remote));
     }
 
     public async Task InitializeAsync()

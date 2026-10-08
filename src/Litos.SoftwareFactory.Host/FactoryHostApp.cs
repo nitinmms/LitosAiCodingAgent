@@ -69,6 +69,7 @@ public static class FactoryHostApp
             sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
             sp.GetRequiredService<VerificationGate>()));
         services.AddSingleton<VerificationGate>();
+        services.AddSingleton<ChatExecutor>();
         if (!string.IsNullOrWhiteSpace(options.GitHubToken))
             services.AddSingleton<IGitHub>(_ => new GitHubClient(GitHubClient.CreateHttpClient(options.GitHubToken)));
 
@@ -105,7 +106,9 @@ public static class FactoryHostApp
         {
             // Workers call back on loopback, whatever name the browser reaches the host by.
             var address = new Uri(app.Urls.First());
-            app.Services.GetRequiredService<RunExecutor>().HostUrl = $"http://127.0.0.1:{address.Port}";
+            var hostUrl = $"http://127.0.0.1:{address.Port}";
+            app.Services.GetRequiredService<RunExecutor>().HostUrl = hostUrl;
+            app.Services.GetRequiredService<ChatExecutor>().HostUrl = hostUrl;
         });
         return app;
     }
@@ -161,8 +164,12 @@ public static class HostProviders
 
 public sealed class GitWorkspaceProvider(FactoryOptions options) : IWorkspaceProvider
 {
-    public IWorkspace For(Project project) => new GitWorkspace(new GitWorkspaceOptions(
-        Path.Combine(options.WorkspacesDirectory, project.Id.ToString("N")),
+    public IWorkspace For(Project project) => Clone(project, options.WorkspacesDirectory);
+
+    public IWorkspace ReadingCopyFor(Project project) => Clone(project, options.ReadingDirectory);
+
+    private GitWorkspace Clone(Project project, string directory) => new(new GitWorkspaceOptions(
+        Path.Combine(directory, project.Id.ToString("N")),
         new GitHubRepository(project.GitHubOwner, project.GitHubRepository).CloneUrl)
     {
         AccessToken = options.GitHubToken,

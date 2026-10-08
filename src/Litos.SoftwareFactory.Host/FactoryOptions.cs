@@ -76,6 +76,19 @@ public sealed class FactoryOptions
 
     public string WorkspacesDirectory => Path.Combine(DataDirectory, "workspaces");
 
+    /// <summary>The projects' reading copies, which chat reads (m2-architecture.md §5).</summary>
+    public string ReadingDirectory => Path.Combine(DataDirectory, "reading");
+
+    /// <summary>The most tokens one chat answer may use (FACTORY_CHAT_TURN_CAP). Chat is not
+    /// charged to the task's budget (§5); this bounds what a single question can cost.</summary>
+    public long ChatTurnCap { get; set; } = 100_000;
+
+    /// <summary>A chat answer is cut off after this many tool calls...</summary>
+    public int ChatMaxToolCalls { get; set; } = 30;
+
+    /// <summary>...or after this long.</summary>
+    public TimeSpan ChatTimeout { get; set; } = TimeSpan.FromMinutes(10);
+
     public string RunDirectory(Guid runId) => Path.Combine(DataDirectory, "runs", runId.ToString("N"));
 
     /// <summary>The run's own TEMP, TMP and TMPDIR, so concurrent runs never share temporary files.</summary>
@@ -130,6 +143,8 @@ public sealed class FactoryOptions
             options.SlotCap = slotCap;
         if (int.TryParse(configuration["FACTORY_VERIFY_CONCURRENCY"], out var verifyConcurrency))
             options.VerifyConcurrency = verifyConcurrency;
+        if (long.TryParse(configuration["FACTORY_CHAT_TURN_CAP"], out var chatTurnCap))
+            options.ChatTurnCap = chatTurnCap;
 
         if (configuration["FACTORY_DEFAULT_BUDGET"] is { Length: > 0 } defaultBudget)
         {
@@ -162,6 +177,8 @@ public sealed class FactoryOptions
             problems.Add("FACTORY_VERIFY_CONCURRENCY must be at least 1.");
         if (LivenessInterval <= TimeSpan.Zero)
             problems.Add("The liveness interval must be positive.");
+        if (ChatTurnCap < 1)
+            problems.Add("FACTORY_CHAT_TURN_CAP must be at least 1.");
         return problems;
     }
 

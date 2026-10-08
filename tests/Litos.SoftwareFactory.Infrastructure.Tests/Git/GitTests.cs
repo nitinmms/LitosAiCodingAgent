@@ -371,6 +371,71 @@ public class GitWorkspaceTests : IAsyncLifetime
 
     // ---- Setting aside what an earlier task left behind ----
 
+    // ---- Reading copies (chat) ----
+
+    [Fact]
+    public async Task CheckoutForReadingAsync_PutsTheCopyAtTheRemoteBranch_AsFetched()
+    {
+        await GitAsync(_seed, "checkout", "-b", "factory/read");
+        File.WriteAllText(Path.Combine(_seed, "feature.txt"), "on the task branch");
+        await SeedCommitAsync("Task work");
+        await GitAsync(_seed, "push", "origin", "HEAD:refs/heads/factory/read");
+        var pushed = await GitAsync(_seed, "rev-parse", "HEAD");
+
+        await _workspace.FetchAsync(default);
+        await _workspace.CheckoutForReadingAsync("factory/read", default);
+
+        Assert.Equal(pushed, (await _workspace.GetStatusAsync(default)).HeadCommit);
+        Assert.Equal("on the task branch", File.ReadAllText(InWorkspace("feature.txt")));
+
+        // And back to the default branch, which does not have the file.
+        await _workspace.CheckoutForReadingAsync("main", default);
+        Assert.False(File.Exists(InWorkspace("feature.txt")));
+    }
+
+    [Fact]
+    public async Task CheckoutForReadingAsync_DiscardsWhatAnEarlierReaderLeft_ButKeepsIgnoredFiles()
+    {
+        File.WriteAllText(Path.Combine(_seed, ".gitignore"), "bin/\n");
+        await SeedCommitAsync("Ignore bin");
+        await GitAsync(_seed, "push", "origin", "HEAD:refs/heads/main");
+        await _workspace.FetchAsync(default);
+        await _workspace.CheckoutForReadingAsync("main", default);
+
+        File.WriteAllText(InWorkspace("README.md"), "changed by a reader");
+        File.WriteAllText(InWorkspace("stray.txt"), "left behind");
+        Directory.CreateDirectory(InWorkspace("bin"));
+        File.WriteAllText(InWorkspace(Path.Combine("bin", "cache.txt")), "build output");
+
+        await _workspace.CheckoutForReadingAsync("main", default);
+
+        Assert.Equal("line 1\nline 2\nline 3\n", File.ReadAllText(InWorkspace("README.md")).ReplaceLineEndings("\n"));
+        Assert.False(File.Exists(InWorkspace("stray.txt")));
+        Assert.True(File.Exists(InWorkspace(Path.Combine("bin", "cache.txt"))));
+        Assert.True((await _workspace.GetStatusAsync(default)).IsClean);
+    }
+
+    [Fact]
+    public async Task CheckoutForReadingAsync_ABranchNotOnTheRemote_Throws()
+    {
+        await _workspace.FetchAsync(default);
+
+        await Assert.ThrowsAsync<WorkspaceException>(() => _workspace.CheckoutForReadingAsync("factory/never-pushed", default));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("-x")]
+    [InlineData("a..b")]
+    [InlineData("has space")]
+    [InlineData("a:b")]
+    public async Task CheckoutForReadingAsync_AnInvalidBranchName_IsRefusedBeforeGitRuns(string branch)
+    {
+        var ex = await Assert.ThrowsAsync<WorkspaceException>(() => _workspace.CheckoutForReadingAsync(branch, default));
+
+        Assert.Contains("not a valid branch name", ex.Message);
+    }
+
     [Fact]
     public async Task SetAsideUncommittedChangesAsync_CleansTheWorkingCopy_AndKeepsTheEditsInTheStash()
     {

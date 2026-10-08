@@ -66,6 +66,19 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
         await GitAsync(options.Path, ["checkout", branch], authenticated: false, ct);
     }
 
+    public async Task CheckoutForReadingAsync(string branch, CancellationToken ct)
+    {
+        if (branch.Length == 0 || branch.StartsWith('-') || branch.Contains("..", StringComparison.Ordinal)
+            || branch.Any(c => char.IsWhiteSpace(c) || c is '~' or '^' or ':' or '?' or '*' or '[' or '\\'))
+        {
+            throw new WorkspaceException($"'{branch}' is not a valid branch name.");
+        }
+
+        await GitAsync(options.Path, ["checkout", "--force", "--detach", $"origin/{branch}"], authenticated: false, ct);
+        // Whatever an earlier reader's tools left behind; ignored files (build output) are kept.
+        await GitAsync(options.Path, ["clean", "-fd"], authenticated: false, ct);
+    }
+
     public async Task<WorkspaceStatus> GetStatusAsync(CancellationToken ct)
     {
         var branch = (await GitAsync(options.Path, ["rev-parse", "--abbrev-ref", "HEAD"], authenticated: false, ct)).Trim();
