@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, createApi, type FactoryApi } from './api/client';
-import { subscribeToBoard, type EventSourceFactory } from './api/events';
+import { resubscribeDelay, subscribeToBoard, type EventSourceFactory } from './api/events';
 import type { CurrentUser, Project, Settings, Thread } from './api/types';
 import { BoardPage } from './components/BoardPage';
 import { InvitePage } from './components/InvitePage';
@@ -31,6 +31,13 @@ export function App({ createClient, openEvents }: AppProps) {
   const [loaded, setLoaded] = useState(false);
   /** Where the board's live stream starts: read by the host before the thread list. */
   const [boardCursor, setBoardCursor] = useState<number | null>(null);
+  /** Bumped to open the board's stream again from a fresh snapshot after the host closed it. */
+  const [boardSnapshot, setBoardSnapshot] = useState(0);
+  const [boardReconnecting, setBoardReconnecting] = useState(false);
+  /** Bumped when a fresh snapshot sets the cursor, so the stream reopens even at the same cursor. */
+  const [boardOpened, setBoardOpened] = useState(0);
+  /** How many fresh snapshots in a row have been tried since the board's stream was last live. */
+  const boardAttempt = useRef(0);
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const route = useRoute();
@@ -108,6 +115,9 @@ export function App({ createClient, openEvents }: AppProps) {
     return () => {
       stopped = true;
       setBoardCursor(null);
+      setBoardSnapshot(0);
+      setBoardReconnecting(false);
+      boardAttempt.current = 0;
     };
   }, [api, signedIn]);
 
@@ -115,8 +125,47 @@ export function App({ createClient, openEvents }: AppProps) {
   // thread, arrives as the thread's whole view and replaces an older copy.
   useEffect(() => {
     if (!signedIn || boardCursor === null) return;
-    return subscribeToBoard(boardCursor, mergeThread, openEvents);
-  }, [signedIn, boardCursor, mergeThread, openEvents]);
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const stop = subscribeToBoard(boardCursor, mergeThread, openEvents, (status) => {
+      if (status === 'live') boardAttempt.current = 0;
+      setBoardReconnecting(status !== 'live');
+      // The host refused the stream; the fresh list below finds out why (a 401 signs out).
+      if (status === 'closed') retry = setTimeout(() => setBoardSnapshot((n) => n + 1), resubscribeDelay(boardAttempt.current++));
+    });
+    return () => {
+      clearTimeout(retry);
+      stop();
+    };
+  }, [signedIn, boardCursor, boardOpened, mergeThread, openEvents]);
+
+  // After the board's stream was closed: the list again, and a new stream from its cursor. The
+  // list replaces the old one, so a thread in a project the user has left goes away.
+  useEffect(() => {
+    if (!signedIn || boardSnapshot === 0) return;
+    let stopped = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    api
+      .threadList()
+      .then((list) => {
+        if (stopped) return;
+        setThreads((current) =>
+          list.threads.map((t) => {
+            const shown = current.find((c) => c.id === t.id);
+            return shown ? newer(shown, t) : t;
+          }),
+        );
+        setBoardCursor(list.cursor);
+        setBoardOpened((n) => n + 1);
+      })
+      .catch((failure: unknown) => {
+        if (stopped || (failure instanceof ApiError && failure.status === 401)) return;
+        retry = setTimeout(() => setBoardSnapshot((n) => n + 1), resubscribeDelay(boardAttempt.current++));
+      });
+    return () => {
+      stopped = true;
+      clearTimeout(retry);
+    };
+  }, [api, signedIn, boardSnapshot]);
 
   // A thread from someone not seen before (a new thread, a newly joined project) needs their name.
   const unknownOwner = threads.some((t) => !(t.ownerId in names));
@@ -179,6 +228,7 @@ export function App({ createClient, openEvents }: AppProps) {
         user={user}
         view={route.view}
         awaitingYou={waiting.length}
+        reconnecting={boardReconnecting}
         onNavigate={(view) => navigate(view === 'threads' ? { view, threadId: null } : ({ view } as Route))}
         onAwaitingYou={() => waiting[0] && navigate({ view: 'threads', threadId: waiting[0].id })}
         onSignOut={() => {

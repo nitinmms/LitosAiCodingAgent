@@ -107,6 +107,7 @@ export function ThreadsPage({
               user={user}
               settings={settings}
               reload={view.reload}
+              connection={view.connection}
               onNotice={onNotice}
             />
             <Details

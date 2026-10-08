@@ -7,6 +7,7 @@ import {
   canChat,
   canMessage,
   canPause,
+  canResume,
   canWithdraw,
   chatWork,
   isBareMention,
@@ -36,6 +37,7 @@ export function ThreadMain({
   user,
   settings,
   reload,
+  connection = 'live',
   onNotice,
 }: {
   api: FactoryApi;
@@ -43,6 +45,8 @@ export function ThreadMain({
   user: CurrentUser;
   settings: Settings | null;
   reload: () => Promise<void>;
+  /** Whether this thread's live updates are arriving. */
+  connection?: 'live' | 'reconnecting';
   /** Tells the user something happened, or went wrong, outside the conversation. */
   onNotice: (text: string) => void;
 }) {
@@ -50,6 +54,8 @@ export function ThreadMain({
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  // Asked to stop while running (a 202): shown until the task leaves Running.
+  const [stopping, setStopping] = useState<'pause' | 'cancel' | null>(null);
   const [editing, setEditing] = useState(false);
   // Renaming or re-filing a thread is its owner's, or an admin's.
   const canEdit = thread.ownerId === user.id || user.roles.includes('Admin');
@@ -64,7 +70,12 @@ export function ThreadMain({
     if (count > 1) end.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
   }, [count]);
 
-  useEffect(() => setConfirmingCancel(false), [thread.state]);
+  useEffect(() => {
+    setConfirmingCancel(false);
+    setStopping(null);
+  }, [thread.state]);
+  // The state event can arrive before the 202 itself, so it counts only while still running.
+  const stoppingNow = thread.state === 'Running' ? stopping : null;
 
   // The factory opens the draft; marking it ready, merging and closing happen on GitHub. So the
   // label comes from GitHub, asked again whenever the task changes state and once a minute.
@@ -164,6 +175,13 @@ export function ThreadMain({
       setDraft('');
     }
   };
+
+  /** Pause or cancel. A running task answers before it has stopped, so that is shown until it has. */
+  const stop = (kind: 'pause' | 'cancel') =>
+    act(async () => {
+      const result = await (kind === 'pause' ? api.pause(thread.id) : api.cancel(thread.id));
+      if (result.stopping) setStopping(kind);
+    });
 
   const startRequest = () => {
     setDraft((current) => withMention(current));
@@ -286,6 +304,11 @@ export function ThreadMain({
             <h1>{thread.title}</h1>
             <TurnPill turn={thread.turn} />
             <span className="tag">{thread.typeLabel}</span>
+            {connection === 'reconnecting' ? (
+              <span className="pill you" role="status" title="Live updates stopped. What is shown may be out of date.">
+                Reconnecting…
+              </span>
+            ) : null}
             {canEdit ? (
               <button className="btn ghost small" onClick={() => setEditing(true)}>
                 Rename or change type
@@ -343,14 +366,19 @@ export function ThreadMain({
 
       <div className="composer">
         <div className="controls">
-          {canPause(thread.state) ? (
-            <button className="btn" onClick={() => void act(() => api.pause(thread.id))} disabled={busy}>
+          {stoppingNow ? (
+            <span className="pill neutral" role="status">
+              {stoppingNow === 'pause' ? 'Pausing…' : 'Cancelling…'}
+            </span>
+          ) : canPause(thread.state) ? (
+            <button className="btn" onClick={() => void stop('pause')} disabled={busy}>
               Pause
             </button>
           ) : null}
-          {thread.state === 'PausedUser' ? (
+          {/* A budget-paused task resumes from its panel, which offers raising the cap too. */}
+          {canResume(thread.state) && thread.state !== 'PausedBudget' ? (
             <button className="btn primary" onClick={() => void act(() => api.resume(thread.id))} disabled={busy}>
-              Resume
+              {thread.state === 'Interrupted' ? 'Recover and resume' : 'Resume'}
             </button>
           ) : null}
           {thread.state === 'AwaitingHumanTesting' ? (
@@ -368,20 +396,24 @@ export function ThreadMain({
               Withdraw change request
             </button>
           ) : null}
-          {canCancel(thread.state) ? (
+          {canCancel(thread.state) && !stoppingNow ? (
             confirmingCancel ? (
               <>
                 <button
                   className="btn danger"
-                  onClick={() => void act(() => api.cancel(thread.id)).then(() => setConfirmingCancel(false))}
+                  onClick={() => void stop('cancel').then(() => setConfirmingCancel(false))}
                   disabled={busy}
                 >
-                  Yes, cancel this task
+                  {thread.state === 'Draft' ? 'Yes, cancel this draft' : 'Yes, cancel this task'}
                 </button>
                 <button className="btn ghost" onClick={() => setConfirmingCancel(false)}>
                   Keep it
                 </button>
-                <span className="small muted">A cancelled task cannot be restarted. Its branch is kept.</span>
+                <span className="small muted">
+                  {thread.state === 'Draft'
+                    ? 'A cancelled draft cannot be delegated later.'
+                    : 'A cancelled task cannot be restarted. Its branch is kept.'}
+                </span>
               </>
             ) : (
               <button className="btn" onClick={() => setConfirmingCancel(true)} disabled={busy}>
@@ -389,7 +421,12 @@ export function ThreadMain({
               </button>
             )
           ) : null}
-          {confirmingCancel ? null : reworkUnderWay && thread.state === 'Running' ? (
+          {confirmingCancel ? null : stoppingNow ? (
+            <span className="small muted">
+              Litos stops at its next safe point, usually within a minute.{' '}
+              {stoppingNow === 'pause' ? 'The work so far is kept.' : 'The branch is kept.'}
+            </span>
+          ) : reworkUnderWay && thread.state === 'Running' ? (
             <span className="small muted">Litos is working on your change request. Pause it if you want to withdraw it.</span>
           ) : (
             <StateHint state={thread.state} branch={thread.branch} />

@@ -31,6 +31,16 @@ export class ApiError extends Error {
   }
 }
 
+/** What asking a task to pause or cancel did. */
+export interface StopResult {
+  /** True when the task was running: it has been asked to stop, and has not stopped yet. */
+  stopping: boolean;
+}
+
+const stopResult = (body: unknown): StopResult => ({
+  stopping: typeof body === 'object' && body !== null && (body as { stopping?: unknown }).stopping === true,
+});
+
 /** The host refuses state-changing requests without this header (Auth/FactoryAuth.cs). */
 export const CSRF_HEADER = 'X-Factory-Request';
 
@@ -67,8 +77,9 @@ export interface FactoryApi {
   approveSpec(id: string, revision: number): Promise<SpecStatus>;
   setBudget(id: string, cap: number | null): Promise<Thread>;
   accept(id: string): Promise<Thread>;
-  pause(id: string): Promise<void>;
-  cancel(id: string): Promise<void>;
+  /** `stopping`: the task is running, and stops at its next safe point; the new state arrives as an event. */
+  pause(id: string): Promise<StopResult>;
+  cancel(id: string): Promise<StopResult>;
   resume(id: string): Promise<Thread>;
   /** Takes back a change request made after a handoff. */
   withdraw(id: string): Promise<Thread>;
@@ -171,10 +182,10 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     approveSpec: (id, revision) => send<SpecStatus>('POST', `${thread(id)}/spec/${revision}/approve`),
     setBudget: (id, cap) => send<Thread>('POST', `${thread(id)}/budget`, { cap }),
     accept: (id) => send<Thread>('POST', `${thread(id)}/accept`),
-    // Pausing or cancelling a running task answers 202 before the task has stopped; the new
-    // state arrives on the event stream, so neither returns a thread to trust.
-    pause: async (id) => void (await send<unknown>('POST', `${thread(id)}/pause`)),
-    cancel: async (id) => void (await send<unknown>('POST', `${thread(id)}/cancel`)),
+    // Pausing or cancelling a running task answers 202 with { stopping: true } before the task
+    // has stopped; the new state arrives on the event stream, so neither returns a thread to trust.
+    pause: async (id) => stopResult(await send<unknown>('POST', `${thread(id)}/pause`)),
+    cancel: async (id) => stopResult(await send<unknown>('POST', `${thread(id)}/cancel`)),
     resume: (id) => send<Thread>('POST', `${thread(id)}/resume`),
     withdraw: (id) => send<Thread>('POST', `${thread(id)}/withdraw`),
     pullRequest: (id) => send<PullRequestInfo>('GET', `${thread(id)}/pull-request`),

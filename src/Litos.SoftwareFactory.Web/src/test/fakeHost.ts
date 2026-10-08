@@ -29,12 +29,37 @@ export interface RecordedRequest {
   headers: Record<string, string>;
 }
 
-/** One open event stream, driven by the test. */
+/** One open event stream, driven by the test. Like a browser's, it starts connecting (0), is
+ * open (1) once connected, and is closed (2) when refused or closed. */
 export class FakeEventSource implements EventSourceLike {
   closed = false;
+  readyState = 0;
   private readonly listeners = new Map<string, ((event: MessageEvent) => void)[]>();
 
   constructor(public readonly url: string) {}
+
+  /** The host answered: the stream is open. */
+  connect(): void {
+    this.readyState = 1;
+    this.fire('open');
+  }
+
+  /** The connection dropped; the browser keeps trying by itself. */
+  drop(): void {
+    this.readyState = 0;
+    this.fire('error');
+  }
+
+  /** The host refused the stream (a 401, say); the browser gives up on it. */
+  refuse(): void {
+    this.readyState = 2;
+    this.fire('error');
+  }
+
+  private fire(type: string): void {
+    if (this.closed) return;
+    for (const listener of this.listeners.get(type) ?? []) listener({} as MessageEvent);
+  }
 
   addEventListener(type: string, listener: (event: MessageEvent) => void): void {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
@@ -42,6 +67,7 @@ export class FakeEventSource implements EventSourceLike {
 
   close(): void {
     this.closed = true;
+    this.readyState = 2;
   }
 
   emit(type: string, data: unknown, id: number): void {
@@ -137,6 +163,8 @@ export class FakeHost {
   readonly sources: FakeEventSource[] = [];
   /** The board's streams (GET /api/events). */
   readonly boardSources: FakeEventSource[] = [];
+  /** A running task stops before its pause or cancel is answered: the state event comes first. */
+  stopsAtOnce = false;
   /** Answers the next matching request with this instead of handling it. */
   private readonly failures: { match: (r: RecordedRequest) => boolean; status: number; error?: string }[] = [];
   private sequence = 0;
@@ -447,6 +475,13 @@ export class FakeHost {
     }
   }
 
+  /** The 202 for a running task asked to stop; the stop itself lands first if `stopsAtOnce`. */
+  private stopping(id: string, into: LifecycleState): [number, unknown] {
+    const thread = this.details(id).thread;
+    if (this.stopsAtOnce) this.change(id, { state: into });
+    return [202, { thread, stopping: true }];
+  }
+
   /** The requests the app made, newest last, filtered by method and path. */
   sent(method: string, pathPart: string): RecordedRequest[] {
     return this.requests.filter((r) => r.method === method && r.path.includes(pathPart));
@@ -567,12 +602,13 @@ export class FakeHost {
         return [200, this.change(id, { state: 'Accepted', stage: 'Done' })];
       case 'POST pause':
         // A running task is stopped through its worker: accepted now, paused a moment later.
-        if (state === 'Running') return [202, { thread: details.thread, stopping: true }];
+        if (state === 'Running') return this.stopping(id, 'PausedUser');
         if (state !== 'Queued') return conflict('Pause');
         return [200, this.change(id, { state: 'PausedUser' })];
       case 'POST cancel':
-        if (state === 'Running') return [202, { thread: details.thread, stopping: true }];
-        if (state === 'Accepted' || state === 'Cancelled' || state === 'Draft') return conflict('Cancel');
+        if (state === 'Running') return this.stopping(id, 'Cancelled');
+        if (state === 'Accepted' || state === 'Cancelled') return conflict('Cancel');
+        this.say(id, { author: 'User', text: state === 'Draft' ? 'Cancelled before it was delegated.' : 'Cancelled.' });
         return [200, this.change(id, { state: 'Cancelled' })];
       case 'POST withdraw': {
         if (state === 'Running') return [409, { error: 'The change request is being worked on. Pause the task, then withdraw it.' }];

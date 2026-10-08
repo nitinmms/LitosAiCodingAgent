@@ -81,7 +81,8 @@ export function chatWork(progress: { modelCalls: number; toolCalls: number } | n
 export const isPlainMessage = (message: { payload: unknown }): boolean =>
   typeof message.payload === 'object' && message.payload !== null && (message.payload as { plain?: unknown }).plain === true;
 
-export const canCancel = (state: LifecycleState): boolean => !isClosed(state) && state !== 'Draft';
+/** Anything not closed, a draft included: one that will not be delegated can be closed (TaskLifecycle.cs). */
+export const canCancel = (state: LifecycleState): boolean => !isClosed(state);
 
 /**
  * The states from which a change request can be taken back (TaskLifecycle's WithdrawChanges):

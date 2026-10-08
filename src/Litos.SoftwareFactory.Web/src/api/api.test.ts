@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FakeEventSource } from '../test/fakeHost';
 import { ApiError, createApi, CSRF_HEADER, type Fetch } from './client';
-import { subscribeToBoard, subscribeToThread, type ThreadEvent } from './events';
+import { resubscribeDelay, subscribeToBoard, subscribeToThread, type ThreadEvent } from './events';
 
 function fetchReturning(status: number, body?: unknown) {
   const calls: { path: string; init: RequestInit }[] = [];
@@ -68,6 +68,12 @@ describe('the API client', () => {
     await createApi(fetcher)[name]('t');
     expect(calls[0]!.path).toBe(path);
     expect(calls[0]!.init.body).toBeUndefined();
+  });
+
+  it.each(['pause', 'cancel'] as const)('%s says whether the task is still stopping', async (name) => {
+    expect(await createApi(fetchReturning(202, { thread: {}, stopping: true }).fetcher)[name]('t')).toEqual({ stopping: true });
+    // A task that was not running changes at once: the answer is the thread itself.
+    expect(await createApi(fetchReturning(200, { id: 't', state: 'PausedUser' }).fetcher)[name]('t')).toEqual({ stopping: false });
   });
 
   it('asks where the pull request stands with a read', async () => {
@@ -176,6 +182,7 @@ describe('the event stream', () => {
     const events: ThreadEvent[] = [];
     const listeners: Record<string, (e: MessageEvent) => void> = {};
     subscribeToThread('t', 0, (e) => events.push(e), () => ({
+      readyState: 1,
       addEventListener: (type, listener) => void (listeners[type] = listener),
       close: () => {},
     }));
@@ -277,6 +284,68 @@ describe('the board', () => {
     expect([calls[0]!.init.method, calls[0]!.path]).toEqual(['PATCH', '/api/threads/t%201']);
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ typeLabel: 'bug' });
     expect(CSRF_HEADER in headersOf(calls[0]!.init)).toBe(true);
+  });
+
+  it('drops an event it has already handled, or one from before its starting point', () => {
+    let source: FakeEventSource | undefined;
+    const events: ThreadEvent[] = [];
+    subscribeToThread('t', 42, (e) => events.push(e), (url) => (source = new FakeEventSource(url)));
+    if (!source) throw new Error('no stream was opened');
+
+    source.emit('message', {}, 41); // before the snapshot it started from
+    source.emit('message', {}, 43);
+    source.emit('message', {}, 43); // replayed after a reconnect
+    source.emit('chat', { runId: 'r' }, 44);
+    source.emit('state', { state: 'Running', revision: 2 }, 44);
+    source.emit('message', {}, 45);
+
+    expect(events.map((e) => [e.type, e.sequence])).toEqual([
+      ['message', 43],
+      ['chat', 44],
+      ['message', 45],
+    ]);
+  });
+
+  it('reports a drop as reconnecting, and live again once the stream reopens', () => {
+    const statuses: string[] = [];
+    let source: FakeEventSource | undefined;
+    subscribeToThread('t', 0, () => {}, (url) => (source = new FakeEventSource(url)), (s) => statuses.push(s));
+
+    source!.connect();
+    source!.drop();
+    source!.connect();
+
+    expect(statuses).toEqual(['live', 'reconnecting', 'live']);
+    expect(source!.closed).toBe(false);
+  });
+
+  it('reports a refused stream as closed, and closes it so the browser stops trying', () => {
+    const statuses: string[] = [];
+    let source: FakeEventSource | undefined;
+    subscribeToBoard(0, () => {}, (url) => (source = new FakeEventSource(url)), (s) => statuses.push(s));
+
+    source!.connect();
+    source!.refuse();
+
+    expect(statuses).toEqual(['live', 'closed']);
+    expect(source!.closed).toBe(true);
+  });
+
+  it('waits longer before each fresh snapshot, up to a limit', () => {
+    expect([0, 1, 2, 3, 4, 5, 9].map(resubscribeDelay)).toEqual([1_000, 2_000, 5_000, 10_000, 30_000, 30_000, 30_000]);
+    expect(resubscribeDelay(-1)).toBe(1_000);
+  });
+
+  it('drops a board event it has already handled', () => {
+    let source: FakeEventSource | undefined;
+    const heard: number[] = [];
+    subscribeToBoard(7, (thread) => heard.push(thread.revision), (url) => (source = new FakeEventSource(url)));
+
+    source!.emit('thread', { id: 't', revision: 1 }, 7);
+    source!.emit('thread', { id: 't', revision: 2 }, 8);
+    source!.emit('thread', { id: 't', revision: 2 }, 8);
+
+    expect(heard).toEqual([2]);
   });
 
   it('hears each thread the board stream sends, and stops when asked', () => {

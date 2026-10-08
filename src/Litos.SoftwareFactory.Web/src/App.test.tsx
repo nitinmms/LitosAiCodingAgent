@@ -912,15 +912,19 @@ describe('stopping and restarting', () => {
     expect(host.sent('POST', '/resume')).toHaveLength(1);
   });
 
-  it('pausing a running task waits for the worker to stop, then shows it paused', async () => {
+  it('pausing a running task shows it stopping until the worker has, then shows it paused', async () => {
     const { host, thread, user } = await withThread({ state: 'Running', stage: 'Implement' });
 
     await user.click(screen.getByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(host.sent('POST', '/pause')).toHaveLength(1));
-    // Accepted, but still running until the worker reaches a safe point.
-    expect(screen.getByRole('button', { name: 'Pause' })).toBeInTheDocument();
+    // Accepted (202), but still running until the worker reaches a safe point.
+    expect(await screen.findByText('Pausing…')).toBeInTheDocument();
+    expect(screen.getByText(/Litos stops at its next safe point/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pause' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel task' })).not.toBeInTheDocument();
 
     act(() => void host.change(thread.id, { state: 'PausedUser' }));
+    expect(screen.queryByText('Pausing…')).not.toBeInTheDocument();
 
     expect(await screen.findByRole('button', { name: 'Resume' })).toBeInTheDocument();
     expect(composer()).toBeDisabled();
@@ -944,11 +948,67 @@ describe('stopping and restarting', () => {
     expect(screen.queryByRole('button', { name: 'Cancel task' })).not.toBeInTheDocument();
   });
 
-  it('a draft has nothing to pause or cancel', async () => {
-    await withThread();
+  it('cancelling a running task shows it stopping until it has, then shows it closed', async () => {
+    const { host, thread, user } = await withThread({ state: 'Running', stage: 'Implement' });
+
+    await user.click(screen.getByRole('button', { name: 'Cancel task' }));
+    await user.click(screen.getByRole('button', { name: 'Yes, cancel this task' }));
+
+    expect(await screen.findByText('Cancelling…')).toBeInTheDocument();
+    expect(screen.getByText(/The branch is kept/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pause' })).not.toBeInTheDocument();
+
+    act(() => void host.change(thread.id, { state: 'Cancelled' }));
+
+    expect(await screen.findByText('Cancelled. This task is closed.')).toBeInTheDocument();
+    expect(screen.queryByText('Cancelling…')).not.toBeInTheDocument();
+  });
+
+  it('a stop that lands before its answer shows the new state, not "stopping"', async () => {
+    const { host, user } = await withThread({ state: 'Running', stage: 'Implement' });
+    // The worker stops at once: the state event arrives before the 202 is read.
+    host.stopsAtOnce = true;
+
+    await user.click(screen.getByRole('button', { name: 'Pause' }));
+
+    expect(await screen.findByRole('button', { name: 'Resume' })).toBeInTheDocument();
+    expect(screen.queryByText('Pausing…')).not.toBeInTheDocument();
+  });
+
+  it('a draft can be cancelled, but not paused', async () => {
+    const { host, thread, user } = await withThread();
 
     expect(screen.queryByRole('button', { name: 'Pause' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Cancel task' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel task' }));
+    expect(screen.getByText('A cancelled draft cannot be delegated later.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Yes, cancel this draft' }));
+
+    expect(await screen.findByText('Cancelled. This task is closed.')).toBeInTheDocument();
+    expect(host.details(thread.id).thread.state).toBe('Cancelled');
+    expect(screen.getByText('Cancelled before it was delegated.')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['Blocked', 'Resume'],
+    ['Interrupted', 'Recover and resume'],
+    ['PausedUser', 'Resume'],
+  ] as const)('a task that is %s can be resumed from beside the composer', async (state, label) => {
+    const { host, thread, user } = await withThread({ state, stage: 'Implement' });
+
+    // The panel in the conversation offers it too; the one beside the composer is always in view.
+    const buttons = screen.getAllByRole('button', { name: label });
+    await user.click(buttons[buttons.length - 1]!);
+
+    await waitFor(() => expect(host.details(thread.id).thread.state).toBe('Queued'));
+    expect(host.sent('POST', '/resume')).toHaveLength(1);
+  });
+
+  it('a budget-paused task resumes from its panel only, where the cap can be raised', async () => {
+    await withThread({ state: 'PausedBudget', stage: 'Implement' });
+
+    expect(screen.getByRole('button', { name: 'Raise budget and resume' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Resume' })).not.toBeInTheDocument();
   });
 
   it('a budget pause says why, and raising the budget resumes the task', async () => {

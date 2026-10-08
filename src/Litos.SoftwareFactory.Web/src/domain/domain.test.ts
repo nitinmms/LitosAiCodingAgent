@@ -185,8 +185,9 @@ describe('what each state allows matches the host', () => {
     expect(allowed(canResume)).toEqual(['PausedBudget', 'PausedUser', 'Blocked', 'Interrupted']));
   it('message: draft, queued, running, and after a handoff', () =>
     expect(allowed(canMessage)).toEqual(['Draft', 'Queued', 'Running', 'AwaitingHumanTesting']));
-  it('cancel: anything delegated and not closed', () =>
+  it('cancel: anything not closed, a draft included', () =>
     expect(allowed(canCancel)).toEqual([
+      'Draft',
       'Queued',
       'Running',
       'AwaitingDecision',

@@ -7,6 +7,7 @@ export function TopBar({
   user,
   view,
   awaitingYou,
+  reconnecting = false,
   onNavigate,
   onAwaitingYou,
   onSignOut,
@@ -15,6 +16,8 @@ export function TopBar({
   view: Route['view'];
   /** How many of the user's tasks are stopped until they act. */
   awaitingYou: number;
+  /** The live stream is down and being reopened: what is shown may be out of date. */
+  reconnecting?: boolean;
   onNavigate: (view: Exclude<Route['view'], 'invite'>) => void;
   onAwaitingYou: () => void;
   onSignOut: () => void;
@@ -41,6 +44,11 @@ export function TopBar({
         ))}
       </nav>
       <div className="top-right">
+        {reconnecting ? (
+          <span className="pill you" role="status" title="Live updates stopped. Reconnecting to the factory host.">
+            Reconnecting…
+          </span>
+        ) : null}
         <button className={`btn ${awaitingYou ? 'attn' : ''}`} onClick={onAwaitingYou} disabled={!awaitingYou}>
           {awaitingYou} awaiting you
         </button>
