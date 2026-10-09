@@ -217,6 +217,13 @@ a{color:var(--petrol)}
 .bubble{white-space:pre-wrap}
 /* A status note can be a list, one item per line (the resume check's, for one). */
 .ev-text{white-space:pre-wrap}
+/* Markdown blocks in a message (components/bits.tsx, Rich). */
+.md-h{font-weight:700;margin:.7em 0 .25em}
+.md-p{margin:.4em 0}
+.md-list{margin:.3em 0;padding-left:1.4em;white-space:normal}
+.md-list li{margin:.15em 0}
+:is(.md-h,.md-p,.md-list):first-child{margin-top:0}
+:is(.md-h,.md-p,.md-list):last-child{margin-bottom:0}
 .checks{display:grid;gap:6px}
 .stack{display:grid;gap:10px}
 .raise{display:flex;flex-wrap:wrap;gap:10px;align-items:end}

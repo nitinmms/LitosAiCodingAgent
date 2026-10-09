@@ -4,7 +4,7 @@ import { createApi } from '../api/client';
 import type { LifecycleState, Stage } from '../api/types';
 import { App } from '../App';
 import { FakeHost, turnOf } from '../test/fakeHost';
-import { Rail, Rich, SafeLink } from './bits';
+import { blocks, Rail, Rich, SafeLink } from './bits';
 import { phaseName, phaseTotals } from './Details';
 
 describe('the stage rail', () => {
@@ -75,6 +75,63 @@ describe('message text', () => {
   it('does not treat a longer word as a mention', () => {
     const { container } = render(<Rich text="@factoryfoo" />);
     expect(container.querySelector('.mention')).toBeNull();
+  });
+
+  it('keeps a single paragraph inline, with its own line breaks, as before', () => {
+    const { container } = render(<Rich text={'Line one\nline two with **bold**'} />);
+    expect(container.querySelector('div, ul, ol')).toBeNull();
+    expect(container.querySelector('strong')).toHaveTextContent('bold');
+    expect(container.textContent).toBe('Line one\nline two with bold');
+  });
+
+  /** Found on the M2 check: a chat answer's "## How documents are deleted today" showed its hashes. */
+  it('lays out the Markdown a chat answer is written in', () => {
+    const answer = [
+      '## How documents are deleted today',
+      '',
+      '`Delete(key)` commits **one** frame.',
+      'It returns whether the key existed.',
+      '',
+      '- Outside a transaction it commits.',
+      '* Inside one it stages.',
+      '',
+      '1. Take the lock',
+      '2) Commit the batch',
+    ].join('\n');
+    const { container } = render(<Rich text={answer} />);
+
+    expect(container.querySelector('.md-h')).toHaveTextContent('How documents are deleted today');
+    expect(container.textContent).not.toContain('#');
+    const paragraph = container.querySelector('.md-p')!;
+    expect(paragraph.querySelector('code')).toHaveTextContent('Delete(key)');
+    expect(paragraph.querySelector('strong')).toHaveTextContent('one');
+    expect(paragraph.textContent).toBe('Delete(key) commits one frame.\nIt returns whether the key existed.');
+    expect([...container.querySelectorAll('ul > li')].map((li) => li.textContent)).toEqual([
+      'Outside a transaction it commits.',
+      'Inside one it stages.',
+    ]);
+    expect([...container.querySelectorAll('ol > li')].map((li) => li.textContent)).toEqual(['Take the lock', 'Commit the batch']);
+  });
+
+  it('never turns the text into HTML, in a list or a heading either', () => {
+    const { container } = render(<Rich text={'# <img src=x onerror=alert(1)>\n- <b>bold?</b> @factory'} />);
+    expect(container.querySelector('img, b')).toBeNull();
+    expect(container.querySelector('.md-h')).toHaveTextContent('<img src=x onerror=alert(1)>');
+    expect(container.querySelector('li .mention')).toHaveTextContent('@factory');
+  });
+});
+
+describe('blocks', () => {
+  it('splits headings, lists and paragraphs, and keeps anything else as written', () => {
+    expect(blocks('Decision scan: 2 open choices. Assuming:\n- A: yes\n- B: no')).toEqual([
+      { kind: 'paragraph', text: 'Decision scan: 2 open choices. Assuming:' },
+      { kind: 'bullets', items: ['A: yes', 'B: no'] },
+    ]);
+    expect(blocks('#hashtag, not a heading\n-not a bullet\n2026 was the year')).toEqual([
+      { kind: 'paragraph', text: '#hashtag, not a heading\n-not a bullet\n2026 was the year' },
+    ]);
+    expect(blocks('- one\n\n- two')).toEqual([{ kind: 'bullets', items: ['one', 'two'] }]);
+    expect(blocks('')).toEqual([]);
   });
 });
 

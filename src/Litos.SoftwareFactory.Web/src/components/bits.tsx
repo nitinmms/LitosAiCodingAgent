@@ -20,14 +20,53 @@ export function TurnPill({ turn, state }: { turn: Turn; state: LifecycleState })
   return <span className={`pill ${label.cls}`}>{label.text}</span>;
 }
 
-/** Text with `code` spans and @factory mentions marked up. Everything else is plain text. */
-export function Rich({ text }: { text: string }) {
-  const parts = text.split(/(`[^`\n]+`|@factory\b)/g);
+/** One block of a message: a heading, a list, or a paragraph. */
+export type Block = { kind: 'heading'; text: string } | { kind: 'bullets' | 'numbers'; items: string[] } | { kind: 'paragraph'; text: string };
+
+/**
+ * The few Markdown blocks the model writes in its answers and notes: `#` headings, `-`/`*` and
+ * numbered lists, and paragraphs between blank lines. Anything else is paragraph text, as written.
+ */
+export function blocks(text: string): Block[] {
+  const result: Block[] = [];
+  let paragraph: string[] = [];
+  const endParagraph = () => {
+    if (paragraph.length > 0) result.push({ kind: 'paragraph', text: paragraph.join('\n') });
+    paragraph = [];
+  };
+  const addItem = (kind: 'bullets' | 'numbers', item: string) => {
+    endParagraph();
+    const last = result[result.length - 1];
+    if (last?.kind === kind) last.items.push(item);
+    else result.push({ kind, items: [item] });
+  };
+
+  for (const line of text.split('\n')) {
+    const heading = /^#{1,6}\s+(.+)$/.exec(line);
+    const bullet = /^\s*[-*]\s+(.+)$/.exec(line);
+    const numbered = /^\s*\d+[.)]\s+(.+)$/.exec(line);
+    if (line.trim() === '') endParagraph();
+    else if (heading) {
+      endParagraph();
+      result.push({ kind: 'heading', text: heading[1]!.trim() });
+    } else if (bullet) addItem('bullets', bullet[1]!);
+    else if (numbered) addItem('numbers', numbered[1]!);
+    else paragraph.push(line);
+  }
+  endParagraph();
+  return result;
+}
+
+/** A line's marks: `code`, **bold** and @factory mentions. Never HTML: the text stays text. */
+function Inline({ text }: { text: string }) {
+  const parts = text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|@factory\b)/g);
   return (
     <>
       {parts.map((part, index) =>
         part.length > 2 && part.startsWith('`') && part.endsWith('`') ? (
           <code key={index}>{part.slice(1, -1)}</code>
+        ) : part.length > 4 && part.startsWith('**') && part.endsWith('**') ? (
+          <strong key={index}>{part.slice(2, -2)}</strong>
         ) : part === '@factory' ? (
           <span key={index} className="mention">
             {part}
@@ -36,6 +75,48 @@ export function Rich({ text }: { text: string }) {
           <Fragment key={index}>{part}</Fragment>
         ),
       )}
+    </>
+  );
+}
+
+/**
+ * Message text: a single paragraph stays inline text, as it always was; headings, lists and
+ * several paragraphs (a chat answer, the decision scan's assumptions) are laid out as blocks.
+ */
+export function Rich({ text }: { text: string }) {
+  const parts = blocks(text);
+  if (parts.length === 0 || (parts.length === 1 && parts[0]!.kind === 'paragraph')) return <Inline text={text} />;
+
+  return (
+    <>
+      {parts.map((block, index) => {
+        switch (block.kind) {
+          case 'heading':
+            return (
+              <div key={index} className="md-h">
+                <Inline text={block.text} />
+              </div>
+            );
+          case 'paragraph':
+            return (
+              <div key={index} className="md-p">
+                <Inline text={block.text} />
+              </div>
+            );
+          default: {
+            const List = block.kind === 'bullets' ? 'ul' : 'ol';
+            return (
+              <List key={index} className="md-list">
+                {block.items.map((item, i) => (
+                  <li key={i}>
+                    <Inline text={item} />
+                  </li>
+                ))}
+              </List>
+            );
+          }
+        }
+      })}
     </>
   );
 }

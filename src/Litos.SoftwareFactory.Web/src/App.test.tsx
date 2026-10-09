@@ -424,7 +424,7 @@ describe('live updates', () => {
     expect(host.sources[0]!.url).toBe(`/api/threads/${thread.id}/events?after=${host.details(thread.id).eventCursor}`);
   });
 
-  it('keeps the lines of a status note that is a list, such as the resume check', async () => {
+  it('shows a status note that is a list as a list, such as the resume check', async () => {
     const host = new FakeHost();
     const project = host.addProject();
     const thread = host.addThread(project, { state: 'Running', stage: 'Implement' });
@@ -436,9 +436,13 @@ describe('live updates', () => {
     start(host);
 
     const code = await screen.findByText('src/Collection.cs');
-    const row = code.closest('.ev-text')!;
-    expect(row.textContent).toBe(note.replaceAll('`', ''));
-    // The breaks survive only if the row keeps white space, as a chat bubble does.
+    const row = within(code.closest('.ev-text') as HTMLElement);
+    expect(row.getByText('Resuming. The working copy differs from where this run last recorded it:')).toBeInTheDocument();
+    expect(row.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'Changed since then: src/Collection.cs.',
+      'Newly changed: tests/CollectionTests.cs.',
+    ]);
+    // A note of one paragraph keeps its own line breaks, as a chat bubble does.
     expect(readFileSync('src/styles.css', 'utf8')).toMatch(/\.ev-text\{white-space:pre-wrap\}/);
   });
 
@@ -839,7 +843,7 @@ describe('after a handoff, @factory is a change request', () => {
     expect(await screen.findByRole('button', { name: 'Accept' })).toBeEnabled();
     expect(host.sent('POST', `/api/threads/${thread.id}/withdraw`)).toHaveLength(1);
     expect(host.details(thread.id).thread.state).toBe('AwaitingHumanTesting');
-    expect(screen.getByText('Change request withdrawn. The task is back at its last handoff.', { selector: '.ev span' })).toBeInTheDocument();
+    expect(screen.getByText('Change request withdrawn. The task is back at its last handoff.', { selector: '.ev-text' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Withdraw change request' })).not.toBeInTheDocument();
     expect(stageNow()).toContain('Handoff');
   });
