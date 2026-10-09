@@ -82,7 +82,7 @@ p{margin:0}
 .login-line span.on{background:var(--amber);border-color:var(--amber);color:var(--ink)}
 .login-form{display:grid;place-items:center;padding:40px 16px}
 .login-form form{width:min(360px,100%);display:grid;gap:14px}
-.field{display:grid;gap:4px}
+.field{display:grid;gap:4px;align-content:start}
 .field label{font-weight:600;font-size:.86rem}
 .field input,.field select,.field textarea{border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:8px 10px;width:100%}
 .field .hint{font-size:.78rem;color:var(--muted)}
