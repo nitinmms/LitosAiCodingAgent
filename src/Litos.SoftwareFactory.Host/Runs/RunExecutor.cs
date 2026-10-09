@@ -43,10 +43,9 @@ public interface IUserDirectory
 /// </summary>
 public sealed class RunExecutor(
     IFactoryStore store, FactoryOptions options, IWorkspaceProvider workspaces, IVerifier verifier,
-    IWorkerLauncher launcher, IWorkerClientFactory clients, IUserDirectory users, FactorySignals signals, IClock clock,
+    IWorkerLauncher launcher, IWorkerClientFactory clients, IUserDirectory users, FactorySignals signals, IClock clock, Settings.FactorySettings settings,
     ILogger<RunExecutor> logger, IGitHub? gitHub = null, VerificationGate? verificationGate = null)
 {
-    private readonly RunOrchestrator _orchestrator = new(options.Limits);
     private readonly VerificationGate _verificationGate = verificationGate ?? new VerificationGate(options);
 
     /// <summary>Executes a claimed run until it stops. <see cref="RunSupervisor"/> holds the run
@@ -68,10 +67,13 @@ public sealed class RunExecutor(
                 _ => new RunStarted(),
             };
 
-            var context = new RunData(claimed, workspaces.For(project), VerificationProfile.Parse(project.VerificationProfileJson));
+            // The run's limits are fixed when it starts: a settings change affects runs that start afterwards.
+            var limits = options.Limits with { MaxRepairCycles = settings.Budgets.RepairCyclesPerRun };
+            var orchestrator = new RunOrchestrator(limits);
+            var context = new RunData(claimed, workspaces.For(project), VerificationProfile.Parse(project.VerificationProfileJson), limits);
             while (true)
             {
-                var transition = _orchestrator.Next(state, outcome, clock.UtcNow);
+                var transition = orchestrator.Next(state, outcome, clock.UtcNow);
                 state = transition.State;
 
                 if (transition.Step is StopStep stop)
@@ -162,7 +164,7 @@ public sealed class RunExecutor(
     }
 
     /// <summary>The fixed inputs of one run, gathered once.</summary>
-    private sealed record RunData(ClaimedRun Claimed, IWorkspace Workspace, VerificationProfile Profile)
+    private sealed record RunData(ClaimedRun Claimed, IWorkspace Workspace, VerificationProfile Profile, RunLimits Limits)
     {
         public TaskRun Run => Claimed.Run;
 
@@ -394,10 +396,10 @@ public sealed class RunExecutor(
         if (phase == "LightReview")
             context = context with { ReviewDepth = ReviewDepth.Light };
 
-        var brief = BriefComposer.Compose(step, context, state with { Baseline = data.Baseline ?? state.Baseline }, options.Limits);
+        var brief = BriefComposer.Compose(step, context, state with { Baseline = data.Baseline ?? state.Baseline }, data.Limits);
         var before = await FingerprintAsync(data, ct);
 
-        using var timeout = new CancellationTokenSource(options.Limits.TurnTimeout);
+        using var timeout = new CancellationTokenSource(data.Limits.TurnTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(hostStopping, timeout.Token);
         // Once the task has had a decision, in this run or an earlier one, a limitation may say
         // exactly what the person chose; it is not sent back as a question.
@@ -409,7 +411,7 @@ public sealed class RunExecutor(
         TurnStreamResult? result = null;
         try
         {
-            result = await client.RunTurnAsync(sessionId, step.Kind, brief, allowance?.MaxToolCalls ?? options.Limits.MaxToolCallsPerTurn, turnToken);
+            result = await client.RunTurnAsync(sessionId, step.Kind, brief, allowance?.MaxToolCalls ?? data.Limits.MaxToolCallsPerTurn, turnToken);
         }
         catch (OperationCanceledException) when (!hostStopping.IsCancellationRequested)
         {
@@ -446,7 +448,7 @@ public sealed class RunExecutor(
         }
         else if (submission is PlanSubmission scanned)
         {
-            await NoteAsync(data, DecisionPolicy.Decide(scanned, Math.Max(0, options.Limits.MaxDecisions - state.DecisionsAsked)).Describe());
+            await NoteAsync(data, DecisionPolicy.Decide(scanned, Math.Max(0, data.Limits.MaxDecisions - state.DecisionsAsked)).Describe());
         }
 
         if (active.StopRequest == StopRequest.Cancel)
@@ -510,11 +512,11 @@ public sealed class RunExecutor(
         RunData data, RunState state, StartTurnStep step, WorkspaceDiff? diff, CancellationToken ct)
     {
         if (state.WorkTurn == TurnKind.Scan)
-            return ("Scan", step.Brief is BriefKind.Nudge or BriefKind.ScanRecheck ? TurnAllowance.ForScanNudge(options.Limits) : TurnAllowance.ForScan(options.Limits));
+            return ("Scan", step.Brief is BriefKind.Nudge or BriefKind.ScanRecheck ? TurnAllowance.ForScanNudge(data.Limits) : TurnAllowance.ForScan(data.Limits));
         if (state.WorkTurn != TurnKind.Review)
             return (step.Kind.ToString(), null);
         if (step.Brief == BriefKind.Nudge)
-            return ("Review", TurnAllowance.ForReviewNudge(options.Limits));
+            return ("Review", TurnAllowance.ForReviewNudge(data.Limits));
 
         // What this run spent on the work under review: its implement, rework, repair and
         // work-nudge turns. Earlier runs of the task are not this review's concern.
@@ -524,15 +526,15 @@ public sealed class RunExecutor(
 
         // A review resumed after a stop is not planned again: it continues, as a full review.
         if (step.Brief != BriefKind.Review || diff is null)
-            return ("Review", TurnAllowance.ForReview(ReviewDepth.Full, implementation, options.Limits));
+            return ("Review", TurnAllowance.ForReview(ReviewDepth.Full, implementation, data.Limits));
 
-        var plan = ReviewPlanner.Plan(new ReviewInputs(diff.Files, diff.Patch, state.LastVerification, state.LastSubmission), options.Limits);
+        var plan = ReviewPlanner.Plan(new ReviewInputs(diff.Files, diff.Patch, state.LastVerification, state.LastSubmission), data.Limits);
         await NoteAsync(data, plan.Describe());
         return plan.Depth switch
         {
             ReviewDepth.None => (NoReviewPhase, null),
-            ReviewDepth.Light => ("LightReview", TurnAllowance.ForReview(ReviewDepth.Light, implementation, options.Limits)),
-            _ => ("Review", TurnAllowance.ForReview(ReviewDepth.Full, implementation, options.Limits)),
+            ReviewDepth.Light => ("LightReview", TurnAllowance.ForReview(ReviewDepth.Light, implementation, data.Limits)),
+            _ => ("Review", TurnAllowance.ForReview(ReviewDepth.Full, implementation, data.Limits)),
         };
     }
 

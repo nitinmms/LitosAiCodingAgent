@@ -8,6 +8,7 @@ using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Host.Auth;
 using Litos.SoftwareFactory.Host.Runs;
+using Litos.SoftwareFactory.Host.Settings;
 using Litos.SoftwareFactory.Infrastructure.GitHub;
 using Litos.SoftwareFactory.Infrastructure.Persistence;
 using Litos.SoftwareFactory.Infrastructure.Verification;
@@ -110,11 +111,12 @@ public static class FactoryApi
         var decisionRoutes = api.MapGroup("/decisions/{id:guid}").RequireProjectAccess(ProjectScoped.Decision);
         var findingRoutes = api.MapGroup("/findings/{id:guid}").RequireProjectAccess(ProjectScoped.Finding);
 
-        api.MapGet("/settings", (FactoryOptions options) => Results.Ok(new
+        api.MapGet("/settings", (FactoryOptions options, FactorySettings settings) => Results.Ok(new
         {
             options.Provider,
             options.Model,
-            options.DefaultBudget,
+            DefaultBudget = settings.Budgets.DefaultTaskBudget,
+            MaximumBudget = settings.Budgets.MaximumTaskBudget,
             options.PtcEnabled,
             // What fraction of a cached input token counts against a task's budget (§9).
             options.Budget.CachedInputWeight,
@@ -196,8 +198,8 @@ public static class FactoryApi
         });
 
         api.MapPost("/threads", async (
-            CreateThreadRequest request, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, FactoryOptions options, FactorySignals signals,
-            IClock clock, CancellationToken ct) =>
+            CreateThreadRequest request, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, FactoryOptions options, FactorySettings settings,
+            FactorySignals signals, IClock clock, CancellationToken ct) =>
         {
             // Outside the project it is not found, as a project that does not exist.
             if (!await access.CanSeeProjectAsync(user, request.ProjectId, ct))
@@ -208,6 +210,10 @@ public static class FactoryApi
                 return Problem($"typeLabel must be one of: {string.Join(", ", TaskTypes.All)}.");
             if (request.BudgetCap is <= 0)
                 return Problem("budgetCap must be positive.");
+            var budgets = settings.Budgets;
+            var cap = request.BudgetCap ?? budgets.DefaultTaskBudget;
+            if (budgets.RefuseCap(cap) is { } refused)
+                return Problem(refused);
 
             try
             {
@@ -218,7 +224,7 @@ public static class FactoryApi
                     OwnerId = user.UserId(),
                     Title = request.Title.Trim(),
                     TypeLabel = request.TypeLabel,
-                    BudgetCap = request.BudgetCap ?? options.DefaultBudget,
+                    BudgetCap = cap,
                     SessionId = Guid.NewGuid().ToString("N"),
                     Provider = options.Provider,
                     Model = options.Model,
@@ -295,7 +301,7 @@ public static class FactoryApi
 
         threadRoutes.MapPost("/messages", async (
             Guid id, PostMessageRequest request, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals,
-            IClock clock, FactoryOptions options, CancellationToken ct) =>
+            IClock clock, FactoryOptions options, FactorySettings settings, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.MessageId))
                 return Problem("messageId is required: it makes a retried request safe.");
@@ -321,7 +327,7 @@ public static class FactoryApi
                 result = asksForSpec
                     ? await store.RequestSpecAsync(id, user.UserId(), request.MessageId, specRequest, clock.UtcNow, ct)
                     : mentioned
-                        ? await store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct, options.Budget.ReworkTopUpShare)
+                        ? await store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct, settings.Budgets.ReworkTopUpShare)
                         : await store.ChatAsync(id, user.UserId(), request.MessageId, text, options.ChatTurnCap, clock.UtcNow, ct);
             }
             catch (StoreNotFoundException)
@@ -366,10 +372,14 @@ public static class FactoryApi
             }
         });
 
-        threadRoutes.MapPost("/budget", (Guid id, SetBudgetRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        threadRoutes.MapPost("/budget", (
+            Guid id, SetBudgetRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, FactorySignals signals,
+            IClock clock, CancellationToken ct) =>
             request.Cap is <= 0
                 ? Task.FromResult(Problem("cap must be positive, or null for no cap."))
-                : ActAsync(signals, () => store.SetBudgetCapAsync(id, request.Cap, user.UserId(), clock.UtcNow, ct)));
+                : settings.Budgets.RefuseCap(request.Cap) is { } refused
+                    ? Task.FromResult(Problem(refused))
+                    : ActAsync(signals, () => store.SetBudgetCapAsync(id, request.Cap, user.UserId(), clock.UtcNow, ct)));
 
         threadRoutes.MapPost("/accept", (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
             ActAsync(signals, () => store.ApplyUserActionAsync(id, user.UserId(), LifecycleTrigger.Accept, clock.UtcNow, ct)));

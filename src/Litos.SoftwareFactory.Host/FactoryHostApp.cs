@@ -48,6 +48,7 @@ public static class FactoryHostApp
         services.TryAddSingleton<IHostInstanceLock, NoHostInstanceLock>();
         // Before auth: the sign-in cookies use the same key ring.
         services.AddFactorySecretProtection(options.DataDirectory);
+        services.AddSingleton<FactorySettings>();
         services.AddFactoryAuth();
         // A session is checked against its account this often: disabling an account rotates its
         // security stamp, so its open sessions end at the next check.
@@ -69,7 +70,7 @@ public static class FactoryHostApp
             sp.GetRequiredService<IFactoryStore>(), options,
             sp.GetRequiredService<IWorkspaceProvider>(), sp.GetRequiredService<IVerifier>(), sp.GetRequiredService<IWorkerLauncher>(),
             sp.GetRequiredService<IWorkerClientFactory>(), sp.GetRequiredService<IUserDirectory>(), sp.GetRequiredService<FactorySignals>(),
-            sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
+            sp.GetRequiredService<IClock>(), sp.GetRequiredService<FactorySettings>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
             sp.GetRequiredService<VerificationGate>()));
         services.AddSingleton<VerificationGate>();
         services.AddSingleton<ReadingCopies>();
@@ -104,6 +105,7 @@ public static class FactoryHostApp
         app.MapFactoryInvitations();
         app.MapFactoryUsers();
         app.MapFactoryApi();
+        app.MapFactorySettings();
         app.MapFactoryEvents();
         app.MapWorkerCallbacks();
 
@@ -141,6 +143,16 @@ public static class FactoryHostApp
             return held;
 
         Directory.CreateDirectory(options.DataDirectory);
+
+        // Settings are read from the database from here on; the first start writes them there
+        // from the environment (m3-architecture.md §3.3).
+        var settings = app.Services.GetRequiredService<FactorySettings>();
+        await settings.LoadAsync(ct);
+        if (await SettingsSeeding.SeedAsync(settings, options, ct))
+            app.Logger.LogInformation(
+                "Factory settings were written to the database from this host's environment. From now on they are changed in the app, and these variables are no longer read: {Variables}.",
+                string.Join(", ", SettingsSeeding.Replaced));
+
         return await FactoryAuth.SeedAdminAsync(app.Services, options);
     }
 }

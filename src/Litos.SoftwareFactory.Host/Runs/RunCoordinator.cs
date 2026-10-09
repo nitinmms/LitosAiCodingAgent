@@ -12,7 +12,7 @@ namespace Litos.SoftwareFactory.Host.Runs;
 /// </summary>
 public sealed class RunCoordinator(
     IFactoryStore store, RunSupervisor supervisor, RunRegistry registry, RunLiveness liveness, FactoryOptions options,
-    FactorySignals signals, IClock clock, IHostApplicationLifetime lifetime, ILogger<RunCoordinator> logger) : BackgroundService
+    FactorySignals signals, IClock clock, IHostApplicationLifetime lifetime, Settings.FactorySettings settings, ILogger<RunCoordinator> logger) : BackgroundService
 {
     /// <summary>Completes once startup recovery is done and the coordinator is claiming work.</summary>
     public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -43,7 +43,8 @@ public sealed class RunCoordinator(
                     }
 
                     // Asked even with every slot busy, so each queued thread says what it waits for.
-                    if (await store.ClaimNextRunAsync(options.SlotCap, clock.UtcNow, hostStopping.Token, registry.RunIds) is { } claimed)
+                    // Read on every claim, so a changed cap applies to the next run without a restart.
+                    if (await store.ClaimNextRunAsync(settings.Budgets.SlotCap, clock.UtcNow, hostStopping.Token, registry.RunIds) is { } claimed)
                     {
                         signals.EventsWritten();
                         _ = supervisor.Start(claimed, hostStopping.Token);
