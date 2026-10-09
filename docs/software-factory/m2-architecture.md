@@ -331,7 +331,7 @@ The scan fix carried from M1 (§2) can land between any two steps; it changes th
 | 1 | Two tasks at once, a third waits | **Passed 2026-10-08.** GetOrDefault (`filedb-sharp`, 55,583 tokens, PR #13) and hex colours (`insta-story-generator`, 33,941, PR #5) ran at once. A third task, IsEmpty (`filedb-sharp`), showed "held by" and started when the first handed off; it asked one genuine decision and handed off at 78,550 (PR #14). |
 | 2 | Host stopped mid-run, Interrupted, Recover continues | **Failed, fixed, passed 2026-10-09.** See below. "Keys with a prefix" (`filedb-sharp`) recovered mid-Implement, posted the resume check, and handed off at 176,757 tokens including the cut-off attempt (PR #15). |
 | 3 | A Member invited by link sees only their projects | **Passed 2026-10-09.** `nitin`, invited by link to `insta-story-generator` only, saw none of `filedb-sharp`'s 15 threads, no admin screens, and a `filedb-sharp` thread's address said "Thread not found". Three display bugs found and fixed; see below. |
-| 4 | Chat → spec → approve → implement → handoff | Open |
+| 4 | Chat → spec → approve → implement → handoff | **Passed 2026-10-09.** "Clear a collection" (`filedb-sharp`): a plain question answered from the code, `@factory spec` proposed 14 criteria with no open questions, approved, built with one steer (a batch of Delete operations, no new log operation kind), which the scan recorded and the code kept; handed off and accepted (PR #16, 5 files, 15 new tests, three Minor review findings on test coverage). The budget was raised twice; see below. |
 | 5 | One M1 task re-runs within its earlier cost | Open |
 
 **Check 2 first failed.** On Ctrl+C the web server, and with it the model gateway, stopped before the coordinator's stopping token was cancelled. The turn under way failed with "the model gateway could not be reached", and the run was recorded Blocked (TurnFaulted), as if the task had failed. The tests had not shown it because they cancel the token directly, never through a real shutdown in which the gateway goes first. Fixed in `fa6054f`:
@@ -349,4 +349,20 @@ Also from check 2, `6c2e74c`: a status note keeps its line breaks, so the resume
 - the address of a thread the user cannot see showed the first thread of their own list under it. It now says "Thread not found", in the same words whether the thread does not exist or is in another project (`39a40e6`);
 - a task cancelled mid-way, which stays in its stage's column, showed its turn label "Done" as a green pill. It now says Cancelled, in grey (`70b8e5e`).
 
+**Check 4's cost.** The task was charged 411,328 tokens against a 300,000 default:
+
+| Stage | Model calls | Charged |
+| --- | --- | --- |
+| Chat (its own budget) | 5 | 20,430 |
+| Spec | 14 | 111,501 |
+| Decision scan | 7 | 31,102 |
+| Implement | 33 | 169,935 |
+| Review (full, risk score 8) | 12 | 87,582 |
+
+The spec is charged to the task and cost more than a third of the default budget before anything was built. With the review, the stages around the work cost as much as the work. Both are carried to M3 below.
+
+**Also from check 4:** the decision scan's note joined its assumptions into one sentence (`e44cfe0` puts each on a line), and messages showed Markdown as written, hashes and all (`97d76ae` lays out headings, lists, paragraphs and bold, as elements, never HTML).
+
 **Carried to M3: reviews that never reply.** On check 2 the light review of a 5-file change spent about 39,000 tokens reasoning and reached the output limit without replying, so the run handed off with the review `DidNotFinish` and said so, as designed (`RunOrchestrator.OnReviewCutOff`). It is the third such review with `deepseek/deepseek-v4.1-flash` (36,006 tokens on F7, 64,717 on the R3 retry). The handling is right; the cost is not, since each attempt buys nothing. Two remedies, for M3's settings and model catalog work: a separate model for review turns, chosen for direct answers over long reasoning; or a cap on reasoning without a reply, which saves tokens but still yields no review.
+
+**Carried to M3: the spec's cost.** A spec is charged to the task, and check 4's took 14 model calls and 111,501 tokens for a one-method feature: it reads the code as widely as an implementation does. A spec allowance, as the scan and the review have, would bound it.
