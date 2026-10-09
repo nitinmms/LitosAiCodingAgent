@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 import type { LifecycleState, Stage, Turn } from '../api/types';
-import { STAGES, turnLabel } from '../domain/task';
+import { STAGES, taskLabel } from '../domain/task';
 
 /** The factory's mark: a carrier on a line. */
 export function Mark() {
@@ -14,9 +14,9 @@ export function Mark() {
   );
 }
 
-/** Whose turn it is, as a pill. */
-export function TurnPill({ turn }: { turn: Turn }) {
-  const label = turnLabel(turn);
+/** Whose turn it is, as a pill; a cancelled task's says Cancelled. */
+export function TurnPill({ turn, state }: { turn: Turn; state: LifecycleState }) {
+  const label = taskLabel(turn, state);
   return <span className={`pill ${label.cls}`}>{label.text}</span>;
 }
 

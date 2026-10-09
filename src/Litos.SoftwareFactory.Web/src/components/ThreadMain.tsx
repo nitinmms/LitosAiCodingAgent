@@ -302,7 +302,7 @@ export function ThreadMain({
         ) : (
           <div className="th-title">
             <h1>{thread.title}</h1>
-            <TurnPill turn={thread.turn} />
+            <TurnPill turn={thread.turn} state={thread.state} />
             <span className="tag">{thread.typeLabel}</span>
             {connection === 'reconnecting' ? (
               <span className="pill you" role="status" title="Live updates stopped. What is shown may be out of date.">

@@ -88,7 +88,7 @@ export function BoardPage({
                   <button key={t.id} className={`card ${t.turn === 'AwaitingYou' ? 'card-you' : ''}`} onClick={() => onOpen(t.id)} aria-label={t.title}>
                     <span className="card-title">{t.title}</span>
                     <span className="card-row">
-                      <TurnPill turn={t.turn} />
+                      <TurnPill turn={t.turn} state={t.state} />
                       <span className="tag">{t.typeLabel}</span>
                     </span>
                     <span className="small muted">

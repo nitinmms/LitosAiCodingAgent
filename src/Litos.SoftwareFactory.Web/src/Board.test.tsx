@@ -76,6 +76,21 @@ describe('the board', () => {
     expect(within(screen.getByRole('button', { name: 'Speed up reads' })).getByText('Not started')).toBeInTheDocument();
   });
 
+  /** Found on the M2 check: a task cancelled mid-way stays in its stage's column, and its green
+   * "Done" read as finished work. */
+  it('says Cancelled on a cancelled task, and Done only on accepted work', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.addThread(project, { title: 'Abandoned attempt', state: 'Cancelled', stage: 'Implement', turn: 'Done' });
+    host.addThread(project, { title: 'Shipped', state: 'Accepted', stage: 'Done', turn: 'Done' });
+    start(host);
+
+    const cancelled = within(await screen.findByRole('button', { name: 'Abandoned attempt' }));
+    expect(cancelled.getByText('Cancelled')).toHaveClass('pill', 'neutral');
+    expect(cancelled.queryByText('Done')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('button', { name: 'Shipped' })).getByText('Done')).toHaveClass('pill', 'done');
+  });
+
   /** §7.1: "Awaiting you" is personal. Ben's decision is not the Admin's to count. */
   it('counts as awaiting you only the waiting tasks you own', async () => {
     const { host } = scene();

@@ -40,6 +40,13 @@ const TURN_LABELS: Record<Turn, TurnLabel> = {
  */
 export const turnLabel = (turn: Turn): TurnLabel => TURN_LABELS[turn] ?? { text: turn, cls: 'neutral' };
 
+/**
+ * The pill on a task: its turn label, except that a cancelled task says so. Accepted and Cancelled
+ * are both "Done" as turns (nobody's move), but a green Done on cancelled work reads as finished.
+ */
+export const taskLabel = (turn: Turn, state: LifecycleState): TurnLabel =>
+  state === 'Cancelled' ? { text: 'Cancelled', cls: 'neutral' } : turnLabel(turn);
+
 /** "Awaiting you" is personal (§7.1): the tasks waiting on a person that this user owns. */
 export const awaitsYou = (thread: Thread, userId: string): boolean => thread.turn === 'AwaitingYou' && thread.ownerId === userId;
 

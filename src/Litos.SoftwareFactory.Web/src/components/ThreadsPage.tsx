@@ -72,7 +72,7 @@ export function ThreadsPage({
                   >
                     <span>{t.title}</span>
                     <span>
-                      <TurnPill turn={t.turn} />
+                      <TurnPill turn={t.turn} state={t.state} />
                     </span>
                   </button>
                 ))}

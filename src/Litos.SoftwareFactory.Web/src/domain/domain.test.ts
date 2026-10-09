@@ -20,6 +20,7 @@ import {
   parseSpec,
   pullRequestLabel,
   stateName,
+  taskLabel,
   turnLabel,
   withMention,
 } from './task';
@@ -158,6 +159,12 @@ describe('turnLabel', () => {
     ['Paused', 'Paused', 'neutral'],
     ['Done', 'Done', 'done'],
   ])('%s is "%s" (%s)', (turn, text, cls) => expect(turnLabel(turn)).toEqual({ text, cls }));
+
+  it('a cancelled task says Cancelled; every other state shows its turn', () => {
+    expect(taskLabel('Done', 'Cancelled')).toEqual({ text: 'Cancelled', cls: 'neutral' });
+    for (const state of ALL_STATES.filter((s) => s !== 'Cancelled')) expect(taskLabel('Done', state)).toEqual(turnLabel('Done'));
+    expect(taskLabel('AwaitingYou', 'Blocked')).toEqual(turnLabel('AwaitingYou'));
+  });
 
   it('"Awaiting you" is only what this user owns', () => {
     expect(awaitsYou(thread({ turn: 'AwaitingYou', ownerId: 'u1' }), 'u1')).toBe(true);
