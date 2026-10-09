@@ -39,7 +39,7 @@ public static class WorkerApp
 
         // Registered after AddLitosAgent, so these replace its user-profile defaults.
         builder.Services.AddSingleton<ITranscriptStore>(_ => new JsonlTranscriptStore(options.SessionsDirectory));
-        builder.Services.AddSingleton<ISkillDiscovery>(_ => new SkillDiscovery(Directory.GetCurrentDirectory(), userRoots: []));
+        builder.Services.AddSingleton<ISkillDiscovery, NoSkills>();
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(_ => new FactoryHostClient(hostHttp ?? new HttpClient(), options));
