@@ -1567,6 +1567,95 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         JsonSerializer.Deserialize<List<Guid>>(invitation.ProjectIdsJson) ?? [];
 
     /// <summary>Adds an audit row to the transaction under way, so it commits with the change it records.</summary>
+    // ---- Factory settings and secrets ----
+
+    public async Task<IReadOnlyList<SettingsSection>> ListSettingsAsync(CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Settings.AsNoTracking().OrderBy(s => s.Section).ToListAsync(ct);
+    }
+
+    public async Task<SettingsSection> SaveSettingsAsync(
+        string section, string json, long expectedRevision, Guid? actorId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+
+        var current = await db.Settings.FirstOrDefaultAsync(s => s.Section == section, ct);
+        if ((current?.Revision ?? 0) != expectedRevision)
+            throw new StoreConflictException($"The {section} settings were changed by someone else. Reload them and make your change again.");
+
+        if (current is null)
+        {
+            current = new SettingsSection { Section = section };
+            db.Settings.Add(current);
+        }
+
+        current.Json = json;
+        current.Revision = expectedRevision + 1;
+        current.UpdatedAt = now;
+        current.UpdatedBy = actorId;
+        if (actorId is { } actor)
+            Audit(db, actor, AuditActions.SettingsUpdate, AuditTargets.Settings, null, null, new { Section = section, current.Revision }, now);
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            // Two first writes of one section at once, or a change between the read and the
+            // write: the revision check above lost the race.
+            throw new StoreConflictException($"The {section} settings were changed by someone else. Reload them and make your change again.");
+        }
+
+        await write.CommitAsync(ct);
+        return current;
+    }
+
+    public async Task<IReadOnlyList<FactorySecret>> ListSecretsAsync(CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Secrets.AsNoTracking().OrderBy(s => s.Name).ToListAsync(ct);
+    }
+
+    public async Task SetSecretAsync(string name, string ciphertext, Guid? actorId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+
+        var secret = await db.Secrets.FirstOrDefaultAsync(s => s.Name == name, ct);
+        if (secret is null)
+        {
+            secret = new FactorySecret { Name = name, Ciphertext = ciphertext };
+            db.Secrets.Add(secret);
+        }
+
+        secret.Ciphertext = ciphertext;
+        secret.SetAt = now;
+        secret.SetBy = actorId;
+        // By name only: the audit never holds a secret, protected or not.
+        if (actorId is { } actor)
+            Audit(db, actor, AuditActions.SecretSet, AuditTargets.Secret, null, null, new { Name = name }, now);
+
+        await db.SaveChangesAsync(ct);
+        await write.CommitAsync(ct);
+    }
+
+    public async Task<bool> ClearSecretAsync(string name, Guid actorId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+
+        if (await db.Secrets.Where(s => s.Name == name).ExecuteDeleteAsync(ct) == 0)
+            return false;
+
+        Audit(db, actorId, AuditActions.SecretClear, AuditTargets.Secret, null, null, new { Name = name }, now);
+        await db.SaveChangesAsync(ct);
+        await write.CommitAsync(ct);
+        return true;
+    }
+
     private static void Audit(
         FactoryDbContext db, Guid actorId, string action, string targetType, Guid? targetId, Guid? projectId, object? details, DateTimeOffset now) =>
         db.AuditEvents.Add(new AuditEvent

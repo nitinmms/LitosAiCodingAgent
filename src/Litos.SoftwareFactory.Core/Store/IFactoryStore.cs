@@ -363,6 +363,28 @@ public interface IFactoryStore
     /// message says which.</exception>
     Task<Invitation> AcceptInvitationAsync(Guid invitationId, Guid userId, DateTimeOffset now, CancellationToken ct);
 
+    // ---- Factory settings and secrets (m3-architecture.md §3) ----
+
+    /// <summary>Every settings section written so far; a section never written is absent.</summary>
+    Task<IReadOnlyList<SettingsSection>> ListSettingsAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Writes a section, when its revision is still the one the caller read (0 for one never
+    /// written), and returns it at its new revision. An Admin's change is audited; the host's
+    /// seeding (no actor) is not.
+    /// </summary>
+    /// <exception cref="StoreConflictException">The section changed since the caller read it.</exception>
+    Task<SettingsSection> SaveSettingsAsync(string section, string json, long expectedRevision, Guid? actorId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Every secret, protected. The API never passes the ciphertext on.</summary>
+    Task<IReadOnlyList<FactorySecret>> ListSecretsAsync(CancellationToken ct);
+
+    /// <summary>Sets or replaces a secret. An Admin's change is audited by name only.</summary>
+    Task SetSecretAsync(string name, string ciphertext, Guid? actorId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Clears a secret. False, and nothing recorded, when it was not set.</summary>
+    Task<bool> ClearSecretAsync(string name, Guid actorId, DateTimeOffset now, CancellationToken ct);
+
     /// <summary>Records a change made outside the store, such as to an Identity account.</summary>
     Task AddAuditAsync(AuditEvent auditEvent, CancellationToken ct);
 

@@ -473,6 +473,52 @@ public sealed class AuditEvent
     public DateTimeOffset CreatedAt { get; set; }
 }
 
+/// <summary>
+/// One section of the factory's settings (m3-architecture.md §3.1): a JSON document of a settings
+/// record, never a secret. Each write names the revision it read, so two Admins cannot overwrite
+/// each other's change unseen.
+/// </summary>
+public sealed class SettingsSection
+{
+    /// <summary>The section's name, one of <see cref="SettingsSections"/>.</summary>
+    public required string Section { get; set; }
+    public string Json { get; set; } = "{}";
+
+    /// <summary>1 when first written; one more on every change.</summary>
+    public long Revision { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+
+    /// <summary>The Admin who changed it; null when the host seeded it from its environment.</summary>
+    public Guid? UpdatedBy { get; set; }
+}
+
+/// <summary>
+/// A secret the factory holds (m3-architecture.md §3.1): a provider key, an MCP server's variable,
+/// the GitHub token. Only its protected form is stored, and it is never shown again.
+/// </summary>
+public sealed class FactorySecret
+{
+    /// <summary>What it is, e.g. <c>provider:openrouter</c>, <c>mcp:github:TOKEN</c>, <c>github</c>.</summary>
+    public required string Name { get; set; }
+    public required string Ciphertext { get; set; }
+    public DateTimeOffset SetAt { get; set; }
+
+    /// <summary>The Admin who set it; null when the host seeded it from its environment.</summary>
+    public Guid? SetBy { get; set; }
+}
+
+public static class SettingsSections
+{
+    public const string Budgets = "budgets";
+    public const string Providers = "providers";
+    public const string Tools = "tools";
+    public const string Mcp = "mcp";
+    public const string Skills = "skills";
+    public const string Presets = "presets";
+
+    public static readonly IReadOnlyList<string> All = [Budgets, Providers, Tools, Mcp, Skills, Presets];
+}
+
 public static class AuditTargets
 {
     public const string Project = "project";
@@ -481,6 +527,8 @@ public static class AuditTargets
     public const string Finding = "finding";
     public const string User = "user";
     public const string Invitation = "invitation";
+    public const string Settings = "settings";
+    public const string Secret = "secret";
 }
 
 public static class AuditActions
@@ -521,6 +569,9 @@ public static class AuditActions
     public const string ThreadBudget = "thread.budget";
     public const string DecisionAnswer = "decision.answer";
     public const string FindingVerdict = "finding.verdict";
+    public const string SettingsUpdate = "settings.update";
+    public const string SecretSet = "secret.set";
+    public const string SecretClear = "secret.clear";
 }
 
 public static class EventTypes

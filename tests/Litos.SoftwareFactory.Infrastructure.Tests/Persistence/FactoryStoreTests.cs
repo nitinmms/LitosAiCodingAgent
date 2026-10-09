@@ -2569,6 +2569,113 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Single(await Store.ListAuditAsync(null, 1, default));
         Assert.Contains("left the team", (await AuditAsync())[0].DetailsJson);
     }
+
+    // ---- Factory settings and secrets (m3-architecture.md §3) ----
+
+    /// <summary>jsonb does not keep a document's spelling, so settings are compared parsed.</summary>
+    private static int SlotCap(SettingsSection section) => JsonDocument.Parse(section.Json).RootElement.GetProperty("slotCap").GetInt32();
+
+    [SkippableFact]
+    public async Task Settings_HoldNothing_UntilASectionIsWritten()
+    {
+        Assert.Empty(await Store.ListSettingsAsync(default));
+        Assert.Empty(await Store.ListSecretsAsync(default));
+    }
+
+    [SkippableFact]
+    public async Task ASectionsFirstWrite_IsRevisionOne_AndAnAdminsChangeIsAudited()
+    {
+        var saved = await Store.SaveSettingsAsync(SettingsSections.Budgets, """{"slotCap":3}""", 0, Admin, T0, default);
+
+        Assert.Equal((1L, (Guid?)Admin, T0), (saved.Revision, saved.UpdatedBy, saved.UpdatedAt));
+        var listed = Assert.Single(await Store.ListSettingsAsync(default));
+        Assert.Equal((SettingsSections.Budgets, 1L, 3), (listed.Section, listed.Revision, SlotCap(listed)));
+        var row = Assert.Single(await AuditAsync());
+        Assert.Equal((AuditActions.SettingsUpdate, AuditTargets.Settings), (row.Action, row.TargetType));
+        Assert.Contains("budgets", row.DetailsJson);
+    }
+
+    [SkippableFact]
+    public async Task EachChange_RaisesTheRevision()
+    {
+        await Store.SaveSettingsAsync(SettingsSections.Budgets, """{"slotCap":3}""", 0, Admin, T0, default);
+
+        var second = await Store.SaveSettingsAsync(SettingsSections.Budgets, """{"slotCap":4}""", 1, Admin, T0.AddMinutes(1), default);
+
+        Assert.Equal(2, second.Revision);
+        Assert.Equal(4, SlotCap(Assert.Single(await Store.ListSettingsAsync(default))));
+    }
+
+    /// <summary>Two Admins read revision 1; the second to save must not overwrite the first unseen.</summary>
+    [SkippableFact]
+    public async Task AChangeFromAStaleRevision_IsAConflict_AndKeepsTheOtherChange()
+    {
+        await Store.SaveSettingsAsync(SettingsSections.Budgets, """{"slotCap":3}""", 0, Admin, T0, default);
+        await Store.SaveSettingsAsync(SettingsSections.Budgets, """{"slotCap":4}""", 1, Admin, T0.AddMinutes(1), default);
+
+        var conflict = await Assert.ThrowsAsync<StoreConflictException>(
+            () => Store.SaveSettingsAsync(SettingsSections.Budgets, """{"slotCap":9}""", 1, Admin, T0.AddMinutes(2), default));
+
+        Assert.Contains("changed by someone else", conflict.Message);
+        var kept = Assert.Single(await Store.ListSettingsAsync(default));
+        Assert.Equal((2L, 4), (kept.Revision, SlotCap(kept)));
+    }
+
+    [SkippableFact]
+    public async Task AFirstWrite_ThatClaimsARevision_IsAConflict()
+    {
+        await Assert.ThrowsAsync<StoreConflictException>(
+            () => Store.SaveSettingsAsync(SettingsSections.Budgets, """{"slotCap":3}""", 5, Admin, T0, default));
+
+        Assert.Empty(await Store.ListSettingsAsync(default));
+    }
+
+    [SkippableFact]
+    public async Task TheHostsSeeding_IsStored_ButNotAudited()
+    {
+        var seeded = await Store.SaveSettingsAsync(SettingsSections.Budgets, """{"slotCap":2}""", 0, actorId: null, T0, default);
+        await Store.SetSecretAsync("provider:openrouter", "protected-key", actorId: null, T0, default);
+
+        Assert.Null(seeded.UpdatedBy);
+        Assert.Null(Assert.Single(await Store.ListSecretsAsync(default)).SetBy);
+        Assert.Empty(await AuditAsync());
+    }
+
+    [SkippableFact]
+    public async Task ASecret_IsStoredProtected_AndItsAuditNamesItOnly()
+    {
+        await Store.SetSecretAsync("provider:openrouter", "CfDJ8-protected", Admin, T0, default);
+
+        var secret = Assert.Single(await Store.ListSecretsAsync(default));
+        Assert.Equal(("provider:openrouter", "CfDJ8-protected", (Guid?)Admin, T0), (secret.Name, secret.Ciphertext, secret.SetBy, secret.SetAt));
+        var row = Assert.Single(await AuditAsync());
+        Assert.Equal((AuditActions.SecretSet, AuditTargets.Secret), (row.Action, row.TargetType));
+        Assert.Contains("provider:openrouter", row.DetailsJson);
+        Assert.DoesNotContain("CfDJ8", row.DetailsJson); // never the secret, even protected
+    }
+
+    [SkippableFact]
+    public async Task SettingASecretAgain_ReplacesIt()
+    {
+        await Store.SetSecretAsync("github", "first", Admin, T0, default);
+
+        await Store.SetSecretAsync("github", "second", Admin, T0.AddMinutes(1), default);
+
+        var secret = Assert.Single(await Store.ListSecretsAsync(default));
+        Assert.Equal(("second", T0.AddMinutes(1)), (secret.Ciphertext, secret.SetAt));
+    }
+
+    [SkippableFact]
+    public async Task ClearingASecret_RemovesIt_AndClearingOneNotSet_ChangesNothing()
+    {
+        await Store.SetSecretAsync("github", "token", Admin, T0, default);
+
+        Assert.True(await Store.ClearSecretAsync("github", Admin, T0.AddMinutes(1), default));
+        Assert.False(await Store.ClearSecretAsync("github", Admin, T0.AddMinutes(2), default));
+
+        Assert.Empty(await Store.ListSecretsAsync(default));
+        Assert.Equal([AuditActions.SecretClear, AuditActions.SecretSet], (await AuditAsync()).Select(r => r.Action));
+    }
 }
 
 public sealed class SqliteFactoryStoreTests : FactoryStoreContract

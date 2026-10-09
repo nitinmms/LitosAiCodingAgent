@@ -37,6 +37,8 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<Invitation> Invitations => Set<Invitation>();
     public DbSet<ProjectMember> ProjectMembers => Set<ProjectMember>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<SettingsSection> Settings => Set<SettingsSection>();
+    public DbSet<FactorySecret> Secrets => Set<FactorySecret>();
 
     /// <summary>Set by the store once this context's transaction holds the outbox lock.</summary>
     internal bool HoldsOutboxLock { get; set; }
@@ -227,6 +229,22 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.HasOne<Project>().WithMany().HasForeignKey(m => m.ProjectId).OnDelete(DeleteBehavior.Cascade);
             // Which projects a user belongs to: asked on every project-scoped call.
             e.HasIndex(m => m.UserId);
+        });
+
+        model.Entity<SettingsSection>(e =>
+        {
+            e.ToTable("factory_settings");
+            e.HasKey(s => s.Section);
+            e.Property(s => s.Section).HasMaxLength(40);
+            Json(e.Property(s => s.Json));
+            e.Property(s => s.Revision).IsConcurrencyToken();
+        });
+
+        model.Entity<FactorySecret>(e =>
+        {
+            e.ToTable("factory_secrets");
+            e.HasKey(s => s.Name);
+            e.Property(s => s.Name).HasMaxLength(200);
         });
 
         model.Entity<AuditEvent>(e =>
