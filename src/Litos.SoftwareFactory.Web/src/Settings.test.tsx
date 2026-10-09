@@ -16,6 +16,7 @@ function start(host: FakeHost) {
 async function onBudgets(host: FakeHost) {
   const user = start(host);
   await user.click(await screen.findByRole('button', { name: 'Settings' }));
+  await user.click(await screen.findByRole('tab', { name: 'Budgets and limits' }));
   await screen.findByRole('form', { name: 'Budgets and limits' });
   return user;
 }
@@ -205,8 +206,9 @@ describe('the budgets form', () => {
 describe('the settings route', () => {
   it('names its tab, and falls back to the first for one it does not know', () => {
     expect(parseRoute('#/settings/budgets')).toEqual({ view: 'settings', tab: 'budgets' });
-    expect(parseRoute('#/settings')).toEqual({ view: 'settings', tab: 'budgets' });
-    expect(parseRoute('#/settings/nonsense')).toEqual({ view: 'settings', tab: 'budgets' });
+    expect(parseRoute('#/settings/providers')).toEqual({ view: 'settings', tab: 'providers' });
+    expect(parseRoute('#/settings')).toEqual({ view: 'settings', tab: 'providers' });
+    expect(parseRoute('#/settings/nonsense')).toEqual({ view: 'settings', tab: 'providers' });
     expect(routeHash({ view: 'settings', tab: 'budgets' })).toBe('#/settings/budgets');
   });
 });

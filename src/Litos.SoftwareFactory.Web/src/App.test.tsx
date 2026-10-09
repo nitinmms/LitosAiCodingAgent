@@ -198,6 +198,8 @@ describe('threads', () => {
       title: 'Add CSV export to Orders',
       typeLabel: 'bug',
       budgetCap: 300_000,
+      provider: 'openrouter',
+      model: 'deepseek/deepseek-v4.1-flash',
     });
     expect(screen.getByRole('heading', { name: 'Delegate this task' })).toBeInTheDocument();
     expect(stageNow()).toContain('Discuss');

@@ -64,6 +64,9 @@ p{margin:0}
 .tabs button{border:0;background:transparent;padding:8px 12px;cursor:pointer;font-weight:600;color:var(--muted)}
 .tabs button[aria-selected="true"]{color:var(--ink);box-shadow:inset 0 -2px 0 var(--petrol)}
 .with-unit{display:flex;align-items:center;gap:6px}
+.section-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.section-head h2{margin:0}
+.section-head .check{margin-left:auto}
 .top-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:.72rem;font-weight:700;background:var(--petrol-soft);color:var(--petrol);flex:none}
 .userbox{display:flex;align-items:center;gap:8px}

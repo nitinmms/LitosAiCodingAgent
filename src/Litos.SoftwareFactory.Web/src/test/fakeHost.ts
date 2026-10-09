@@ -3,6 +3,7 @@ import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
   AccountRole,
   BudgetSettings,
+  KnownProvider,
   ChatProgress,
   CurrentUser,
   Decision,
@@ -12,6 +13,7 @@ import type {
   LifecycleState,
   Message,
   Person,
+  ProviderSettings,
   Project,
   PullRequestState,
   SecretStatus,
@@ -149,6 +151,15 @@ export class FakeHost {
   settings: Settings = {
     provider: 'openrouter',
     model: 'deepseek/deepseek-v4.1-flash',
+    providers: [
+      {
+        name: 'openrouter',
+        displayName: 'OpenRouter',
+        budgetPrecision: 'strict',
+        models: [{ id: 'deepseek/deepseek-v4.1-flash', contextLength: 1_048_576 }],
+        defaultModel: 'deepseek/deepseek-v4.1-flash',
+      },
+    ],
     defaultBudget: 300_000,
     maximumBudget: null,
     ptcEnabled: true,
@@ -171,7 +182,36 @@ export class FakeHost {
       outputAllowanceTokens: 32_768,
     },
   };
-  readonly secrets: SecretStatus[] = [];
+  /** The Providers tab as stored, seeded as the host's first start does. */
+  providerSettings: SettingsSection<ProviderSettings> = {
+    revision: 1,
+    settings: {
+      providers: [
+        {
+          name: 'openrouter',
+          enabled: true,
+          baseUrl: null,
+          models: [{ id: 'deepseek/deepseek-v4.1-flash', contextLength: 1_048_576 }],
+          defaultModel: 'deepseek/deepseek-v4.1-flash',
+        },
+      ],
+      defaultProvider: 'openrouter',
+      strictOnly: true,
+    },
+  };
+  readonly knownProviders: KnownProvider[] = [
+    { name: 'anthropic', displayName: 'Anthropic', precision: 'Strict', usesBaseUrl: false, keySecret: 'provider:anthropic' },
+    { name: 'openai', displayName: 'OpenAI', precision: 'Strict', usesBaseUrl: false, keySecret: 'provider:openai' },
+    { name: 'gemini', displayName: 'Gemini', precision: 'Strict', usesBaseUrl: false, keySecret: 'provider:gemini' },
+    { name: 'openrouter', displayName: 'OpenRouter', precision: 'Strict', usesBaseUrl: false, keySecret: 'provider:openrouter' },
+    { name: 'mesh_api', displayName: 'MeshApi', precision: 'Estimated', usesBaseUrl: false, keySecret: 'provider:mesh_api' },
+    { name: 'local', displayName: 'Local server', precision: 'Estimated', usesBaseUrl: true, keySecret: 'provider:local' },
+  ];
+  /** Set and cleared through the API; their values are kept only so tests can check them. */
+  readonly secrets: SecretStatus[] = [{ name: 'provider:openrouter', setAt: NOW, setBy: null }];
+  readonly secretValues = new Map<string, string>();
+  /** What GET /api/admin/models/context-length answers, by model; 200,000 otherwise. */
+  readonly contextLengths = new Map<string, number>();
   projects: Project[] = [];
   readonly threads = new Map<string, ThreadDetails>();
   readonly usage = new Map<string, UsageCall[]>();
@@ -470,7 +510,7 @@ export class FakeHost {
     const call: UsageCall = {
       id: this.nextId('c'),
       runId: null,
-      model: this.settings.model,
+      model: this.settings.model ?? '',
       estimatedInput: 9_000,
       reserved: 14_300,
       actualInput: 9_400,
@@ -567,12 +607,24 @@ export class FakeHost {
       const project = this.projects.find((p) => p.id === data.projectId);
       if (!project) return [404, { error: 'The project does not exist.' }];
       if (!String(data.title ?? '').trim()) return [400, { error: 'title is required.' }];
+      // As ProviderSettings.Choose: what this person is offered, or the defaults.
+      if (!this.settings.providers.length)
+        return [400, { error: 'No model provider is ready. An Admin enables one, and sets its key, under Settings.' }];
+      const providerName = (data.provider as string | undefined) ?? this.settings.provider;
+      const provider = this.settings.providers.find((p) => p.name === providerName);
+      if (!provider) return [400, { error: `"${providerName}" is not a provider you can choose.` }];
+      const model = (data.model as string | undefined) ?? provider.defaultModel ?? '';
+      if (!provider.models.some((m) => m.id === model))
+        return [400, { error: `"${model}" is not a model you can choose on ${provider.displayName}.` }];
       return [
         201,
         this.addThread(project, {
           title: String(data.title),
           typeLabel: String(data.typeLabel),
           budgetCap: (data.budgetCap as number | undefined) ?? this.settings.defaultBudget,
+          provider: provider.name,
+          model,
+          budgetPrecision: provider.budgetPrecision,
         }),
       ];
     }
@@ -711,6 +763,34 @@ export class FakeHost {
 
   // ---- factory settings (Api/SettingsApi.cs) ----
 
+  private displayNameOf(name: string): string {
+    return this.knownProviders.find((k) => k.name === name)?.displayName ?? name;
+  }
+
+  /** What /api/settings offers, after the providers or a key changed (ProviderSettings.Offered). */
+  offerProviders(): void {
+    const { providers, defaultProvider, strictOnly } = this.providerSettings.settings;
+    const admin = this.user.roles.includes('Admin');
+    const offered = providers
+      .filter((p) => {
+        const kind = this.knownProviders.find((k) => k.name === p.name)!;
+        const usable = kind.usesBaseUrl ? !!p.baseUrl : this.secrets.some((s) => s.name === kind.keySecret);
+        return p.enabled && p.models.length > 0 && usable && (admin || !strictOnly || kind.precision === 'Strict');
+      })
+      .map((p) => {
+        const kind = this.knownProviders.find((k) => k.name === p.name)!;
+        return {
+          name: p.name,
+          displayName: kind.displayName,
+          budgetPrecision: kind.precision === 'Strict' ? ('strict' as const) : ('estimated' as const),
+          models: p.models,
+          defaultModel: p.defaultModel,
+        };
+      });
+    const byDefault = offered.find((p) => p.name === defaultProvider) ?? offered[0] ?? null;
+    this.settings = { ...this.settings, providers: offered, provider: byDefault?.name ?? null, model: byDefault?.defaultModel ?? null };
+  }
+
   /** Another Admin saves the budgets first: the revision the app read is now stale. */
   budgetsChangedElsewhere(change: Partial<BudgetSettings>): void {
     this.budgets = { revision: this.budgets.revision + 1, settings: { ...this.budgets.settings, ...change } };
@@ -720,7 +800,50 @@ export class FakeHost {
     if (!path.startsWith('/api/admin/')) return null;
     if (!this.user.roles.includes('Admin')) return [403];
 
-    if (path === '/api/admin/settings' && method === 'GET') return [200, { budgets: this.budgets, secrets: this.secrets }];
+    if (path === '/api/admin/settings' && method === 'GET')
+      return [
+        200,
+        { budgets: this.budgets, providers: this.providerSettings, knownProviders: this.knownProviders, secrets: this.secrets },
+      ];
+    if (path === '/api/admin/settings/providers' && method === 'PUT') {
+      if (data.revision !== this.providerSettings.revision)
+        return [409, { error: 'The providers settings were changed by someone else. Reload them and make your change again.' }];
+      const providers = data.settings as ProviderSettings;
+      // A few of ProviderSettings.Validate's rules.
+      const errors: string[] = [];
+      for (const p of providers.providers)
+        if (p.enabled && !p.models.length) errors.push(`${this.displayNameOf(p.name)}: an enabled provider needs at least one allowed model.`);
+      if (providers.defaultProvider && !providers.providers.some((p) => p.name === providers.defaultProvider && p.enabled))
+        errors.push('The default provider must be one that is enabled.');
+      if (errors.length) return [400, { error: errors.join(' '), errors }];
+
+      this.providerSettings = { revision: this.providerSettings.revision + 1, settings: providers };
+      this.offerProviders();
+      return [200, this.providerSettings];
+    }
+    const secret = /^\/api\/admin\/secrets\/([^/]+)$/.exec(path);
+    if (secret && method === 'PUT') {
+      const name = decodeURIComponent(secret[1]!);
+      const index = this.secrets.findIndex((s) => s.name === name);
+      const status = { name, setAt: this.now.toISOString(), setBy: this.user.id };
+      if (index >= 0) this.secrets[index] = status;
+      else this.secrets.push(status);
+      this.secretValues.set(name, String(data.value));
+      this.offerProviders();
+      return [204];
+    }
+    if (secret && method === 'DELETE') {
+      const index = this.secrets.findIndex((s) => s.name === decodeURIComponent(secret[1]!));
+      if (index < 0) return [404, { error: 'That secret is not set.' }];
+      this.secrets.splice(index, 1);
+      this.offerProviders();
+      return [204];
+    }
+    if (path.startsWith('/api/admin/models/context-length') && method === 'GET') {
+      const model = new URL(path, 'http://host').searchParams.get('model');
+      if (!model) return [400, { error: 'model is required.' }];
+      return [200, { model, contextLength: this.contextLengths.get(model) ?? 200_000 }];
+    }
     if (path === '/api/admin/settings/budgets' && method === 'PUT') {
       if (data.revision !== this.budgets.revision)
         return [409, { error: 'The budgets settings were changed by someone else. Reload them and make your change again.' }];

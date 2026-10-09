@@ -12,6 +12,7 @@ import type {
   Invitation,
   InvitationPreview,
   Person,
+  ProviderSettings,
   SpecStatus,
   Project,
   PullRequestInfo,
@@ -109,6 +110,12 @@ export interface FactoryApi {
   adminSettings(): Promise<AdminSettings>;
   /** Saves the section whole; a revision someone else has moved past makes this a 409. */
   saveBudgets(revision: number, settings: BudgetSettings): Promise<SettingsSection<BudgetSettings>>;
+  saveProviders(revision: number, settings: ProviderSettings): Promise<SettingsSection<ProviderSettings>>;
+  /** Sets or replaces a secret; its value is never sent back. */
+  setSecret(name: string, value: string): Promise<void>;
+  clearSecret(name: string): Promise<void>;
+  /** A model's context window, from OpenRouter's catalog or the engine's own table. */
+  contextLength(model: string): Promise<number>;
 }
 
 /**
@@ -218,5 +225,11 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     adminSettings: () => send<AdminSettings>('GET', '/api/admin/settings'),
     saveBudgets: (revision, settings) =>
       send<SettingsSection<BudgetSettings>>('PUT', '/api/admin/settings/budgets', { revision, settings }),
+    saveProviders: (revision, settings) =>
+      send<SettingsSection<ProviderSettings>>('PUT', '/api/admin/settings/providers', { revision, settings }),
+    setSecret: async (name, value) => void (await send<unknown>('PUT', `/api/admin/secrets/${encodeURIComponent(name)}`, { value })),
+    clearSecret: async (name) => void (await send<unknown>('DELETE', `/api/admin/secrets/${encodeURIComponent(name)}`)),
+    contextLength: async (model) =>
+      (await send<{ contextLength: number }>('GET', `/api/admin/models/context-length?model=${encodeURIComponent(model)}`)).contextLength,
   };
 }

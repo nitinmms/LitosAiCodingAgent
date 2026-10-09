@@ -23,9 +23,23 @@ export interface CurrentUser {
   roles: string[];
 }
 
+/** A provider a person may choose for a new thread, with the models allowed on it. */
+export interface OfferedProvider {
+  name: string;
+  displayName: string;
+  budgetPrecision: BudgetPrecision;
+  models: AllowedModel[];
+  defaultModel: string | null;
+}
+
+export type BudgetPrecision = 'strict' | 'estimated';
+
 export interface Settings {
-  provider: string;
-  model: string;
+  /** What a new thread gets when its creator chooses nothing; null while no provider is ready. */
+  provider: string | null;
+  model: string | null;
+  /** What this person may choose from: Members see only strict providers while strict-only is on. */
+  providers: OfferedProvider[];
   defaultBudget: number | null;
   /** No task's budget may be above this, at creation or when raised; null for no limit. */
   maximumBudget: number | null;
@@ -78,7 +92,7 @@ export interface Thread {
   pullRequestUrl: string | null;
   provider: string;
   model: string;
-  budgetPrecision: string;
+  budgetPrecision: BudgetPrecision;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -89,6 +103,9 @@ export interface CreateThread {
   title: string;
   typeLabel: string;
   budgetCap?: number;
+  /** Left out for the factory's default provider, and its default model. */
+  provider?: string;
+  model?: string;
 }
 
 export type MessageAuthor = 'User' | 'Factory';
@@ -387,7 +404,41 @@ export interface SecretStatus {
   setBy: string | null;
 }
 
+/** A model members may choose, with the context window its worker compacts against. */
+export interface AllowedModel {
+  id: string;
+  contextLength: number;
+}
+
+/** One provider on the Providers tab (Core/Settings/ProviderSettings.cs). Its key is a secret. */
+export interface ProviderEntry {
+  name: string;
+  enabled: boolean;
+  /** Where a provider that usesBaseUrl is reached. */
+  baseUrl: string | null;
+  models: AllowedModel[];
+  defaultModel: string | null;
+}
+
+export interface ProviderSettings {
+  providers: ProviderEntry[];
+  defaultProvider: string | null;
+  strictOnly: boolean;
+}
+
+/** A provider the factory can offer, as the host describes it. */
+export interface KnownProvider {
+  name: string;
+  displayName: string;
+  precision: 'Strict' | 'Estimated';
+  usesBaseUrl: boolean;
+  /** The name its key is kept under. */
+  keySecret: string;
+}
+
 export interface AdminSettings {
   budgets: SettingsSection<BudgetSettings>;
+  providers: SettingsSection<ProviderSettings>;
+  knownProviders: KnownProvider[];
   secrets: SecretStatus[];
 }

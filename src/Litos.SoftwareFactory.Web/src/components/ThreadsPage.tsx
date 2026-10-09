@@ -178,6 +178,11 @@ function NewThread({
   const [projectId, setProjectId] = useState(defaultProjectId);
   const [typeLabel, setTypeLabel] = useState(types.includes('feature') ? 'feature' : (types[0] ?? 'feature'));
   const [cap, setCap] = useState(settings?.defaultBudget ? String(settings.defaultBudget) : '');
+  const offered = settings?.providers ?? [];
+  const [providerName, setProviderName] = useState(settings?.provider ?? offered[0]?.name ?? '');
+  const provider = offered.find((p) => p.name === providerName) ?? null;
+  const [model, setModel] = useState(settings?.model ?? provider?.defaultModel ?? '');
+  const chosenModel = provider?.models.find((m) => m.id === model) ?? null;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // The dialog closes on a click on the backdrop only if the press began there too. A browser
@@ -203,7 +208,16 @@ function NewThread({
     setBusy(true);
     setError(null);
     try {
-      onCreated(await api.createThread({ projectId, title: title.trim(), typeLabel, budgetCap }));
+      onCreated(
+        await api.createThread({
+          projectId,
+          title: title.trim(),
+          typeLabel,
+          budgetCap,
+          provider: provider?.name,
+          model: provider ? model : undefined,
+        }),
+      );
     } catch (failure) {
       setError(failure instanceof ApiError ? failure.message : 'The thread could not be created.');
       setBusy(false);
@@ -272,9 +286,47 @@ function NewThread({
             </span>
           </div>
         </div>
-        {settings ? (
+        {offered.length ? (
+          <div className="form-grid">
+            <div className="field">
+              <label htmlFor="nt-provider">Provider</label>
+              <select
+                id="nt-provider"
+                value={providerName}
+                onChange={(e) => {
+                  setProviderName(e.target.value);
+                  setModel(offered.find((p) => p.name === e.target.value)?.defaultModel ?? '');
+                }}
+              >
+                {offered.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.displayName}
+                    {p.budgetPrecision === 'estimated' ? ' (estimated budget)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="nt-model">Model</label>
+              <select id="nt-model" value={model} onChange={(e) => setModel(e.target.value)}>
+                {(provider?.models ?? []).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">{chosenModel ? `Context ${fmt(chosenModel.contextLength)} tokens.` : ''}</span>
+            </div>
+          </div>
+        ) : settings ? (
+          <p className="small error" role="note">
+            No model provider is ready. An admin enables one, and sets its key, under Settings.
+          </p>
+        ) : null}
+        {provider?.budgetPrecision === 'estimated' ? (
           <p className="small muted">
-            Runs on <span className="mono">{settings.model}</span> ({settings.provider}).
+            {provider.displayName} may not report what a call used, so the factory charges its own estimate and the budget can be
+            overrun.
           </p>
         ) : null}
         <ErrorNote message={error} />

@@ -4,8 +4,9 @@ import type { AdminSettings, BudgetSettings, SettingsSection } from '../api/type
 import { fmt } from '../domain/format';
 import { navigate, SETTINGS_TABS, type SettingsTab } from '../domain/route';
 import { ErrorNote } from './bits';
+import { ProvidersTab } from './ProvidersTab';
 
-const TAB_LABELS: Record<SettingsTab, string> = { budgets: 'Budgets and limits' };
+const TAB_LABELS: Record<SettingsTab, string> = { providers: 'Providers', budgets: 'Budgets and limits' };
 
 /**
  * The Admin's factory settings (blueprint §8.3, m3-architecture.md §3.4), one tab per section.
@@ -36,6 +37,13 @@ export function SettingsPage({
     }
   }, [api]);
 
+  /** A section was saved: shown here at its new revision, and what members are offered may have changed. */
+  const saved = <K extends 'budgets' | 'providers'>(key: K, section: AdminSettings[K], text: string) => {
+    setSettings((current) => (current ? { ...current, [key]: section } : current));
+    onNotice(text);
+    onSaved();
+  };
+
   useEffect(() => {
     void reload();
   }, [reload]);
@@ -54,17 +62,29 @@ export function SettingsPage({
         error ? null : (
           <p className="note">Loading…</p>
         )
-      ) : (
-        <BudgetsTab
+      ) : tab === 'providers' ? (
+        <ProvidersTab
           // A newer revision, saved here or reloaded after a conflict, starts the form again from it.
-          key={settings.budgets.revision}
+          key={`providers-${settings.providers.revision}`}
           api={api}
-          section={settings.budgets}
-          onSaved={(budgets) => {
-            setSettings((current) => (current ? { ...current, budgets } : current));
-            onNotice('The budgets are saved.');
+          section={settings.providers}
+          known={settings.knownProviders}
+          secrets={settings.secrets}
+          onSaved={(providers) => saved('providers', providers, 'The providers are saved.')}
+          onSecretChanged={async (text) => {
+            // Only the secrets are read again: edits not yet saved stay in the form.
+            await reload();
+            onNotice(text);
             onSaved();
           }}
+          onReload={reload}
+        />
+      ) : (
+        <BudgetsTab
+          key={`budgets-${settings.budgets.revision}`}
+          api={api}
+          section={settings.budgets}
+          onSaved={(budgets) => saved('budgets', budgets, 'The budgets are saved.')}
           onReload={reload}
         />
       )}
