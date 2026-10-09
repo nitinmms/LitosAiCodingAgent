@@ -109,6 +109,14 @@ A "strict-budget providers only" switch hides the estimated ones from members.
 
 The `budgets` section holds: the default and **maximum** task budget (creation and raising refuse above it), **daily and monthly per-user quotas** (filled into the ledger's snapshot from `usage_entries`; the refusal path already exists), repair cycles per run, and the slot cap (read by the coordinator on each claim). The rework top-up share and the output allowance move here too.
 
+How quotas count, as built:
+
+- Every model call charged to the person who asked for the run counts, chats included (a chat is charged to its own budget, not the task's, but it is still the person's spending).
+- A call counts in the UTC day and month it was reserved in: settled and estimated calls at what they were charged, reserved and unknown ones at what they hold.
+- With both quotas set, whichever has less left decides. A call that fits only with a shorter reply is sent with that shorter output limit, as under a task cap.
+- Two of one person's tasks hold different thread locks, so a reservation under a quota also takes that person's advisory lock (PostgreSQL), and two calls cannot both fit into the same last tokens.
+- The quotas and the output allowance are read on every call, so a change applies from the next one, even mid-task. Budgets, repair cycles and the slot cap apply to what starts afterwards.
+
 ## 6. Tools (build step 4)
 
 - **PTC:** a default for new threads and whether members may turn it off. `TaskThread` gains `PtcEnabled`, read at worker launch, so a thread's choice survives reworks.
@@ -165,7 +173,7 @@ Manual, with real providers:
 Each step ends green (all test projects and the web tests) and is committed separately.
 
 1. **Carried fixes:** a question to a working task no longer blocks it, and its answer is shown (m2-architecture.md §10.1); repository skills are no longer advertised (§7.3). **Done 2026-10-09:** `93114ae` (a follow-up is framed as an aside; a work turn that still stops to answer has its answer posted and is continued with a `Continue` brief, keeping its nudge), `5432b39` (the worker finds no skills until step 6).
-2. **Settings store, secrets and budgets** (§3, §5), with the Settings area's shell and its Budgets tab.
+2. **Settings store, secrets and budgets** (§3, §5), with the Settings area's shell and its Budgets tab. **Done 2026-10-09:** `e26d22c` (tables, revisions, audit), `2882ce8` (key ring in `<data>/keys`), `dd208c4` (budgets read from settings; `/api/admin`), `e712a2e` (quotas applied per call; output allowance moved here), `8db9481` (Settings area and Budgets tab; New thread knows the maximum). Secrets have no screen yet: the provider key and GitHub token get theirs on the Providers tab in step 3.
 3. **Providers and models** (§4), including Gemini's output cap.
 4. **Tools** (§6).
 5. **MCP servers** (§7.1, §7.2, §7.4).
