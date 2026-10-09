@@ -39,21 +39,18 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
         {
             Contents = [.. request.Messages.Select(ToGeminiContent)],
             Tools = request.Tools.Count == 0 ? null : [ToGeminiTool(request.Tools)],
+            GenerationConfig = ToGenerationConfig(request),
         };
 
         var textBuilder = new System.Text.StringBuilder();
         var toolCalls = new List<(string CallId, string Name, JsonElement Args)>();
-        var promptTokens = 0;
-        var candidateTokens = 0;
+        var usage = new UsageInfo(0, 0);
         var callCounter = 0;
 
         await foreach (var chunk in model.StreamContentAsync(contentRequest, ct))
         {
             if (chunk.UsageMetadata is not null)
-            {
-                promptTokens = chunk.UsageMetadata.PromptTokenCount;
-                candidateTokens = chunk.UsageMetadata.CandidatesTokenCount;
-            }
+                usage = ToUsage(chunk.UsageMetadata);
 
             if (!string.IsNullOrEmpty(chunk.Text))
             {
@@ -84,8 +81,36 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
         foreach (var call in toolCalls)
             contentBlocks.Add(new LM.ToolUseBlock(call.CallId, call.Name, call.Args));
 
-        yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), new UsageInfo(promptTokens, candidateTokens));
+        yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), usage);
     }
+
+    /// <summary>
+    /// The caller's output limit and temperature. Without a limit the model may write as much as
+    /// it likes, which a caller that reserves for its reply (the factory's budget) cannot allow.
+    /// </summary>
+    private static GenerationConfig? ToGenerationConfig(ChatRequest request) =>
+        request.MaxOutputTokens is null && request.Temperature is null
+            ? null
+            : new GenerationConfig { MaxOutputTokens = request.MaxOutputTokens, Temperature = request.Temperature };
+
+    /// <summary>
+    /// Gemini's counts in Litos' terms. Its prompt count includes the tokens served from cached
+    /// content, which UsageInfo keeps apart (InputTokens is only what was not cached; see
+    /// CLAUDE.md on token accounting). Thinking is billed as output but counted apart from the
+    /// candidates, so it is added to the output and also reported as reasoning.
+    /// </summary>
+    internal static UsageInfo ToUsage(UsageMetadata metadata)
+    {
+        var cached = Count(metadata.CachedContentTokenCount);
+        var thoughts = Count(metadata.ThoughtsTokenCount);
+        return new UsageInfo(
+            InputTokens: Math.Max(0, Count(metadata.PromptTokenCount) - cached),
+            OutputTokens: Count(metadata.CandidatesTokenCount) + thoughts,
+            CacheReadInputTokens: cached,
+            ReasoningTokens: thoughts);
+    }
+
+    private static int Count(int? tokens) => tokens ?? 0;
 
     private static Content ToGeminiContent(LM.ChatMessage message)
     {

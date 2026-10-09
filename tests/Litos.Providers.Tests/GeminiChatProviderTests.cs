@@ -260,4 +260,65 @@ public class GeminiChatProviderTests
         Assert.Equal("Gemini Pro", models[0].DisplayName);
         Assert.Equal("models/gemini-flash", models[1].DisplayName);
     }
+
+    // ---- The output limit and usage (m3-architecture.md §4.2) ----
+
+    [Fact]
+    public async Task StreamAsync_SendsTheOutputLimitAndTemperature_AsGenerationConfig()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalTextResponse));
+        var request = new ChatRequest([ChatMessage.User("hello")], [], "model", Temperature: 0.2, MaxOutputTokens: 8_192);
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        var config = json.RootElement.GetProperty("generationConfig");
+        Assert.Equal(8_192, config.GetProperty("maxOutputTokens").GetInt32());
+        Assert.Equal(0.2, config.GetProperty("temperature").GetDouble(), 5);
+    }
+
+    [Fact]
+    public async Task StreamAsync_WithNeitherLimitNorTemperature_SendsNoGenerationConfig()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalTextResponse));
+
+        await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hello")], [], "model"), CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        Assert.False(json.RootElement.TryGetProperty("generationConfig", out var config) && config.ValueKind != JsonValueKind.Null);
+    }
+
+    /// <summary>Gemini's prompt count includes cached content, and its thinking is billed as output.</summary>
+    [Fact]
+    public async Task StreamAsync_Usage_SplitsOutCachedInput_AndCountsThinkingAsOutput()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            [{"candidates":[{"content":{"parts":[{"text":"hi"}]}}],
+              "usageMetadata":{"promptTokenCount":10000,"cachedContentTokenCount":7000,"candidatesTokenCount":300,"thoughtsTokenCount":1200,"totalTokenCount":11500}}]
+            """));
+
+        var events = await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "model"), CancellationToken.None));
+
+        var usage = Assert.Single(events.OfType<MessageCompleted>()).Usage;
+        Assert.Equal((3_000, 0, 7_000, 10_000), (usage.InputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens, usage.TotalInputTokens));
+        Assert.Equal((1_500, 1_200), (usage.OutputTokens, usage.ReasoningTokens));
+    }
+
+    [Fact]
+    public async Task StreamAsync_UsageOverSeveralChunks_KeepsTheLastReport()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            [{"candidates":[{"content":{"parts":[{"text":"h"}]}}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":1}},
+             {"candidates":[{"content":{"parts":[{"text":"i"}]}}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":2,"thoughtsTokenCount":40}}]
+            """));
+
+        var events = await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "model"), CancellationToken.None));
+
+        var usage = Assert.Single(events.OfType<MessageCompleted>()).Usage;
+        Assert.Equal((100, 42, 40), (usage.InputTokens, usage.OutputTokens, usage.ReasoningTokens));
+    }
 }

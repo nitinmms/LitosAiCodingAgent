@@ -93,9 +93,24 @@ public sealed class OpenAiChatProvider(OpenAIClient client, OpenRouterModelCatal
 
         if (textBuilder.Length > 0)
             contentBlocks.Add(new LM.TextBlock(textBuilder.ToString()));
-        yield return new MessageCompleted(
-            LM.ChatMessage.Assistant(contentBlocks),
-            new UsageInfo(response.Usage?.InputTokenCount ?? 0, response.Usage?.OutputTokenCount ?? 0));
+        yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), ToUsage(response.Usage));
+    }
+
+    /// <summary>
+    /// OpenAI's counts in Litos' terms. Its input count includes the tokens read from the prompt
+    /// cache, which UsageInfo keeps apart (InputTokens is only what was not cached; see CLAUDE.md
+    /// on token accounting); reasoning is already part of its output count.
+    /// </summary>
+    internal static UsageInfo ToUsage(ResponseTokenUsage? usage)
+    {
+        if (usage is null)
+            return new UsageInfo(0, 0);
+        var cached = usage.InputTokenDetails?.CachedTokenCount ?? 0;
+        return new UsageInfo(
+            InputTokens: Math.Max(0, usage.InputTokenCount - cached),
+            OutputTokens: usage.OutputTokenCount,
+            CacheReadInputTokens: cached,
+            ReasoningTokens: usage.OutputTokenDetails?.ReasoningTokenCount ?? 0);
     }
 
     private static JsonElement ParseToolArguments(string json)

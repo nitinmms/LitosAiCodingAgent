@@ -298,6 +298,34 @@ public class OpenAiChatProviderTests
         Assert.All(models, m => Assert.Equal(m.Id, m.DisplayName));
         Assert.All(models, m => Assert.False(m.IsDefault));
     }
-}
 
-#pragma warning restore OPENAI001
+    // ---- Usage under prompt caching (CLAUDE.md, token accounting) ----
+
+    /// <summary>OpenAI's input count includes what its prompt cache served; Litos keeps that apart.</summary>
+    [Fact]
+    public async Task StreamAsync_Usage_SplitsOutCachedInput_AndReportsReasoning()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalTextResponse.Replace(
+            "\"usage\": { \"input_tokens\": 10, \"output_tokens\": 5, \"total_tokens\": 15 }",
+            "\"usage\": { \"input_tokens\": 12000, \"input_tokens_details\": { \"cached_tokens\": 9000 }, \"output_tokens\": 900, \"output_tokens_details\": { \"reasoning_tokens\": 600 }, \"total_tokens\": 12900 }")));
+
+        var events = await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "model"), CancellationToken.None));
+
+        var usage = Assert.Single(events.OfType<MessageCompleted>()).Usage;
+        Assert.Equal((3_000, 9_000, 12_000), (usage.InputTokens, usage.CacheReadInputTokens, usage.TotalInputTokens));
+        Assert.Equal((900, 600), (usage.OutputTokens, usage.ReasoningTokens));
+    }
+
+    [Fact]
+    public async Task StreamAsync_SendsTheOutputLimit()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalTextResponse));
+
+        await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "model", MaxOutputTokens: 8_192), CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        Assert.Equal(8_192, json.RootElement.GetProperty("max_output_tokens").GetInt32());
+    }
+}
