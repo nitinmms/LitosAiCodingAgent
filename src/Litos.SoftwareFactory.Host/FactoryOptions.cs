@@ -11,7 +11,7 @@ namespace Litos.SoftwareFactory.Host;
 /// </summary>
 public sealed class FactoryOptions
 {
-    /// <summary>M1 runs every task on OpenRouter.</summary>
+    /// <summary>The provider M1 and M2 ran every task on; the first start seeds it (FACTORY_MODEL).</summary>
     public const string OpenRouter = "openrouter";
 
     public string? ConnectionString { get; set; }
@@ -28,11 +28,14 @@ public sealed class FactoryOptions
 
     public string? AdminPassword { get; set; }
 
-    public string Provider { get; set; } = OpenRouter;
-
+    /// <summary>The OpenRouter model the first start allows and makes the default.</summary>
     public string Model { get; set; } = "deepseek/deepseek-v4.1-flash";
 
+    /// <summary>The context window of a thread created before M3, which did not record its own.</summary>
     public int ContextLength { get; set; } = 1_048_576;
+
+    /// <summary>The context window a thread's worker compacts against.</summary>
+    public int ContextLengthOf(Core.Store.TaskThread thread) => thread.ContextLength ?? ContextLength;
 
     /// <summary>The cap a new thread gets when its creator sets none; null means no cap.</summary>
     public long? DefaultBudget { get; set; } = 300_000;

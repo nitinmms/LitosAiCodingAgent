@@ -3,6 +3,7 @@ using System;
 using Litos.SoftwareFactory.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(FactoryDbContext))]
-    partial class FactoryDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261009113452_M3ThreadContextLength")]
+    partial class M3ThreadContextLength
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

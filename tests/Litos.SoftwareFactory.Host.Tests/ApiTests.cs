@@ -571,7 +571,7 @@ public sealed class ApiTests : IAsyncLifetime
 
         await _host.DelegateAsync(threadId);
         var claimed = (await _host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
-        var run = new Runs.ActiveRun(claimed.Run.Id, threadId, claimed.Run.RequestedBy, _host.Options.Provider, _host.Options.Model);
+        var run = new Runs.ActiveRun(claimed.Run.Id, threadId, claimed.Run.RequestedBy, FactoryOptions.OpenRouter, _host.Options.Model);
         _host.Provider.EnqueueReply("pong", new Litos.Agent.Streaming.UsageInfo(40, 10));
         await _host.App.Services.GetRequiredService<Gateway.ModelGateway>().HandleAsync(
             run,
@@ -644,11 +644,10 @@ public class FactoryOptionsTests
     }
 
     [Fact]
-    public void Defaults_AreOpenRouter_DeepSeekFlash_AndTwoSlots()
+    public void Defaults_AreDeepSeekFlash_AndTwoSlots()
     {
         var options = new FactoryOptions();
 
-        Assert.Equal("openrouter", options.Provider);
         Assert.Equal("deepseek/deepseek-v4.1-flash", options.Model);
         Assert.Equal(2, options.SlotCap);
         Assert.Equal(2, options.Limits.MaxRepairCycles);

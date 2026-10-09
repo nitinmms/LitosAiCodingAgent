@@ -37,7 +37,7 @@ public sealed class LiveGatewayTests(ITestOutputHelper output)
         var threadId = await host.CreateThreadAsync(await host.RegisterProjectAsync(), budgetCap: 20_000);
         await host.DelegateAsync(threadId);
         var claimed = (await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!;
-        var run = new ActiveRun(claimed.Run.Id, threadId, claimed.Run.RequestedBy, host.Options.Provider, host.Options.Model);
+        var run = new ActiveRun(claimed.Run.Id, threadId, claimed.Run.RequestedBy, FactoryOptions.OpenRouter, host.Options.Model);
 
         var request = new GatewayRequest(Guid.NewGuid().ToString(), new ChatRequest(
             [ChatMessage.User("Reply with exactly one word: pong")], [], "ignored-by-the-gateway",

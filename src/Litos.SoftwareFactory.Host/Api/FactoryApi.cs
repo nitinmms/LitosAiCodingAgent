@@ -4,6 +4,7 @@ using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Host.Auth;
@@ -20,7 +21,10 @@ public sealed record RegisterProjectRequest(
     string GitHubUrl, string? Name = null, string DefaultBranch = "main", string Preset = VerificationPresets.DotNet,
     double? CoverageThresholdPercent = null, bool PullRequestEnabled = true, string? ProfileJson = null);
 
-public sealed record CreateThreadRequest(Guid ProjectId, string Title, string TypeLabel = "feature", long? BudgetCap = null);
+/// <param name="Provider">Null for the factory's default provider.</param>
+/// <param name="Model">Null for the provider's default model.</param>
+public sealed record CreateThreadRequest(
+    Guid ProjectId, string Title, string TypeLabel = "feature", long? BudgetCap = null, string? Provider = null, string? Model = null);
 
 /// <summary>MessageId is the client's own id for the message: the dispatch idempotency key.</summary>
 public sealed record PostMessageRequest(string MessageId, string Text);
@@ -111,19 +115,35 @@ public static class FactoryApi
         var decisionRoutes = api.MapGroup("/decisions/{id:guid}").RequireProjectAccess(ProjectScoped.Decision);
         var findingRoutes = api.MapGroup("/findings/{id:guid}").RequireProjectAccess(ProjectScoped.Finding);
 
-        api.MapGet("/settings", (FactoryOptions options, FactorySettings settings) => Results.Ok(new
+        api.MapGet("/settings", (ClaimsPrincipal user, FactoryOptions options, FactorySettings settings) =>
         {
-            options.Provider,
-            options.Model,
-            DefaultBudget = settings.Budgets.DefaultTaskBudget,
-            MaximumBudget = settings.Budgets.MaximumTaskBudget,
-            options.PtcEnabled,
-            // What fraction of a cached input token counts against a task's budget (§9).
-            options.Budget.CachedInputWeight,
-            Presets = VerificationPresets.Names,
-            TaskTypes = TaskTypes.All,
-            PromptRevision = Core.Briefs.BriefComposer.Revision,
-        }));
+            var providers = settings.Providers;
+            var isAdmin = ProjectAccess.IsAdmin(user);
+            var byDefault = providers.Choose(null, null, isAdmin, settings.IsUsable, out _);
+            return Results.Ok(new
+            {
+                // What a new thread gets when its creator chooses nothing; null when no provider is ready.
+                Provider = byDefault?.Provider.Name,
+                Model = byDefault?.Model.Id,
+                // What this person may choose from (m3-architecture.md §4.4).
+                Providers = providers.Offered(isAdmin, settings.IsUsable).Select(p => new
+                {
+                    p.Name,
+                    KnownProviders.Find(p.Name)!.DisplayName,
+                    BudgetPrecision = Precision(p.Name),
+                    p.Models,
+                    p.DefaultModel,
+                }),
+                DefaultBudget = settings.Budgets.DefaultTaskBudget,
+                MaximumBudget = settings.Budgets.MaximumTaskBudget,
+                options.PtcEnabled,
+                // What fraction of a cached input token counts against a task's budget (§9).
+                options.Budget.CachedInputWeight,
+                Presets = VerificationPresets.Names,
+                TaskTypes = TaskTypes.All,
+                PromptRevision = Core.Briefs.BriefComposer.Revision,
+            });
+        });
 
         // ---- Projects ----
 
@@ -214,6 +234,9 @@ public static class FactoryApi
             var cap = request.BudgetCap ?? budgets.DefaultTaskBudget;
             if (budgets.RefuseCap(cap) is { } refused)
                 return Problem(refused);
+            if (settings.Providers.Choose(Blank(request.Provider), Blank(request.Model), ProjectAccess.IsAdmin(user), settings.IsUsable, out var notOffered)
+                is not var (provider, model))
+                return Problem(notOffered!);
 
             try
             {
@@ -226,8 +249,9 @@ public static class FactoryApi
                     TypeLabel = request.TypeLabel,
                     BudgetCap = cap,
                     SessionId = Guid.NewGuid().ToString("N"),
-                    Provider = options.Provider,
-                    Model = options.Model,
+                    Provider = provider.Name,
+                    Model = model.Id,
+                    ContextLength = model.ContextLength,
                     CreatedAt = now,
                     UpdatedAt = now,
                 }, ct);
@@ -619,12 +643,17 @@ public static class FactoryApi
         thread.PullRequestUrl,
         thread.Provider,
         thread.Model,
-        // Every provider in M1 honours the output cap and reports usage, so budgets are strict.
-        BudgetPrecision = "strict",
+        // Whether the provider honours the output cap and reports usage (m3-architecture.md §4.2).
+        BudgetPrecision = Precision(thread.Provider),
         thread.Revision,
         thread.CreatedAt,
         thread.UpdatedAt,
     };
+
+    /// <summary>"strict" or "estimated", as the app reads it.</summary>
+    private static string Precision(string provider) => KnownProviders.PrecisionOf(provider).ToString().ToLowerInvariant();
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static object SpecView(Specification spec) => new
     {

@@ -69,6 +69,10 @@ public sealed class TaskThread
     public required string Provider { get; set; }
     public required string Model { get; set; }
 
+    /// <summary>The model's context window, copied from the allowed model when the thread was
+    /// created (m3-architecture.md §4.4); null for a thread created before M3.</summary>
+    public int? ContextLength { get; set; }
+
     /// <summary>The next message's sequence number within this thread.</summary>
     public long NextMessageSequence { get; set; } = 1;
 

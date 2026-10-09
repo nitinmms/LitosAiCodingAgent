@@ -30,7 +30,7 @@ public sealed class ReadingWorker : IAsyncDisposable
         var handle = await launcher.LaunchAsync(
             new WorkerLaunch(
                 run.Id.ToString("N"), workingCopy, thread.Provider, thread.Model,
-                options.ContextLength, options.DataDirectory, hostUrl, active.Secret)
+                options.ContextLengthOf(thread), options.DataDirectory, hostUrl, active.Secret)
             {
                 PtcEnabled = options.PtcEnabled,
                 TempDirectory = options.RunTempDirectory(run.Id),

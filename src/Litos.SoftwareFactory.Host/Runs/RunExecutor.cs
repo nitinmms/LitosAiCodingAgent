@@ -376,7 +376,7 @@ public sealed class RunExecutor(
         // context past the engine's compaction trigger is compacted first, keeping what the
         // task still needs.
         int? sessionInput = active.Baselines.TryGetValue(sessionId, out var baseline) ? baseline.TotalInputTokens : null;
-        if (ContextPolicy.ShouldCompactBefore(step, sessionInput, options.ContextLength))
+        if (ContextPolicy.ShouldCompactBefore(step, sessionInput, options.ContextLengthOf(data.Thread)))
         {
             try
             {
@@ -821,7 +821,7 @@ public sealed class RunExecutor(
         var handle = await launcher.LaunchAsync(
             new WorkerLaunch(
                 claimed.Run.Id.ToString("N"), workspaces.For(claimed.Project).Path, claimed.Thread.Provider, claimed.Thread.Model,
-                options.ContextLength, options.DataDirectory, HostUrl, active.Secret)
+                options.ContextLengthOf(claimed.Thread), options.DataDirectory, HostUrl, active.Secret)
             {
                 PtcEnabled = options.PtcEnabled,
                 TempDirectory = options.RunTempDirectory(claimed.Run.Id),
