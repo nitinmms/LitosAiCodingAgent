@@ -1,3 +1,4 @@
+using Litos.SoftwareFactory.Core.Budget;
 using Litos.SoftwareFactory.Core.Settings;
 
 namespace Litos.SoftwareFactory.Core.Tests.Settings;
@@ -13,6 +14,8 @@ public class BudgetSettingsTests
         Assert.Equal((300_000L, (long?)null, 2, 2, 0.5), (defaults.DefaultTaskBudget!.Value, defaults.MaximumTaskBudget, defaults.RepairCyclesPerRun, defaults.SlotCap, defaults.ReworkTopUpShare));
         Assert.Null(defaults.DailyUserQuota);
         Assert.Null(defaults.MonthlyUserQuota);
+        Assert.Equal(new BudgetPolicy().OutputAllowanceTokens, defaults.OutputAllowanceTokens);
+        Assert.Equal(UserQuotas.None, defaults.Quotas());
         Assert.Empty(defaults.Validate());
     }
 
@@ -30,6 +33,8 @@ public class BudgetSettingsTests
         { new BudgetSettings { SlotCap = 17 }, "Concurrent runs must be between 1 and 16" },
         { new BudgetSettings { ReworkTopUpShare = 11 }, "top-up must be between 0 and 10" },
         { new BudgetSettings { ReworkTopUpShare = double.NaN }, "top-up must be between 0 and 10" },
+        { new BudgetSettings { OutputAllowanceTokens = 4_095 }, "output allowance must be between 4,096 and 200,000" },
+        { new BudgetSettings { OutputAllowanceTokens = 200_001 }, "output allowance must be between 4,096 and 200,000" },
     };
 
     [Theory]
@@ -60,6 +65,15 @@ public class BudgetSettingsTests
         Assert.Null(settings.RefuseCap(600_000));
         Assert.Contains("at most 600,000 tokens", settings.RefuseCap(600_001));
         Assert.Contains("must have a budget of at most 600,000", settings.RefuseCap(null));
+    }
+}
+
+public class BudgetSettingsQuotasTests
+{
+    [Fact]
+    public void Quotas_AreTheDailyAndMonthlySettings()
+    {
+        Assert.Equal(new UserQuotas(50_000, 900_000), new BudgetSettings { DailyUserQuota = 50_000, MonthlyUserQuota = 900_000 }.Quotas());
     }
 }
 

@@ -1033,6 +1033,89 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(["Implement", "LightReview", null], (await Store.ListUsageAsync(running.Thread.Id, default)).Select(u => u.Phase));
     }
 
+    // ---- A user's quotas (m3-architecture.md §5) ----
+
+    private ReserveCommand ReserveWithin(ClaimedRun run, string key, long? daily = null, long? monthly = null) =>
+        Reserve(run, key) with { Quotas = new UserQuotas(daily, monthly) };
+
+    /// <summary>A quota is the person's, not the task's: what their other tasks used counts.</summary>
+    [SkippableFact]
+    public async Task Reserve_AboveTheUsersDailyQuota_CountingTheirOtherTasks_IsRefusedForQuota_AndChangesNothing()
+    {
+        var first = await RunningAsync("salesapp", cap: 1_000_000);
+        var second = await RunningAsync("billing", cap: 1_000_000);
+        await Store.ReserveAsync(ReserveWithin(first, "a", daily: 30_000), Policy, T0, default);
+        await Store.SettleAsync("a", new UsageInfo(14_000, 1_000), 15_000, T0, default);
+
+        var result = await Store.ReserveAsync(ReserveWithin(second, "b", daily: 30_000), Policy, T0, default);
+
+        var refused = Assert.IsType<Refused>(result.Decision);
+        Assert.Equal((RefusalReason.UserQuota, 20_500L, 15_000L), (refused.Reason, refused.Needed, refused.Remaining));
+        Assert.Equal(0, (await ThreadAsync(second.Thread.Id)).TokensReserved);
+        Assert.Empty(await Store.ListUsageAsync(second.Thread.Id, default));
+    }
+
+    /// <summary>What is reserved, and unknown usage that stays charged, count against the quota too.</summary>
+    [SkippableFact]
+    public async Task Reserve_CountsTheUsersReservedAndUnknownCalls_AgainstTheQuota()
+    {
+        var first = await RunningAsync("salesapp", cap: 1_000_000);
+        var second = await RunningAsync("billing", cap: 1_000_000);
+        await Store.ReserveAsync(ReserveWithin(first, "held"), Policy, T0, default);
+        await Store.ReserveAsync(ReserveWithin(first, "lost"), Policy, T0, default);
+        await Store.MarkUsageUnknownAsync("lost", default);
+
+        // 41,000 is held; a 20,500 call needs 61,500.
+        Assert.IsType<Refused>((await Store.ReserveAsync(ReserveWithin(second, "b", daily: 61_499), Policy, T0, default)).Decision);
+        Assert.IsType<Admitted>((await Store.ReserveAsync(ReserveWithin(second, "c", daily: 61_500), Policy, T0, default)).Decision);
+    }
+
+    [SkippableFact]
+    public async Task Reserve_CountsOnlyThisDay_ForTheDailyQuota_AndOnlyThisMonth_ForTheMonthlyOne()
+    {
+        var first = await RunningAsync("salesapp", cap: 1_000_000);
+        var second = await RunningAsync("billing", cap: 1_000_000);
+        // 30 September, 1 October and, as now, 6 October.
+        var lastMonth = T0.AddDays(-1);
+        var earlierThisMonth = T0;
+        var now = T0.AddDays(5);
+        await Store.ReserveAsync(ReserveWithin(first, "september"), Policy, lastMonth, default);
+        await Store.SettleAsync("september", new UsageInfo(90_000, 10_000), 100_000, lastMonth, default);
+        await Store.ReserveAsync(ReserveWithin(first, "october"), Policy, earlierThisMonth, default);
+        await Store.SettleAsync("october", new UsageInfo(20_000, 5_000), 25_000, earlierThisMonth, default);
+
+        // Today nothing is used: a daily quota alone admits the call.
+        Assert.IsType<Admitted>((await Store.ReserveAsync(ReserveWithin(second, "daily", daily: 20_500), Policy, now, default)).Decision);
+        await Store.ReleaseReservationAsync("daily", default);
+
+        // This month 25,000 is used, September's 100,000 not counted.
+        var refused = Assert.IsType<Refused>((await Store.ReserveAsync(ReserveWithin(second, "monthly", daily: 100_000, monthly: 45_000), Policy, now, default)).Decision);
+        Assert.Equal((RefusalReason.UserQuota, 20_000L), (refused.Reason, refused.Remaining));
+        Assert.IsType<Admitted>((await Store.ReserveAsync(ReserveWithin(second, "fits", daily: 100_000, monthly: 45_500), Policy, now, default)).Decision);
+    }
+
+    [SkippableFact]
+    public async Task Reserve_IgnoresOtherPeoplesUsage_ForTheQuota()
+    {
+        var mine = await RunningAsync("salesapp", cap: 1_000_000);
+        var theirs = await RunningAsync("billing", cap: 1_000_000);
+        await Store.ReserveAsync(Reserve(theirs, "theirs") with { UserId = Guid.NewGuid() }, Policy, T0, default);
+        await Store.SettleAsync("theirs", new UsageInfo(90_000, 10_000), 100_000, T0, default);
+
+        Assert.IsType<Admitted>((await Store.ReserveAsync(ReserveWithin(mine, "mine", daily: 20_500), Policy, T0, default)).Decision);
+    }
+
+    [SkippableFact]
+    public async Task Reserve_WithoutQuotas_IgnoresTheUsersUsage()
+    {
+        var first = await RunningAsync("salesapp", cap: 1_000_000);
+        var second = await RunningAsync("billing", cap: 1_000_000);
+        await Store.ReserveAsync(Reserve(first, "a"), Policy, T0, default);
+        await Store.SettleAsync("a", new UsageInfo(900_000, 0), 900_000, T0, default);
+
+        Assert.IsType<Admitted>((await Store.ReserveAsync(Reserve(second, "b"), Policy, T0, default)).Decision);
+    }
+
     // ---- A call is reserved for about what it will cost ----
 
     private static readonly BudgetPolicy Real = new() { OutputAllowanceTokens = 32_768, MinimumOutputTokens = 4_096, Margin = 0.10 };
@@ -2061,6 +2144,26 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal((0L, 0L), ((await ThreadAsync(thread.Id)).TokensUsed, (await ThreadAsync(thread.Id)).TokensReserved));
         var entry = Assert.Single(await Store.ListUsageAsync(thread.Id, default));
         Assert.Equal((Ben, "Chat"), (entry.UserId, entry.Phase)); // counted to the person who asked
+    }
+
+    /// <summary>A chat is charged to its own budget, not the task's, but it is still the person's quota.</summary>
+    [SkippableFact]
+    public async Task AChatsModelCalls_CountAgainstThePersonsQuota()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync(), cap: 300_000);
+        var chat = (await ChatAsync(thread.Id)).RunId!.Value;
+        await Store.ReserveAsync(new ReserveCommand("chat-1", thread.Id, chat, Ben, "openrouter", "m", 10_000, 10_000), Real, T0, default);
+        await Store.SettleAsync("chat-1", new UsageInfo(9_000, 500), 9_500, T0, default);
+
+        // The chat's budget has 90,500 left, Ben's day 40,500: after 11,000 of input, that leaves
+        // the reply 29,500 of the 32,768 it would otherwise get.
+        var next = new ReserveCommand("chat-2", thread.Id, chat, Ben, "openrouter", "m", 10_000, 10_000) { Quotas = new UserQuotas(50_000, null) };
+        Assert.Equal(29_500, Assert.IsType<Admitted>((await Store.ReserveAsync(next, Real, T0, default)).Decision).MaxOutputTokens);
+
+        // Under a quota of 20,000 Ben's day is spent: 9,500 used and the 40,500 just reserved.
+        var last = next with { RequestKey = "chat-3", Quotas = new UserQuotas(20_000, null) };
+        var refused = Assert.IsType<Refused>((await Store.ReserveAsync(last, Real, T0, default)).Decision);
+        Assert.Equal(RefusalReason.UserQuota, refused.Reason);
     }
 
     [SkippableFact]

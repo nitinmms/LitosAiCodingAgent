@@ -105,7 +105,7 @@ public static class SettingsSeeding
     /// and GitHub token are seeded as secrets too, but the host reads them from its environment
     /// until providers come from settings (m3-architecture.md §10, step 3).
     /// </summary>
-    public static readonly IReadOnlyList<string> Replaced = ["FACTORY_DEFAULT_BUDGET", "FACTORY_SLOT_CAP", "FACTORY_REWORK_TOP_UP"];
+    public static readonly IReadOnlyList<string> Replaced = ["FACTORY_DEFAULT_BUDGET", "FACTORY_SLOT_CAP", "FACTORY_REWORK_TOP_UP", "FACTORY_OUTPUT_ALLOWANCE"];
 
     /// <summary>Writes what is missing; returns whether anything was.</summary>
     public static async Task<bool> SeedAsync(FactorySettings settings, FactoryOptions options, CancellationToken ct)
@@ -119,6 +119,7 @@ public static class SettingsSeeding
                 SlotCap = options.SlotCap,
                 ReworkTopUpShare = options.Budget.ReworkTopUpShare,
                 RepairCyclesPerRun = options.Limits.MaxRepairCycles,
+                OutputAllowanceTokens = options.Budget.OutputAllowanceTokens,
             }, 0, actorId: null, ct);
             seeded = true;
         }

@@ -34,6 +34,20 @@ public sealed record BudgetSnapshot(
     public long? QuotaRemaining => QuotaCap is null ? null : Math.Max(0, QuotaCap.Value - QuotaUsed - QuotaReserved);
 }
 
+/// <summary>
+/// The tokens one person's model calls may use in a UTC day and a UTC month, wherever they are made
+/// (m3-architecture.md §5); null for no quota.
+/// </summary>
+public sealed record UserQuotas(long? Daily, long? Monthly)
+{
+    public static readonly UserQuotas None = new(null, null);
+
+    public bool Any => Daily is not null || Monthly is not null;
+}
+
+/// <summary>What one person's calls have been charged in a quota window, and what they still hold reserved there.</summary>
+public readonly record struct QuotaUsage(long Used, long Reserved);
+
 public enum RefusalReason
 {
     TaskBudget,
@@ -248,6 +262,26 @@ public static class BudgetLedger
 
     /// <summary>Raising a cap changes the maximum, not the accounting history.</summary>
     public static BudgetSnapshot WithTaskCap(BudgetSnapshot budget, long? cap) => budget with { TaskCap = cap };
+
+    /// <summary>Where the quota windows that contain <paramref name="now"/> begin: its UTC day and its UTC month.</summary>
+    public static (DateTimeOffset Day, DateTimeOffset Month) QuotaWindowStarts(DateTimeOffset now)
+    {
+        var utc = now.ToUniversalTime();
+        return (new DateTimeOffset(utc.Year, utc.Month, utc.Day, 0, 0, 0, TimeSpan.Zero), new DateTimeOffset(utc.Year, utc.Month, 1, 0, 0, 0, TimeSpan.Zero));
+    }
+
+    /// <summary>
+    /// The user's quota as the snapshot holds it: of the daily and the monthly quota, whichever has
+    /// less left, so a call is admitted only when it fits both. Without quotas, the snapshot as it was.
+    /// </summary>
+    public static BudgetSnapshot WithQuota(BudgetSnapshot budget, UserQuotas quotas, QuotaUsage today, QuotaUsage thisMonth)
+    {
+        var windows = new[] { (Cap: quotas.Daily, Usage: today), (Cap: quotas.Monthly, Usage: thisMonth) }
+            .Where(w => w.Cap is not null)
+            .Select(w => budget with { QuotaCap = w.Cap, QuotaUsed = w.Usage.Used, QuotaReserved = w.Usage.Reserved })
+            .ToList();
+        return windows.Count == 0 ? budget : windows.MinBy(w => w.QuotaRemaining)!;
+    }
 
     /// <summary>What a change request adds to a task's cap: a share of the cap the task was created
     /// with, so that a cap raised by hand does not raise every later top-up. Nothing for a task

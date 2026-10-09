@@ -47,6 +47,7 @@ public sealed class SettingsApiTests : IAsyncLifetime
         var settings = budgets.GetProperty("settings");
         Assert.Equal(_host.Options.SlotCap, settings.GetProperty("slotCap").GetInt32()); // TestHost runs one task at a time
         Assert.Equal(_host.Options.DefaultBudget, settings.GetProperty("defaultTaskBudget").GetInt64());
+        Assert.Equal(_host.Options.Budget.OutputAllowanceTokens, settings.GetProperty("outputAllowanceTokens").GetInt32());
         Assert.Equal(JsonValueKind.Null, settings.GetProperty("maximumTaskBudget").ValueKind);
     }
 

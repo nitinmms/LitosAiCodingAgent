@@ -5,9 +5,11 @@ using Litos.Agent.Tools;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Budget;
 using Litos.SoftwareFactory.Core.Estimation;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Gateway;
 using Litos.SoftwareFactory.Host.Runs;
+using Litos.SoftwareFactory.Host.Settings;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Litos.SoftwareFactory.Host.Tests;
@@ -104,6 +106,42 @@ public sealed class GatewayTests : IAsyncLifetime
         Assert.Equal(error.Message, _run.BudgetRefusal);            // the coordinator turns this into PausedBudget
         var thread = await ThreadAsync();
         Assert.Equal((0L, 0L), (thread.TokensUsed, thread.TokensReserved));
+    }
+
+    /// <summary>The budgets an Admin sets, read on every call (m3-architecture.md §5).</summary>
+    private async Task SetBudgetsAsync(Func<BudgetSettings, BudgetSettings> change)
+    {
+        var settings = _host.App.Services.GetRequiredService<FactorySettings>();
+        await settings.SaveAsync(SettingsSections.Budgets, change(settings.Budgets), settings.RevisionOf(SettingsSections.Budgets), null, default);
+    }
+
+    [Fact]
+    public async Task CallAboveThePersonsQuota_IsRefusedBeforeSending_AsAQuota()
+    {
+        await StartRunAsync(cap: 1_000_000);
+        await SetBudgetsAsync(b => b with { DailyUserQuota = 20_000 });
+
+        var events = await CallAsync(Request());
+
+        var error = Assert.IsType<GatewayError>(Assert.Single(events));
+        Assert.Equal(GatewayErrorCodes.QuotaExhausted, error.Code);
+        Assert.Contains("your quota has 20,000 left", error.Message);
+        Assert.Empty(_host.Provider.Requests);
+        Assert.Equal(error.Message, _run.BudgetRefusal);
+    }
+
+    [Fact]
+    public async Task AChangedOutputAllowance_AppliesFromTheNextCall()
+    {
+        await StartRunAsync(cap: 1_000_000);
+        _host.Provider.EnqueueReply("one", new UsageInfo(14_200, 800));
+        _host.Provider.EnqueueReply("two", new UsageInfo(14_200, 800));
+        await CallAsync(Request());
+
+        await SetBudgetsAsync(b => b with { OutputAllowanceTokens = 9_000 });
+        await CallAsync(Request());
+
+        Assert.Equal([4_000, 9_000], _host.Provider.Requests.Select(r => r.MaxOutputTokens));
     }
 
     [Fact]

@@ -589,6 +589,62 @@ public class BudgetLedgerTests
         Assert.Equal(32_768, policy.OutputAllowanceTokens);
     }
 
+    // ---- A user's daily and monthly quotas (m3-architecture.md §5) ----
+
+    [Fact]
+    public void QuotaWindows_StartAtTheUtcDayAndMonth_WhateverTheOffsetOfNow()
+    {
+        // 02:30 on 1 November in India is still 31 October in UTC.
+        var (day, month) = BudgetLedger.QuotaWindowStarts(new DateTimeOffset(2026, 11, 1, 2, 30, 0, TimeSpan.FromHours(5.5)));
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 31, 0, 0, 0, TimeSpan.Zero), day);
+        Assert.Equal(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), month);
+    }
+
+    private static readonly BudgetSnapshot TaskOnly = new(TaskCap: 500_000, TaskUsed: 0, TaskReserved: 0);
+
+    [Fact]
+    public void WithQuota_NoQuotas_LeavesTheSnapshotAsItWas()
+    {
+        Assert.Same(TaskOnly, BudgetLedger.WithQuota(TaskOnly, UserQuotas.None, new QuotaUsage(9_000, 0), new QuotaUsage(9_000, 0)));
+    }
+
+    [Fact]
+    public void WithQuota_OnlyADailyQuota_IsTheDaysUsage()
+    {
+        var budget = BudgetLedger.WithQuota(TaskOnly, new UserQuotas(Daily: 100_000, Monthly: null), new QuotaUsage(30_000, 5_000), new QuotaUsage(900_000, 5_000));
+
+        Assert.Equal((100_000L, 30_000L, 5_000L, 65_000L), (budget.QuotaCap!.Value, budget.QuotaUsed, budget.QuotaReserved, budget.QuotaRemaining!.Value));
+        Assert.Equal(TaskOnly.TaskCap, budget.TaskCap);
+    }
+
+    [Fact]
+    public void WithQuota_OnlyAMonthlyQuota_IsTheMonthsUsage()
+    {
+        var budget = BudgetLedger.WithQuota(TaskOnly, new UserQuotas(Daily: null, Monthly: 1_000_000), new QuotaUsage(30_000, 0), new QuotaUsage(400_000, 10_000));
+
+        Assert.Equal(590_000, budget.QuotaRemaining);
+    }
+
+    [Fact]
+    public void WithQuota_Both_TheOneWithLessLeftDecides()
+    {
+        var quotas = new UserQuotas(Daily: 100_000, Monthly: 1_000_000);
+
+        // Early in the month the day is the limit; late in it the month is.
+        Assert.Equal(70_000, BudgetLedger.WithQuota(TaskOnly, quotas, new QuotaUsage(30_000, 0), new QuotaUsage(200_000, 0)).QuotaRemaining);
+        Assert.Equal(20_000, BudgetLedger.WithQuota(TaskOnly, quotas, new QuotaUsage(30_000, 0), new QuotaUsage(980_000, 0)).QuotaRemaining);
+    }
+
+    [Fact]
+    public void WithQuota_ACallThatFitsTheDayButNotTheMonth_IsRefusedForQuota()
+    {
+        var budget = BudgetLedger.WithQuota(TaskOnly, new UserQuotas(Daily: 100_000, Monthly: 1_000_000), new QuotaUsage(0, 0), new QuotaUsage(985_000, 0));
+
+        var refused = Assert.IsType<Refused>(BudgetLedger.Admit(budget, expectedInputCharge: 15_000, Policy));
+        Assert.Equal((RefusalReason.UserQuota, 15_000L), (refused.Reason, refused.Remaining));
+    }
+
     [Fact]
     public void UsageStatus_HasTheLedgerStates_InAnOrderThatMustNotChange()
     {

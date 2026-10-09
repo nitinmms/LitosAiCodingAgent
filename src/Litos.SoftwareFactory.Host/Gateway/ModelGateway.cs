@@ -9,6 +9,7 @@ using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Runs;
+using Litos.SoftwareFactory.Host.Settings;
 
 namespace Litos.SoftwareFactory.Host.Gateway;
 
@@ -25,8 +26,8 @@ namespace Litos.SoftwareFactory.Host.Gateway;
 /// cannot exceed its reservation; it is then settled against what the provider reports.
 /// </summary>
 public sealed class ModelGateway(
-    IFactoryStore store, IChatProviderFactory providers, FactoryOptions options, FactorySignals signals, IClock clock,
-    ILogger<ModelGateway> logger)
+    IFactoryStore store, IChatProviderFactory providers, FactoryOptions options, FactorySettings settings, FactorySignals signals,
+    IClock clock, ILogger<ModelGateway> logger)
 {
     /// <summary>One calibration window per provider and model, learned from settled calls (§9.5).</summary>
     private readonly ConcurrentDictionary<string, CalibrationWindow> _calibration = new();
@@ -103,13 +104,16 @@ public sealed class ModelGateway(
                 ? baseline!.ExpectedCachedTokens(clock.UtcNow, options.Budget.CacheWindow)
                 : 0;
 
+            // Read per call, so an Admin's change to the allowance or the quotas applies from the next one.
+            var budgets = settings.Budgets;
             var reservation = await store.ReserveAsync(
                 new ReserveCommand(requestKey, run.ThreadId, run.RunId, run.UserId, run.Provider, run.Model, estimate.RawTokens, estimate.Tokens)
                 {
                     ExpectedCachedInput = expectedCached,
                     Phase = run.Phase,
+                    Quotas = budgets.Quotas(),
                 },
-                options.Budget, clock.UtcNow, ct);
+                options.Budget with { OutputAllowanceTokens = budgets.OutputAllowanceTokens }, clock.UtcNow, ct);
             signals.EventsWritten();
 
             if (reservation.Decision is Refused refused)

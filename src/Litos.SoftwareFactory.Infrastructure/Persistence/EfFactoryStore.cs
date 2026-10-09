@@ -31,6 +31,12 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
     /// </summary>
     private const long OutboxLockKey = 0x4C49544F534F5554; // "LITOSOUT"
 
+    /// <summary>
+    /// The first key of each user's quota lock, the second being derived from their id. Two-key
+    /// advisory locks never collide with the single-key ones above.
+    /// </summary>
+    private const int QuotaLockClass = 0x51554F54; // "QUOT"
+
     /// <summary>Stands in for row and advisory locks on providers that have neither (SQLite, in tests).</summary>
     private static readonly SemaphoreSlim FallbackWriteLock = new(1, 1);
 
@@ -1104,8 +1110,9 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             return new ReservationResult(new Admitted(existing.Reserved, policy.OutputAllowanceTokens), AlreadyKnown: true);
 
         var ledger = await LedgerAsync(db, thread, command.RunId, ct);
+        var budget = command.Quotas.Any ? await WithQuotaAsync(db, ledger.Snapshot, command.UserId, command.Quotas, now, ct) : ledger.Snapshot;
         var expectedInputCharge = BudgetLedger.ExpectedInputCharge(command.EstimatedInput, command.ExpectedCachedInput, policy.CachedInputWeight);
-        var decision = BudgetLedger.Admit(ledger.Snapshot, expectedInputCharge, policy);
+        var decision = BudgetLedger.Admit(budget, expectedInputCharge, policy);
         if (decision is not Admitted admitted)
             return new ReservationResult(decision, AlreadyKnown: false);
 
@@ -1216,6 +1223,36 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         }
 
         return reconciled;
+    }
+
+    /// <summary>
+    /// The snapshot with the user's quota filled in from what their calls were charged and still
+    /// hold reserved this UTC day and month (m3-architecture.md §5). A user's calls on other
+    /// threads hold other thread locks, so the user's own lock keeps two of them from both fitting
+    /// into the same last tokens; it is held until the reservation commits.
+    /// </summary>
+    private static async Task<BudgetSnapshot> WithQuotaAsync(
+        FactoryDbContext db, BudgetSnapshot budget, Guid userId, UserQuotas quotas, DateTimeOffset now, CancellationToken ct)
+    {
+        if (db.Database.IsNpgsql())
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({QuotaLockClass}, {userId.GetHashCode()})", ct);
+
+        var (dayStart, monthStart) = BudgetLedger.QuotaWindowStarts(now);
+        var sums = await db.Usage.AsNoTracking()
+            .Where(u => u.UserId == userId && u.CreatedAt >= monthStart)
+            .GroupBy(u => u.UserId)
+            .Select(g => new
+            {
+                MonthUsed = g.Sum(u => u.Status == UsageStatus.Settled || u.Status == UsageStatus.Estimated ? u.Charged : 0),
+                MonthReserved = g.Sum(u => u.Status == UsageStatus.Reserved || u.Status == UsageStatus.Unknown ? u.Reserved : 0),
+                DayUsed = g.Sum(u => u.CreatedAt >= dayStart && (u.Status == UsageStatus.Settled || u.Status == UsageStatus.Estimated) ? u.Charged : 0),
+                DayReserved = g.Sum(u => u.CreatedAt >= dayStart && (u.Status == UsageStatus.Reserved || u.Status == UsageStatus.Unknown) ? u.Reserved : 0),
+            })
+            .FirstOrDefaultAsync(ct);
+
+        return BudgetLedger.WithQuota(budget, quotas,
+            today: new QuotaUsage(sums?.DayUsed ?? 0, sums?.DayReserved ?? 0),
+            thisMonth: new QuotaUsage(sums?.MonthUsed ?? 0, sums?.MonthReserved ?? 0));
     }
 
     /// <summary>

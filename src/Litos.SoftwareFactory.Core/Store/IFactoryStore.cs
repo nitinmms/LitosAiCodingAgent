@@ -75,6 +75,9 @@ public sealed record ReserveCommand(
 
     /// <summary>The turn the call is made in; see UsageEntry.Phase.</summary>
     public string? Phase { get; init; }
+
+    /// <summary>The quotas of UserId, as the settings stood when the call was made.</summary>
+    public UserQuotas Quotas { get; init; } = UserQuotas.None;
 }
 
 /// <summary>The outcome of asking to send one model call.</summary>
