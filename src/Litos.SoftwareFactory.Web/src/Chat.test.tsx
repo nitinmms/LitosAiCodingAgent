@@ -96,7 +96,10 @@ describe('asking a question', () => {
     act(() => void host.reportChat(thread.id, { activity: 'Read src/Orders.cs', modelCalls: 2, toolCalls: 1 }));
     expect(await within(waiting()).findByText('Read src/Orders.cs...')).toBeInTheDocument();
     expect(within(waiting()).getByText('1 lookup, 2 model calls so far')).toBeInTheDocument();
-    // Applied straight from the event: nothing is fetched again for it.
+    // Applied straight from the event: nothing is fetched again for it. The question's own message
+    // event schedules a reload (120 ms after it); on a loaded machine that can land late, inside
+    // this window, so it is let land before counting.
+    await new Promise((resolve) => setTimeout(resolve, 400));
     const fetches = host.sent('GET', `/api/threads/${thread.id}`).length;
     act(() => void host.reportChat(thread.id, { activity: 'Thinking', modelCalls: 2, toolCalls: 1 }));
     await within(waiting()).findByText('Thinking...');
