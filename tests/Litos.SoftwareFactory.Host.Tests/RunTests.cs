@@ -523,6 +523,20 @@ public sealed class RunTests : IAsyncLifetime
         Assert.Null(details.Thread.PullRequestNumber);
     }
 
+    /// <summary>The token is a setting an Admin may not have set yet: the branch is still handed off.</summary>
+    [Fact]
+    public async Task WithNoGitHubToken_TheHandoffHasNoPullRequest_AndGitHubIsNotAsked()
+    {
+        _host.GitHub.IsConfigured = false;
+        var (_, threadId) = await DelegatedAsync();
+
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Empty(_host.GitHub.Drafts);
+        Assert.Null(details.Thread.PullRequestNumber);
+        Assert.DoesNotContain("draft PR", Assert.Single(Texts(details, MessageKind.Handoff)));
+    }
+
     [Fact]
     public async Task WorkerCannotBeStarted_BlocksTheRun_WithTheReason()
     {

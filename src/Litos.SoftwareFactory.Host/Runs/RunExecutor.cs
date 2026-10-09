@@ -685,7 +685,7 @@ public sealed class RunExecutor(
             // the handoff, not treated as the handoff failing.
             PullRequestRef? pullRequest = null;
             var notes = new List<string>();
-            if (data.Project.PullRequestEnabled && gitHub is not null)
+            if (data.Project.PullRequestEnabled && gitHub is { IsConfigured: true })
             {
                 try
                 {

@@ -124,6 +124,10 @@ public sealed record PullRequestDraft(string Owner, string Repository, string He
 
 public interface IGitHub
 {
+    /// <summary>Whether a token is set to call GitHub with; when not, the factory skips pull
+    /// requests rather than failing on them.</summary>
+    bool IsConfigured => true;
+
     /// <summary>Creates the draft PR for a task branch, or updates its title and body when one
     /// is already open for that branch.</summary>
     Task<PullRequestRef> CreateOrUpdateDraftPullRequestAsync(PullRequestDraft draft, CancellationToken ct);

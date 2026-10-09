@@ -1,6 +1,7 @@
 using Litos.Agent.Providers;
 using Litos.Host;
 using Litos.SoftwareFactory.Core.Ports;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Api;
 using Litos.SoftwareFactory.Host.Auth;
@@ -76,8 +77,8 @@ public static class FactoryHostApp
         services.AddSingleton<ReadingCopies>();
         services.AddSingleton<ChatExecutor>();
         services.AddSingleton<SpecExecutor>();
-        if (!string.IsNullOrWhiteSpace(options.GitHubToken))
-            services.AddSingleton<IGitHub>(_ => new GitHubClient(GitHubClient.CreateHttpClient(options.GitHubToken)));
+        // The factory-wide token is a setting (m3-architecture.md §2): read when it is used.
+        services.AddSingleton<IGitHub, GitHubFromSettings>();
 
         services.AddSingleton<PullRequestStatus>(sp => new PullRequestStatus(
             sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILogger<PullRequestStatus>>(), sp.GetService<IGitHub>()));
@@ -157,7 +158,8 @@ public static class FactoryHostApp
     }
 }
 
-public sealed class GitWorkspaceProvider(FactoryOptions options) : IWorkspaceProvider
+/// <summary>Working copies authenticated with the GitHub token set when each is opened.</summary>
+public sealed class GitWorkspaceProvider(FactoryOptions options, FactorySettings settings) : IWorkspaceProvider
 {
     public IWorkspace For(Project project) => Clone(project, options.WorkspacesDirectory);
 
@@ -167,7 +169,7 @@ public sealed class GitWorkspaceProvider(FactoryOptions options) : IWorkspacePro
         Path.Combine(directory, project.Id.ToString("N")),
         new GitHubRepository(project.GitHubOwner, project.GitHubRepository).CloneUrl)
     {
-        AccessToken = options.GitHubToken,
+        AccessToken = settings.Secret(SecretNames.GitHub),
     });
 }
 

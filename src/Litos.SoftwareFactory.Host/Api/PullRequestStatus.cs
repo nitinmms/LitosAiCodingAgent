@@ -20,7 +20,7 @@ public sealed class PullRequestStatus(IClock clock, ILogger<PullRequestStatus> l
     /// GitHub token, or GitHub did not answer.</summary>
     public async Task<PullRequestState?> GetAsync(string owner, string repository, int number, CancellationToken ct)
     {
-        if (gitHub is null)
+        if (gitHub is not { IsConfigured: true })
             return null;
 
         var key = $"{owner}/{repository}#{number}";

@@ -142,12 +142,14 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
 public static class SettingsSeeding
 {
     /// <summary>
-    /// The environment variables the database now replaces, for the host's log. The GitHub token
-    /// is seeded as a secret too, but read from the environment until it moves (m3-architecture.md
-    /// §10, step 3). FACTORY_CONTEXT_LENGTH is still the window of a thread created before M3.
+    /// The environment variables the database now replaces, for the host's log.
+    /// FACTORY_CONTEXT_LENGTH is still the window of a thread created before M3.
     /// </summary>
     public static readonly IReadOnlyList<string> Replaced =
-        ["FACTORY_DEFAULT_BUDGET", "FACTORY_SLOT_CAP", "FACTORY_REWORK_TOP_UP", "FACTORY_OUTPUT_ALLOWANCE", "FACTORY_MODEL", "OPENROUTER_API_KEY"];
+    [
+        "FACTORY_DEFAULT_BUDGET", "FACTORY_SLOT_CAP", "FACTORY_REWORK_TOP_UP", "FACTORY_OUTPUT_ALLOWANCE", "FACTORY_MODEL",
+        "OPENROUTER_API_KEY", "FACTORY_GITHUB_TOKEN",
+    ];
 
     /// <summary>Writes what is missing; returns whether anything was.</summary>
     public static async Task<bool> SeedAsync(FactorySettings settings, FactoryOptions options, CancellationToken ct)

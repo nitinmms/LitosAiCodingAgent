@@ -330,6 +330,9 @@ public sealed class ScriptedVerifier : IVerifier
 
 public sealed class FakeGitHub : IGitHub
 {
+    /// <summary>False: as if no GitHub token were set.</summary>
+    public bool IsConfigured { get; set; } = true;
+
     public List<PullRequestDraft> Drafts { get; } = [];
 
     public Exception? Fail { get; set; }
