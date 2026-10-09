@@ -323,3 +323,24 @@ The scan fix carried from M1 (§2) can land between any two steps; it changes th
 - a Member invited by link sees only their projects;
 - a thread goes chat → spec → approve → implement → handoff;
 - one M1 task re-runs within its earlier cost, as a regression check.
+
+### 10.1 M2 check results
+
+| # | Check | Result |
+| --- | --- | --- |
+| 1 | Two tasks at once, a third waits | **Passed 2026-10-08.** GetOrDefault (`filedb-sharp`, 55,583 tokens, PR #13) and hex colours (`insta-story-generator`, 33,941, PR #5) ran at once. A third task, IsEmpty (`filedb-sharp`), showed "held by" and started when the first handed off; it asked one genuine decision and handed off at 78,550 (PR #14). |
+| 2 | Host stopped mid-run, Interrupted, Recover continues | **Failed, fixed, passed 2026-10-09.** See below. "Keys with a prefix" (`filedb-sharp`) recovered mid-Implement, posted the resume check, and handed off at 176,757 tokens including the cut-off attempt (PR #15). |
+| 3 | A Member invited by link sees only their projects | Open |
+| 4 | Chat → spec → approve → implement → handoff | Open |
+| 5 | One M1 task re-runs within its earlier cost | Open |
+
+**Check 2 first failed.** On Ctrl+C the web server, and with it the model gateway, stopped before the coordinator's stopping token was cancelled. The turn under way failed with "the model gateway could not be reached", and the run was recorded Blocked (TurnFaulted), as if the task had failed. The tests had not shown it because they cancel the token directly, never through a real shutdown in which the gateway goes first. Fixed in `fa6054f`:
+
+- runs are given a token linked to `ApplicationStopping`, which is signalled before anything stops;
+- a turn that fails after it (a faulted result, an unreachable worker, a broken stream) leaves the run Running, for the next start to mark Interrupted; the same holds for a spec turn, and a chat says the host was stopping;
+- the coordinator claims nothing new once the host is stopping;
+- `HostShutdownTests` covers each, and that the same failure with the host running still blocks.
+
+Also from check 2, `6c2e74c`: a status note keeps its line breaks, so the resume check's list no longer runs together on one line.
+
+**Carried to M3: reviews that never reply.** On check 2 the light review of a 5-file change spent about 39,000 tokens reasoning and reached the output limit without replying, so the run handed off with the review `DidNotFinish` and said so, as designed (`RunOrchestrator.OnReviewCutOff`). It is the third such review with `deepseek/deepseek-v4.1-flash` (36,006 tokens on F7, 64,717 on the R3 retry). The handling is right; the cost is not, since each attempt buys nothing. Two remedies, for M3's settings and model catalog work: a separate model for review turns, chosen for direct answers over long reasoning; or a cap on reasoning without a reply, which saves tokens but still yields no review.
