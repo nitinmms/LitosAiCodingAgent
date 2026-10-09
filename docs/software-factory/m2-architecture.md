@@ -330,7 +330,7 @@ The scan fix carried from M1 (§2) can land between any two steps; it changes th
 | --- | --- | --- |
 | 1 | Two tasks at once, a third waits | **Passed 2026-10-08.** GetOrDefault (`filedb-sharp`, 55,583 tokens, PR #13) and hex colours (`insta-story-generator`, 33,941, PR #5) ran at once. A third task, IsEmpty (`filedb-sharp`), showed "held by" and started when the first handed off; it asked one genuine decision and handed off at 78,550 (PR #14). |
 | 2 | Host stopped mid-run, Interrupted, Recover continues | **Failed, fixed, passed 2026-10-09.** See below. "Keys with a prefix" (`filedb-sharp`) recovered mid-Implement, posted the resume check, and handed off at 176,757 tokens including the cut-off attempt (PR #15). |
-| 3 | A Member invited by link sees only their projects | Open |
+| 3 | A Member invited by link sees only their projects | **Passed 2026-10-09.** `nitin`, invited by link to `insta-story-generator` only, saw none of `filedb-sharp`'s 15 threads, no admin screens, and a `filedb-sharp` thread's address said "Thread not found". Three display bugs found and fixed; see below. |
 | 4 | Chat → spec → approve → implement → handoff | Open |
 | 5 | One M1 task re-runs within its earlier cost | Open |
 
@@ -342,5 +342,11 @@ The scan fix carried from M1 (§2) can land between any two steps; it changes th
 - `HostShutdownTests` covers each, and that the same failure with the host running still blocks.
 
 Also from check 2, `6c2e74c`: a status note keeps its line breaks, so the resume check's list no longer runs together on one line.
+
+**Check 3 found three display bugs, none of them a leak.** The host's 404 held throughout; what the app did with it, and with several people on one thread, did not:
+
+- every person's message was labelled with the viewer's own name, so nitin saw admin's request as his. Messages now carry `authorName` from the directory (`2f7d2c6`);
+- the address of a thread the user cannot see showed the first thread of their own list under it. It now says "Thread not found", in the same words whether the thread does not exist or is in another project (`39a40e6`);
+- a task cancelled mid-way, which stays in its stage's column, showed its turn label "Done" as a green pill. It now says Cancelled, in grey (`70b8e5e`).
 
 **Carried to M3: reviews that never reply.** On check 2 the light review of a 5-file change spent about 39,000 tokens reasoning and reached the output limit without replying, so the run handed off with the review `DidNotFinish` and said so, as designed (`RunOrchestrator.OnReviewCutOff`). It is the third such review with `deepseek/deepseek-v4.1-flash` (36,006 tokens on F7, 64,717 on the R3 retry). The handling is right; the cost is not, since each attempt buys nothing. Two remedies, for M3's settings and model catalog work: a separate model for review turns, chosen for direct answers over long reasoning; or a cap on reasoning without a reply, which saves tokens but still yields no review.
