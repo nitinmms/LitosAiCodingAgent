@@ -332,7 +332,7 @@ The scan fix carried from M1 (§2) can land between any two steps; it changes th
 | 2 | Host stopped mid-run, Interrupted, Recover continues | **Failed, fixed, passed 2026-10-09.** See below. "Keys with a prefix" (`filedb-sharp`) recovered mid-Implement, posted the resume check, and handed off at 176,757 tokens including the cut-off attempt (PR #15). |
 | 3 | A Member invited by link sees only their projects | **Passed 2026-10-09.** `nitin`, invited by link to `insta-story-generator` only, saw none of `filedb-sharp`'s 15 threads, no admin screens, and a `filedb-sharp` thread's address said "Thread not found". Three display bugs found and fixed; see below. |
 | 4 | Chat → spec → approve → implement → handoff | **Passed 2026-10-09.** "Clear a collection" (`filedb-sharp`): a plain question answered from the code, `@factory spec` proposed 14 criteria with no open questions, approved, built with one steer (a batch of Delete operations, no new log operation kind), which the scan recorded and the code kept; handed off and accepted (PR #16, 5 files, 15 new tests, three Minor review findings on test coverage). The budget was raised twice; see below. |
-| 5 | One M1 task re-runs within its earlier cost | Open |
+| 5 | One M1 task re-runs within its earlier cost | **Failed on cost 2026-10-09; quality matched.** F3 "Automatic compaction" from the same base as M1's re-run (`18422cc`, on a temporary branch): accepted after one rework at **302,061** against M1's **231,807** (+30%), all five criteria met with tests (M1 left criterion 5 weak). See below. |
 
 **Check 2 first failed.** On Ctrl+C the web server, and with it the model gateway, stopped before the coordinator's stopping token was cancelled. The turn under way failed with "the model gateway could not be reached", and the run was recorded Blocked (TurnFaulted), as if the task had failed. The tests had not shown it because they cancel the token directly, never through a real shutdown in which the gateway goes first. Fixed in `fa6054f`:
 
@@ -363,6 +363,28 @@ The spec is charged to the task and cost more than a third of the default budget
 
 **Also from check 4:** the decision scan's note joined its assumptions into one sentence (`e44cfe0` puts each on a line), and messages showed Markdown as written, hashes and all (`97d76ae` lays out headings, lists, paragraphs and bold, as elements, never HTML).
 
+**Check 5 by stage,** against M1's F3 re-run on `m1.9`:
+
+| Stage | M1 | M2 |
+| --- | --- | --- |
+| Decision scan and three questions | — | 23,953 |
+| Implement | 99,633 (26 calls) | 143,728 (36 calls) |
+| Review | 51,578 (full) | 30,089 (light) |
+| Repair of the review's blocking finding | — | 27,873 |
+| **First handoff** | **151,211** | **225,643** |
+| Rework | 80,596 | 76,418 |
+| **Accepted** | **231,807** | **302,061** |
+
+- **The implementation cost 44% more** for a diff of the same size: the regression the check exists to catch, and not yet explained.
+- **The scan paid for itself in quality:** one of its three questions was the failure-observability gap behind criterion 4, which M1 missed twice; answered, it was met from the first handoff. It did not pay for itself in tokens.
+- **The repair fixed a real bug:** one failed compaction switched automatic compaction off for the life of the instance.
+- **About 29,000 of the rework was lost to a follow-up** (below). Without it the total is about 273,000: still over.
+- The scan assumed a fixed minimum file size; criterion 2 wants it configurable. The agent sees the request, not the task set's criteria, so this was the rework's to fix, as M1's was for criteria 4 and 5.
+
+**Found on check 5: a question sent while a task works blocks it.** A plain message to a running task is a follow-up, steered into the agent's turn as the person's words. "what are you working on now?" was answered in text, which ends a turn; the turn had changed no files, so the orchestrator blocked it at once as NoProgress (that rule skips the nudge), and the answer was never shown. Resume continued it. To fix: frame a follow-up as an aside to take into account without ending the turn; continue, not block, a turn that ended after one; and post the agent's reply to the thread.
+
 **Carried to M3: reviews that never reply.** On check 2 the light review of a 5-file change spent about 39,000 tokens reasoning and reached the output limit without replying, so the run handed off with the review `DidNotFinish` and said so, as designed (`RunOrchestrator.OnReviewCutOff`). It is the third such review with `deepseek/deepseek-v4.1-flash` (36,006 tokens on F7, 64,717 on the R3 retry). The handling is right; the cost is not, since each attempt buys nothing. Two remedies, for M3's settings and model catalog work: a separate model for review turns, chosen for direct answers over long reasoning; or a cap on reasoning without a reply, which saves tokens but still yields no review.
 
 **Carried to M3: the spec's cost.** A spec is charged to the task, and check 4's took 14 model calls and 111,501 tokens for a one-method feature: it reads the code as widely as an implementation does. A spec allowance, as the scan and the review have, would bound it.
+
+**Carried to M3: implementation cost.** Check 5's implementation took 36 calls and 143,728 tokens against M1's 26 and 99,633 for a diff of the same size. Find out why before M3 adds more to the brief.
