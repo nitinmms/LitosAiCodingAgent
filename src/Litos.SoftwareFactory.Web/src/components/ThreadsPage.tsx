@@ -194,6 +194,11 @@ function NewThread({
       setError('The token budget must be a whole number above zero.');
       return;
     }
+    const maximum = settings?.maximumBudget ?? null;
+    if (budgetCap !== undefined && maximum !== null && budgetCap > maximum) {
+      setError(`A task's budget can be at most ${fmt(maximum)} tokens.`);
+      return;
+    }
 
     setBusy(true);
     setError(null);
@@ -263,6 +268,7 @@ function NewThread({
             <input id="nt-cap" type="number" min={1} value={cap} onChange={(e) => setCap(e.target.value)} />
             <span className="hint">
               {settings?.defaultBudget ? `Left empty, it is ${fmt(settings.defaultBudget)}.` : 'Left empty, the task has no cap.'}
+              {settings?.maximumBudget ? ` At most ${fmt(settings.maximumBudget)}.` : ''}
             </span>
           </div>
         </div>

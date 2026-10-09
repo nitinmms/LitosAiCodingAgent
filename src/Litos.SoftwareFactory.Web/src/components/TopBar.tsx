@@ -27,8 +27,13 @@ export function TopBar({
     ['board', 'Board'],
     ['threads', 'Threads'],
     ['projects', 'Projects'],
-    // People, invitations and project membership are an admin's to manage.
-    ...(user.roles.includes('Admin') ? [['people', 'People'] as [Exclude<Route['view'], 'invite'>, string]] : []),
+    // People, invitations, project membership and the factory's settings are an admin's to manage.
+    ...(user.roles.includes('Admin')
+      ? ([
+          ['people', 'People'],
+          ['settings', 'Settings'],
+        ] as [Exclude<Route['view'], 'invite'>, string][])
+      : []),
   ];
 
   return (

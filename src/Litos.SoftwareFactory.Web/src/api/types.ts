@@ -27,6 +27,8 @@ export interface Settings {
   provider: string;
   model: string;
   defaultBudget: number | null;
+  /** No task's budget may be above this, at creation or when raised; null for no limit. */
+  maximumBudget: number | null;
   ptcEnabled: boolean;
   /** The fraction of a cached input token that counts against a task's budget, 0 to 1. */
   cachedInputWeight: number;
@@ -355,4 +357,37 @@ export interface Person {
 export interface DirectoryEntry {
   id: string;
   name: string;
+}
+
+// ---- Factory settings (Admin; Api/SettingsApi.cs, m3-architecture.md §3) ----
+
+/** One settings section as stored: a change names the revision it was read at. */
+export interface SettingsSection<T> {
+  revision: number;
+  settings: T;
+}
+
+/** The Budgets and limits tab (Core/Settings/BudgetSettings.cs). Null means "no cap", "no limit" or "no quota". */
+export interface BudgetSettings {
+  defaultTaskBudget: number | null;
+  maximumTaskBudget: number | null;
+  dailyUserQuota: number | null;
+  monthlyUserQuota: number | null;
+  repairCyclesPerRun: number;
+  slotCap: number;
+  /** A change request adds this share of the task's first cap: 0.5 is half. */
+  reworkTopUpShare: number;
+  outputAllowanceTokens: number;
+}
+
+/** Whether a secret is set, and when: never its value. */
+export interface SecretStatus {
+  name: string;
+  setAt: string;
+  setBy: string | null;
+}
+
+export interface AdminSettings {
+  budgets: SettingsSection<BudgetSettings>;
+  secrets: SecretStatus[];
 }

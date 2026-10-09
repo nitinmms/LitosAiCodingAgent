@@ -7,9 +7,10 @@ import { InvitePage } from './components/InvitePage';
 import { Login } from './components/Login';
 import { PeoplePage } from './components/PeoplePage';
 import { ProjectsPage } from './components/ProjectsPage';
+import { SettingsPage } from './components/SettingsPage';
 import { ThreadsPage } from './components/ThreadsPage';
 import { TopBar } from './components/TopBar';
-import { navigate, useRoute, type Route } from './domain/route';
+import { navigate, SETTINGS_TABS, useRoute, type Route } from './domain/route';
 import { awaitsYou, newer } from './domain/task';
 
 const NOTICE_MS = 6_000;
@@ -229,7 +230,11 @@ export function App({ createClient, openEvents }: AppProps) {
         view={route.view}
         awaitingYou={waiting.length}
         reconnecting={boardReconnecting}
-        onNavigate={(view) => navigate(view === 'threads' ? { view, threadId: null } : ({ view } as Route))}
+        onNavigate={(view) =>
+          navigate(
+            view === 'threads' ? { view, threadId: null } : view === 'settings' ? { view, tab: SETTINGS_TABS[0] } : ({ view } as Route),
+          )
+        }
         onAwaitingYou={() => waiting[0] && navigate({ view: 'threads', threadId: waiting[0].id })}
         onSignOut={() => {
           api
@@ -259,6 +264,18 @@ export function App({ createClient, openEvents }: AppProps) {
           <PeoplePage api={api} projects={projects} currentUserId={user.id} onNotice={say} />
         ) : (
           <p className="note">Only an admin can manage people.</p>
+        )
+      ) : route.view === 'settings' ? (
+        user.roles.includes('Admin') ? (
+          <SettingsPage
+            api={api}
+            tab={route.tab}
+            onNotice={say}
+            // What members see of the budgets (the default and maximum) comes from /api/settings.
+            onSaved={() => api.settings().then(setSettings).catch(() => {})}
+          />
+        ) : (
+          <p className="note">Only an admin can change the factory's settings.</p>
         )
       ) : route.view === 'projects' ? (
         <ProjectsPage

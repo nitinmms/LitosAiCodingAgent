@@ -2,6 +2,7 @@ import { CSRF_HEADER, type Fetch } from '../api/client';
 import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
   AccountRole,
+  BudgetSettings,
   ChatProgress,
   CurrentUser,
   Decision,
@@ -13,7 +14,9 @@ import type {
   Person,
   Project,
   PullRequestState,
+  SecretStatus,
   Settings,
+  SettingsSection,
   SpecPayload,
   Stage,
   Thread,
@@ -147,12 +150,28 @@ export class FakeHost {
     provider: 'openrouter',
     model: 'deepseek/deepseek-v4.1-flash',
     defaultBudget: 300_000,
+    maximumBudget: null,
     ptcEnabled: true,
     cachedInputWeight: 0.1,
     presets: ['dotnet', 'node-react'],
     taskTypes: ['bug', 'feature', 'refactor', 'chore'],
     promptRevision: 'm1.1',
   };
+  /** The Budgets tab as stored (GET /api/admin/settings); /api/settings shows members its default and maximum. */
+  budgets: SettingsSection<BudgetSettings> = {
+    revision: 1,
+    settings: {
+      defaultTaskBudget: 300_000,
+      maximumTaskBudget: null,
+      dailyUserQuota: null,
+      monthlyUserQuota: null,
+      repairCyclesPerRun: 2,
+      slotCap: 2,
+      reworkTopUpShare: 0.5,
+      outputAllowanceTokens: 32_768,
+    },
+  };
+  readonly secrets: SecretStatus[] = [];
   projects: Project[] = [];
   readonly threads = new Map<string, ThreadDetails>();
   readonly usage = new Map<string, UsageCall[]>();
@@ -561,6 +580,9 @@ export class FakeHost {
     const people = this.handlePeople(method, path, data);
     if (people) return people;
 
+    const settings = this.handleSettings(method, path, data);
+    if (settings) return settings;
+
     const decision = /^\/api\/decisions\/([^/]+)\/answer$/.exec(path);
     if (decision && method === 'POST') return this.answer(decision[1]!, String(data.answer ?? ''));
 
@@ -685,6 +707,36 @@ export class FakeHost {
     found.acceptedUserId = person.id;
     this.signInAs(person);
     return [200, this.user];
+  }
+
+  // ---- factory settings (Api/SettingsApi.cs) ----
+
+  /** Another Admin saves the budgets first: the revision the app read is now stale. */
+  budgetsChangedElsewhere(change: Partial<BudgetSettings>): void {
+    this.budgets = { revision: this.budgets.revision + 1, settings: { ...this.budgets.settings, ...change } };
+  }
+
+  private handleSettings(method: string, path: string, data: Record<string, unknown>): [number, unknown?] | null {
+    if (!path.startsWith('/api/admin/')) return null;
+    if (!this.user.roles.includes('Admin')) return [403];
+
+    if (path === '/api/admin/settings' && method === 'GET') return [200, { budgets: this.budgets, secrets: this.secrets }];
+    if (path === '/api/admin/settings/budgets' && method === 'PUT') {
+      if (data.revision !== this.budgets.revision)
+        return [409, { error: 'The budgets settings were changed by someone else. Reload them and make your change again.' }];
+      const budgets = data.settings as BudgetSettings;
+      // A few of BudgetSettings.Validate's rules, enough to show the host's reasons reach the Admin.
+      const errors: string[] = [];
+      if (budgets.slotCap < 1 || budgets.slotCap > 16) errors.push('Concurrent runs must be between 1 and 16.');
+      if (budgets.maximumTaskBudget !== null && budgets.defaultTaskBudget !== null && budgets.defaultTaskBudget > budgets.maximumTaskBudget)
+        errors.push('The default task budget cannot be above the maximum.');
+      if (errors.length) return [400, { error: errors.join(' '), errors }];
+
+      this.budgets = { revision: this.budgets.revision + 1, settings: budgets };
+      this.settings = { ...this.settings, defaultBudget: budgets.defaultTaskBudget, maximumBudget: budgets.maximumTaskBudget };
+      return [200, this.budgets];
+    }
+    return [404];
   }
 
   private handlePeople(method: string, path: string, data: Record<string, unknown>): [number, unknown?] | null {

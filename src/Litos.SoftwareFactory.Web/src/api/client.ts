@@ -1,5 +1,7 @@
 import type {
   AccountRole,
+  AdminSettings,
+  BudgetSettings,
   CreatedInvitation,
   CreateInvitation,
   CreateThread,
@@ -15,6 +17,7 @@ import type {
   PullRequestInfo,
   RegisterProject,
   Settings,
+  SettingsSection,
   Thread,
   ThreadDetails,
   UsageCall,
@@ -101,6 +104,11 @@ export interface FactoryApi {
   setRole(id: string, role: AccountRole): Promise<Person>;
   addMember(projectId: string, userId: string): Promise<void>;
   removeMember(projectId: string, userId: string): Promise<void>;
+
+  // Factory settings (Admin).
+  adminSettings(): Promise<AdminSettings>;
+  /** Saves the section whole; a revision someone else has moved past makes this a 409. */
+  saveBudgets(revision: number, settings: BudgetSettings): Promise<SettingsSection<BudgetSettings>>;
 }
 
 /**
@@ -207,5 +215,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
       void (await send<unknown>('POST', `/api/projects/${encodeURIComponent(projectId)}/members`, { userId })),
     removeMember: async (projectId, userId) =>
       void (await send<unknown>('DELETE', `/api/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`)),
+    adminSettings: () => send<AdminSettings>('GET', '/api/admin/settings'),
+    saveBudgets: (revision, settings) =>
+      send<SettingsSection<BudgetSettings>>('PUT', '/api/admin/settings/budgets', { revision, settings }),
   };
 }
