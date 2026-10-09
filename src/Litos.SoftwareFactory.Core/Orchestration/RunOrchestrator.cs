@@ -319,6 +319,12 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
                     new StartTurnStep(TurnKind.Nudge, BriefKind.ProceedOnRecommendation));
         }
 
+        // The turn stopped to answer a person's follow-up, whose answer is now on the thread. That
+        // is not a stuck turn: the work carries on, and the turn's one reminder is kept. Each
+        // continuation needs a new follow-up, so this cannot loop.
+        if (turn.AnsweredFollowUp)
+            return Enter(state, new StartTurnStep(state.WorkTurn, BriefKind.Continue));
+
         // No usable completion call.
         if (!turn.FilesChanged && !state.NudgeUsed)
         {

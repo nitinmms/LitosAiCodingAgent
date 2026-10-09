@@ -134,8 +134,28 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             _submission = null;
             BudgetRefusal = null;
             DecisionId = null;
+            _followUps = 0;
             return _turn.Token;
         }
+    }
+
+    private int _followUps;
+
+    /// <summary>Follow-ups a person sent while the turn in progress was running.</summary>
+    public int FollowUps
+    {
+        get
+        {
+            lock (_lock)
+                return _followUps;
+        }
+    }
+
+    /// <summary>A person's follow-up was passed to the turn in progress.</summary>
+    public void NoteFollowUp()
+    {
+        lock (_lock)
+            _followUps++;
     }
 
     private Core.Orchestration.CostMeterState _costMeter = new();

@@ -774,6 +774,26 @@ public class BriefComposerTests
     }
 
     [Fact]
+    public void AFollowUp_ReachesTheAgentAsAnAside_ToAnswerWithoutStoppingTheWork()
+    {
+        var text = BriefComposer.FollowUp("  what are you working on now?  ");
+
+        Assert.Contains("\n\nwhat are you working on now?\n\n", text);
+        Assert.Contains("keep working in the same turn", text);
+        Assert.Contains("submit_work or request_decision", text);
+        Assert.Contains("Do not stop the work just to answer.", text);
+    }
+
+    [Fact]
+    public void Continue_AfterAnsweringAFollowUp_SaysTheAnswerIsPosted_AndWhichToolFinishes()
+    {
+        var brief = Compose(BriefKind.Continue, State());
+
+        Assert.Contains("Your answer to the person has been posted on the thread.", brief);
+        Assert.Contains("`submit_work`", brief);
+    }
+
+    [Fact]
     public void Resume_WithAnUnchangedWorkingCopy_SaysNothingAboutDrift()
     {
         var brief = Compose(BriefKind.Resume, State(), Context with { WorkspaceDrift = "" });

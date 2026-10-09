@@ -468,7 +468,17 @@ public sealed class RunExecutor(
                 : new TurnEnded(TurnEndReason.Faulted, FilesChanged: filesChanged, Detail: error);
         }
 
-        return new TurnEnded(TurnEndReason.Completed, submission, filesChanged);
+        // A person's follow-up arrived during the turn, and the turn ended without a submission:
+        // the agent stopped to answer it. The answer goes on the thread, where the person asked,
+        // and the orchestrator carries the work on rather than blocking it.
+        var answeredFollowUp = active.FollowUps > 0 && submission is null && state.WorkTurn is not (TurnKind.Review or TurnKind.Scan);
+        if (answeredFollowUp && result?.Reply is { } answer && !string.IsNullOrWhiteSpace(answer))
+        {
+            await store.AddFactoryMessageAsync(data.Thread.Id, MessageKind.Text, answer.Trim(), null, clock.UtcNow, CancellationToken.None);
+            signals.EventsWritten();
+        }
+
+        return new TurnEnded(TurnEndReason.Completed, submission, filesChanged, AnsweredFollowUp: answeredFollowUp);
     }
 
     /// <summary>The run's decision-scan session: fresh, and the same for a nudge or a resume of the

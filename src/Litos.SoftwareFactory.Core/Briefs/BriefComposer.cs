@@ -103,6 +103,7 @@ public static partial class BriefComposer
         BriefKind.DecisionAnswer => DecisionAnswer(state),
         BriefKind.ProceedOnRecommendation => Render("proceed", new() { ["maxDecisions"] = limits.MaxDecisions.ToString() }),
         BriefKind.Resume => Resume(context, state),
+        BriefKind.Continue => Render("continue", new() { ["completionTool"] = CompletionTool(state) }),
         BriefKind.Scan => Scan(context, state),
         BriefKind.ScanRecheck => ScanRecheck(state),
         _ => throw new ArgumentOutOfRangeException(nameof(step), step.Brief, "Unknown brief kind."),
@@ -110,6 +111,13 @@ public static partial class BriefComposer
 
     /// <summary>The instruction for compaction before a large turn (§8.6): what must survive.</summary>
     public static string CompactionInstruction() => Render("compaction", []);
+
+    /// <summary>
+    /// A person's message to a task that is working, as it reaches the agent mid-turn. Passed on
+    /// bare, a question read as the turn's last word: the agent answered it and stopped, and the
+    /// turn was blocked for making no progress (m2-architecture.md §10.1, check 5).
+    /// </summary>
+    public static string FollowUp(string text) => Render("follow-up", new() { ["text"] = text.Trim() });
 
     /// <summary>The most earlier messages a chat brief carries, newest kept.</summary>
     public const int ChatConversationMessages = 20;

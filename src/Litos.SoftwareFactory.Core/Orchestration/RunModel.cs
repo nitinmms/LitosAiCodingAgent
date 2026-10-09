@@ -152,6 +152,9 @@ public enum BriefKind
     /// <summary>After an answer, the scan checks whether the answers so far settle the questions
     /// not yet asked.</summary>
     ScanRecheck,
+
+    /// <summary>The turn stopped to answer a person's follow-up; the work carries on.</summary>
+    Continue,
 }
 
 // ---- Steps: what the host should do next ----
@@ -269,8 +272,11 @@ public enum TurnEndReason
 /// </summary>
 /// <param name="LightReview">The turn was a light review: one cut off at its output limit is not
 /// run again, because a resumed review runs as a full one.</param>
+/// <param name="AnsweredFollowUp">A person sent a follow-up during the turn, and the turn ended
+/// without a submission: the agent stopped to answer, and the host has posted its answer.</param>
 public sealed record TurnEnded(
-    TurnEndReason Reason, Submission? Submission = null, bool FilesChanged = false, string? Detail = null, bool LightReview = false) : StepOutcome;
+    TurnEndReason Reason, Submission? Submission = null, bool FilesChanged = false, string? Detail = null, bool LightReview = false,
+    bool AnsweredFollowUp = false) : StepOutcome;
 
 public sealed record DecisionAnswered(string Answer) : StepOutcome;
 

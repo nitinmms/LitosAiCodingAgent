@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Litos.SoftwareFactory.Core.Briefs;
 using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Api;
@@ -73,11 +74,13 @@ public sealed class RunSupervisor(
 
     public async Task SteerAsync(Guid threadId, string text, CancellationToken ct)
     {
-        if (registry.FindByThread(threadId) is { Client: { } client, SessionId: { } sessionId })
+        if (registry.FindByThread(threadId) is { Client: { } client, SessionId: { } sessionId } active)
         {
             try
             {
-                await client.SteerAsync(sessionId, text, ct);
+                // Counted first: the agent may answer and end its turn before the call returns.
+                active.NoteFollowUp();
+                await client.SteerAsync(sessionId, BriefComposer.FollowUp(text), ct);
             }
             catch (HttpRequestException ex)
             {

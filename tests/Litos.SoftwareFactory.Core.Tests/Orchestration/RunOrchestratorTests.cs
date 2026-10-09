@@ -626,6 +626,48 @@ public class RunOrchestratorTests
         Assert.DoesNotContain(run.Steps, s => s is StartTurnStep { Kind: TurnKind.Nudge });
     }
 
+    // ---- A person's follow-up during a turn (m2-architecture.md §10.1, check 5) ----
+
+    /// <summary>Found on the M2 check: "what are you working on now?" was answered and ended the
+    /// turn, which changed nothing yet, so the run was blocked as making no progress.</summary>
+    [Fact]
+    public void ATurnThatStoppedToAnswerAFollowUp_CarriesTheWorkOn_InsteadOfBlocking()
+    {
+        var run = new Run().Started();
+
+        AssertTurn(run.Report(new TurnEnded(TurnEndReason.Completed, FilesChanged: false, AnsweredFollowUp: true)), TurnKind.Implement, BriefKind.Continue);
+        Assert.Null(run.State.LastStop);
+        Assert.False(run.State.NudgeUsed);
+    }
+
+    [Fact]
+    public void ContinuingAfterAFollowUp_KeepsTheTurnsOneNudge_ForWhenItReallyStalls()
+    {
+        var run = new Run().Started();
+        run.Report(new TurnEnded(TurnEndReason.Completed, FilesChanged: true, AnsweredFollowUp: true));
+
+        AssertTurn(run.Report(new TurnEnded(TurnEndReason.Completed, FilesChanged: true)), TurnKind.Nudge, BriefKind.Nudge);
+        AssertStopped(run.Report(new TurnEnded(TurnEndReason.Completed, FilesChanged: true)), LifecycleTrigger.Block, StopReason.NoCompletionCall);
+    }
+
+    [Fact]
+    public void ARepairThatAnsweredAFollowUp_ContinuesAsTheRepair()
+    {
+        var run = new Run().Started();
+        run.Submit();
+        run.Verify(Failing("T.A")); // a repair turn is the work now
+
+        AssertTurn(run.Report(new TurnEnded(TurnEndReason.Completed, AnsweredFollowUp: true)), TurnKind.Repair, BriefKind.Continue);
+    }
+
+    [Fact]
+    public void AFollowUpAnswered_AfterTheWorkWasSubmitted_ChangesNothing()
+    {
+        var run = new Run().Started();
+
+        Assert.IsType<VerifyStep>(run.Report(new TurnEnded(TurnEndReason.Completed, Work(), FilesChanged: true, AnsweredFollowUp: true)));
+    }
+
     // ---- Budget, pause, cancel, faults ----
 
     [Fact]

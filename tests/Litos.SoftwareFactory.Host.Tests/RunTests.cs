@@ -460,7 +460,8 @@ public sealed class RunTests : IAsyncLifetime
         var result = await _host.DelegateAsync(threadId, "@factory Also handle an empty result.");
 
         Assert.Equal("FollowUp", result.GetProperty("outcome").GetString());
-        Assert.Equal(["Also handle an empty result."], Assert.Single(_host.Workers.Workers).Steered);
+        // Framed as an aside to take into account (FollowUpTests), with the person's words in it.
+        Assert.Equal(Core.Briefs.BriefComposer.FollowUp("Also handle an empty result."), Assert.Single(Assert.Single(_host.Workers.Workers).Steered));
         Assert.Equal(2, (await _host.ThreadAsync(threadId)).Messages.Count(m => m.Author == MessageAuthor.User));
         await _host.PostAsync($"api/threads/{threadId}/cancel", null, HttpStatusCode.Accepted);
         await _host.WaitForStateAsync(threadId, LifecycleState.Cancelled);

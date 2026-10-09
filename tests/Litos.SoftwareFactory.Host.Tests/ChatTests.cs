@@ -422,7 +422,7 @@ public sealed class ChatTests
         var result = await SayAsync(host, threadId, "Use semicolons, not commas.");
 
         Assert.Equal("FollowUp", result.GetProperty("outcome").GetString());
-        Assert.Contains("Use semicolons, not commas.", Assert.Single(host.Workers.Workers).Steered);
+        Assert.Contains("Use semicolons, not commas.", Assert.Single(Assert.Single(host.Workers.Workers).Steered));
         Assert.Null((await host.ThreadAsync(threadId)).ChatRun);
         await host.PostAsync($"api/threads/{threadId}/cancel", null, HttpStatusCode.Accepted);
     }
