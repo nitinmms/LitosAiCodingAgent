@@ -164,7 +164,7 @@ Manual, with real providers:
 
 Each step ends green (all test projects and the web tests) and is committed separately.
 
-1. **Carried fixes:** a question to a working task no longer blocks it, and its answer is shown (m2-architecture.md §10.1); repository skills are no longer advertised (§7.3).
+1. **Carried fixes:** a question to a working task no longer blocks it, and its answer is shown (m2-architecture.md §10.1); repository skills are no longer advertised (§7.3). **Done 2026-10-09:** `93114ae` (a follow-up is framed as an aside; a work turn that still stops to answer has its answer posted and is continued with a `Continue` brief, keeping its nudge), `5432b39` (the worker finds no skills until step 6).
 2. **Settings store, secrets and budgets** (§3, §5), with the Settings area's shell and its Budgets tab.
 3. **Providers and models** (§4), including Gemini's output cap.
 4. **Tools** (§6).
