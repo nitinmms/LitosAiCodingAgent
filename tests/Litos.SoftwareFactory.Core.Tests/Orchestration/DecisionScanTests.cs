@@ -93,7 +93,22 @@ public class DecisionPolicyTests
         Assert.Equal("Decision scan: the request leaves no choice open. Implementing.", DecisionPolicy.Decide(Plan(), 3).Describe());
 
         var note = DecisionPolicy.Decide(Plan(Choice(ChoiceCategories.ExistingData), Choice(ChoiceCategories.Other, question: "Sweep or not?")), 3).Describe();
-        Assert.Equal("Decision scan: 2 open choices, asking you 1. Assuming: Sweep or not: Option 1.", note);
+        Assert.Equal("Decision scan: 2 open choices, asking you 1. Assuming:\n- Sweep or not: Option 1", note);
+    }
+
+    [Fact]
+    public void EachAssumption_IsOnALineOfItsOwn()
+    {
+        var note = DecisionPolicy.Decide(
+            Plan(
+                Choice(ChoiceCategories.Other, question: "Lock once or twice?"),
+                Choice(ChoiceCategories.Other, question: "Reuse DropCollection?"),
+                Choice(ChoiceCategories.Other, question: "One timestamp or many?")),
+            3).Describe();
+
+        Assert.Equal(
+            ["Decision scan: 3 open choices, none needs you. Assuming:", "- Lock once or twice: Option 1", "- Reuse DropCollection: Option 1", "- One timestamp or many: Option 1"],
+            note.Split('\n'));
     }
 }
 

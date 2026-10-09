@@ -49,7 +49,7 @@ public sealed class DecisionScanRunTests : IAsyncLifetime
         var waiting = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingDecision);
         var decision = Assert.Single(waiting.Decisions);
         Assert.Equal("What happens to version-1 files?", decision.Question);
-        Assert.Contains(waiting.Messages, m => m.Text == "Decision scan: 2 open choices, asking you 1. Assuming: On read or a background sweep: On read.");
+        Assert.Contains(waiting.Messages, m => m.Text == "Decision scan: 2 open choices, asking you 1. Assuming:\n- On read or a background sweep: On read");
         Assert.Contains(waiting.Messages, m => m.Kind == MessageKind.Decision && m.Text.StartsWith("Decision needed: What happens to version-1 files?"));
 
         await _host.PostAsync($"api/decisions/{decision.Id}/answer", new { answer = "Keep reading them." }, HttpStatusCode.OK);

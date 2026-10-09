@@ -7,7 +7,8 @@ namespace Litos.SoftwareFactory.Core.Orchestration;
 /// <param name="Assume">Choices the run proceeds on, stated to the implementer and in the handoff.</param>
 public sealed record ScanDecisions(IReadOnlyList<OpenChoice> Ask, IReadOnlyList<OpenChoice> Assume)
 {
-    /// <summary>The line the thread shows when the scan finishes.</summary>
+    /// <summary>The note the thread shows when the scan finishes: a line saying what it found, then
+    /// one line per assumption. Joined into one sentence, seven of them read as a wall of text.</summary>
     public string Describe()
     {
         var total = Ask.Count + Assume.Count;
@@ -23,7 +24,7 @@ public sealed record ScanDecisions(IReadOnlyList<OpenChoice> Ask, IReadOnlyList<
         };
         var assuming = Assume.Count == 0
             ? ""
-            : " Assuming: " + string.Join("; ", Assume.Select(DecisionPolicy.Assumption)) + ".";
+            : " Assuming:" + string.Concat(Assume.Select(choice => $"\n- {DecisionPolicy.Assumption(choice)}"));
         return $"Decision scan: {found}, {asking}.{assuming}";
     }
 }
