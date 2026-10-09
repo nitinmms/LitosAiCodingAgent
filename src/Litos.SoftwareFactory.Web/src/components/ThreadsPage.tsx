@@ -26,7 +26,8 @@ export function ThreadsPage({
   settings: Settings | null;
   projects: Project[];
   threads: Thread[];
-  /** The thread in the address bar; when it names none, the first thread is shown. */
+  /** The thread in the address bar; when it names none, the first thread is shown. One this user
+   * cannot see is not replaced by another: the page says it is not there. */
   selectedId: string | null;
   openEvents?: EventSourceFactory;
   onSelect: (threadId: string) => void;
@@ -37,7 +38,9 @@ export function ThreadsPage({
 }) {
   const [creating, setCreating] = useState(false);
   const [listOpen, setListOpen] = useState(false);
-  const shownId = (selectedId && threads.some((t) => t.id === selectedId) ? selectedId : threads[0]?.id) ?? null;
+  // Showing another thread under this one's address would invite acting on the wrong task.
+  const missing = selectedId !== null && !threads.some((t) => t.id === selectedId);
+  const shownId = missing ? null : (selectedId ?? threads[0]?.id ?? null);
   const view = useThread(api, shownId, openEvents, onThread);
 
   return (
@@ -89,6 +92,14 @@ export function ThreadsPage({
                   Go to Projects
                 </button>
               </div>
+            </div>
+          </div>
+        ) : missing ? (
+          <div className="center">
+            <div className="panel">
+              {/* The same words whether it does not exist or is in another project, as the host's 404. */}
+              <h2>Thread not found</h2>
+              <p>This thread does not exist, or it is in a project you are not a member of. Choose one from the list.</p>
             </div>
           </div>
         ) : !shownId ? (

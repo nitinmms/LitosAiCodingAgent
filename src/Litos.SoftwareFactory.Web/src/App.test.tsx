@@ -293,6 +293,22 @@ describe('threads', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Second' })).toBeInTheDocument();
   });
 
+  it('says a thread it cannot show is not there, rather than showing another under its address', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.addThread(project, { title: 'First' });
+    // A thread in a project this user is not a member of: the host lists nothing of it.
+    window.location.hash = '#/threads/t-in-another-project';
+    const user = start(host);
+
+    expect(await screen.findByRole('heading', { name: 'Thread not found' })).toBeInTheDocument();
+    expect(screen.getByText(/does not exist, or it is in a project you are not a member of/)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1, name: 'First' })).not.toBeInTheDocument();
+
+    await user.click(within(screen.getByRole('complementary', { name: 'Threads' })).getByText('First'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'First' })).toBeInTheDocument();
+  });
+
   it('counts the tasks waiting on a person, and takes the user to the first', async () => {
     const host = new FakeHost();
     const project = host.addProject();
