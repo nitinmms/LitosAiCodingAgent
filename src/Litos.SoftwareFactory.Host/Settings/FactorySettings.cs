@@ -20,21 +20,34 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
     private readonly Lock _lock = new();
     private readonly Dictionary<string, (SettingsSection Row, object Value)> _sections = [];
 
+    /// <summary>Every secret, still protected: a value is unprotected only when it is used.</summary>
+    private readonly Dictionary<string, FactorySecret> _secrets = [];
+
     /// <summary>A section was written; its name. Consumers that cache derived state listen.</summary>
     public event Action<string>? Changed;
 
     public async Task LoadAsync(CancellationToken ct)
     {
         var rows = await store.ListSettingsAsync(ct);
+        var secrets = await store.ListSecretsAsync(ct);
         lock (_lock)
         {
             _sections.Clear();
             foreach (var row in rows)
                 _sections[row.Section] = (row, Deserialize(row));
+            _secrets.Clear();
+            foreach (var secret in secrets)
+                _secrets[secret.Name] = secret;
         }
     }
 
     public BudgetSettings Budgets => Read<BudgetSettings>(SettingsSections.Budgets);
+
+    public ProviderSettings Providers => Read<ProviderSettings>(SettingsSections.Providers);
+
+    /// <summary>Whether a provider can be called: its address is set if it is reached at one, otherwise its key.</summary>
+    public bool IsUsable(ProviderEntry provider) => KnownProviders.Find(provider.Name) is { } kind
+        && (kind.UsesBaseUrl ? !string.IsNullOrWhiteSpace(provider.BaseUrl) : IsSet(SecretNames.Provider(provider.Name)));
 
     /// <summary>A section's settings; its defaults when it was never written.</summary>
     public T Read<T>(string section) where T : class, new()
@@ -64,23 +77,50 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
 
     // ---- Secrets: kept protected, never shown again ----
 
-    public async Task<IReadOnlyList<SecretStatus>> SecretsAsync(CancellationToken ct) =>
-        [.. (await store.ListSecretsAsync(ct)).Select(s => new SecretStatus(s.Name, s.SetAt, s.SetBy))];
+    public IReadOnlyList<SecretStatus> Secrets
+    {
+        get
+        {
+            lock (_lock)
+                return [.. _secrets.Values.OrderBy(s => s.Name, StringComparer.Ordinal).Select(s => new SecretStatus(s.Name, s.SetAt, s.SetBy))];
+        }
+    }
+
+    public bool IsSet(string name)
+    {
+        lock (_lock)
+            return _secrets.ContainsKey(name);
+    }
 
     /// <summary>A secret's value, or null when it is not set.</summary>
     /// <exception cref="SecretUnreadableException">It was protected with a key ring this host does not have.</exception>
-    public async Task<string?> SecretAsync(string name, CancellationToken ct) =>
-        (await store.ListSecretsAsync(ct)).FirstOrDefault(s => s.Name == name) is { } secret ? protector.Unprotect(secret.Ciphertext) : null;
+    public string? Secret(string name)
+    {
+        string ciphertext;
+        lock (_lock)
+        {
+            if (!_secrets.TryGetValue(name, out var secret))
+                return null;
+            ciphertext = secret.Ciphertext;
+        }
+
+        return protector.Unprotect(ciphertext);
+    }
 
     public async Task SetSecretAsync(string name, string value, Guid? actorId, CancellationToken ct)
     {
-        await store.SetSecretAsync(name, protector.Protect(value), actorId, clock.UtcNow, ct);
+        var secret = new FactorySecret { Name = name, Ciphertext = protector.Protect(value), SetAt = clock.UtcNow, SetBy = actorId };
+        await store.SetSecretAsync(name, secret.Ciphertext, actorId, secret.SetAt, ct);
+        lock (_lock)
+            _secrets[name] = secret;
         Changed?.Invoke(name);
     }
 
     public async Task<bool> ClearSecretAsync(string name, Guid actorId, CancellationToken ct)
     {
         var cleared = await store.ClearSecretAsync(name, actorId, clock.UtcNow, ct);
+        lock (_lock)
+            _secrets.Remove(name);
         if (cleared)
             Changed?.Invoke(name);
         return cleared;
@@ -90,6 +130,7 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
     private static object Deserialize(SettingsSection row) => row.Section switch
     {
         SettingsSections.Budgets => JsonSerializer.Deserialize<BudgetSettings>(row.Json, FactoryWire.Json) ?? new BudgetSettings(),
+        SettingsSections.Providers => JsonSerializer.Deserialize<ProviderSettings>(row.Json, FactoryWire.Json) ?? new ProviderSettings(),
         _ => JsonDocument.Parse(row.Json).RootElement.Clone(),
     };
 }
@@ -101,11 +142,12 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
 public static class SettingsSeeding
 {
     /// <summary>
-    /// The environment variables the database now replaces, for the host's log. The provider key
-    /// and GitHub token are seeded as secrets too, but the host reads them from its environment
-    /// until providers come from settings (m3-architecture.md §10, step 3).
+    /// The environment variables the database now replaces, for the host's log. The GitHub token
+    /// is seeded as a secret too, but read from the environment until it moves (m3-architecture.md
+    /// §10, step 3). FACTORY_CONTEXT_LENGTH is still the window of a thread created before M3.
     /// </summary>
-    public static readonly IReadOnlyList<string> Replaced = ["FACTORY_DEFAULT_BUDGET", "FACTORY_SLOT_CAP", "FACTORY_REWORK_TOP_UP", "FACTORY_OUTPUT_ALLOWANCE"];
+    public static readonly IReadOnlyList<string> Replaced =
+        ["FACTORY_DEFAULT_BUDGET", "FACTORY_SLOT_CAP", "FACTORY_REWORK_TOP_UP", "FACTORY_OUTPUT_ALLOWANCE", "FACTORY_MODEL", "OPENROUTER_API_KEY"];
 
     /// <summary>Writes what is missing; returns whether anything was.</summary>
     public static async Task<bool> SeedAsync(FactorySettings settings, FactoryOptions options, CancellationToken ct)
@@ -124,14 +166,33 @@ public static class SettingsSeeding
             seeded = true;
         }
 
-        var secrets = (await settings.SecretsAsync(ct)).Select(s => s.Name).ToHashSet();
+        if (settings.RevisionOf(SettingsSections.Providers) == 0)
+        {
+            // M2 ran every task on one OpenRouter model; it stays the default.
+            await settings.SaveAsync(SettingsSections.Providers, new ProviderSettings
+            {
+                Providers =
+                [
+                    new ProviderEntry
+                    {
+                        Name = FactoryOptions.OpenRouter,
+                        Enabled = true,
+                        Models = [new AllowedModel(options.Model, options.ContextLength)],
+                        DefaultModel = options.Model,
+                    },
+                ],
+                DefaultProvider = FactoryOptions.OpenRouter,
+            }, 0, actorId: null, ct);
+            seeded = true;
+        }
+
         foreach (var (name, value) in new[]
         {
             (SecretNames.Provider(FactoryOptions.OpenRouter), options.OpenRouterApiKey),
             (SecretNames.GitHub, options.GitHubToken),
         })
         {
-            if (!string.IsNullOrWhiteSpace(value) && !secrets.Contains(name))
+            if (!string.IsNullOrWhiteSpace(value) && !settings.IsSet(name))
             {
                 await settings.SetSecretAsync(name, value, actorId: null, ct);
                 seeded = true;

@@ -4,6 +4,7 @@ using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Budget;
 using Litos.SoftwareFactory.Host.Gateway;
 using Litos.SoftwareFactory.Host.Runs;
+using Litos.SoftwareFactory.Host.Settings;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
 
@@ -30,7 +31,7 @@ public sealed class LiveGatewayTests(ITestOutputHelper output)
                 options.OpenRouterApiKey = key;
                 options.Budget = new BudgetPolicy { OutputAllowanceTokens = 256, Margin = 0.10 };
             },
-            services => services.AddSingleton<IChatProviderFactory>(sp => HostProviders.Create(sp.GetRequiredService<FactoryOptions>())),
+            services => services.AddSingleton<IChatProviderFactory, FactoryProviders>(),
             startCoordinator: false);
 
         var threadId = await host.CreateThreadAsync(await host.RegisterProjectAsync(), budgetCap: 20_000);

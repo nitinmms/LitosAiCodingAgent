@@ -174,12 +174,8 @@ public sealed class FactoryOptions
             problems.Add("ConnectionStrings__FactoryState is not set.");
         if (string.IsNullOrWhiteSpace(DataDirectory))
             problems.Add("FACTORY_DATA_DIR is not set.");
-        if (Provider != OpenRouter)
-            problems.Add($"M1 supports the '{OpenRouter}' provider only, but '{Provider}' is configured.");
-        if (string.IsNullOrWhiteSpace(OpenRouterApiKey))
-            problems.Add("OPENROUTER_API_KEY is not set in the host's environment.");
-        if (string.IsNullOrWhiteSpace(Model))
-            problems.Add("No model is configured.");
+        // No provider key is required: a factory with no usable provider starts, and the app says
+        // what to set (m3-architecture.md §3.3).
         if (SlotCap < 1)
             problems.Add("FACTORY_SLOT_CAP must be at least 1.");
         if (VerifyConcurrency < 1)

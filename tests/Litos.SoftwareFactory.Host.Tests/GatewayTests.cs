@@ -889,13 +889,4 @@ public sealed class GatewayTests : IAsyncLifetime
         // 8,000 + (100 + 3,883 + 17) + 4,000 characters → 4,000 tokens.
         Assert.Equal(4_000, (await OnlyEntryAsync()).EstimatedInputRaw);
     }
-
-    [Fact]
-    public void HostProviders_AllowOnlyOpenRouter()
-    {
-        var providers = HostProviders.Create(new FactoryOptions { OpenRouterApiKey = "sk-or-test" });
-
-        Assert.Equal("openrouter", providers.Resolve("openrouter").ProviderName);
-        Assert.Throws<InvalidOperationException>(() => providers.Resolve("anthropic"));
-    }
 }

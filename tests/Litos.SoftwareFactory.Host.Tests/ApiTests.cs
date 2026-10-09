@@ -819,17 +819,17 @@ public class FactoryOptionsTests
 
         Assert.Contains(problems, p => p.Contains("ConnectionStrings__FactoryState"));
         Assert.Contains(problems, p => p.Contains("FACTORY_DATA_DIR"));
-        Assert.Contains(problems, p => p.Contains("OPENROUTER_API_KEY"));
+        Assert.Equal(2, problems.Count);
     }
 
-    /// <summary>M1 runs on OpenRouter only.</summary>
+    /// <summary>Providers and their keys are settings now (m3-architecture.md §3.3): a host starts without one.</summary>
     [Fact]
-    public void Validate_AnyOtherProvider_IsRefused()
+    public void Validate_NeedsNoProviderKey()
     {
         var options = Valid();
-        options.Provider = "anthropic";
+        options.OpenRouterApiKey = null;
 
-        Assert.Contains(options.Validate(), p => p.Contains("'openrouter' provider only"));
+        Assert.Empty(options.Validate());
     }
 
     [Fact]

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Litos.Agent.Providers;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Ports;
@@ -60,7 +61,7 @@ public sealed class SettingsApiTests : IAsyncLifetime
         var key = Assert.Single(secrets, s => s.GetProperty("name").GetString() == "provider:openrouter");
         Assert.Equal(JsonValueKind.Null, key.GetProperty("setBy").ValueKind); // seeded by the host, not an Admin
         Assert.DoesNotContain(_host.Options.OpenRouterApiKey!, body);
-        Assert.Equal(_host.Options.OpenRouterApiKey, await _host.App.Services.GetRequiredService<FactorySettings>().SecretAsync("provider:openrouter", default));
+        Assert.Equal(_host.Options.OpenRouterApiKey, _host.App.Services.GetRequiredService<FactorySettings>().Secret("provider:openrouter"));
     }
 
     [Fact]
@@ -146,7 +147,7 @@ public sealed class SettingsApiTests : IAsyncLifetime
         Assert.DoesNotContain("ghp_secret_value", body);
         var github = Assert.Single((await SettingsAsync()).GetProperty("secrets").EnumerateArray(), s => s.GetProperty("name").GetString() == "github");
         Assert.Equal(await _host.AdminIdAsync(), github.GetProperty("setBy").GetGuid());
-        Assert.Equal("ghp_secret_value", await _host.App.Services.GetRequiredService<FactorySettings>().SecretAsync("github", default));
+        Assert.Equal("ghp_secret_value", _host.App.Services.GetRequiredService<FactorySettings>().Secret("github"));
 
         using (var cleared = await _host.Client.DeleteAsync("api/admin/secrets/github"))
             Assert.Equal(HttpStatusCode.NoContent, cleared.StatusCode);
@@ -162,6 +163,94 @@ public sealed class SettingsApiTests : IAsyncLifetime
         using var response = await _host.Client.PutAsJsonAsync($"api/admin/secrets/{name}", new { value });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // ---- Providers (m3-architecture.md §4) ----
+
+    private async Task<HttpResponseMessage> PutProvidersAsync(long revision, object settings) =>
+        await _host.Client.PutAsJsonAsync("api/admin/settings/providers", new { revision, settings });
+
+    [Fact]
+    public async Task TheFirstStart_OffersM2sOpenRouterModel_WithItsContextLength()
+    {
+        var providers = (await SettingsAsync()).GetProperty("providers");
+
+        Assert.Equal(1, providers.GetProperty("revision").GetInt64());
+        var settings = providers.GetProperty("settings");
+        Assert.Equal("openrouter", settings.GetProperty("defaultProvider").GetString());
+        Assert.True(settings.GetProperty("strictOnly").GetBoolean());
+        var openRouter = Assert.Single(settings.GetProperty("providers").EnumerateArray());
+        Assert.True(openRouter.GetProperty("enabled").GetBoolean());
+        var model = Assert.Single(openRouter.GetProperty("models").EnumerateArray());
+        Assert.Equal((_host.Options.Model, _host.Options.ContextLength), (model.GetProperty("id").GetString(), model.GetProperty("contextLength").GetInt32()));
+        Assert.Equal(_host.Options.Model, openRouter.GetProperty("defaultModel").GetString());
+    }
+
+    [Fact]
+    public async Task EveryKnownProvider_IsListed_WithItsPrecisionAndKeyName()
+    {
+        var known = (await SettingsAsync()).GetProperty("knownProviders").EnumerateArray().ToList();
+
+        Assert.Equal(["anthropic", "openai", "gemini", "openrouter", "mesh_api", "local"], known.Select(p => p.GetProperty("name").GetString()));
+        var local = known[^1];
+        Assert.Equal(("Estimated", true), (local.GetProperty("precision").GetString(), local.GetProperty("usesBaseUrl").GetBoolean()));
+        Assert.Equal("provider:anthropic", known[0].GetProperty("keySecret").GetString());
+    }
+
+    [Fact]
+    public async Task AProvidersChange_IsSaved_AndReadWithoutARestart()
+    {
+        using var response = await PutProvidersAsync(1, new ProviderSettings
+        {
+            Providers =
+            [
+                new ProviderEntry { Name = "openrouter", Enabled = true, Models = [new AllowedModel("deepseek/deepseek-v4.1-flash", 1_048_576)], DefaultModel = "deepseek/deepseek-v4.1-flash" },
+                new ProviderEntry { Name = "anthropic", Enabled = true, Models = [new AllowedModel("claude-sonnet-5", 200_000)], DefaultModel = "claude-sonnet-5" },
+            ],
+            DefaultProvider = "anthropic",
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var providers = _host.App.Services.GetRequiredService<FactorySettings>().Providers;
+        Assert.Equal(("anthropic", 2), (providers.DefaultProvider, providers.Providers.Count));
+    }
+
+    [Fact]
+    public async Task AnUnusableProvidersChange_Is400_WithItsReasons()
+    {
+        using var response = await PutProvidersAsync(1, new ProviderSettings
+        {
+            Providers = [new ProviderEntry { Name = "anthropic", Enabled = true }],
+            DefaultProvider = "openrouter",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var error = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString();
+        Assert.Contains("needs at least one allowed model", error);
+        Assert.Contains("default provider must be one that is enabled", error);
+        Assert.Equal(1, (await SettingsAsync()).GetProperty("providers").GetProperty("revision").GetInt64());
+    }
+
+    [Fact]
+    public async Task TheContextLengthOfAModel_IsLookedUp_InOpenRoutersCatalog()
+    {
+        await using var host = await TestHost.StartAsync(services: services => services.AddSingleton(new OpenRouterModelCatalog(
+            new HttpClient(new CatalogStub("""{"data":[{"id":"anthropic/claude-sonnet-5","context_length":200000}]}"""))
+            {
+                BaseAddress = new Uri("https://openrouter.test/api/v1/"),
+            })));
+
+        var found = await host.GetAsync("api/admin/models/context-length?model=claude-sonnet-5");
+
+        Assert.Equal(200_000, found.GetProperty("contextLength").GetInt32());
+        using var missing = await host.Client.GetAsync("api/admin/models/context-length");
+        Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
+    }
+
+    private sealed class CatalogStub(string json) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") });
     }
 
     // ---- What the budgets govern ----

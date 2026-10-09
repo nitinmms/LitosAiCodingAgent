@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Litos.Agent.Providers;
 using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Auth;
@@ -22,11 +23,35 @@ public static class SettingsApi
     {
         var admin = app.MapGroup("/api/admin").RequireAuthorization(FactoryRoles.Admin);
 
-        admin.MapGet("/settings", async (FactorySettings settings, CancellationToken ct) => Results.Ok(new
+        admin.MapGet("/settings", (FactorySettings settings) => Results.Ok(new
         {
             Budgets = Section(settings, SettingsSections.Budgets, settings.Budgets),
-            Secrets = await settings.SecretsAsync(ct),
+            Providers = Section(settings, SettingsSections.Providers, settings.Providers),
+            // What the Providers tab lists, in order, with what each needs to be called.
+            KnownProviders = KnownProviders.All.Select(p => new
+            {
+                p.Name, p.DisplayName, Precision = p.Precision.ToString(), p.UsesBaseUrl, KeySecret = SecretNames.Provider(p.Name),
+            }),
+            Secrets = settings.Secrets,
         }));
+
+        admin.MapPut("/settings/providers", async (
+            SaveSettingsRequest<ProviderSettings> request, ClaimsPrincipal user, FactorySettings settings, CancellationToken ct) =>
+        {
+            if (request.Settings is not { } providers)
+                return Results.BadRequest(new { error = "settings are required." });
+            if (providers.Validate() is { Count: > 0 } errors)
+                return Results.BadRequest(new { error = string.Join(" ", errors), errors });
+
+            return await SaveAsync(settings, SettingsSections.Providers, providers, request.Revision, user, ct);
+        });
+
+        // The context window of a model an Admin is about to allow: from OpenRouter's public
+        // catalog, which lists the native providers' models too, or the engine's own table.
+        admin.MapGet("/models/context-length", async (string? model, OpenRouterModelCatalog catalog, CancellationToken ct) =>
+            string.IsNullOrWhiteSpace(model)
+                ? Results.BadRequest(new { error = "model is required." })
+                : Results.Ok(new { Model = model.Trim(), ContextLength = await ModelContextResolver.ResolveAsync(catalog, model.Trim(), null, ct) }));
 
         admin.MapPut("/settings/budgets", async (
             SaveSettingsRequest<BudgetSettings> request, ClaimsPrincipal user, FactorySettings settings, FactorySignals signals, CancellationToken ct) =>

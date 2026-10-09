@@ -55,10 +55,10 @@ public static class FactoryHostApp
         services.Configure<Microsoft.AspNetCore.Identity.SecurityStampValidatorOptions>(o => o.ValidationInterval = options.SessionCheckInterval);
         services.AddSingleton<ProjectAccess>();
 
-        // The real providers, behind the gateway. The config is built from the host's own
-        // settings: it is never loaded from, or saved to, the ~/.litos/config.json that the
-        // other Litos faces share (§9.3).
-        services.AddSingleton<IChatProviderFactory>(_ => HostProviders.Create(options));
+        // The real providers, behind the gateway, built from the factory's settings and keys.
+        services.AddSingleton<IChatProviderFactory, FactoryProviders>();
+        // OpenRouter's public catalog, for the context length of a model an Admin allows.
+        services.AddSingleton(_ => new Litos.Agent.Providers.OpenRouterModelCatalog(new HttpClient { BaseAddress = new Uri("https://openrouter.ai/api/v1/") }));
         services.AddSingleton<ModelGateway>();
 
         services.AddSingleton<IWorkspaceProvider, GitWorkspaceProvider>();
@@ -154,29 +154,6 @@ public static class FactoryHostApp
                 string.Join(", ", SettingsSeeding.Replaced));
 
         return await FactoryAuth.SeedAdminAsync(app.Services, options);
-    }
-}
-
-/// <summary>The providers the gateway may call. M1: OpenRouter only.</summary>
-public static class HostProviders
-{
-    public static IChatProviderFactory Create(FactoryOptions options)
-    {
-        var config = new LitosConfig(
-            DefaultProvider: FactoryOptions.OpenRouter, DefaultModel: options.Model, LastWorkingDirectory: null,
-            ApiKeys: new Dictionary<string, string> { [FactoryOptions.OpenRouter] = options.OpenRouterApiKey ?? "" });
-
-        var services = new ServiceCollection().AddLitosAgent(config).BuildServiceProvider();
-        return new OnlyProvider(services.GetRequiredService<IChatProviderFactory>(), FactoryOptions.OpenRouter);
-    }
-
-    /// <summary>Refuses any provider but the one configured, however the request names it.</summary>
-    private sealed class OnlyProvider(IChatProviderFactory inner, string allowed) : IChatProviderFactory
-    {
-        public IChatProvider Resolve(string providerName) =>
-            providerName == allowed
-                ? inner.Resolve(providerName)
-                : throw new InvalidOperationException($"The factory is configured for '{allowed}' only, not '{providerName}'.");
     }
 }
 
