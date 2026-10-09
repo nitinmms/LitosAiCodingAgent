@@ -57,12 +57,14 @@ public sealed class ChatExecutor(
 
             if (!string.IsNullOrWhiteSpace(result.Reply))
                 reply = result.Reply;
+            else if (hostStopping.IsCancellationRequested)
+                failure = Stopped; // the turn's error is the host going, not the question
             else if (active.BudgetRefusal is { } refusal)
                 failure = $"Litos stopped before answering: {refusal}";
             else
                 failure = result.Error is { Length: > 0 } error ? $"Litos could not answer that: {error}" : NoAnswer;
         }
-        catch (OperationCanceledException) when (hostStopping.IsCancellationRequested)
+        catch (Exception ex) when (hostStopping.IsCancellationRequested && ex is OperationCanceledException or HttpRequestException or IOException)
         {
             failure = Stopped;
         }

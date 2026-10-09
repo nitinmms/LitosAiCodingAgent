@@ -12,20 +12,26 @@ namespace Litos.SoftwareFactory.Host.Runs;
 /// </summary>
 public sealed class RunCoordinator(
     IFactoryStore store, RunSupervisor supervisor, RunRegistry registry, RunLiveness liveness, FactoryOptions options,
-    FactorySignals signals, IClock clock, ILogger<RunCoordinator> logger) : BackgroundService
+    FactorySignals signals, IClock clock, IHostApplicationLifetime lifetime, ILogger<RunCoordinator> logger) : BackgroundService
 {
     /// <summary>Completes once startup recovery is done and the coordinator is claiming work.</summary>
     public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // What runs are told when the host stops. The stopping token alone comes too late: the
+        // host cancels it only after the web server has gone, and with it the model gateway and
+        // the worker callbacks, so a run would first see its model calls refused and record that
+        // as the task's failure. Application stopping is signalled before anything stops.
+        using var hostStopping = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, lifetime.ApplicationStopping);
         try
         {
             await RecoverAsync(stoppingToken);
             Started.TrySetResult();
 
             var lastSweep = clock.UtcNow;
-            while (!stoppingToken.IsCancellationRequested)
+            // Nothing new is claimed once the host is stopping.
+            while (!hostStopping.IsCancellationRequested)
             {
                 try
                 {
@@ -33,14 +39,14 @@ public sealed class RunCoordinator(
                     if (clock.UtcNow - lastSweep >= options.LivenessInterval)
                     {
                         lastSweep = clock.UtcNow;
-                        await liveness.SweepAsync(stoppingToken);
+                        await liveness.SweepAsync(hostStopping.Token);
                     }
 
                     // Asked even with every slot busy, so each queued thread says what it waits for.
-                    if (await store.ClaimNextRunAsync(options.SlotCap, clock.UtcNow, stoppingToken, registry.RunIds) is { } claimed)
+                    if (await store.ClaimNextRunAsync(options.SlotCap, clock.UtcNow, hostStopping.Token, registry.RunIds) is { } claimed)
                     {
                         signals.EventsWritten();
-                        _ = supervisor.Start(claimed, stoppingToken);
+                        _ = supervisor.Start(claimed, hostStopping.Token);
                         continue; // there may be another to claim
                     }
                 }
@@ -51,7 +57,7 @@ public sealed class RunCoordinator(
                     logger.LogError(ex, "Could not claim work; will retry.");
                 }
 
-                await signals.WaitForWorkAsync(options.PollInterval, stoppingToken);
+                await signals.WaitForWorkAsync(options.PollInterval, hostStopping.Token);
             }
         }
         catch (OperationCanceledException)

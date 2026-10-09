@@ -55,9 +55,13 @@ public sealed class SpecExecutor(
             var turnToken = active.BeginTurn(TurnKind.Spec, TurnKind.Spec, sessionId, ct, phase: "Spec");
             var result = await worker.Client.RunTurnAsync(sessionId, TurnKind.Spec, brief, options.SpecMaxToolCalls, turnToken);
 
+            // A turn that failed while the host was stopping failed because it was (RunExecutor
+            // does the same); a proposal that arrived is still recorded.
+            if (result.Error is not null && active.Submission is null)
+                hostStopping.ThrowIfCancellationRequested();
             await FinishAsync(claimed, active, result.Error);
         }
-        catch (OperationCanceledException) when (hostStopping.IsCancellationRequested)
+        catch (Exception ex) when (hostStopping.IsCancellationRequested && ex is OperationCanceledException or HttpRequestException or IOException)
         {
             // The run stays marked Running; the next start marks it Interrupted, which is the truth.
             logger.LogWarning("Spec run {RunId} was in progress when the host stopped.", run.Id);

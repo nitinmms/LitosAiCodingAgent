@@ -104,10 +104,10 @@ public sealed class RunExecutor(
                 context.Snapshot = await SnapshotAsync(context) ?? context.Snapshot;
             }
         }
-        catch (OperationCanceledException) when (hostStopping.IsCancellationRequested)
+        catch (Exception ex) when (hostStopping.IsCancellationRequested && ex is OperationCanceledException or HttpRequestException or IOException)
         {
-            // The host is shutting down. The run stays marked Running; the next start finds it
-            // and marks it Interrupted, which is the truth.
+            // The host is shutting down, and what failed went with it. The run stays marked
+            // Running; the next start finds it and marks it Interrupted, which is the truth.
             logger.LogWarning("Run {RunId} was in progress when the host stopped.", run.Id);
         }
         catch (Exception ex)
@@ -429,6 +429,12 @@ public sealed class RunExecutor(
             logger.LogWarning(ex, "The worker for run {RunId} stopped while a turn was running.", data.Run.Id);
             result = new TurnStreamResult(false, 0, "The worker process stopped unexpectedly while the turn was running. The edits made so far are kept; resuming starts a new worker.");
         }
+
+        // A turn that failed while the host was stopping failed because it was: the gateway and
+        // the worker's callbacks go with the host. That is not the task's failure, so the run is
+        // not stopped with it; it stays Running for the next start to mark Interrupted (§16).
+        if (hostStopping.IsCancellationRequested && result is not { Completed: true })
+            throw new OperationCanceledException(hostStopping);
 
         var submission = active.Submission;
         if (submission is ReviewSubmission review)
