@@ -387,6 +387,8 @@ export class FakeHost {
       payload: null,
       createdAt: NOW,
       ...message,
+      // As the host names it: whoever is signed in wrote a person's message, unless the test says who.
+      authorName: message.authorName !== undefined ? message.authorName : message.author === 'User' ? this.user.displayName || this.user.userName : null,
     };
     details.messages = [...details.messages, full];
     this.emit(threadId, 'message', { id: full.id, sequence: full.sequence, kind: full.kind, text: full.text });

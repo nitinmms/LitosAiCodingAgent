@@ -195,4 +195,28 @@ public sealed class MembershipApiTests : IAsyncLifetime
         Assert.True(routes.Count >= 14, $"Expected the thread, decision and finding routes, found {routes.Count}.");
         Assert.All(routes, e => Assert.True(e.Metadata.GetMetadata<ProjectAccessMetadata>() is not null, $"{e.RoutePattern.RawText} does not check membership."));
     }
+
+    /// <summary>
+    /// Found on the M2 check: the app labelled every person's message with the viewer's own name,
+    /// so Ben saw the Admin's request as his. Each message now names who wrote it.
+    /// </summary>
+    [Fact]
+    public async Task EachPersonsMessage_NamesWhoWroteIt_WhoeverReadsTheThread()
+    {
+        await _host.DelegateAsync(_salesThread, "@factory Add CSV export for Orders.");
+        using (var said = await _ben.PostAsJsonAsync($"api/threads/{_salesThread}/messages", new { messageId = Guid.NewGuid().ToString(), text = "Use semicolons." }))
+            Assert.Equal(HttpStatusCode.Accepted, said.StatusCode);
+
+        foreach (var reader in new[] { _ben, _host.Client })
+        {
+            var messages = (await JsonAsync(await reader.GetAsync($"api/threads/{_salesThread}"))).GetProperty("messages").EnumerateArray().ToList();
+            string? NameOn(string text) => messages.Single(m => m.GetProperty("text").GetString() == text).GetProperty("authorName").GetString();
+
+            Assert.Equal("admin", NameOn("Add CSV export for Orders."));
+            Assert.Equal("ben", NameOn("Use semicolons."));
+            Assert.All(
+                messages.Where(m => m.GetProperty("author").GetString() == "Factory"),
+                m => Assert.Equal(JsonValueKind.Null, m.GetProperty("authorName").ValueKind));
+        }
+    }
 }

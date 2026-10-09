@@ -96,6 +96,8 @@ export interface Message {
   id: string;
   sequence: number;
   author: MessageAuthor;
+  /** The person who wrote it; null for the factory's messages. */
+  authorName: string | null;
   kind: MessageKind;
   text: string;
   decisionId: string | null;

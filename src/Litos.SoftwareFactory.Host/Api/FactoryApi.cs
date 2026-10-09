@@ -234,12 +234,20 @@ public static class FactoryApi
             }
         });
 
-        threadRoutes.MapGet("", async (Guid id, IFactoryStore store, CancellationToken ct) =>
+        threadRoutes.MapGet("", async (Guid id, IFactoryStore store, UserManager<FactoryUser> users, CancellationToken ct) =>
         {
             // Read before the thread itself: anything written in between is then replayed by the
             // event stream, never missed.
             var cursor = await store.LastEventSequenceAsync(id, ct);
-            return await store.GetThreadAsync(id, ct) is { } details ? Results.Ok(DetailsView(details, cursor)) : Results.NotFound();
+            if (await store.GetThreadAsync(id, ct) is not { } details)
+                return Results.NotFound();
+
+            // Who wrote each person's message: with more than one person on a thread, the viewer's
+            // own name is not everyone's.
+            var authors = details.Messages.Select(m => m.AuthorUserId).OfType<Guid>().ToHashSet();
+            var names = users.Users.Where(u => authors.Contains(u.Id)).ToList()
+                .ToDictionary(u => u.Id, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.UserName : u.DisplayName);
+            return Results.Ok(DetailsView(details, cursor, names));
         });
 
         // Renaming a thread, or filing it under another type: its owner or an Admin.
@@ -616,7 +624,7 @@ public static class FactoryApi
         spec.ApprovedAt,
     };
 
-    private static object DetailsView(ThreadDetails details, long eventCursor) => new
+    private static object DetailsView(ThreadDetails details, long eventCursor, IReadOnlyDictionary<Guid, string?> authorNames) => new
     {
         // Pass to GET .../events?after= to hear everything that happened after this snapshot.
         EventCursor = eventCursor,
@@ -633,6 +641,8 @@ public static class FactoryApi
             m.Id,
             m.Sequence,
             Author = m.Author.ToString(),
+            // The person's name; null for the factory, or a person no longer in the directory.
+            AuthorName = m.AuthorUserId is { } authorId ? authorNames.GetValueOrDefault(authorId) : null,
             Kind = m.Kind.ToString(),
             m.Text,
             m.DecisionId,

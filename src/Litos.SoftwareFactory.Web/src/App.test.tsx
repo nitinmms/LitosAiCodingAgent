@@ -426,6 +426,21 @@ describe('live updates', () => {
     expect(readFileSync('src/styles.css', 'utf8')).toMatch(/\.ev-text\{white-space:pre-wrap\}/);
   });
 
+  it("names who wrote each person's message, not whoever is reading", async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Running', stage: 'Implement' });
+    host.say(thread.id, { author: 'User', kind: 'Text', text: 'Export the orders.', authorName: 'Ben Okafor' });
+    host.say(thread.id, { author: 'User', kind: 'Text', text: 'Use semicolons.' });
+    start(host);
+
+    const ben = (await screen.findByText('Export the orders.')).closest('.m')!;
+    expect(within(ben as HTMLElement).getByText('Ben Okafor')).toBeInTheDocument();
+    expect(ben).toHaveTextContent('BO');
+    const mine = screen.getByText('Use semicolons.').closest('.m')!;
+    expect(within(mine as HTMLElement).getByText(ADMIN.displayName!)).toBeInTheDocument();
+  });
+
   it('shows progress, stage changes and budget use as they happen', async () => {
     const { host, thread } = await withThread({ state: 'Running', stage: 'Implement' });
 

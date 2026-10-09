@@ -131,7 +131,6 @@ export function ThreadMain({
   const requestingChanges = !answering && thread.state === 'AwaitingHumanTesting' && request !== null && !asksForSpec;
   // A rework run that has not produced its own handoff yet can be taken back.
   const reworkUnderWay = run?.kind === 'Rework' && run.status !== 'Finished' && handoff !== null;
-  const userName = user.displayName || user.userName;
 
   /** Runs one action against the host, then shows whatever it changed. */
   const act = async (action: () => Promise<unknown>, done?: string) => {
@@ -269,9 +268,10 @@ export function ThreadMain({
           <div key={m.id} className="m user">
             <div className="m-who">
               <span className="avatar" aria-hidden="true">
-                {initials(userName)}
+                {initials(m.authorName ?? '')}
               </span>
-              <b>{userName}</b>
+              {/* Whoever wrote it: a thread has more than one person on it, not only the viewer. */}
+              <b>{m.authorName ?? 'Someone'}</b>
               {m.kind === 'DecisionAnswer' ? <span>answered the decision</span> : null}
             </div>
             <div className="bubble">
