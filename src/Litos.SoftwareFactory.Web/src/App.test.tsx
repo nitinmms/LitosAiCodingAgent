@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createApi } from './api/client';
 import { App } from './App';
 import { ADMIN, FakeHost, PASSWORD } from './test/fakeHost';
+import { readFileSync } from 'node:fs';
 
 /** Starts the app against a fake host. Signed in unless told otherwise. */
 function start(host: FakeHost, { signedIn = true } = {}) {
@@ -405,6 +406,24 @@ describe('live updates', () => {
     await screen.findByText('Reading the code.');
     await waitFor(() => expect(host.sources).toHaveLength(1));
     expect(host.sources[0]!.url).toBe(`/api/threads/${thread.id}/events?after=${host.details(thread.id).eventCursor}`);
+  });
+
+  it('keeps the lines of a status note that is a list, such as the resume check', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Running', stage: 'Implement' });
+    const note =
+      'Resuming. The working copy differs from where this run last recorded it:\n' +
+      '- Changed since then: `src/Collection.cs`.\n' +
+      '- Newly changed: `tests/CollectionTests.cs`.';
+    host.say(thread.id, { text: note });
+    start(host);
+
+    const code = await screen.findByText('src/Collection.cs');
+    const row = code.closest('.ev-text')!;
+    expect(row.textContent).toBe(note.replaceAll('`', ''));
+    // The breaks survive only if the row keeps white space, as a chat bubble does.
+    expect(readFileSync('src/styles.css', 'utf8')).toMatch(/\.ev-text\{white-space:pre-wrap\}/);
   });
 
   it('shows progress, stage changes and budget use as they happen', async () => {
