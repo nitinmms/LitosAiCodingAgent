@@ -6,6 +6,7 @@ using Litos.SoftwareFactory.Host.Api;
 using Litos.SoftwareFactory.Host.Auth;
 using Litos.SoftwareFactory.Host.Gateway;
 using Litos.SoftwareFactory.Host.Runs;
+using Litos.SoftwareFactory.Host.Settings;
 using Litos.SoftwareFactory.Infrastructure.Git;
 using Litos.SoftwareFactory.Infrastructure.GitHub;
 using Litos.SoftwareFactory.Infrastructure.Persistence;
@@ -45,6 +46,8 @@ public static class FactoryHostApp
         if (!string.IsNullOrWhiteSpace(options.ConnectionString))
             services.AddFactoryStore(options.ConnectionString);
         services.TryAddSingleton<IHostInstanceLock, NoHostInstanceLock>();
+        // Before auth: the sign-in cookies use the same key ring.
+        services.AddFactorySecretProtection(options.DataDirectory);
         services.AddFactoryAuth();
         // A session is checked against its account this often: disabling an account rotates its
         // security stamp, so its open sessions end at the next check.
