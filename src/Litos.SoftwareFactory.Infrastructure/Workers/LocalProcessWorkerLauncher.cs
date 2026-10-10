@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Ports;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Infrastructure.Processes;
 
 namespace Litos.SoftwareFactory.Infrastructure.Workers;
@@ -68,6 +69,10 @@ public sealed class LocalProcessWorkerLauncher(
             arguments.AddRange(["--context-length", contextLength.ToString()]);
         if (!launch.PtcEnabled)
             arguments.AddRange(["--ptc", "off"]);
+        if (launch.ShellTimeoutSeconds is { } shellTimeout)
+            arguments.AddRange(["--shell-timeout", shellTimeout.ToString()]);
+        if (launch.WebSearch != WebSearchAccess.Off)
+            arguments.AddRange(["--web-search", launch.WebSearch == WebSearchAccess.AllTurns ? "all" : "work"]);
         return arguments;
     }
 

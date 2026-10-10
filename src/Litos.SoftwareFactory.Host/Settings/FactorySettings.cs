@@ -45,6 +45,11 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
 
     public ProviderSettings Providers => Read<ProviderSettings>(SettingsSections.Providers);
 
+    public ToolSettings Tools => Read<ToolSettings>(SettingsSections.Tools);
+
+    /// <summary>Which turns of a run starting now may search the web: none without a key.</summary>
+    public WebSearchAccess WebSearch => Tools.WebSearch(IsSet(SecretNames.WebSearch));
+
     /// <summary>Whether a provider can be called: its address is set if it is reached at one, otherwise its key.</summary>
     public bool IsUsable(ProviderEntry provider) => KnownProviders.Find(provider.Name) is { } kind
         && (kind.UsesBaseUrl ? !string.IsNullOrWhiteSpace(provider.BaseUrl) : IsSet(SecretNames.Provider(provider.Name)));
@@ -131,6 +136,7 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
     {
         SettingsSections.Budgets => JsonSerializer.Deserialize<BudgetSettings>(row.Json, FactoryWire.Json) ?? new BudgetSettings(),
         SettingsSections.Providers => JsonSerializer.Deserialize<ProviderSettings>(row.Json, FactoryWire.Json) ?? new ProviderSettings(),
+        SettingsSections.Tools => JsonSerializer.Deserialize<ToolSettings>(row.Json, FactoryWire.Json) ?? new ToolSettings(),
         _ => JsonDocument.Parse(row.Json).RootElement.Clone(),
     };
 }
@@ -185,6 +191,12 @@ public static class SettingsSeeding
                 ],
                 DefaultProvider = FactoryOptions.OpenRouter,
             }, 0, actorId: null, ct);
+            seeded = true;
+        }
+
+        if (settings.RevisionOf(SettingsSections.Tools) == 0)
+        {
+            await settings.SaveAsync(SettingsSections.Tools, new ToolSettings { PtcByDefault = options.PtcEnabled }, 0, actorId: null, ct);
             seeded = true;
         }
 

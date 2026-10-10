@@ -23,8 +23,10 @@ public sealed record RegisterProjectRequest(
 
 /// <param name="Provider">Null for the factory's default provider.</param>
 /// <param name="Model">Null for the provider's default model.</param>
+/// <param name="PtcEnabled">Null for the factory's default (m3-architecture.md §6).</param>
 public sealed record CreateThreadRequest(
-    Guid ProjectId, string Title, string TypeLabel = "feature", long? BudgetCap = null, string? Provider = null, string? Model = null);
+    Guid ProjectId, string Title, string TypeLabel = "feature", long? BudgetCap = null, string? Provider = null, string? Model = null,
+    bool? PtcEnabled = null);
 
 /// <summary>MessageId is the client's own id for the message: the dispatch idempotency key.</summary>
 public sealed record PostMessageRequest(string MessageId, string Text);
@@ -150,7 +152,9 @@ public static class FactoryApi
                     .Select(r => new { r.Provider, r.Model }),
                 DefaultBudget = settings.Budgets.DefaultTaskBudget,
                 MaximumBudget = settings.Budgets.MaximumTaskBudget,
-                options.PtcEnabled,
+                // Whether a new thread starts with PTC on, and whether this person may choose otherwise (§6).
+                PtcEnabled = settings.Tools.PtcByDefault,
+                CanChoosePtc = isAdmin || settings.Tools.MembersMayChoosePtc,
                 // What fraction of a cached input token counts against a task's budget (§9).
                 options.Budget.CachedInputWeight,
                 Presets = VerificationPresets.Names,
@@ -252,6 +256,8 @@ public static class FactoryApi
                     Blank(request.Provider), Blank(request.Model), ProjectAccess.IsAdmin(user), settings.IsUsable, out var notOffered, catalog.Current)
                 is not var (provider, model))
                 return Problem(notOffered!);
+            if (settings.Tools.ChoosePtc(request.PtcEnabled, ProjectAccess.IsAdmin(user), out var ptcRefused) is not { } ptc)
+                return Problem(ptcRefused!);
 
             try
             {
@@ -267,6 +273,7 @@ public static class FactoryApi
                     Provider = provider.Name,
                     Model = model.Id,
                     ContextLength = model.ContextLength,
+                    PtcEnabled = ptc,
                     CreatedAt = now,
                     UpdatedAt = now,
                 }, ct);
@@ -660,6 +667,8 @@ public static class FactoryApi
         thread.Model,
         // Whether the provider honours the output cap and reports usage (m3-architecture.md §4.2).
         BudgetPrecision = Precision(thread.Provider),
+        // Whether its runs use PTC; null for a thread created before M3, which follows the host's option.
+        thread.PtcEnabled,
         thread.Revision,
         thread.CreatedAt,
         thread.UpdatedAt,

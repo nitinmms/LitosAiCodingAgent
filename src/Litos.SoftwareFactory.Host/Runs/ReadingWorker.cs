@@ -23,8 +23,8 @@ public sealed class ReadingWorker : IAsyncDisposable
     public IWorkerClient Client { get; }
 
     public static async Task<ReadingWorker> StartAsync(
-        IWorkerLauncher launcher, IWorkerClientFactory clients, IFactoryStore store, FactoryOptions options, string hostUrl,
-        ClaimedRun claimed, ActiveRun active, string workingCopy, CancellationToken ct)
+        IWorkerLauncher launcher, IWorkerClientFactory clients, IFactoryStore store, FactoryOptions options, Settings.FactorySettings settings,
+        string hostUrl, ClaimedRun claimed, ActiveRun active, string workingCopy, CancellationToken ct)
     {
         var (run, thread, _) = claimed;
         var handle = await launcher.LaunchAsync(
@@ -32,7 +32,9 @@ public sealed class ReadingWorker : IAsyncDisposable
                 run.Id.ToString("N"), workingCopy, thread.Provider, thread.Model,
                 options.ContextLengthOf(thread), options.DataDirectory, hostUrl, active.Secret)
             {
-                PtcEnabled = options.PtcEnabled,
+                PtcEnabled = options.PtcOf(thread),
+                ShellTimeoutSeconds = settings.Tools.ShellTimeoutSeconds,
+                WebSearch = settings.WebSearch,
                 TempDirectory = options.RunTempDirectory(run.Id),
             },
             ct);

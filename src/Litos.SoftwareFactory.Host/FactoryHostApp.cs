@@ -65,6 +65,10 @@ public static class FactoryHostApp
             sp.GetRequiredService<IChatProviderFactory>(),
             new HttpClient { BaseAddress = new Uri("https://openrouter.ai/api/v1/"), Timeout = TimeSpan.FromSeconds(30) }));
         services.AddSingleton<ModelCatalogService>();
+        // Web search for runs, with the key the host holds (m3-architecture.md §6).
+        services.AddSingleton(_ => new Litos.Tools.Web.TavilySearchClient(
+            new HttpClient { BaseAddress = new Uri("https://api.tavily.com/"), Timeout = TimeSpan.FromSeconds(30) }));
+        services.AddSingleton<RunWebSearch>();
         services.AddSingleton<ModelGateway>();
 
         services.AddSingleton<IWorkspaceProvider, GitWorkspaceProvider>();

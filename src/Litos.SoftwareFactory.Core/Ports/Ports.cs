@@ -177,6 +177,12 @@ public sealed record WorkerLaunch(
     /// <summary>Whether new sessions start with Programmatic Tool Calling on (the default, §8).</summary>
     public bool PtcEnabled { get; init; } = true;
 
+    /// <summary>How long one shell command may run; null keeps the engine's limit (m3-architecture.md §6).</summary>
+    public int? ShellTimeoutSeconds { get; init; }
+
+    /// <summary>Which of the run's turns may search the web, through the host (m3-architecture.md §6).</summary>
+    public Settings.WebSearchAccess WebSearch { get; init; }
+
     /// <summary>The run's own TEMP, TMP and TMPDIR for the worker and every command it starts;
     /// null keeps the host's.</summary>
     public string? TempDirectory { get; init; }

@@ -36,6 +36,16 @@ public sealed class FactoryHostClient
             ?? throw new HttpRequestException("The factory host returned an empty response to a submission.");
     }
 
+    /// <summary>Asks the host to search the web; it holds the key, and says why when it will not.</summary>
+    /// <exception cref="HttpRequestException">The host could not be reached or answered with an error.</exception>
+    public async Task<WebSearchResponse> WebSearchAsync(WebSearchRequest request, CancellationToken ct)
+    {
+        using var response = await Http.PostAsJsonAsync(FactoryWire.WebSearchPath(RunId), request, FactoryWire.Json, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WebSearchResponse>(FactoryWire.Json, ct)
+            ?? throw new HttpRequestException("The factory host returned an empty response to a web search.");
+    }
+
     public async Task ReadyAsync(WorkerReady ready, CancellationToken ct)
     {
         using var response = await Http.PostAsJsonAsync(FactoryWire.ReadyPath(RunId), ready, FactoryWire.Json, ct);

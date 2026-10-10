@@ -73,6 +73,10 @@ public sealed class TaskThread
     /// created (m3-architecture.md §4.4); null for a thread created before M3.</summary>
     public int? ContextLength { get; set; }
 
+    /// <summary>Whether its runs use Programmatic Tool Calling, chosen when the thread was created
+    /// (m3-architecture.md §6), so every rework keeps it; null for a thread created before M3.</summary>
+    public bool? PtcEnabled { get; set; }
+
     /// <summary>The next message's sequence number within this thread.</summary>
     public long NextMessageSequence { get; set; } = 1;
 

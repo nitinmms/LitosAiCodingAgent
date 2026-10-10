@@ -7,10 +7,27 @@ namespace Litos.SoftwareFactory.Worker;
 /// part through the environment — command lines are visible to other processes on the machine.
 /// Nothing here is ever read from, or written to, the ~/.litos/config.json other Litos faces share.
 /// </summary>
+/// <summary>Which turns may search the web, through the host (m3-architecture.md §6).</summary>
+public enum WorkerWebSearch
+{
+    Off,
+
+    /// <summary>Implement, repair and rework turns.</summary>
+    WorkTurns,
+
+    /// <summary>Every turn, the read-only ones too.</summary>
+    AllTurns,
+}
+
 public sealed record WorkerOptions(
     string RunId, string Secret, Uri HostUrl, string Provider, string Model, int? ContextLength,
     string DataDirectory, int? ParentProcessId, bool PtcEnabled)
 {
+    /// <summary>How long one shell command may run; null keeps the engine's limit.</summary>
+    public int? ShellTimeoutSeconds { get; init; }
+
+    public WorkerWebSearch WebSearch { get; init; }
+
     /// <summary>
     /// How many lines a read_file with no 'limit' returns, and the most any one read returns.
     /// R1 printed ten whole files of 9,000 to 24,000 characters while exploring, and paused on
@@ -79,6 +96,14 @@ public sealed record WorkerOptions(
         if (ptc is not ("on" or "off"))
             throw new WorkerOptionsException($"Argument '--ptc' must be 'on' or 'off', but was '{ptc}'.");
 
+        var webSearch = values.GetValueOrDefault("--web-search", "off") switch
+        {
+            "off" => WorkerWebSearch.Off,
+            "work" => WorkerWebSearch.WorkTurns,
+            "all" => WorkerWebSearch.AllTurns,
+            var other => throw new WorkerOptionsException($"Argument '--web-search' must be 'off', 'work' or 'all', but was '{other}'."),
+        };
+
         return new WorkerOptions(
             RunId: RequiredVariable(FactoryWire.RunIdVariable),
             Secret: RequiredVariable(FactoryWire.WorkerSecretVariable),
@@ -88,7 +113,11 @@ public sealed record WorkerOptions(
             ContextLength: OptionalInt("--context-length"),
             DataDirectory: Path.GetFullPath(Required("--data-dir")),
             ParentProcessId: OptionalInt("--parent-pid"),
-            PtcEnabled: ptc == "on");
+            PtcEnabled: ptc == "on")
+        {
+            ShellTimeoutSeconds = OptionalInt("--shell-timeout"),
+            WebSearch = webSearch,
+        };
     }
 }
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Litos.SoftwareFactory.Core.Ports;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Infrastructure.Workers;
 
 namespace Litos.SoftwareFactory.Infrastructure.Tests.Workers;
@@ -372,6 +373,25 @@ public class LocalProcessWorkerLauncherTests : IDisposable
             ["--parent-pid", "4242", "--provider", "openrouter", "--model", "vendor/model", "--data-dir", _dataDirectory, "--context-length", "200000"],
             arguments);
         Assert.DoesNotContain("launch-secret", arguments);
+    }
+
+    [Theory]
+    [InlineData(WebSearchAccess.WorkTurns, "work")]
+    [InlineData(WebSearchAccess.AllTurns, "all")]
+    public void BuildArguments_CarryTheShellLimitAndWhichTurnsMaySearch(WebSearchAccess access, string expected)
+    {
+        var arguments = LocalProcessWorkerLauncher.BuildArguments(Launch() with { ShellTimeoutSeconds = 600, WebSearch = access, PtcEnabled = false }, 1);
+
+        Assert.Equal(["--ptc", "off", "--shell-timeout", "600", "--web-search", expected], arguments.Skip(10));
+    }
+
+    [Fact]
+    public void BuildArguments_WithNoShellLimitAndNoWebSearch_SayNothingOfThem()
+    {
+        var arguments = LocalProcessWorkerLauncher.BuildArguments(Launch(), 1);
+
+        Assert.DoesNotContain("--shell-timeout", arguments);
+        Assert.DoesNotContain("--web-search", arguments);
     }
 
     [Fact]

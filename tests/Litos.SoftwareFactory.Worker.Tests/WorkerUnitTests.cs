@@ -49,6 +49,27 @@ public class WorkerOptionsTests
     }
 
     [Fact]
+    public void Parse_ShellLimitAndWebSearch_AreReadWhenGiven_AndOffOtherwise()
+    {
+        var options = Parse([.. Arguments, "--shell-timeout", "900", "--web-search", "all"]);
+
+        Assert.Equal((900, WorkerWebSearch.AllTurns), (options.ShellTimeoutSeconds, options.WebSearch));
+        Assert.Equal(WorkerWebSearch.WorkTurns, Parse([.. Arguments, "--web-search", "work"]).WebSearch);
+        Assert.Equal(((int?)null, WorkerWebSearch.Off), (Parse().ShellTimeoutSeconds, Parse().WebSearch));
+    }
+
+    [Theory]
+    [InlineData("--web-search", "sometimes")]
+    [InlineData("--shell-timeout", "0")]
+    [InlineData("--shell-timeout", "soon")]
+    public void Parse_MalformedShellLimitOrWebSearch_IsRefused(string name, string value)
+    {
+        var ex = Assert.Throws<WorkerOptionsException>(() => Parse([.. Arguments, name, value]));
+
+        Assert.Contains(name, ex.Message);
+    }
+
+    [Fact]
     public void Parse_OptionalArguments_MayBeOmitted()
     {
         var options = Parse(["--provider", "anthropic", "--model", "m", "--data-dir", "d"]);
@@ -710,8 +731,8 @@ public class FactoryToolSetPolicyTests
     private static readonly string[] Registered =
         ["read_file", "write_file", "edit_file", "list_directory", "search_code", "shell", "web_search", "skill"];
 
-    private static FactoryToolSetPolicy Policy(IEnumerable<string>? registered = null) => new(
-        (registered ?? Registered).Select(n => new NamedTool(n)), TestOptions.HostClient(new FakeHttpMessageHandler()));
+    private static FactoryToolSetPolicy Policy(IEnumerable<string>? registered = null, WorkerWebSearch webSearch = WorkerWebSearch.Off) => new(
+        (registered ?? Registered).Select(n => new NamedTool(n)), TestOptions.HostClient(new FakeHttpMessageHandler()), webSearch: webSearch);
 
     private static string[] Names(ToolRegistry registry) => [.. registry.Schemas.Select(s => s.Name)];
 
@@ -820,6 +841,57 @@ public class FactoryToolSetPolicyTests
         Assert.DoesNotContain("edit_file", reviewBridge);
         Assert.DoesNotContain("shell", reviewBridge);
         Assert.Contains("submit_review", reviewBridge);
+    }
+
+    [Theory]
+    [InlineData(WorkerWebSearch.Off, "Implement", false)]
+    [InlineData(WorkerWebSearch.Off, "Chat", false)]
+    [InlineData(WorkerWebSearch.WorkTurns, "Implement", true)]
+    [InlineData(WorkerWebSearch.WorkTurns, "Repair", true)]
+    [InlineData(WorkerWebSearch.WorkTurns, "Rework", true)]
+    [InlineData(WorkerWebSearch.WorkTurns, "Review", false)]
+    [InlineData(WorkerWebSearch.WorkTurns, "Spec", false)]
+    [InlineData(WorkerWebSearch.WorkTurns, "Scan", false)]
+    [InlineData(WorkerWebSearch.WorkTurns, "Chat", false)]
+    [InlineData(WorkerWebSearch.AllTurns, "Review", true)]
+    [InlineData(WorkerWebSearch.AllTurns, "Chat", true)]
+    [InlineData(WorkerWebSearch.AllTurns, "Implement", true)]
+    public void WebSearch_JoinsTheTurnsTheRunAllows_DirectlyAndThroughTheBridge(WorkerWebSearch webSearch, string turnKind, bool expected)
+    {
+        var policy = Policy(webSearch: webSearch);
+
+        var direct = policy.Create("thread", turnKind);
+
+        Assert.Equal(expected, Names(direct).Contains("web_search"));
+        Assert.Equal(expected, Names(policy.CreateForBridge("thread")).Contains("web_search"));
+        // Never the engine's own, which would search with a key of the worker's: it has none.
+        if (expected)
+            Assert.IsNotType<NamedTool>(direct.Resolve("web_search"));
+    }
+
+    [Fact]
+    public async Task WebSearch_AsksTheHost_ForItsSession_AndShowsWhatTheHostSays()
+    {
+        var handler = new FakeHttpMessageHandler();
+        handler.EnqueueJson(new WebSearchResponse(false, "Example — https://example.com\nAn excerpt."));
+        handler.EnqueueJson(new WebSearchResponse(true, "Web search is turned off for this factory."));
+        handler.EnqueueFailure();
+        var policy = new FactoryToolSetPolicy(Registered.Select(n => new NamedTool(n)), TestOptions.HostClient(handler), webSearch: WorkerWebSearch.WorkTurns);
+        var tool = policy.Create("thread-42", "Implement").Resolve("web_search")!;
+        var args = JsonDocument.Parse("""{"query":"csv rfc 4180","max_results":3}""").RootElement;
+
+        var found = await tool.InvokeAsync(args, default);
+        var refused = await tool.InvokeAsync(args, default);
+        var unreachable = await tool.InvokeAsync(args, default);
+
+        Assert.Equal((false, "Example — https://example.com\nAn excerpt."), (found.IsError, found.Text));
+        Assert.Equal((true, "Web search is turned off for this factory."), (refused.IsError, refused.Text));
+        Assert.True(unreachable.IsError);
+        Assert.Contains("factory host could not be reached", unreachable.Text);
+        var request = handler.Requests[0];
+        Assert.Equal("/internal/runs/run-1/web-search", request.Uri.AbsolutePath);
+        Assert.Equal(TestOptions.Secret, request.Headers["X-Factory-Secret"]);
+        Assert.Equal(new WebSearchRequest("thread-42", "csv rfc 4180", 3), JsonSerializer.Deserialize<WebSearchRequest>(request.Body!, FactoryWire.Json));
     }
 
     [Fact]

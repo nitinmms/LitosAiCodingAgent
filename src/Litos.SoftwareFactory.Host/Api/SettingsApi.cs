@@ -27,6 +27,7 @@ public static class SettingsApi
         {
             Budgets = Section(settings, SettingsSections.Budgets, settings.Budgets),
             Providers = Section(settings, SettingsSections.Providers, settings.Providers),
+            Tools = Section(settings, SettingsSections.Tools, settings.Tools),
             // What the Providers tab lists, in order, with what each needs to be called.
             KnownProviders = KnownProviders.All.Select(p => new
             {
@@ -64,6 +65,17 @@ public static class SettingsApi
 
             await catalog.RefreshAsync(provider, ct);
             return Results.Ok(CatalogView(provider, catalog.Current, settings.Providers));
+        });
+
+        admin.MapPut("/settings/tools", async (
+            SaveSettingsRequest<ToolSettings> request, ClaimsPrincipal user, FactorySettings settings, CancellationToken ct) =>
+        {
+            if (request.Settings is not { } tools)
+                return Results.BadRequest(new { error = "settings are required." });
+            if (tools.Validate() is { Count: > 0 } errors)
+                return Results.BadRequest(new { error = string.Join(" ", errors), errors });
+
+            return await SaveAsync(settings, SettingsSections.Tools, tools, request.Revision, user, ct);
         });
 
         admin.MapPut("/settings/budgets", async (

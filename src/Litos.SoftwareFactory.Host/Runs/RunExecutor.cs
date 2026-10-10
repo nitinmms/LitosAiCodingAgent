@@ -823,7 +823,9 @@ public sealed class RunExecutor(
                 claimed.Run.Id.ToString("N"), workspaces.For(claimed.Project).Path, claimed.Thread.Provider, claimed.Thread.Model,
                 options.ContextLengthOf(claimed.Thread), options.DataDirectory, HostUrl, active.Secret)
             {
-                PtcEnabled = options.PtcEnabled,
+                PtcEnabled = options.PtcOf(claimed.Thread),
+                ShellTimeoutSeconds = settings.Tools.ShellTimeoutSeconds,
+                WebSearch = settings.WebSearch,
                 TempDirectory = options.RunTempDirectory(claimed.Run.Id),
             },
             ct);

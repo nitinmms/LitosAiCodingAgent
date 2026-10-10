@@ -58,6 +58,27 @@ public static class WorkerCallbacks
             return Results.Json(response, FactoryWire.Json);
         });
 
+        runs.MapPost("/web-search", async (string runId, HttpRequest request, RunRegistry registry, RunWebSearch search, CancellationToken ct) =>
+        {
+            if (Authenticate(runId, request, registry) is not { } active)
+                return Results.Unauthorized();
+
+            WebSearchRequest? body;
+            try
+            {
+                body = await request.ReadFromJsonAsync<WebSearchRequest>(FactoryWire.Json, ct);
+            }
+            catch (JsonException)
+            {
+                body = null;
+            }
+
+            if (body is null || string.IsNullOrWhiteSpace(body.Query))
+                return Results.Json(new WebSearchResponse(true, "A 'query' argument is required."), FactoryWire.Json);
+
+            return Results.Json(await search.SearchAsync(active, body, ct), FactoryWire.Json);
+        });
+
         runs.MapPost("/gateway", async (string runId, HttpContext context, RunRegistry registry, ModelGateway gateway) =>
         {
             if (Authenticate(runId, context.Request, registry) is not { } active)

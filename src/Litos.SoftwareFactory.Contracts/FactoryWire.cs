@@ -39,6 +39,8 @@ public static class FactoryWire
 
     public static string ReadyPath(string runId) => $"/internal/runs/{Uri.EscapeDataString(runId)}/ready";
 
+    public static string WebSearchPath(string runId) => $"/internal/runs/{Uri.EscapeDataString(runId)}/web-search";
+
     /// <summary>The worker's own extra endpoints, beside Litos.Hosting's turn endpoints.</summary>
     public static string CompactPath(string sessionId) => $"/sessions/{Uri.EscapeDataString(sessionId)}/compact";
 
@@ -67,6 +69,12 @@ public static class FactoryWire
 /// <summary>The worker's "started" callback: its port, and whether its MCP servers have
 /// settled — the host waits for this, not just the port handshake, before the first turn.</summary>
 public sealed record WorkerReady(int Port, bool McpReady);
+
+/// <summary>A search the agent asked for; the host searches with its own key (m3-architecture.md §6).</summary>
+public sealed record WebSearchRequest(string SessionId, string Query, int MaxResults);
+
+/// <summary>What the model is shown: the results, or, when <paramref name="IsError"/>, why there are none.</summary>
+public sealed record WebSearchResponse(bool IsError, string Text);
 
 /// <summary>Body of the worker's compact endpoint. The instruction tells the summarizer what
 /// must survive (acceptance criteria, decisions, changed files, outstanding failures).</summary>

@@ -37,6 +37,9 @@ public sealed class FactoryOptions
     /// <summary>The context window a thread's worker compacts against.</summary>
     public int ContextLengthOf(Core.Store.TaskThread thread) => thread.ContextLength ?? ContextLength;
 
+    /// <summary>Whether a thread's runs use PTC: its own choice, or for a thread created before M3, <see cref="PtcEnabled"/>.</summary>
+    public bool PtcOf(Core.Store.TaskThread thread) => thread.PtcEnabled ?? PtcEnabled;
+
     /// <summary>The cap a new thread gets when its creator sets none; null means no cap.</summary>
     public long? DefaultBudget { get; set; } = 300_000;
 
@@ -57,7 +60,10 @@ public sealed class FactoryOptions
 
     public RunLimits Limits { get; set; } = new();
 
-    /// <summary>Whether runs use Programmatic Tool Calling. On by default (§8).</summary>
+    /// <summary>
+    /// Whether runs use Programmatic Tool Calling (§8): the Tools tab's default on the first start,
+    /// and the choice of a thread created before M3. On by default.
+    /// </summary>
     public bool PtcEnabled { get; set; } = true;
 
     /// <summary>The worker executable; null finds it beside the host.</summary>

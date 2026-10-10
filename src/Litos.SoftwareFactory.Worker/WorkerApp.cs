@@ -33,7 +33,7 @@ public static class WorkerApp
         // or write the ~/.litos/config.json other Litos faces share.
         var config = new LitosConfig(
             DefaultProvider: options.Provider, DefaultModel: options.Model, LastWorkingDirectory: null,
-            ApiKeys: new Dictionary<string, string>());
+            ApiKeys: new Dictionary<string, string>(), ShellCommandTimeoutSeconds: options.ShellTimeoutSeconds);
         builder.Services.AddLitosAgent(config);
         builder.Services.AddLitosAutoApproval();
 
@@ -54,7 +54,8 @@ public static class WorkerApp
                 ? new Litos.Tools.FileSystem.ReadFileTool(WorkerOptions.ReadFileMaxBytes, WorkerOptions.ReadFileDefaultLines)
                 : tool),
             sp.GetRequiredService<FactoryHostClient>(),
-            testOutputDirectory: options.TestOutputDirectory));
+            testOutputDirectory: options.TestOutputDirectory,
+            webSearch: options.WebSearch));
         builder.Services.AddSingleton<IToolSetPolicy>(sp => sp.GetRequiredService<FactoryToolSetPolicy>());
         builder.Services.AddSingleton<IWorkingDirectoryResolver, ProcessWorkingDirectoryResolver>();
 

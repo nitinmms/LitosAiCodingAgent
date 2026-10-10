@@ -2,18 +2,21 @@ using System.Collections.Concurrent;
 using Litos.Agent.Tools;
 using Litos.Hosting;
 using Litos.SoftwareFactory.Contracts;
+using Litos.Tools.Web;
 
 namespace Litos.SoftwareFactory.Worker;
 
 /// <summary>
-/// Which tools each kind of turn gets (ReadMe_LitosSoftwareFactory_V1.md §8). The set is fixed
-/// in M1 — no MCP, no skills, no web search:
+/// Which tools each kind of turn gets (ReadMe_LitosSoftwareFactory_V1.md §8). No MCP and no
+/// skills yet; web search only where the run was launched with it (m3-architecture.md §6):
 ///
 /// - implement, repair and rework turns edit code and finish with submit_work or request_decision;
 /// - a review turn can only read, and finishes with submit_review;
 /// - a spec turn can only read, and finishes with submit_spec;
 /// - a decision scan can only read, and finishes with submit_plan;
-/// - a chat turn can only read.
+/// - a chat turn can only read;
+/// - web_search joins the implement, repair and rework turns when it is on, and the read-only
+///   turns too when the Admin allows it there.
 ///
 /// A nudge carries no kind of its own: it gets whatever the turn it follows had, so a nudged
 /// review still cannot edit files.
@@ -25,6 +28,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
 
     private readonly Dictionary<string, ITool> _builtIn;
     private readonly FactoryHostClient _host;
+    private readonly WorkerWebSearch _webSearch;
     private readonly ConcurrentDictionary<string, TurnKind> _lastKind = new();
 
     private static readonly string[] FileTools = ["read_file", "write_file", "edit_file", "list_directory", "search_code"];
@@ -33,9 +37,13 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     /// which the host starts it in.</param>
     /// <param name="testOutputDirectory">Where the whole output of a test run is kept when the
     /// shell cuts it to its failures and summary (TestOutputTrimmer); null keeps test output whole.</param>
-    public FactoryToolSetPolicy(IEnumerable<ITool> registeredTools, FactoryHostClient host, string? workingCopy = null, string? testOutputDirectory = null)
+    /// <param name="webSearch">Which turns may search the web, through the host.</param>
+    public FactoryToolSetPolicy(
+        IEnumerable<ITool> registeredTools, FactoryHostClient host, string? workingCopy = null, string? testOutputDirectory = null,
+        WorkerWebSearch webSearch = WorkerWebSearch.Off)
     {
         _host = host;
+        _webSearch = webSearch;
         _builtIn = registeredTools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
 
         // An agent gets the shell and the file tools behind guards, whether it calls them directly
@@ -84,14 +92,22 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
 
     private ToolRegistry ToolsFor(TurnKind kind, string sessionId) => kind switch
     {
-        TurnKind.Implement or TurnKind.Repair or TurnKind.Rework =>
-            new ToolRegistry([.. BuiltIn(WorkTools), new SubmitWorkTool(_host, sessionId), new RequestDecisionTool(_host, sessionId)]),
-        TurnKind.Review => new ToolRegistry([.. BuiltIn(ReadOnlyTools), new SubmitReviewTool(_host, sessionId)]),
-        TurnKind.Spec => new ToolRegistry([.. BuiltIn(ReadOnlyTools), new SubmitSpecTool(_host, sessionId)]),
-        TurnKind.Scan => new ToolRegistry([.. BuiltIn(ReadOnlyTools), new SubmitPlanTool(_host, sessionId)]),
-        TurnKind.Chat => new ToolRegistry(BuiltIn(ReadOnlyTools)),
+        TurnKind.Implement or TurnKind.Repair or TurnKind.Rework => new ToolRegistry(
+            [.. BuiltIn(WorkTools), .. WebSearch(sessionId, readOnly: false), new SubmitWorkTool(_host, sessionId), new RequestDecisionTool(_host, sessionId)]),
+        TurnKind.Review => new ToolRegistry([.. ReadOnly(sessionId), new SubmitReviewTool(_host, sessionId)]),
+        TurnKind.Spec => new ToolRegistry([.. ReadOnly(sessionId), new SubmitSpecTool(_host, sessionId)]),
+        TurnKind.Scan => new ToolRegistry([.. ReadOnly(sessionId), new SubmitPlanTool(_host, sessionId)]),
+        TurnKind.Chat => new ToolRegistry(ReadOnly(sessionId)),
         _ => throw new InvalidOperationException($"No tool set is defined for a {kind} turn."),
     };
+
+    private IEnumerable<ITool> ReadOnly(string sessionId) => [.. BuiltIn(ReadOnlyTools), .. WebSearch(sessionId, readOnly: true)];
+
+    /// <summary>The engine's web_search tool, searching through the host, where this run allows it.</summary>
+    private IEnumerable<ITool> WebSearch(string sessionId, bool readOnly) =>
+        _webSearch == WorkerWebSearch.AllTurns || (_webSearch == WorkerWebSearch.WorkTurns && !readOnly)
+            ? [new WebSearchTool(new HostWebSearchBackend(_host, sessionId))]
+            : [];
 
     private IEnumerable<ITool> BuiltIn(IEnumerable<string> names) => names.Select(name => _builtIn[name]);
 }
