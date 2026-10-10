@@ -139,6 +139,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(r => r.ReviewSessionId).HasMaxLength(100);
             Json(e.Property(r => r.StateJson));
             Json(e.Property(r => r.WorkspaceSnapshotJson));
+            Json(e.Property(r => r.CapabilitiesJson));
             e.HasOne<TaskThread>().WithMany().HasForeignKey(r => r.ThreadId).OnDelete(DeleteBehavior.Cascade);
             // One active run per thread: a second one cannot be inserted while the first is live. A
             // chat run answering a message is not the task's work, so it never blocks one.

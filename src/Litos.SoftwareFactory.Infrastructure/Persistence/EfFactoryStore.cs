@@ -910,6 +910,26 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task SetRunCapabilitiesAsync(Guid runId, string capabilitiesJson, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var run = await db.Runs.FirstOrDefaultAsync(r => r.Id == runId, ct) ?? throw new StoreNotFoundException("The run does not exist.");
+        run.CapabilitiesJson = capabilitiesJson;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<string?> LatestCapabilitiesAsync(Guid threadId, Guid exceptRunId, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var runs = await db.Runs.AsNoTracking()
+            .Where(r => r.ThreadId == threadId && r.Id != exceptRunId && r.CapabilitiesJson != null
+                && (r.Kind == RunKind.Implement || r.Kind == RunKind.Rework))
+            .Select(r => new { r.CreatedAt, r.CapabilitiesJson })
+            .ToListAsync(ct);
+        // A thread has a handful of runs, so they are ordered after reading (SQLite cannot order by a DateTimeOffset).
+        return runs.OrderByDescending(r => r.CreatedAt).FirstOrDefault()?.CapabilitiesJson;
+    }
+
     public async Task SetRunCommitsAsync(Guid runId, string? baselineCommit, string? headCommit, string? reviewSessionId, CancellationToken ct)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);

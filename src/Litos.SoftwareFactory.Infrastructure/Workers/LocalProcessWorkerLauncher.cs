@@ -73,6 +73,8 @@ public sealed class LocalProcessWorkerLauncher(
             arguments.AddRange(["--shell-timeout", shellTimeout.ToString()]);
         if (launch.WebSearch != WebSearchAccess.Off)
             arguments.AddRange(["--web-search", launch.WebSearch == WebSearchAccess.AllTurns ? "all" : "work"]);
+        if (launch.McpConfigPath is { } mcpConfig)
+            arguments.AddRange(["--mcp-config", mcpConfig]);
         return arguments;
     }
 

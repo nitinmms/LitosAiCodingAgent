@@ -16,7 +16,8 @@ namespace Litos.SoftwareFactory.Worker;
 /// - a decision scan can only read, and finishes with submit_plan;
 /// - a chat turn can only read;
 /// - web_search joins the implement, repair and rework turns when it is on, and the read-only
-///   turns too when the Admin allows it there.
+///   turns too when the Admin allows it there;
+/// - the run's MCP tools join the implement, repair and rework turns only (m3-architecture.md §7.2).
 ///
 /// A nudge carries no kind of its own: it gets whatever the turn it follows had, so a nudged
 /// review still cannot edit files.
@@ -29,6 +30,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     private readonly Dictionary<string, ITool> _builtIn;
     private readonly FactoryHostClient _host;
     private readonly WorkerWebSearch _webSearch;
+    private readonly Func<IEnumerable<ITool>> _mcpTools;
     private readonly ConcurrentDictionary<string, TurnKind> _lastKind = new();
 
     private static readonly string[] FileTools = ["read_file", "write_file", "edit_file", "list_directory", "search_code"];
@@ -38,12 +40,14 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     /// <param name="testOutputDirectory">Where the whole output of a test run is kept when the
     /// shell cuts it to its failures and summary (TestOutputTrimmer); null keeps test output whole.</param>
     /// <param name="webSearch">Which turns may search the web, through the host.</param>
+    /// <param name="mcpTools">The run's MCP tools it may call, read on every turn; none by default.</param>
     public FactoryToolSetPolicy(
         IEnumerable<ITool> registeredTools, FactoryHostClient host, string? workingCopy = null, string? testOutputDirectory = null,
-        WorkerWebSearch webSearch = WorkerWebSearch.Off)
+        WorkerWebSearch webSearch = WorkerWebSearch.Off, Func<IEnumerable<ITool>>? mcpTools = null)
     {
         _host = host;
         _webSearch = webSearch;
+        _mcpTools = mcpTools ?? (() => []);
         _builtIn = registeredTools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
 
         // An agent gets the shell and the file tools behind guards, whether it calls them directly
@@ -93,7 +97,8 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     private ToolRegistry ToolsFor(TurnKind kind, string sessionId) => kind switch
     {
         TurnKind.Implement or TurnKind.Repair or TurnKind.Rework => new ToolRegistry(
-            [.. BuiltIn(WorkTools), .. WebSearch(sessionId, readOnly: false), new SubmitWorkTool(_host, sessionId), new RequestDecisionTool(_host, sessionId)]),
+            [.. BuiltIn(WorkTools), .. WebSearch(sessionId, readOnly: false), .. _mcpTools(),
+             new SubmitWorkTool(_host, sessionId), new RequestDecisionTool(_host, sessionId)]),
         TurnKind.Review => new ToolRegistry([.. ReadOnly(sessionId), new SubmitReviewTool(_host, sessionId)]),
         TurnKind.Spec => new ToolRegistry([.. ReadOnly(sessionId), new SubmitSpecTool(_host, sessionId)]),
         TurnKind.Scan => new ToolRegistry([.. ReadOnly(sessionId), new SubmitPlanTool(_host, sessionId)]),

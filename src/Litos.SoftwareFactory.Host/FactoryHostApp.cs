@@ -69,6 +69,8 @@ public static class FactoryHostApp
         services.AddSingleton(_ => new Litos.Tools.Web.TavilySearchClient(
             new HttpClient { BaseAddress = new Uri("https://api.tavily.com/"), Timeout = TimeSpan.FromSeconds(30) }));
         services.AddSingleton<RunWebSearch>();
+        // Test connection for an MCP server an Admin is setting up (m3-architecture.md §7.1).
+        services.AddSingleton<IMcpConnectionTester, McpConnectionTester>();
         services.AddSingleton<ModelGateway>();
 
         services.AddSingleton<IWorkspaceProvider, GitWorkspaceProvider>();

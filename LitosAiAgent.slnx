@@ -38,6 +38,7 @@
     <Project Path="tests/Litos.SoftwareFactory.Host.Tests/Litos.SoftwareFactory.Host.Tests.csproj" />
     <Project Path="tests/Litos.SoftwareFactory.Infrastructure.Tests/Litos.SoftwareFactory.Infrastructure.Tests.csproj" />
     <Project Path="tests/Litos.SoftwareFactory.Worker.Tests/Litos.SoftwareFactory.Worker.Tests.csproj" />
+    <Project Path="tests/Litos.SoftwareFactory.TestMcpServer/Litos.SoftwareFactory.TestMcpServer.csproj" />
     <Project Path="tests/Litos.Tools.Tests/Litos.Tools.Tests.csproj" />
     <Project Path="tests/Litos.Tools.Mcp.Tests/Litos.Tools.Mcp.Tests.csproj" />
     <Project Path="tests/Litos.VsCodeHost.Tests/Litos.VsCodeHost.Tests.csproj" />

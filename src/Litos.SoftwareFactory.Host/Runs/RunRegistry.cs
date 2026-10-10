@@ -47,7 +47,10 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
     /// <summary>Generated per launch; the worker's callbacks and the host's calls both carry it.</summary>
     public string Secret { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
-    public TaskCompletionSource<WorkerReady> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource<WorkerReady> Ready { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Before a worker is launched: its "ready" is awaited afresh, not an earlier worker's.</summary>
+    public void ExpectReady() => Ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public TurnKind? TurnKind { get; private set; }
 

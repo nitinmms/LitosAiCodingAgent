@@ -415,6 +415,13 @@ public sealed class FakeWorker(WorkerLaunch launch, FakeWorkerLauncher owner) : 
         return ValueTask.CompletedTask;
     }
 
+    /// <summary>Tells the host the worker is ready, with how its MCP servers connected, as the real worker does.</summary>
+    public async Task ReadyAsync(params McpServerReport[] mcpServers)
+    {
+        using var response = await _http.PostAsJsonAsync(FactoryWire.ReadyPath(launch.RunId), new WorkerReady(1, true, mcpServers), FactoryWire.Json);
+        response.EnsureSuccessStatusCode();
+    }
+
     /// <summary>Posts a completion tool's payload to the host, as the real worker does.</summary>
     public async Task<SubmissionResponse> SubmitAsync(string sessionId, Submission submission)
     {

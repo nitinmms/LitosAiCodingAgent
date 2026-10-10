@@ -48,6 +48,8 @@ public static class WorkerApp
         builder.Services.AddSingleton<IChatProviderFactory, GatewayChatProviderFactory>();
 
         builder.Services.AddSingleton<IModelSelection>(new FixedModelSelection(options.Provider, options.Model, options.ContextLength));
+        if (options.McpConfigPath is { } mcpConfig)
+            builder.Services.AddSingleton(sp => new WorkerMcp(mcpConfig, sp.GetRequiredService<ILoggerFactory>()));
         // read_file with the factory's per-file limit in place of the profile's (WorkerOptions.ReadFileDefaultLines).
         builder.Services.AddSingleton(sp => new FactoryToolSetPolicy(
             sp.GetServices<ITool>().Select(tool => tool.Name == "read_file"
@@ -55,7 +57,8 @@ public static class WorkerApp
                 : tool),
             sp.GetRequiredService<FactoryHostClient>(),
             testOutputDirectory: options.TestOutputDirectory,
-            webSearch: options.WebSearch));
+            webSearch: options.WebSearch,
+            mcpTools: sp.GetService<WorkerMcp>() is { } mcp ? mcp.PermittedTools : null));
         builder.Services.AddSingleton<IToolSetPolicy>(sp => sp.GetRequiredService<FactoryToolSetPolicy>());
         builder.Services.AddSingleton<IWorkingDirectoryResolver, ProcessWorkingDirectoryResolver>();
 
@@ -93,11 +96,14 @@ public static class WorkerApp
     {
         var port = await LoopbackHost.StartAndAnnounceAsync(app);
 
-        // M1 has no MCP servers to wait for, so the worker is ready as soon as it is listening.
+        // Ready means ready (blueprint §8.1): the run's MCP servers have each connected or failed.
         var host = app.Services.GetRequiredService<FactoryHostClient>();
         try
         {
-            await host.ReadyAsync(new WorkerReady(port, McpReady: true), app.Lifetime.ApplicationStopping);
+            IReadOnlyList<McpServerReport> mcp = app.Services.GetService<WorkerMcp>() is { } servers
+                ? await servers.ConnectAsync(app.Lifetime.ApplicationStopping)
+                : [];
+            await host.ReadyAsync(new WorkerReady(port, McpReady: true, mcp), app.Lifetime.ApplicationStopping);
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {

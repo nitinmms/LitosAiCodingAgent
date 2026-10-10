@@ -195,6 +195,10 @@ public sealed class TaskRun
     /// <summary>The working copy at the last checkpoint (a WorkspaceSnapshot), which a resumed
     /// run compares with the working copy now (§16).</summary>
     public string? WorkspaceSnapshotJson { get; set; }
+
+    /// <summary>The tool settings and MCP servers it started with (Settings.RunCapabilities), fixed
+    /// at its start (m3-architecture.md §7.4); null for a run that never started, or ran before M3.</summary>
+    public string? CapabilitiesJson { get; set; }
     public string? ReviewSessionId { get; set; }
     public required string PromptRevision { get; set; }
     public StopReason? StopReason { get; set; }

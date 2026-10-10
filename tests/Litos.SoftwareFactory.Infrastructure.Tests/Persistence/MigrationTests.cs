@@ -118,6 +118,7 @@ public sealed class MigrationTests : IAsyncLifetime
         await using var db = Context();
         var spec = await db.Specifications.SingleAsync();
         Assert.Equal(("[]", "[]", "", (Guid?)null), (spec.AffectedAreasJson.Replace(" ", ""), spec.OpenQuestionsJson.Replace(" ", ""), spec.TestPlan, spec.RunId));
-        Assert.Null((await db.Runs.ToListAsync()).FirstOrDefault()?.SpecificationRevision);
+        // Only the column M2Spec added: today's model has run columns this schema does not.
+        Assert.Null(await db.Runs.Select(r => r.SpecificationRevision).FirstOrDefaultAsync());
     }
 }

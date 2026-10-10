@@ -9,6 +9,7 @@
     <ProjectReference Include="..\Litos.SoftwareFactory.Infrastructure\Litos.SoftwareFactory.Infrastructure.csproj" />
     <ProjectReference Include="..\Litos.SoftwareFactory.Contracts\Litos.SoftwareFactory.Contracts.csproj" />
     <ProjectReference Include="..\Litos.Host\Litos.Host.csproj" />
+    <ProjectReference Include="..\Litos.Tools.Mcp\Litos.Tools.Mcp.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

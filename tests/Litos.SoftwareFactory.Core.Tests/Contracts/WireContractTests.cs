@@ -312,6 +312,9 @@ public class WireContractTests
     [Fact]
     public void Json_UsesCamelCaseNames()
     {
-        Assert.Equal("""{"port":1,"mcpReady":false}""", Json(new WorkerReady(1, false)));
+        Assert.Equal("""{"port":1,"mcpReady":false,"mcpServers":null}""", Json(new WorkerReady(1, false)));
+        Assert.Equal(
+            """{"port":1,"mcpReady":true,"mcpServers":[{"name":"github","connected":false,"tools":[],"error":"exited"}]}""",
+            Json(new WorkerReady(1, true, [new McpServerReport("github", false, [], "exited")])));
     }
 }

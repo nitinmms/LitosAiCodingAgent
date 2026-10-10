@@ -183,6 +183,9 @@ public sealed record WorkerLaunch(
     /// <summary>Which of the run's turns may search the web, through the host (m3-architecture.md §6).</summary>
     public Settings.WebSearchAccess WebSearch { get; init; }
 
+    /// <summary>The run's MCP servers, secrets included, in the engine's mcp.json shape; null with none (m3-architecture.md §7.2).</summary>
+    public string? McpConfigPath { get; init; }
+
     /// <summary>The run's own TEMP, TMP and TMPDIR for the worker and every command it starts;
     /// null keeps the host's.</summary>
     public string? TempDirectory { get; init; }

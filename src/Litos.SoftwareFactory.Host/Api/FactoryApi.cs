@@ -734,6 +734,10 @@ public static class FactoryApi
             details.LatestRun.BaselineCommit,
             details.LatestRun.HeadCommit,
             details.LatestRun.PromptRevision,
+            // What it started with: tool settings and MCP servers, never their secrets (m3-architecture.md §7.4).
+            Capabilities = details.LatestRun.CapabilitiesJson is { Length: > 0 } capabilities
+                ? JsonSerializer.Deserialize<RunCapabilities>(capabilities, FactoryWire.Json)
+                : null,
         },
         Verification = details.LatestVerification is null ? null : new
         {

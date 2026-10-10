@@ -68,7 +68,12 @@ public static class FactoryWire
 
 /// <summary>The worker's "started" callback: its port, and whether its MCP servers have
 /// settled — the host waits for this, not just the port handshake, before the first turn.</summary>
-public sealed record WorkerReady(int Port, bool McpReady);
+/// <param name="McpServers">How each MCP server the run was given connected; empty with none.</param>
+public sealed record WorkerReady(int Port, bool McpReady, IReadOnlyList<McpServerReport>? McpServers = null);
+
+/// <summary>One MCP server as the worker found it at start (m3-architecture.md §7.2).</summary>
+/// <param name="Tools">The tools it offers that the run may use; a denied tool is left out.</param>
+public sealed record McpServerReport(string Name, bool Connected, IReadOnlyList<string> Tools, string? Error);
 
 /// <summary>A search the agent asked for; the host searches with its own key (m3-architecture.md §6).</summary>
 public sealed record WebSearchRequest(string SessionId, string Query, int MaxResults);

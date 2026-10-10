@@ -47,6 +47,8 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
 
     public ToolSettings Tools => Read<ToolSettings>(SettingsSections.Tools);
 
+    public McpSettings Mcp => Read<McpSettings>(SettingsSections.Mcp);
+
     /// <summary>Which turns of a run starting now may search the web: none without a key.</summary>
     public WebSearchAccess WebSearch => Tools.WebSearch(IsSet(SecretNames.WebSearch));
 
@@ -137,6 +139,7 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
         SettingsSections.Budgets => JsonSerializer.Deserialize<BudgetSettings>(row.Json, FactoryWire.Json) ?? new BudgetSettings(),
         SettingsSections.Providers => JsonSerializer.Deserialize<ProviderSettings>(row.Json, FactoryWire.Json) ?? new ProviderSettings(),
         SettingsSections.Tools => JsonSerializer.Deserialize<ToolSettings>(row.Json, FactoryWire.Json) ?? new ToolSettings(),
+        SettingsSections.Mcp => JsonSerializer.Deserialize<McpSettings>(row.Json, FactoryWire.Json) ?? new McpSettings(),
         _ => JsonDocument.Parse(row.Json).RootElement.Clone(),
     };
 }

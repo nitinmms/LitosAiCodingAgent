@@ -869,6 +869,26 @@ public class FactoryToolSetPolicyTests
             Assert.IsNotType<NamedTool>(direct.Resolve("web_search"));
     }
 
+    [Theory]
+    [InlineData("Implement", true)]
+    [InlineData("Repair", true)]
+    [InlineData("Rework", true)]
+    [InlineData("Review", false)]
+    [InlineData("Spec", false)]
+    [InlineData("Scan", false)]
+    [InlineData("Chat", false)]
+    public void McpTools_JoinOnlyTheWorkTurns_DirectlyAndThroughTheBridge(string turnKind, bool expected)
+    {
+        var policy = new FactoryToolSetPolicy(
+            Registered.Select(n => new NamedTool(n)), TestOptions.HostClient(new FakeHttpMessageHandler()),
+            mcpTools: () => [new NamedTool("mcp__github__create_issue")]);
+
+        var direct = Names(policy.Create("thread", turnKind));
+
+        Assert.Equal(expected, direct.Contains("mcp__github__create_issue"));
+        Assert.Equal(expected, Names(policy.CreateForBridge("thread")).Contains("mcp__github__create_issue"));
+    }
+
     [Fact]
     public async Task WebSearch_AsksTheHost_ForItsSession_AndShowsWhatTheHostSays()
     {

@@ -28,6 +28,7 @@ public static class SettingsApi
             Budgets = Section(settings, SettingsSections.Budgets, settings.Budgets),
             Providers = Section(settings, SettingsSections.Providers, settings.Providers),
             Tools = Section(settings, SettingsSections.Tools, settings.Tools),
+            Mcp = Section(settings, SettingsSections.Mcp, settings.Mcp),
             // What the Providers tab lists, in order, with what each needs to be called.
             KnownProviders = KnownProviders.All.Select(p => new
             {
@@ -76,6 +77,34 @@ public static class SettingsApi
                 return Results.BadRequest(new { error = string.Join(" ", errors), errors });
 
             return await SaveAsync(settings, SettingsSections.Tools, tools, request.Revision, user, ct);
+        });
+
+        admin.MapPut("/settings/mcp", async (
+            SaveSettingsRequest<McpSettings> request, ClaimsPrincipal user, FactorySettings settings, CancellationToken ct) =>
+        {
+            if (request.Settings is not { } mcp)
+                return Results.BadRequest(new { error = "settings are required." });
+            if (mcp.Validate() is { Count: > 0 } errors)
+                return Results.BadRequest(new { error = string.Join(" ", errors), errors });
+
+            var saved = await SaveAsync(settings, SettingsSections.Mcp, mcp, request.Revision, user, ct);
+
+            // A server or variable no longer listed takes its secret with it: nothing would ever read it again.
+            var kept = mcp.Servers.SelectMany(s => s.SecretVariables.Select(v => SecretNames.Mcp(s.Name, v))).ToHashSet(StringComparer.Ordinal);
+            foreach (var orphan in settings.Secrets.Select(s => s.Name).Where(n => n.StartsWith("mcp:", StringComparison.Ordinal) && !kept.Contains(n)))
+                await settings.ClearSecretAsync(orphan, user.UserId(), ct);
+            return saved;
+        });
+
+        // Starts a server once, as the form describes it and with the secrets set for it, and lists its tools (blueprint §8.1).
+        admin.MapPost("/mcp/test", async (McpServerSettings? server, IMcpConnectionTester tester, CancellationToken ct) =>
+        {
+            if (server is null)
+                return Results.BadRequest(new { error = "A server is required." });
+            if (new McpSettings { Servers = [server] }.Validate() is { Count: > 0 } errors)
+                return Results.BadRequest(new { error = string.Join(" ", errors), errors });
+
+            return Results.Ok(await tester.TestAsync(server, ct));
         });
 
         admin.MapPut("/settings/budgets", async (

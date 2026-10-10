@@ -229,6 +229,13 @@ public interface IFactoryStore
 
     Task SetRunWorkerAsync(Guid runId, int? processId, DateTimeOffset? startTime, CancellationToken ct);
 
+    /// <summary>Records what the run started with, and later how its MCP servers connected (m3-architecture.md §7.4).</summary>
+    Task SetRunCapabilitiesAsync(Guid runId, string capabilitiesJson, CancellationToken ct);
+
+    /// <summary>The capabilities of the thread's newest task run that has them, other than
+    /// <paramref name="exceptRunId"/>: what a rework reuses (blueprint §8.2). Null when none has.</summary>
+    Task<string?> LatestCapabilitiesAsync(Guid threadId, Guid exceptRunId, CancellationToken ct);
+
     Task SetRunCommitsAsync(Guid runId, string? baselineCommit, string? headCommit, string? reviewSessionId, CancellationToken ct);
 
     Task SetThreadBranchAsync(Guid threadId, string branch, string baseCommit, CancellationToken ct);

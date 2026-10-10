@@ -30,4 +30,9 @@
     <ProjectReference Include="..\..\src\Litos.SoftwareFactory.Worker\Litos.SoftwareFactory.Worker.csproj" />
   </ItemGroup>
 
+  <!-- A real stdio MCP server, built beside the tests, for the MCP tests to start. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.SoftwareFactory.TestMcpServer\Litos.SoftwareFactory.TestMcpServer.csproj" />
+  </ItemGroup>
+
 </Project>

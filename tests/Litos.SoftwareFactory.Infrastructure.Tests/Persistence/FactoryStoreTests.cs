@@ -229,6 +229,35 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(LifecycleState.Queued, (await ThreadAsync(running.Thread.Id)).State);
     }
 
+    // ---- What a run started with (m3-architecture.md §7.4) ----
+
+    [SkippableFact]
+    public async Task ARunsCapabilities_AreStored_AndReadBackWithIt()
+    {
+        var running = await RunningAsync();
+
+        await Store.SetRunCapabilitiesAsync(running.Run.Id, """{"ptc":false,"shellTimeoutSeconds":900}""", default);
+
+        var json = (await Store.GetRunAsync(running.Run.Id, default))!.CapabilitiesJson!;
+        Assert.Equal(900, JsonDocument.Parse(json).RootElement.GetProperty("shellTimeoutSeconds").GetInt32());
+    }
+
+    [SkippableFact]
+    public async Task AReworkFindsItsTasksLastCapabilities_NotItsOwnNorAnotherThreads()
+    {
+        var running = await RunningAsync();
+        await Store.SetRunCapabilitiesAsync(running.Run.Id, """{"shellTimeoutSeconds":900}""", default);
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
+        var rework = (await Store.DispatchAsync(running.Thread.Id, Admin, "msg-2", "Fix the commas.", T0.AddMinutes(5), default)).RunId!.Value;
+        var other = await QueuedAsync("other-repo");
+
+        var found = await Store.LatestCapabilitiesAsync(running.Thread.Id, rework, default);
+
+        Assert.Equal(900, JsonDocument.Parse(found!).RootElement.GetProperty("shellTimeoutSeconds").GetInt32());
+        Assert.Null(await Store.LatestCapabilitiesAsync(running.Thread.Id, running.Run.Id, default)); // only its own has any
+        Assert.Null(await Store.LatestCapabilitiesAsync(other.Thread.Id, other.RunId, default));
+    }
+
     // ---- A change request's budget top-up (decided 2026-10-03) ----
 
     private async Task<ClaimedRun> HandedOffAsync(long? cap)

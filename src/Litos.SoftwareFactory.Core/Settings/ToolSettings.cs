@@ -1,6 +1,8 @@
+using System.Text.Json.Serialization;
 namespace Litos.SoftwareFactory.Core.Settings;
 
 /// <summary>Which of a run's turns may search the web.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum WebSearchAccess
 {
     Off,

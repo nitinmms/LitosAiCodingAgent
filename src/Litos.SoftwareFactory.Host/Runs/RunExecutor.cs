@@ -6,8 +6,10 @@ using Litos.SoftwareFactory.Core.Briefs;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Core.Verification;
+using Litos.SoftwareFactory.Host.Settings;
 
 namespace Litos.SoftwareFactory.Host.Runs;
 
@@ -56,6 +58,7 @@ public sealed class RunExecutor(
         var session = new WorkerSession(this, active, claimed);
         try
         {
+            session.Capabilities = await CapabilitiesAsync(claimed);
             var state = run.StateJson is { Length: > 0 } json ? RunStateJson.Deserialize(json) : RunOrchestrator.NewRun(run.Kind);
             StepOutcome outcome = run.Entry switch
             {
@@ -120,6 +123,15 @@ public sealed class RunExecutor(
         finally
         {
             await session.DisposeAsync();
+
+            // The run's MCP secrets are on disk only while its worker may need them.
+            try
+            {
+                File.Delete(McpConfigPath(run.Id));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
 
             // The run's temporary files are its own, and nothing that used them is running now.
             try
@@ -816,21 +828,83 @@ public sealed class RunExecutor(
         }
     }
 
-    private async Task<(IWorkerHandle Handle, IWorkerClient Client)> StartWorkerAsync(ActiveRun active, ClaimedRun claimed, CancellationToken ct)
+    /// <summary>How long the host waits for a worker's MCP servers before its first turn (blueprint §8.1).
+    /// A server's own handshake is bounded at 30 seconds; the rest is the worker starting.</summary>
+    public static TimeSpan McpReadyTimeout { get; set; } = TimeSpan.FromSeconds(45);
+
+    private string McpConfigPath(Guid runId) => Path.Combine(options.DataDirectory, "runs", runId.ToString("N"), "mcp.json");
+
+    /// <summary>
+    /// What the run works with (m3-architecture.md §7.4), fixed at its start: a resumed run keeps
+    /// what it started with, a rework reuses its task's last snapshot (blueprint §8.2), and any other
+    /// run takes the settings as they are now.
+    /// </summary>
+    private async Task<RunCapabilities> CapabilitiesAsync(ClaimedRun claimed)
     {
+        var (run, thread, _) = claimed;
+        if (run.CapabilitiesJson is { Length: > 0 } held)
+            return JsonSerializer.Deserialize<RunCapabilities>(held, FactoryWire.Json)!;
+
+        var capabilities = run.Kind == RunKind.Rework && await store.LatestCapabilitiesAsync(thread.Id, run.Id, CancellationToken.None) is { } last
+            ? JsonSerializer.Deserialize<RunCapabilities>(last, FactoryWire.Json)!.ForRework()
+            : RunCapabilities.From(settings.Tools, settings.WebSearch, settings.Mcp, options.PtcOf(thread));
+        await store.SetRunCapabilitiesAsync(run.Id, JsonSerializer.Serialize(capabilities, FactoryWire.Json), CancellationToken.None);
+        return capabilities;
+    }
+
+    private async Task<(IWorkerHandle Handle, IWorkerClient Client)> StartWorkerAsync(WorkerSession session, CancellationToken ct)
+    {
+        var (active, claimed, capabilities) = (session.Active, session.Claimed, session.Capabilities);
+        string? mcpConfig = null;
+        if (capabilities.McpServers.Count > 0)
+        {
+            mcpConfig = McpConfigPath(claimed.Run.Id);
+            FactoryMcp.WriteRunConfig(mcpConfig, capabilities.McpServers, settings);
+            active.ExpectReady();
+        }
+
         var handle = await launcher.LaunchAsync(
             new WorkerLaunch(
                 claimed.Run.Id.ToString("N"), workspaces.For(claimed.Project).Path, claimed.Thread.Provider, claimed.Thread.Model,
                 options.ContextLengthOf(claimed.Thread), options.DataDirectory, HostUrl, active.Secret)
             {
-                PtcEnabled = options.PtcOf(claimed.Thread),
-                ShellTimeoutSeconds = settings.Tools.ShellTimeoutSeconds,
-                WebSearch = settings.WebSearch,
+                PtcEnabled = capabilities.Ptc,
+                ShellTimeoutSeconds = capabilities.ShellTimeoutSeconds,
+                WebSearch = capabilities.WebSearch,
+                McpConfigPath = mcpConfig,
                 TempDirectory = options.RunTempDirectory(claimed.Run.Id),
             },
             ct);
         await store.SetRunWorkerAsync(claimed.Run.Id, handle.ProcessId, handle.StartTime, CancellationToken.None);
+        if (mcpConfig is not null)
+            session.Capabilities = await AwaitMcpAsync(active, capabilities, ct);
         return (handle, clients.Create(handle.BaseAddress, active.Secret));
+    }
+
+    /// <summary>
+    /// Waits for the worker's "MCP ready", not merely its port (blueprint §8.1), and records how each
+    /// server connected. A server that failed, or a worker that never said, is named in the host's
+    /// log and the run's snapshot; the run goes on without it.
+    /// </summary>
+    private async Task<RunCapabilities> AwaitMcpAsync(ActiveRun active, RunCapabilities capabilities, CancellationToken ct)
+    {
+        IReadOnlyList<McpServerReport> reports;
+        try
+        {
+            reports = (await active.Ready.Task.WaitAsync(McpReadyTimeout, ct)).McpServers ?? [];
+        }
+        catch (TimeoutException)
+        {
+            reports = [.. capabilities.McpServers.Select(s => new McpServerReport(
+                s.Name, false, [], $"The worker did not report its MCP servers ready within {McpReadyTimeout.TotalSeconds:0} seconds."))];
+        }
+
+        foreach (var failed in reports.Where(r => !r.Connected))
+            logger.LogWarning("Run {RunId}: MCP server {Server} is not available: {Error}", active.RunId, failed.Name, failed.Error);
+
+        var recorded = capabilities with { McpStatus = reports };
+        await store.SetRunCapabilitiesAsync(active.RunId, JsonSerializer.Serialize(recorded, FactoryWire.Json), CancellationToken.None);
+        return recorded;
     }
 
     /// <summary>The run's worker, started when the first turn needs it and stopped when the run ends.</summary>
@@ -841,12 +915,17 @@ public sealed class RunExecutor(
 
         public ActiveRun Active => active;
 
+        public ClaimedRun Claimed => claimed;
+
+        /// <summary>What the run works with; set before its first step, and again once its MCP servers report.</summary>
+        public RunCapabilities Capabilities { get; set; } = new();
+
         public async Task<IWorkerClient> ClientAsync(CancellationToken ct)
         {
             if (_client is not null && _handle is { HasExited: false })
                 return _client;
 
-            (_handle, _client) = await executor.StartWorkerAsync(active, claimed, ct);
+            (_handle, _client) = await executor.StartWorkerAsync(this, ct);
             active.Client = _client;
             return _client;
         }

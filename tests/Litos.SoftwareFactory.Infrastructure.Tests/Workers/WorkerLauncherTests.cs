@@ -386,12 +386,23 @@ public class LocalProcessWorkerLauncherTests : IDisposable
     }
 
     [Fact]
-    public void BuildArguments_WithNoShellLimitAndNoWebSearch_SayNothingOfThem()
+    public void BuildArguments_WithNoShellLimitNoWebSearchAndNoMcp_SayNothingOfThem()
     {
         var arguments = LocalProcessWorkerLauncher.BuildArguments(Launch(), 1);
 
         Assert.DoesNotContain("--shell-timeout", arguments);
         Assert.DoesNotContain("--web-search", arguments);
+        Assert.DoesNotContain("--mcp-config", arguments);
+    }
+
+    [Fact]
+    public void BuildArguments_NameTheRunsMcpConfig_ButNeverItsSecrets()
+    {
+        var path = Path.Combine(_dataDirectory, "runs", "run-1", "mcp.json");
+
+        var arguments = LocalProcessWorkerLauncher.BuildArguments(Launch() with { McpConfigPath = path }, 1);
+
+        Assert.Equal(["--mcp-config", path], arguments.Skip(10));
     }
 
     [Fact]
