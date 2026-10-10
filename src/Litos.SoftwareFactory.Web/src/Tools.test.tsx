@@ -28,7 +28,7 @@ async function openNewThread(host: FakeHost) {
 }
 
 describe('the tools tab', () => {
-  it('shows the tools as stored, with web search off', async () => {
+  it('shows the tools as stored, with web search on for work turns and no key yet', async () => {
     const host = new FakeHost();
     await onTools(host);
 
@@ -36,8 +36,12 @@ describe('the tools tab', () => {
     expect(screen.getByRole('checkbox', { name: 'New threads start with it on' })).toBeChecked();
     expect(screen.getByLabelText('Command time limit')).toHaveValue('300');
     expect(screen.getByText(/^5 minutes\./)).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /search the web while it implements/ })).not.toBeChecked();
-    // Read-only turns can search only once web search is on.
+    expect(screen.getByRole('checkbox', { name: /search the web while it implements/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Also while it only reads/ })).not.toBeChecked();
+    expect(screen.getByRole('note')).toHaveTextContent('Web search is on but has no key');
+
+    // Read-only turns can search only while web search is on.
+    await userEvent.setup().click(screen.getByRole('checkbox', { name: /search the web while it implements/ }));
     expect(screen.getByRole('checkbox', { name: /Also while it only reads/ })).toBeDisabled();
   });
 
@@ -48,7 +52,6 @@ describe('the tools tab', () => {
     await user.click(screen.getByRole('checkbox', { name: 'New threads start with it on' }));
     await user.clear(screen.getByLabelText('Command time limit'));
     await user.type(screen.getByLabelText('Command time limit'), '900');
-    await user.click(screen.getByRole('checkbox', { name: /search the web while it implements/ }));
     await user.click(screen.getByRole('checkbox', { name: /Also while it only reads/ }));
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Save tools' }));
@@ -78,7 +81,8 @@ describe('the tools tab', () => {
     const user = await onTools(host);
     const webSearch = within(screen.getByRole('region', { name: 'Web search' }));
 
-    await user.click(webSearch.getByRole('checkbox', { name: /search the web while it implements/ }));
+    // Ticked and unsaved, to check that setting the key keeps it.
+    await user.click(webSearch.getByRole('checkbox', { name: /Also while it only reads/ }));
     expect(webSearch.getByRole('note')).toHaveTextContent('Web search is on but has no key');
 
     await user.type(webSearch.getByLabelText('Tavily key'), 'tvly-secret{Enter}');
@@ -88,7 +92,7 @@ describe('the tools tab', () => {
     expect(webSearch.queryByRole('note')).toBeNull();
     expect(document.body.textContent).not.toContain('tvly-secret');
     // Setting the key kept the unsaved tick.
-    expect(webSearch.getByRole('checkbox', { name: /search the web while it implements/ })).toBeChecked();
+    expect(webSearch.getByRole('checkbox', { name: /Also while it only reads/ })).toBeChecked();
   });
 });
 

@@ -6,15 +6,18 @@ namespace Litos.SoftwareFactory.Core.Tests.Settings;
 public class ToolSettingsTests
 {
     [Fact]
-    public void TheDefaults_AreM2s_PtcOnAFiveMinuteShellAndNoWebSearch_AndValid()
+    public void TheDefaults_ArePtcOn_AFiveMinuteShell_AndWebSearchOnForWorkTurns_AndValid()
     {
         var defaults = new ToolSettings();
 
         Assert.True(defaults.PtcByDefault);
         Assert.True(defaults.MembersMayChoosePtc);
         Assert.Equal(300, defaults.ShellTimeoutSeconds);
-        Assert.False(defaults.WebSearchEnabled);
-        Assert.Equal(WebSearchAccess.Off, defaults.WebSearch(keySet: true));
+        Assert.True(defaults.WebSearchEnabled);
+        Assert.False(defaults.WebSearchOnReadOnlyTurns);
+        Assert.Equal(WebSearchAccess.WorkTurns, defaults.WebSearch(keySet: true));
+        // On by default, but nothing to search with until a key is set.
+        Assert.Equal(WebSearchAccess.Off, defaults.WebSearch(keySet: false));
         Assert.Empty(defaults.Validate());
     }
 
@@ -33,7 +36,7 @@ public class ToolSettingsTests
     {
         Assert.Equal(
             ["Web search on read-only turns needs web search to be on."],
-            new ToolSettings { WebSearchOnReadOnlyTurns = true }.Validate());
+            new ToolSettings { WebSearchEnabled = false, WebSearchOnReadOnlyTurns = true }.Validate());
         Assert.Empty(new ToolSettings { WebSearchEnabled = true, WebSearchOnReadOnlyTurns = true }.Validate());
     }
 

@@ -13,9 +13,9 @@ public enum WebSearchAccess
 }
 
 /// <summary>
-/// The Tools tab (blueprint §8.3, m3-architecture.md §6). Its defaults are M2's behaviour, so a
-/// factory whose settings were never written runs as it did: PTC on, the engine's five-minute
-/// shell limit, and no web search.
+/// The Tools tab (blueprint §8.3, m3-architecture.md §6). Its defaults keep M2's PTC and the
+/// engine's five-minute shell limit, and turn web search on for the turns that change code: it
+/// still searches nothing until an Admin sets its key.
 /// </summary>
 public sealed record ToolSettings
 {
@@ -28,8 +28,8 @@ public sealed record ToolSettings
     /// <summary>How long one shell command may run before the agent's shell kills it.</summary>
     public int ShellTimeoutSeconds { get; init; } = 300;
 
-    /// <summary>Whether the agent may search the web; its key is a secret (SecretNames.WebSearch).</summary>
-    public bool WebSearchEnabled { get; init; }
+    /// <summary>Whether the agent may search the web, on by default; its key is a secret (SecretNames.WebSearch).</summary>
+    public bool WebSearchEnabled { get; init; } = true;
 
     /// <summary>Whether read-only turns may search the web too, not only the turns that change code.</summary>
     public bool WebSearchOnReadOnlyTurns { get; init; }

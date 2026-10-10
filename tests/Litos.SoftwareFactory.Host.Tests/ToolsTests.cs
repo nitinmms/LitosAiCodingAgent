@@ -73,13 +73,14 @@ public sealed class ToolsTests : IAsyncLifetime
         var settings = tools.GetProperty("settings");
         Assert.Equal(_host.Options.PtcEnabled, settings.GetProperty("ptcByDefault").GetBoolean());
         Assert.Equal(300, settings.GetProperty("shellTimeoutSeconds").GetInt32());
-        Assert.False(settings.GetProperty("webSearchEnabled").GetBoolean());
+        Assert.True(settings.GetProperty("webSearchEnabled").GetBoolean());
+        Assert.False(settings.GetProperty("webSearchOnReadOnlyTurns").GetBoolean());
     }
 
     [Fact]
     public async Task AnAdmin_SavesTheTools_AndTheHostRefusesWhatCannotWork()
     {
-        using var refused = await PutToolsAsync(new { ptcByDefault = true, membersMayChoosePtc = true, shellTimeoutSeconds = 5, webSearchOnReadOnlyTurns = true });
+        using var refused = await PutToolsAsync(new { ptcByDefault = true, membersMayChoosePtc = true, shellTimeoutSeconds = 5, webSearchEnabled = false, webSearchOnReadOnlyTurns = true });
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         var error = (await BodyAsync(refused)).GetProperty("error").GetString();
         Assert.Contains("between 30 and 3600 seconds", error);
@@ -175,11 +176,10 @@ public sealed class ToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task WithWebSearchOnButNoKey_AWorkerCannotSearch()
+    public async Task WithWebSearchOnByDefaultButNoKey_AWorkerCannotSearch()
     {
         await _host.DisposeAsync();
         await StartAsync(startCoordinator: true);
-        await SaveToolsAsync(new ToolSettings { WebSearchEnabled = true });
         using var created = await CreateAsync(await _host.RegisterProjectAsync(), ptcEnabled: null);
 
         await _host.DelegateAsync((await BodyAsync(created)).GetProperty("id").GetGuid());
@@ -272,6 +272,7 @@ public sealed class ToolsTests : IAsyncLifetime
     [Fact]
     public async Task WebSearchTurnedOff_OrWithNoKey_IsRefusedMidRun_AndTheRefusalIsLogged()
     {
+        await SaveToolsAsync(new ToolSettings { WebSearchEnabled = false });
         var active = Running(TurnKind.Implement);
 
         var off = await SearchAsync(active);

@@ -190,7 +190,7 @@ export class FakeHost {
   /** The Tools tab as stored; /api/settings shows people its PTC default. */
   tools: SettingsSection<ToolSettings> = {
     revision: 1,
-    settings: { ptcByDefault: true, membersMayChoosePtc: true, shellTimeoutSeconds: 300, webSearchEnabled: false, webSearchOnReadOnlyTurns: false },
+    settings: { ptcByDefault: true, membersMayChoosePtc: true, shellTimeoutSeconds: 300, webSearchEnabled: true, webSearchOnReadOnlyTurns: false },
   };
   /** The Providers tab as stored, seeded as the host's first start does. */
   providerSettings: SettingsSection<ProviderSettings> = {
