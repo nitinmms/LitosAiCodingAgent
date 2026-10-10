@@ -508,7 +508,7 @@ export function ThreadMain({
               )}
               Model: <span className="mono">{thread.model}</span> on{' '}
               {thread.provider}
-              {settings ? `. PTC ${settings.ptcEnabled ? 'on' : 'off'}` : ''}.
+              {thread.ptcEnabled === null ? '' : `. PTC ${thread.ptcEnabled ? 'on' : 'off'}`}.
             </p>
           </>
         )}

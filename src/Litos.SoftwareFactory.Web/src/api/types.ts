@@ -45,7 +45,10 @@ export interface Settings {
   defaultBudget: number | null;
   /** No task's budget may be above this, at creation or when raised; null for no limit. */
   maximumBudget: number | null;
+  /** Whether a new thread starts with Programmatic Tool Calling on. */
   ptcEnabled: boolean;
+  /** Whether this person may create a thread with PTC other than that. */
+  canChoosePtc: boolean;
   /** The fraction of a cached input token that counts against a task's budget, 0 to 1. */
   cachedInputWeight: number;
   presets: string[];
@@ -95,6 +98,8 @@ export interface Thread {
   provider: string;
   model: string;
   budgetPrecision: BudgetPrecision;
+  /** Whether its runs use Programmatic Tool Calling; null for a thread created before M3. */
+  ptcEnabled: boolean | null;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -108,6 +113,8 @@ export interface CreateThread {
   /** Left out for the factory's default provider, and its default model. */
   provider?: string;
   model?: string;
+  /** Left out for the factory's default. */
+  ptcEnabled?: boolean;
 }
 
 export type MessageAuthor = 'User' | 'Factory';
@@ -440,9 +447,19 @@ export interface KnownProvider {
   keySecret: string;
 }
 
+/** The Tools tab (Core/Settings/ToolSettings.cs). The web search key is a secret. */
+export interface ToolSettings {
+  ptcByDefault: boolean;
+  membersMayChoosePtc: boolean;
+  shellTimeoutSeconds: number;
+  webSearchEnabled: boolean;
+  webSearchOnReadOnlyTurns: boolean;
+}
+
 export interface AdminSettings {
   budgets: SettingsSection<BudgetSettings>;
   providers: SettingsSection<ProviderSettings>;
+  tools: SettingsSection<ToolSettings>;
   knownProviders: KnownProvider[];
   secrets: SecretStatus[];
 }

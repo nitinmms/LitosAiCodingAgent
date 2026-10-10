@@ -561,7 +561,7 @@ function GitHubToken({
 }
 
 /** A secret is set or replaced, and cleared, at once; its value is never shown again. */
-function SecretField({
+export function SecretField({
   api,
   name,
   label,

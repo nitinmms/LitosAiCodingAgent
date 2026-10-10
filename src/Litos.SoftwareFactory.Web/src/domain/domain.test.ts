@@ -58,6 +58,7 @@ const thread = (overrides: Partial<Thread> = {}): Thread => ({
   provider: 'openrouter',
   model: 'm',
   budgetPrecision: 'strict',
+  ptcEnabled: true,
   revision: 5,
   createdAt: '',
   updatedAt: '',

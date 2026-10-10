@@ -187,6 +187,7 @@ function NewThread({
     return { provider: first.name, model: settings?.provider === first.name && settings.model ? settings.model : (first.defaultModel ?? first.models[0]?.id ?? '') };
   });
   const provider = offered.find((p) => p.name === choice?.provider) ?? null;
+  const [ptc, setPtc] = useState(settings?.ptcEnabled ?? true);
   const pinned = pinnedChoices(offered, { provider: settings?.provider ?? null, model: settings?.model ?? null }, settings?.recentModels ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -221,6 +222,8 @@ function NewThread({
           budgetCap,
           provider: provider?.name,
           model: provider ? choice?.model : undefined,
+          // Sent only when it differs from the default, which the host applies itself.
+          ptcEnabled: settings && ptc !== settings.ptcEnabled ? ptc : undefined,
         }),
       );
     } catch (failure) {
@@ -303,6 +306,15 @@ function NewThread({
             {provider.displayName} may not report what a call used, so the factory charges its own estimate and the budget can be
             overrun.
           </p>
+        ) : null}
+        {settings?.canChoosePtc ? (
+          <label className="check">
+            <input type="checkbox" checked={ptc} onChange={(e) => setPtc(e.target.checked)} />
+            <span>
+              Programmatic Tool Calling: the agent scripts its tool calls, which usually takes fewer tokens. The thread keeps
+              this choice.
+            </span>
+          </label>
         ) : null}
         <ErrorNote message={error} />
         <div className="btn-row">

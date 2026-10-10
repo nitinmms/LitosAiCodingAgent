@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
  * The tabs of the settings area, in the blueprint's order (§8.3). Later M3 steps add tools, MCP,
  * skills and presets.
  */
-export const SETTINGS_TABS = ['providers', 'budgets'] as const;
+export const SETTINGS_TABS = ['providers', 'budgets', 'tools'] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 export type Route =

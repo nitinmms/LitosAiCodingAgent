@@ -25,6 +25,7 @@ import type {
   Stage,
   Thread,
   ThreadDetails,
+  ToolSettings,
   Turn,
   UsageCall,
 } from '../api/types';
@@ -166,6 +167,7 @@ export class FakeHost {
     defaultBudget: 300_000,
     maximumBudget: null,
     ptcEnabled: true,
+    canChoosePtc: true,
     cachedInputWeight: 0.1,
     presets: ['dotnet', 'node-react'],
     taskTypes: ['bug', 'feature', 'refactor', 'chore'],
@@ -184,6 +186,11 @@ export class FakeHost {
       reworkTopUpShare: 0.5,
       outputAllowanceTokens: 32_768,
     },
+  };
+  /** The Tools tab as stored; /api/settings shows people its PTC default. */
+  tools: SettingsSection<ToolSettings> = {
+    revision: 1,
+    settings: { ptcByDefault: true, membersMayChoosePtc: true, shellTimeoutSeconds: 300, webSearchEnabled: false, webSearchOnReadOnlyTurns: false },
   };
   /** The Providers tab as stored, seeded as the host's first start does. */
   providerSettings: SettingsSection<ProviderSettings> = {
@@ -328,6 +335,7 @@ export class FakeHost {
       provider: 'openrouter',
       model: 'deepseek/deepseek-v4.1-flash',
       budgetPrecision: 'strict',
+      ptcEnabled: true,
       revision: 1,
       createdAt: NOW,
       updatedAt: NOW,
@@ -633,6 +641,7 @@ export class FakeHost {
           provider: provider.name,
           model,
           budgetPrecision: provider.budgetPrecision,
+          ptcEnabled: (data.ptcEnabled as boolean | undefined) ?? this.settings.ptcEnabled,
         }),
       ];
     }
@@ -819,8 +828,24 @@ export class FakeHost {
     if (path === '/api/admin/settings' && method === 'GET')
       return [
         200,
-        { budgets: this.budgets, providers: this.providerSettings, knownProviders: this.knownProviders, secrets: this.secrets },
+        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, knownProviders: this.knownProviders, secrets: this.secrets },
       ];
+    if (path === '/api/admin/settings/tools' && method === 'PUT') {
+      if (data.revision !== this.tools.revision)
+        return [409, { error: 'The tools settings were changed by someone else. Reload them and make your change again.' }];
+      const tools = data.settings as ToolSettings;
+      // As ToolSettings.Validate.
+      const errors: string[] = [];
+      if (tools.shellTimeoutSeconds < 30 || tools.shellTimeoutSeconds > 3600)
+        errors.push('The shell command time limit must be between 30 and 3600 seconds.');
+      if (tools.webSearchOnReadOnlyTurns && !tools.webSearchEnabled) errors.push('Web search on read-only turns needs web search to be on.');
+      if (errors.length) return [400, { error: errors.join(' '), errors }];
+
+      this.tools = { revision: this.tools.revision + 1, settings: tools };
+      const admin = this.user.roles.includes('Admin');
+      this.settings = { ...this.settings, ptcEnabled: tools.ptcByDefault, canChoosePtc: admin || tools.membersMayChoosePtc };
+      return [200, this.tools];
+    }
     if (path === '/api/admin/settings/providers' && method === 'PUT') {
       if (data.revision !== this.providerSettings.revision)
         return [409, { error: 'The providers settings were changed by someone else. Reload them and make your change again.' }];
