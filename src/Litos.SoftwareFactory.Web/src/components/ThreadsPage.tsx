@@ -2,10 +2,12 @@ import { useRef, useState, type FormEvent } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
 import type { EventSourceFactory } from '../api/events';
 import type { CurrentUser, Project, Settings, Thread } from '../api/types';
+import { pinnedChoices } from '../domain/catalog';
 import { fmt } from '../domain/format';
 import { useThread } from '../useThread';
 import { ErrorNote, TurnPill } from './bits';
 import { Details } from './Details';
+import { ModelChooser } from './ModelChooser';
 import { ThreadMain } from './ThreadMain';
 
 export function ThreadsPage({
@@ -179,10 +181,13 @@ function NewThread({
   const [typeLabel, setTypeLabel] = useState(types.includes('feature') ? 'feature' : (types[0] ?? 'feature'));
   const [cap, setCap] = useState(settings?.defaultBudget ? String(settings.defaultBudget) : '');
   const offered = settings?.providers ?? [];
-  const [providerName, setProviderName] = useState(settings?.provider ?? offered[0]?.name ?? '');
-  const provider = offered.find((p) => p.name === providerName) ?? null;
-  const [model, setModel] = useState(settings?.model ?? provider?.defaultModel ?? '');
-  const chosenModel = provider?.models.find((m) => m.id === model) ?? null;
+  const [choice, setChoice] = useState<{ provider: string; model: string } | null>(() => {
+    const first = offered.find((p) => p.name === settings?.provider) ?? offered[0];
+    if (!first) return null;
+    return { provider: first.name, model: settings?.provider === first.name && settings.model ? settings.model : (first.defaultModel ?? first.models[0]?.id ?? '') };
+  });
+  const provider = offered.find((p) => p.name === choice?.provider) ?? null;
+  const pinned = pinnedChoices(offered, { provider: settings?.provider ?? null, model: settings?.model ?? null }, settings?.recentModels ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // The dialog closes on a click on the backdrop only if the press began there too. A browser
@@ -215,7 +220,7 @@ function NewThread({
           typeLabel,
           budgetCap,
           provider: provider?.name,
-          model: provider ? model : undefined,
+          model: provider ? choice?.model : undefined,
         }),
       );
     } catch (failure) {
@@ -287,37 +292,7 @@ function NewThread({
           </div>
         </div>
         {offered.length ? (
-          <div className="form-grid">
-            <div className="field">
-              <label htmlFor="nt-provider">Provider</label>
-              <select
-                id="nt-provider"
-                value={providerName}
-                onChange={(e) => {
-                  setProviderName(e.target.value);
-                  setModel(offered.find((p) => p.name === e.target.value)?.defaultModel ?? '');
-                }}
-              >
-                {offered.map((p) => (
-                  <option key={p.name} value={p.name}>
-                    {p.displayName}
-                    {p.budgetPrecision === 'estimated' ? ' (estimated budget)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="nt-model">Model</label>
-              <select id="nt-model" value={model} onChange={(e) => setModel(e.target.value)}>
-                {(provider?.models ?? []).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}
-                  </option>
-                ))}
-              </select>
-              <span className="hint">{chosenModel ? `Context ${fmt(chosenModel.contextLength)} tokens.` : ''}</span>
-            </div>
-          </div>
+          <ModelChooser offered={offered} pinned={pinned} value={choice} onChange={setChoice} />
         ) : settings ? (
           <p className="small error" role="note">
             No model provider is ready. An admin enables one, and sets its key, under Settings.

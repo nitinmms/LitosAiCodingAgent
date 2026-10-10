@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
-import type { AdminSettings, BudgetSettings, SettingsSection } from '../api/types';
+import type { AdminSettings, BudgetSettings, ProviderCatalog, SettingsSection } from '../api/types';
 import { fmt } from '../domain/format';
 import { navigate, SETTINGS_TABS, type SettingsTab } from '../domain/route';
-import { ErrorNote } from './bits';
+import { ErrorNote, SaveBar } from './bits';
 import { ProvidersTab } from './ProvidersTab';
 
 const TAB_LABELS: Record<SettingsTab, string> = { providers: 'Providers', budgets: 'Budgets and limits' };
@@ -26,6 +26,7 @@ export function SettingsPage({
   onSaved: () => void;
 }) {
   const [settings, setSettings] = useState<AdminSettings | null>(null);
+  const [catalogs, setCatalogs] = useState<ProviderCatalog[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -37,6 +38,24 @@ export function SettingsPage({
     }
   }, [api]);
 
+  /** The catalogs say which allowed models are retired, as saved: read again after a save. */
+  const reloadCatalogs = useCallback(async () => {
+    try {
+      setCatalogs(await api.modelCatalog());
+    } catch {
+      // The tab works without them: models can still be added by id.
+    }
+  }, [api]);
+
+  const refreshCatalog = async (provider: string) => {
+    try {
+      const fetched = await api.refreshCatalog(provider);
+      setCatalogs((current) => [...current.filter((c) => c.name !== provider), fetched]);
+    } catch (failure) {
+      onNotice(failure instanceof ApiError ? failure.message : 'The model list could not be fetched.');
+    }
+  };
+
   /** A section was saved: shown here at its new revision, and what members are offered may have changed. */
   const saved = <K extends 'budgets' | 'providers'>(key: K, section: AdminSettings[K], text: string) => {
     setSettings((current) => (current ? { ...current, [key]: section } : current));
@@ -46,7 +65,8 @@ export function SettingsPage({
 
   useEffect(() => {
     void reload();
-  }, [reload]);
+    void reloadCatalogs();
+  }, [reload, reloadCatalogs]);
 
   return (
     <div className="page stack">
@@ -70,7 +90,12 @@ export function SettingsPage({
           section={settings.providers}
           known={settings.knownProviders}
           secrets={settings.secrets}
-          onSaved={(providers) => saved('providers', providers, 'The providers are saved.')}
+          catalogs={catalogs}
+          onSaved={(providers) => {
+            saved('providers', providers, 'The providers are saved.');
+            void reloadCatalogs();
+          }}
+          onRefreshCatalog={refreshCatalog}
           onSecretChanged={async (text) => {
             // Only the secrets are read again: edits not yet saved stay in the form.
             await reload();
@@ -255,7 +280,11 @@ function BudgetsTab({
       </section>
 
       <ErrorNote message={error} />
-      <div className="btn-row">
+      <p className="small muted">
+        Budgets and repair cycles apply to what starts afterwards: a running task keeps those it started with. Quotas and
+        the output allowance apply from the next model call.
+      </p>
+      <SaveBar changed={changed}>
         {stale ? (
           <button className="btn primary" type="button" onClick={() => void onReload()}>
             Load their change
@@ -277,11 +306,7 @@ function BudgetsTab({
         >
           Discard changes
         </button>
-      </div>
-      <p className="small muted">
-        Budgets and repair cycles apply to what starts afterwards: a running task keeps those it started with. Quotas and
-        the output allowance apply from the next model call.
-      </p>
+      </SaveBar>
     </form>
   );
 }

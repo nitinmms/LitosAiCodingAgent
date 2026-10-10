@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useEffect, type ReactNode } from 'react';
 import type { LifecycleState, Stage, Turn } from '../api/types';
 import { STAGES, taskLabel } from '../domain/task';
 
@@ -176,4 +176,38 @@ export function ErrorNote({ message }: { message: string | null }) {
       {message}
     </p>
   ) : null;
+}
+
+/**
+ * Asks the browser to confirm leaving the page while a form has changes not yet saved. Browsers
+ * show their own wording; the page can only ask for the prompt.
+ */
+export function useUnsavedWarning(changed: boolean) {
+  useEffect(() => {
+    if (!changed) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      // Older browsers prompt only when returnValue is set.
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [changed]);
+}
+
+/**
+ * A settings form's save and discard buttons, kept in view at the bottom of the window, saying
+ * when there are changes not yet saved. A change made far up a long form is otherwise easy to
+ * leave unsaved, and lost on a reload.
+ */
+export function SaveBar({ changed, children }: { changed: boolean; children: ReactNode }) {
+  useUnsavedWarning(changed);
+  return (
+    <div className={`save-bar${changed ? ' dirty' : ''}`}>
+      <span className="small save-state" aria-live="polite">
+        {changed ? 'Unsaved changes' : 'All changes saved'}
+      </span>
+      <div className="btn-row">{children}</div>
+    </div>
+  );
 }

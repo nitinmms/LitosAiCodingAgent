@@ -12,6 +12,7 @@ import type {
   Invitation,
   InvitationPreview,
   Person,
+  ProviderCatalog,
   ProviderSettings,
   SpecStatus,
   Project,
@@ -116,6 +117,10 @@ export interface FactoryApi {
   clearSecret(name: string): Promise<void>;
   /** A model's context window, from OpenRouter's catalog or the engine's own table. */
   contextLength(model: string): Promise<number>;
+  /** Every provider's model catalog, as last fetched. */
+  modelCatalog(): Promise<ProviderCatalog[]>;
+  /** Fetches one provider's model list now; a failure comes back in the catalog's error, not as a rejection. */
+  refreshCatalog(provider: string): Promise<ProviderCatalog>;
 }
 
 /**
@@ -231,5 +236,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     clearSecret: async (name) => void (await send<unknown>('DELETE', `/api/admin/secrets/${encodeURIComponent(name)}`)),
     contextLength: async (model) =>
       (await send<{ contextLength: number }>('GET', `/api/admin/models/context-length?model=${encodeURIComponent(model)}`)).contextLength,
+    modelCatalog: async () => (await send<{ providers: ProviderCatalog[] }>('GET', '/api/admin/models/catalog')).providers,
+    refreshCatalog: (provider) => send<ProviderCatalog>('POST', `/api/admin/models/catalog/${encodeURIComponent(provider)}/refresh`),
   };
 }

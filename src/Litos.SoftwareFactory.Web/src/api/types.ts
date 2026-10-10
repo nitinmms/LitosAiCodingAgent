@@ -40,6 +40,8 @@ export interface Settings {
   model: string | null;
   /** What this person may choose from: Members see only strict providers while strict-only is on. */
   providers: OfferedProvider[];
+  /** The models of this person's newest threads that they can still choose, newest first: pinned in New thread. */
+  recentModels: { provider: string; model: string }[];
   defaultBudget: number | null;
   /** No task's budget may be above this, at creation or when raised; null for no limit. */
   maximumBudget: number | null;
@@ -418,6 +420,8 @@ export interface ProviderEntry {
   baseUrl: string | null;
   models: AllowedModel[];
   defaultModel: string | null;
+  /** Offer every tool-capable model in the provider's catalog, not only the allowed ones. */
+  allowEveryModel: boolean;
 }
 
 export interface ProviderSettings {
@@ -441,4 +445,29 @@ export interface AdminSettings {
   providers: SettingsSection<ProviderSettings>;
   knownProviders: KnownProvider[];
   secrets: SecretStatus[];
+}
+
+/** A model a provider listed at its last catalog fetch. Null: the provider does not report it. */
+export interface CatalogModel {
+  id: string;
+  displayName: string | null;
+  contextLength: number | null;
+  supportsTools: boolean | null;
+  /** US dollars per million tokens. */
+  inputPricePerMillion: number | null;
+  outputPricePerMillion: number | null;
+}
+
+/** One provider's model catalog (Api/SettingsApi.cs, m3-architecture.md §4.3). */
+export interface ProviderCatalog {
+  name: string;
+  /** Null: never fetched. */
+  attemptedAt: string | null;
+  /** When a fetch last worked; null if none has. */
+  fetchedAt: string | null;
+  /** Why the last fetch failed; null when it worked. */
+  error: string | null;
+  models: CatalogModel[];
+  /** Allowed models (as saved) that the provider no longer lists. */
+  retired: string[];
 }

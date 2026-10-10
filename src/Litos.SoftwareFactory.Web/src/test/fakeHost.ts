@@ -3,6 +3,7 @@ import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
   AccountRole,
   BudgetSettings,
+  CatalogModel,
   KnownProvider,
   ChatProgress,
   CurrentUser,
@@ -13,6 +14,7 @@ import type {
   LifecycleState,
   Message,
   Person,
+  ProviderCatalog,
   ProviderSettings,
   Project,
   PullRequestState,
@@ -160,6 +162,7 @@ export class FakeHost {
         defaultModel: 'deepseek/deepseek-v4.1-flash',
       },
     ],
+    recentModels: [],
     defaultBudget: 300_000,
     maximumBudget: null,
     ptcEnabled: true,
@@ -193,6 +196,7 @@ export class FakeHost {
           baseUrl: null,
           models: [{ id: 'deepseek/deepseek-v4.1-flash', contextLength: 1_048_576 }],
           defaultModel: 'deepseek/deepseek-v4.1-flash',
+          allowEveryModel: false,
         },
       ],
       defaultProvider: 'openrouter',
@@ -212,6 +216,10 @@ export class FakeHost {
   readonly secretValues = new Map<string, string>();
   /** What GET /api/admin/models/context-length answers, by model; 200,000 otherwise. */
   readonly contextLengths = new Map<string, number>();
+  /** What each provider lists when its catalog is refreshed, or why it cannot be fetched. */
+  readonly catalogSource = new Map<string, CatalogModel[] | { error: string }>();
+  /** Each provider's catalog as last fetched (GET /api/admin/models/catalog); absent: never fetched. */
+  readonly catalogs = new Map<string, Omit<ProviderCatalog, 'retired'>>();
   projects: Project[] = [];
   readonly threads = new Map<string, ThreadDetails>();
   readonly usage = new Map<string, UsageCall[]>();
@@ -791,6 +799,14 @@ export class FakeHost {
     this.settings = { ...this.settings, providers: offered, provider: byDefault?.name ?? null, model: byDefault?.defaultModel ?? null };
   }
 
+  /** One provider's catalog, with its allowed models (as saved) that it no longer lists. Local never retires one. */
+  private catalogView(name: string): ProviderCatalog {
+    const held = this.catalogs.get(name) ?? { name, attemptedAt: null, fetchedAt: null, error: null, models: [] };
+    const allowed = this.providerSettings.settings.providers.find((p) => p.name === name)?.models ?? [];
+    const retired = held.fetchedAt && name !== 'local' ? allowed.filter((m) => !held.models.some((c) => c.id === m.id)).map((m) => m.id) : [];
+    return { ...held, retired };
+  }
+
   /** Another Admin saves the budgets first: the revision the app read is now stale. */
   budgetsChangedElsewhere(change: Partial<BudgetSettings>): void {
     this.budgets = { revision: this.budgets.revision + 1, settings: { ...this.budgets.settings, ...change } };
@@ -838,6 +854,24 @@ export class FakeHost {
       this.secrets.splice(index, 1);
       this.offerProviders();
       return [204];
+    }
+    if (path === '/api/admin/models/catalog' && method === 'GET')
+      return [200, { providers: this.knownProviders.map((k) => this.catalogView(k.name)) }];
+    const refresh = /^\/api\/admin\/models\/catalog\/([^/]+)\/refresh$/.exec(path);
+    if (refresh && method === 'POST') {
+      const name = decodeURIComponent(refresh[1]!);
+      if (!this.knownProviders.some((k) => k.name === name)) return [404, { error: `"${name}" is not a provider the factory knows.` }];
+      // As ModelCatalogService.RefreshAsync: a failure keeps the last list.
+      const listed = this.catalogSource.get(name) ?? [];
+      const before = this.catalogs.get(name);
+      const at = this.now.toISOString();
+      this.catalogs.set(
+        name,
+        'error' in listed
+          ? { name, attemptedAt: at, fetchedAt: before?.fetchedAt ?? null, error: listed.error, models: before?.models ?? [] }
+          : { name, attemptedAt: at, fetchedAt: at, error: null, models: listed },
+      );
+      return [200, this.catalogView(name)];
     }
     if (path.startsWith('/api/admin/models/context-length') && method === 'GET') {
       const model = new URL(path, 'http://host').searchParams.get('model');
