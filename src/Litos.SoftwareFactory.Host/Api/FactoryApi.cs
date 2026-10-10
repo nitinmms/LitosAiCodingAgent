@@ -105,6 +105,12 @@ public static class FactoryApi
     /// <summary>On the thread list: where the board's event stream starts from.</summary>
     public const string EventCursorHeader = "X-Event-Cursor";
 
+    /// <summary>New thread pins this many of a person's recent models (m3-architecture.md §4.4)...</summary>
+    private const int RecentModelsPinned = 3;
+
+    /// <summary>...chosen from this many of the models they used most recently, since some may no longer be offered.</summary>
+    private const int RecentModelsScanned = 10;
+
     public static IEndpointRouteBuilder MapFactoryApi(this IEndpointRouteBuilder app)
     {
         var api = app.MapGroup("/api").RequireAuthorization();
@@ -115,18 +121,21 @@ public static class FactoryApi
         var decisionRoutes = api.MapGroup("/decisions/{id:guid}").RequireProjectAccess(ProjectScoped.Decision);
         var findingRoutes = api.MapGroup("/findings/{id:guid}").RequireProjectAccess(ProjectScoped.Finding);
 
-        api.MapGet("/settings", (ClaimsPrincipal user, FactoryOptions options, FactorySettings settings) =>
+        api.MapGet("/settings", async (
+            ClaimsPrincipal user, FactoryOptions options, FactorySettings settings, ModelCatalogService catalog, IFactoryStore store, CancellationToken ct) =>
         {
             var providers = settings.Providers;
             var isAdmin = ProjectAccess.IsAdmin(user);
-            var byDefault = providers.Choose(null, null, isAdmin, settings.IsUsable, out _);
+            var byDefault = providers.Choose(null, null, isAdmin, settings.IsUsable, out _, catalog.Current);
+            var offered = providers.Offered(isAdmin, settings.IsUsable, catalog.Current);
+            var recent = await store.ListRecentModelsAsync(user.UserId(), RecentModelsScanned, ct);
             return Results.Ok(new
             {
                 // What a new thread gets when its creator chooses nothing; null when no provider is ready.
                 Provider = byDefault?.Provider.Name,
                 Model = byDefault?.Model.Id,
                 // What this person may choose from (m3-architecture.md §4.4).
-                Providers = providers.Offered(isAdmin, settings.IsUsable).Select(p => new
+                Providers = offered.Select(p => new
                 {
                     p.Name,
                     KnownProviders.Find(p.Name)!.DisplayName,
@@ -134,6 +143,11 @@ public static class FactoryApi
                     p.Models,
                     p.DefaultModel,
                 }),
+                // The models of this person's newest threads that they can still choose, pinned in New thread.
+                RecentModels = recent
+                    .Where(r => offered.Any(p => p.Name == r.Provider && p.Model(r.Model) is not null))
+                    .Take(RecentModelsPinned)
+                    .Select(r => new { r.Provider, r.Model }),
                 DefaultBudget = settings.Budgets.DefaultTaskBudget,
                 MaximumBudget = settings.Budgets.MaximumTaskBudget,
                 options.PtcEnabled,
@@ -219,7 +233,7 @@ public static class FactoryApi
 
         api.MapPost("/threads", async (
             CreateThreadRequest request, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, FactoryOptions options, FactorySettings settings,
-            FactorySignals signals, IClock clock, CancellationToken ct) =>
+            ModelCatalogService catalog, FactorySignals signals, IClock clock, CancellationToken ct) =>
         {
             // Outside the project it is not found, as a project that does not exist.
             if (!await access.CanSeeProjectAsync(user, request.ProjectId, ct))
@@ -234,7 +248,8 @@ public static class FactoryApi
             var cap = request.BudgetCap ?? budgets.DefaultTaskBudget;
             if (budgets.RefuseCap(cap) is { } refused)
                 return Problem(refused);
-            if (settings.Providers.Choose(Blank(request.Provider), Blank(request.Model), ProjectAccess.IsAdmin(user), settings.IsUsable, out var notOffered)
+            if (settings.Providers.Choose(
+                    Blank(request.Provider), Blank(request.Model), ProjectAccess.IsAdmin(user), settings.IsUsable, out var notOffered, catalog.Current)
                 is not var (provider, model))
                 return Problem(notOffered!);
 

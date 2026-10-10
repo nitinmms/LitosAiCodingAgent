@@ -388,6 +388,23 @@ public interface IFactoryStore
     /// <summary>Clears a secret. False, and nothing recorded, when it was not set.</summary>
     Task<bool> ClearSecretAsync(string name, Guid actorId, DateTimeOffset now, CancellationToken ct);
 
+    // ---- The model catalog (m3-architecture.md §4.3) ----
+
+    /// <summary>Every provider's catalog rows, and the last fetch of each provider ever fetched.</summary>
+    Task<(IReadOnlyList<ModelCatalogEntry> Models, IReadOnlyList<ModelCatalogFetch> Fetches)> ListModelCatalogAsync(CancellationToken ct);
+
+    /// <summary>Replaces a provider's rows with what it listed just now, and records the fetch as working.</summary>
+    Task<ModelCatalogFetch> ReplaceModelCatalogAsync(string provider, IReadOnlyList<ModelCatalogEntry> models, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Records a failed fetch, keeping the rows of the last one that worked.</summary>
+    Task<ModelCatalogFetch> RecordModelCatalogFailureAsync(string provider, string error, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// The provider and model of a person's newest threads, each pair once, newest first: what
+    /// New thread pins as their recent models (m3-architecture.md §4.4).
+    /// </summary>
+    Task<IReadOnlyList<(string Provider, string Model)>> ListRecentModelsAsync(Guid ownerId, int limit, CancellationToken ct);
+
     /// <summary>Records a change made outside the store, such as to an Identity account.</summary>
     Task AddAuditAsync(AuditEvent auditEvent, CancellationToken ct);
 

@@ -51,6 +51,23 @@ public sealed record ProviderEntry
 
     public string? DefaultModel { get; init; }
 
+    /// <summary>
+    /// Offer every model the provider's catalog lists, not only the allowed ones (m3-architecture.md
+    /// §4.3). Off by default: a member could then start a task on any model, at any price.
+    /// </summary>
+    public bool AllowEveryModel { get; init; }
+
+    public AllowedModel? Model(string? id) => Models.FirstOrDefault(m => m.Id == id);
+}
+
+/// <summary>
+/// A provider as one person is offered it: the allowed models its provider still lists, then,
+/// when every model is allowed, the rest of its catalog; and the model a thread gets by default.
+/// </summary>
+public sealed record OfferedProvider(ProviderEntry Entry, IReadOnlyList<AllowedModel> Models, string DefaultModel)
+{
+    public string Name => Entry.Name;
+
     public AllowedModel? Model(string? id) => Models.FirstOrDefault(m => m.Id == id);
 }
 
@@ -121,23 +138,43 @@ public sealed record ProviderSettings
     /// <summary>
     /// What one person may choose for a new thread: the enabled providers that can be called
     /// (<paramref name="usable"/>: their key, or their address, is set), and for a Member only
-    /// strict ones when StrictOnly is on.
+    /// strict ones when StrictOnly is on. A model its provider no longer lists is not offered, and
+    /// a default on one falls back to the first allowed model still listed; a provider left with
+    /// no model is not offered at all.
     /// </summary>
-    public IReadOnlyList<ProviderEntry> Offered(bool isAdmin, Func<ProviderEntry, bool> usable) =>
-    [
-        .. Providers.Where(p => p.Enabled && p.Models.Count > 0 && usable(p)
-            && (isAdmin || !StrictOnly || KnownProviders.PrecisionOf(p.Name) == BudgetPrecision.Strict)),
-    ];
+    public IReadOnlyList<OfferedProvider> Offered(bool isAdmin, Func<ProviderEntry, bool> usable, ModelCatalog? catalog = null)
+    {
+        catalog ??= ModelCatalog.Empty;
+        var offered = new List<OfferedProvider>();
+        foreach (var entry in Providers)
+        {
+            if (!entry.Enabled || !usable(entry)
+                || (!isAdmin && StrictOnly && KnownProviders.PrecisionOf(entry.Name) != BudgetPrecision.Strict))
+                continue;
+
+            var models = entry.Models.Where(m => !catalog.IsRetired(entry.Name, m.Id)).ToList();
+            if (entry.AllowEveryModel)
+                models.AddRange(catalog.Every(entry.Name)
+                    .Where(m => models.All(allowed => ModelCatalog.Normalize(entry.Name, allowed.Id) != m.Id)));
+            if (models.Count == 0)
+                continue;
+
+            var byDefault = models.FirstOrDefault(m => m.Id == entry.DefaultModel) ?? models[0];
+            offered.Add(new OfferedProvider(entry, models, byDefault.Id));
+        }
+
+        return offered;
+    }
 
     /// <summary>
     /// The provider and model a new thread gets: what its creator chose, checked against what they
     /// are offered, or the defaults. Null with a reason when the choice is not offered, or nothing is.
     /// </summary>
     public (ProviderEntry Provider, AllowedModel Model)? Choose(
-        string? provider, string? model, bool isAdmin, Func<ProviderEntry, bool> usable, out string? refusal)
+        string? provider, string? model, bool isAdmin, Func<ProviderEntry, bool> usable, out string? refusal, ModelCatalog? catalog = null)
     {
         refusal = null;
-        var offered = Offered(isAdmin, usable);
+        var offered = Offered(isAdmin, usable, catalog);
         if (offered.Count == 0)
         {
             refusal = "No model provider is ready. An Admin enables one, and sets its key, under Settings.";
@@ -156,11 +193,14 @@ public sealed record ProviderSettings
         var chosen = entry.Model(model ?? entry.DefaultModel);
         if (chosen is null)
         {
-            refusal = $"\"{model}\" is not a model you can choose on {KnownProviders.Find(entry.Name)!.DisplayName}.";
+            var name = KnownProviders.Find(entry.Name)!.DisplayName;
+            refusal = model is not null && catalog?.IsRetired(entry.Name, model) == true && entry.Entry.Model(model) is not null
+                ? $"\"{model}\" is no longer offered by {name}. Choose another model."
+                : $"\"{model}\" is not a model you can choose on {name}.";
             return null;
         }
 
-        return (entry, chosen);
+        return (entry.Entry, chosen);
     }
 
     private static bool IsHttpUrl(string? value) =>

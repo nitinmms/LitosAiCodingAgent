@@ -511,6 +511,40 @@ public sealed class FactorySecret
     public Guid? SetBy { get; set; }
 }
 
+/// <summary>
+/// One model a provider listed when the host last fetched its catalog (m3-architecture.md §4.3).
+/// A refresh replaces all of a provider's rows. What the provider does not report is null.
+/// </summary>
+public sealed class ModelCatalogEntry
+{
+    public required string Provider { get; set; }
+
+    /// <summary>The id a thread is created with: a Gemini model without its <c>models/</c> prefix.</summary>
+    public required string ModelId { get; set; }
+    public string? DisplayName { get; set; }
+    public int? ContextLength { get; set; }
+
+    /// <summary>Whether it accepts tools; only OpenRouter reports it.</summary>
+    public bool? SupportsTools { get; set; }
+
+    /// <summary>US dollars per million input and output tokens; only OpenRouter reports them.</summary>
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+}
+
+/// <summary>The last catalog fetch of one provider: when it was tried, when it last worked, and why it failed.</summary>
+public sealed class ModelCatalogFetch
+{
+    public required string Provider { get; set; }
+    public DateTimeOffset AttemptedAt { get; set; }
+
+    /// <summary>When the provider's rows were last replaced; null when no fetch has worked yet.</summary>
+    public DateTimeOffset? FetchedAt { get; set; }
+
+    /// <summary>Why the last attempt failed; null when it worked. The rows of the last good fetch are kept.</summary>
+    public string? Error { get; set; }
+}
+
 public static class SettingsSections
 {
     public const string Budgets = "budgets";

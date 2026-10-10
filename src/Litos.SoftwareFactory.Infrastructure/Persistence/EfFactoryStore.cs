@@ -1693,6 +1693,83 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         return true;
     }
 
+    // ---- The model catalog ----
+
+    public async Task<(IReadOnlyList<ModelCatalogEntry> Models, IReadOnlyList<ModelCatalogFetch> Fetches)> ListModelCatalogAsync(CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var models = await db.ModelCatalog.AsNoTracking().OrderBy(m => m.Provider).ThenBy(m => m.ModelId).ToListAsync(ct);
+        var fetches = await db.ModelCatalogFetches.AsNoTracking().OrderBy(f => f.Provider).ToListAsync(ct);
+        return (models, fetches);
+    }
+
+    public async Task<ModelCatalogFetch> ReplaceModelCatalogAsync(
+        string provider, IReadOnlyList<ModelCatalogEntry> models, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+
+        await db.ModelCatalog.Where(m => m.Provider == provider).ExecuteDeleteAsync(ct);
+        // A provider can list one id twice (OpenAI's aliases); the catalog keeps the first.
+        db.ModelCatalog.AddRange(models.DistinctBy(m => m.ModelId).Select(m => new ModelCatalogEntry
+        {
+            Provider = provider,
+            ModelId = m.ModelId,
+            DisplayName = m.DisplayName,
+            ContextLength = m.ContextLength,
+            SupportsTools = m.SupportsTools,
+            InputPricePerMillion = m.InputPricePerMillion,
+            OutputPricePerMillion = m.OutputPricePerMillion,
+        }));
+
+        var fetch = await FetchRowAsync(db, provider, ct);
+        fetch.AttemptedAt = now;
+        fetch.FetchedAt = now;
+        fetch.Error = null;
+
+        await db.SaveChangesAsync(ct);
+        await write.CommitAsync(ct);
+        return fetch;
+    }
+
+    public async Task<ModelCatalogFetch> RecordModelCatalogFailureAsync(string provider, string error, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+
+        var fetch = await FetchRowAsync(db, provider, ct);
+        fetch.AttemptedAt = now;
+        fetch.Error = error.Length > 1000 ? error[..1000] : error;
+
+        await db.SaveChangesAsync(ct);
+        await write.CommitAsync(ct);
+        return fetch;
+    }
+
+    private static async Task<ModelCatalogFetch> FetchRowAsync(FactoryDbContext db, string provider, CancellationToken ct)
+    {
+        var fetch = await db.ModelCatalogFetches.FirstOrDefaultAsync(f => f.Provider == provider, ct);
+        if (fetch is null)
+        {
+            fetch = new ModelCatalogFetch { Provider = provider };
+            db.ModelCatalogFetches.Add(fetch);
+        }
+
+        return fetch;
+    }
+
+    public async Task<IReadOnlyList<(string Provider, string Model)>> ListRecentModelsAsync(Guid ownerId, int limit, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var recent = await db.Threads.AsNoTracking()
+            .Where(t => t.OwnerId == ownerId)
+            .GroupBy(t => new { t.Provider, t.Model })
+            .Select(g => new { g.Key.Provider, g.Key.Model, Newest = g.Max(t => t.CreatedAt) })
+            .ToListAsync(ct);
+        // A person uses a handful of models, so they are ordered after reading.
+        return [.. recent.OrderByDescending(r => r.Newest).Take(limit).Select(r => (r.Provider, r.Model))];
+    }
+
     private static void Audit(
         FactoryDbContext db, Guid actorId, string action, string targetType, Guid? targetId, Guid? projectId, object? details, DateTimeOffset now) =>
         db.AuditEvents.Add(new AuditEvent

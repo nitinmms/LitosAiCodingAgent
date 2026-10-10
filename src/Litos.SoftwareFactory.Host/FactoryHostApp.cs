@@ -60,6 +60,11 @@ public static class FactoryHostApp
         services.AddSingleton<IChatProviderFactory, FactoryProviders>();
         // OpenRouter's public catalog, for the context length of a model an Admin allows.
         services.AddSingleton(_ => new Litos.Agent.Providers.OpenRouterModelCatalog(new HttpClient { BaseAddress = new Uri("https://openrouter.ai/api/v1/") }));
+        // Each provider's model list, fetched when an Admin asks (m3-architecture.md §4.3).
+        services.AddSingleton<IModelCatalogSource>(sp => new ProviderModelCatalogSource(
+            sp.GetRequiredService<IChatProviderFactory>(),
+            new HttpClient { BaseAddress = new Uri("https://openrouter.ai/api/v1/"), Timeout = TimeSpan.FromSeconds(30) }));
+        services.AddSingleton<ModelCatalogService>();
         services.AddSingleton<ModelGateway>();
 
         services.AddSingleton<IWorkspaceProvider, GitWorkspaceProvider>();
@@ -153,6 +158,7 @@ public static class FactoryHostApp
             app.Logger.LogInformation(
                 "Factory settings were written to the database from this host's environment. From now on they are changed in the app, and these variables are no longer read: {Variables}.",
                 string.Join(", ", SettingsSeeding.Replaced));
+        await app.Services.GetRequiredService<ModelCatalogService>().LoadAsync(ct);
 
         return await FactoryAuth.SeedAdminAsync(app.Services, options);
     }

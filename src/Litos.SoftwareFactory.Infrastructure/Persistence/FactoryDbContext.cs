@@ -39,6 +39,8 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<SettingsSection> Settings => Set<SettingsSection>();
     public DbSet<FactorySecret> Secrets => Set<FactorySecret>();
+    public DbSet<ModelCatalogEntry> ModelCatalog => Set<ModelCatalogEntry>();
+    public DbSet<ModelCatalogFetch> ModelCatalogFetches => Set<ModelCatalogFetch>();
 
     /// <summary>Set by the store once this context's transaction holds the outbox lock.</summary>
     internal bool HoldsOutboxLock { get; set; }
@@ -245,6 +247,25 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.ToTable("factory_secrets");
             e.HasKey(s => s.Name);
             e.Property(s => s.Name).HasMaxLength(200);
+        });
+
+        model.Entity<ModelCatalogEntry>(e =>
+        {
+            e.ToTable("model_catalog");
+            e.HasKey(m => new { m.Provider, m.ModelId });
+            e.Property(m => m.Provider).HasMaxLength(40);
+            e.Property(m => m.ModelId).HasMaxLength(200);
+            e.Property(m => m.DisplayName).HasMaxLength(300);
+            e.Property(m => m.InputPricePerMillion).HasPrecision(18, 6);
+            e.Property(m => m.OutputPricePerMillion).HasPrecision(18, 6);
+        });
+
+        model.Entity<ModelCatalogFetch>(e =>
+        {
+            e.ToTable("model_catalog_fetches");
+            e.HasKey(f => f.Provider);
+            e.Property(f => f.Provider).HasMaxLength(40);
+            e.Property(f => f.Error).HasMaxLength(1000);
         });
 
         model.Entity<AuditEvent>(e =>

@@ -2779,6 +2779,107 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Empty(await Store.ListSecretsAsync(default));
         Assert.Equal([AuditActions.SecretClear, AuditActions.SecretSet], (await AuditAsync()).Select(r => r.Action));
     }
+
+    // ---- The model catalog (m3-architecture.md §4.3) ----
+
+    private static ModelCatalogEntry Listed(string provider, string id, int? contextLength = 128_000, bool? tools = null, decimal? input = null) => new()
+    {
+        Provider = provider, ModelId = id, DisplayName = id.ToUpperInvariant(), ContextLength = contextLength, SupportsTools = tools,
+        InputPricePerMillion = input, OutputPricePerMillion = input * 4,
+    };
+
+    [SkippableFact]
+    public async Task TheCatalog_IsEmpty_UntilAProviderIsFetched()
+    {
+        var (models, fetches) = await Store.ListModelCatalogAsync(default);
+
+        Assert.Empty(models);
+        Assert.Empty(fetches);
+    }
+
+    [SkippableFact]
+    public async Task AFetch_StoresWhatTheProviderListed_WithItsTime()
+    {
+        var fetch = await Store.ReplaceModelCatalogAsync("openrouter",
+            [Listed("openrouter", "anthropic/claude-sonnet-5", 200_000, tools: true, input: 3m), Listed("openrouter", "qwen/qwen3-coder", null)], T0, default);
+
+        Assert.Equal(("openrouter", T0, (DateTimeOffset?)T0, (string?)null), (fetch.Provider, fetch.AttemptedAt, fetch.FetchedAt, fetch.Error));
+        var (models, fetches) = await Store.ListModelCatalogAsync(default);
+        Assert.Single(fetches);
+        Assert.Equal(["anthropic/claude-sonnet-5", "qwen/qwen3-coder"], models.Select(m => m.ModelId));
+        var sonnet = models[0];
+        Assert.Equal(("ANTHROPIC/CLAUDE-SONNET-5", (int?)200_000, (bool?)true, (decimal?)3m, (decimal?)12m),
+            (sonnet.DisplayName, sonnet.ContextLength, sonnet.SupportsTools, sonnet.InputPricePerMillion, sonnet.OutputPricePerMillion));
+        Assert.Equal(((int?)null, (bool?)null), (models[1].ContextLength, models[1].SupportsTools));
+    }
+
+    [SkippableFact]
+    public async Task ARefetch_ReplacesOnlyThatProvidersModels()
+    {
+        await Store.ReplaceModelCatalogAsync("openai", [Listed("openai", "gpt-6-luna"), Listed("openai", "gpt-5")], T0, default);
+        await Store.ReplaceModelCatalogAsync("anthropic", [Listed("anthropic", "claude-sonnet-5")], T0, default);
+
+        await Store.ReplaceModelCatalogAsync("openai", [Listed("openai", "gpt-6-luna"), Listed("openai", "gpt-6-sol")], T0.AddHours(1), default);
+
+        var (models, fetches) = await Store.ListModelCatalogAsync(default);
+        Assert.Equal(["anthropic/claude-sonnet-5", "openai/gpt-6-luna", "openai/gpt-6-sol"], models.Select(m => $"{m.Provider}/{m.ModelId}"));
+        Assert.Equal((DateTimeOffset?)T0.AddHours(1), fetches.Single(f => f.Provider == "openai").FetchedAt);
+    }
+
+    [SkippableFact]
+    public async Task AModelListedTwice_IsKeptOnce()
+    {
+        await Store.ReplaceModelCatalogAsync("openai", [Listed("openai", "gpt-6-luna", 400_000), Listed("openai", "gpt-6-luna", 1_000)], T0, default);
+
+        Assert.Equal(400_000, Assert.Single((await Store.ListModelCatalogAsync(default)).Models).ContextLength);
+    }
+
+    [SkippableFact]
+    public async Task AFailedFetch_IsRecorded_AndKeepsTheLastGoodList()
+    {
+        await Store.ReplaceModelCatalogAsync("openai", [Listed("openai", "gpt-6-luna")], T0, default);
+
+        var failed = await Store.RecordModelCatalogFailureAsync("openai", "401 (Unauthorized)", T0.AddHours(1), default);
+
+        Assert.Equal((T0.AddHours(1), (DateTimeOffset?)T0, "401 (Unauthorized)"), (failed.AttemptedAt, failed.FetchedAt, failed.Error));
+        var (models, fetches) = await Store.ListModelCatalogAsync(default);
+        Assert.Equal("gpt-6-luna", Assert.Single(models).ModelId);
+        Assert.Equal("401 (Unauthorized)", Assert.Single(fetches).Error);
+
+        await Store.ReplaceModelCatalogAsync("openai", [Listed("openai", "gpt-6-luna")], T0.AddHours(2), default);
+        Assert.Null(Assert.Single((await Store.ListModelCatalogAsync(default)).Fetches).Error);
+    }
+
+    [SkippableFact]
+    public async Task AFirstFetchThatFails_HasNoFetchTime()
+    {
+        var failed = await Store.RecordModelCatalogFailureAsync("gemini", new string('x', 1_500), T0, default);
+
+        Assert.Null(failed.FetchedAt);
+        Assert.Equal(1_000, Assert.Single((await Store.ListModelCatalogAsync(default)).Fetches).Error!.Length);
+    }
+
+    [SkippableFact]
+    public async Task RecentModels_AreAPersonsOwn_EachOnce_NewestFirst()
+    {
+        var project = await AddProjectAsync();
+        var someoneElse = Guid.NewGuid();
+        async Task Thread(Guid owner, string provider, string model, int minutes) => await Store.AddThreadAsync(new TaskThread
+        {
+            ProjectId = project.Id, OwnerId = owner, Title = "t", SessionId = Guid.NewGuid().ToString("n"),
+            Provider = provider, Model = model, CreatedAt = T0.AddMinutes(minutes), UpdatedAt = T0.AddMinutes(minutes),
+        }, default);
+        await Thread(Admin, "openrouter", "qwen/qwen3-coder", 1);
+        await Thread(Admin, "openai", "gpt-6-luna", 2);
+        await Thread(Admin, "openrouter", "qwen/qwen3-coder", 3);
+        await Thread(Admin, "anthropic", "claude-sonnet-5", 4);
+        await Thread(someoneElse, "gemini", "gemini-3-pro", 5);
+
+        Assert.Equal(
+            [("anthropic", "claude-sonnet-5"), ("openrouter", "qwen/qwen3-coder")],
+            await Store.ListRecentModelsAsync(Admin, 2, default));
+        Assert.Empty(await Store.ListRecentModelsAsync(Guid.NewGuid(), 3, default));
+    }
 }
 
 public sealed class SqliteFactoryStoreTests : FactoryStoreContract

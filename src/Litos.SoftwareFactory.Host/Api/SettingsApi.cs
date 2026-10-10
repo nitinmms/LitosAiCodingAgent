@@ -53,6 +53,19 @@ public static class SettingsApi
                 ? Results.BadRequest(new { error = "model is required." })
                 : Results.Ok(new { Model = model.Trim(), ContextLength = await ModelContextResolver.ResolveAsync(catalog, model.Trim(), null, ct) }));
 
+        // The catalog the Providers tab picks allowed models from (m3-architecture.md §4.3).
+        admin.MapGet("/models/catalog", (FactorySettings settings, ModelCatalogService catalog) =>
+            Results.Ok(new { Providers = KnownProviders.All.Select(p => CatalogView(p.Name, catalog.Current, settings.Providers)) }));
+
+        admin.MapPost("/models/catalog/{provider}/refresh", async (string provider, FactorySettings settings, ModelCatalogService catalog, CancellationToken ct) =>
+        {
+            if (KnownProviders.Find(provider) is null)
+                return Results.NotFound(new { error = $"\"{provider}\" is not a provider the factory knows." });
+
+            await catalog.RefreshAsync(provider, ct);
+            return Results.Ok(CatalogView(provider, catalog.Current, settings.Providers));
+        });
+
         admin.MapPut("/settings/budgets", async (
             SaveSettingsRequest<BudgetSettings> request, ClaimsPrincipal user, FactorySettings settings, FactorySignals signals, CancellationToken ct) =>
         {
@@ -82,6 +95,27 @@ public static class SettingsApi
             await settings.ClearSecretAsync(name, user.UserId(), ct) ? Results.NoContent() : Results.NotFound(new { error = "That secret is not set." }));
 
         return app;
+    }
+
+    /// <summary>
+    /// One provider's catalog, and which of its allowed models it no longer lists. Never fetched:
+    /// no times and no models.
+    /// </summary>
+    private static object CatalogView(string provider, ModelCatalog catalog, ProviderSettings settings)
+    {
+        var held = catalog.Of(provider);
+        return new
+        {
+            Name = provider,
+            held?.Fetch.AttemptedAt,
+            held?.Fetch.FetchedAt,
+            held?.Fetch.Error,
+            Models = (held?.Models ?? []).Select(m => new
+            {
+                Id = m.ModelId, m.DisplayName, m.ContextLength, m.SupportsTools, m.InputPricePerMillion, m.OutputPricePerMillion,
+            }),
+            Retired = (settings.Entry(provider)?.Models ?? []).Where(m => catalog.IsRetired(provider, m.Id)).Select(m => m.Id),
+        };
     }
 
     private static object Section<T>(FactorySettings settings, string section, T value) => new { Revision = settings.RevisionOf(section), Settings = value };
