@@ -12,6 +12,8 @@ import type {
   HandoffEvidence,
   Invitation,
   LifecycleState,
+  McpSettings,
+  McpTestResult,
   Message,
   Person,
   ProviderCatalog,
@@ -192,6 +194,10 @@ export class FakeHost {
     revision: 1,
     settings: { ptcByDefault: true, membersMayChoosePtc: true, shellTimeoutSeconds: 300, webSearchEnabled: true, webSearchOnReadOnlyTurns: false },
   };
+  /** The MCP servers tab as stored: none until an Admin adds one. */
+  mcp: SettingsSection<McpSettings> = { revision: 0, settings: { servers: [] } };
+  /** What Test connection answers; the servers it was asked about are in sent(). */
+  mcpTestResult: McpTestResult = { connected: true, tools: [{ name: 'create_issue', description: 'Opens an issue.' }], error: null };
   /** The Providers tab as stored, seeded as the host's first start does. */
   providerSettings: SettingsSection<ProviderSettings> = {
     revision: 1,
@@ -828,8 +834,28 @@ export class FakeHost {
     if (path === '/api/admin/settings' && method === 'GET')
       return [
         200,
-        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, knownProviders: this.knownProviders, secrets: this.secrets },
+        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, mcp: this.mcp, knownProviders: this.knownProviders, secrets: this.secrets },
       ];
+    if (path === '/api/admin/settings/mcp' && method === 'PUT') {
+      if (data.revision !== this.mcp.revision)
+        return [409, { error: 'The mcp settings were changed by someone else. Reload them and make your change again.' }];
+      const mcp = data.settings as McpSettings;
+      // A few of McpSettings.Validate's rules.
+      const errors: string[] = [];
+      for (const s of mcp.servers) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(s.name) || s.name.includes('__')) errors.push(`"${s.name}" is not a usable server name.`);
+        else if (s.transport === 'Stdio' && !s.command) errors.push(`${s.name}: give the command that starts it.`);
+      }
+      if (errors.length) return [400, { error: errors.join(' '), errors }];
+
+      this.mcp = { revision: this.mcp.revision + 1, settings: mcp };
+      // As the host does: a secret of a server or variable no longer listed is cleared.
+      const kept = new Set(mcp.servers.flatMap((s) => s.secretVariables.map((v) => `mcp:${s.name}:${v}`)));
+      for (let i = this.secrets.length - 1; i >= 0; i--)
+        if (this.secrets[i]!.name.startsWith('mcp:') && !kept.has(this.secrets[i]!.name)) this.secrets.splice(i, 1);
+      return [200, this.mcp];
+    }
+    if (path === '/api/admin/mcp/test' && method === 'POST') return [200, this.mcpTestResult];
     if (path === '/api/admin/settings/tools' && method === 'PUT') {
       if (data.revision !== this.tools.revision)
         return [409, { error: 'The tools settings were changed by someone else. Reload them and make your change again.' }];

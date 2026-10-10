@@ -1,4 +1,4 @@
-import type { Finding, FindingVerdict, ThreadDetails, UsageCall } from '../api/types';
+import type { Finding, FindingVerdict, RunCapabilities, ThreadDetails, UsageCall } from '../api/types';
 import { fmt, pct, shortSha, toneOf, words } from '../domain/format';
 
 function humanTesting(state: ThreadDetails['thread']['state']): { text: string; tone: string } {
@@ -237,10 +237,50 @@ export function Details({
                 <dd className="mono">{run.promptRevision}</dd>
               </>
             ) : null}
+            {run.capabilities ? <CapabilityRows capabilities={run.capabilities} /> : null}
           </dl>
         </section>
       ) : null}
     </aside>
+  );
+}
+
+const WEB_SEARCH: Record<RunCapabilities['webSearch'], string> = { Off: 'off', WorkTurns: 'while it changes code', AllTurns: 'on every turn' };
+
+/** What the run started with (m3-architecture.md §7.4): tool settings, and each MCP server as it connected. */
+function CapabilityRows({ capabilities }: { capabilities: RunCapabilities }) {
+  const { ptc, shellTimeoutSeconds, webSearch, mcpServers, mcpStatus } = capabilities;
+  return (
+    <>
+      <dt>Tools</dt>
+      <dd>
+        PTC {ptc ? 'on' : 'off'}; shell limit {shellTimeoutSeconds % 60 === 0 ? `${shellTimeoutSeconds / 60} min` : `${shellTimeoutSeconds} s`}; web
+        search {WEB_SEARCH[webSearch]}
+      </dd>
+      <dt>MCP servers</dt>
+      <dd>
+        {mcpServers.length === 0
+          ? 'None'
+          : mcpServers.map((server, i) => {
+              const status = mcpStatus?.find((s) => s.name === server.name);
+              return (
+                <span key={server.name}>
+                  {i ? ', ' : ''}
+                  <span className="mono">{server.name}</span>{' '}
+                  {!status ? (
+                    <span className="muted">(connecting)</span>
+                  ) : status.connected ? (
+                    <span className="muted">({status.tools.length === 1 ? '1 tool' : `${status.tools.length} tools`})</span>
+                  ) : (
+                    <span className="error" title={status.error ?? undefined}>
+                      (not available)
+                    </span>
+                  )}
+                </span>
+              );
+            })}
+      </dd>
+    </>
   );
 }
 

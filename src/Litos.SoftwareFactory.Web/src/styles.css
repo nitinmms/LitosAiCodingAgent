@@ -295,3 +295,4 @@ fieldset.checks legend{padding:0;margin-bottom:4px;font-weight:600}
 .model-option:hover{background:var(--surface-2)}
 .model-option[aria-selected="true"]{background:var(--petrol-soft);color:var(--petrol)}
 .model-option .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mcp-variable{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}

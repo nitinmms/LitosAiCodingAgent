@@ -154,6 +154,26 @@ export interface Run {
   baselineCommit: string | null;
   headCommit: string | null;
   promptRevision: string | null;
+  /** What the run started with; null for one that never started, or ran before M3. */
+  capabilities?: RunCapabilities | null;
+}
+
+/** A run's capability snapshot (Core/Settings/RunCapabilities.cs). */
+export interface RunCapabilities {
+  ptc: boolean;
+  shellTimeoutSeconds: number;
+  webSearch: 'Off' | 'WorkTurns' | 'AllTurns';
+  mcpServers: McpServerSettings[];
+  /** How each server connected, once the worker said; null until then. */
+  mcpStatus: McpServerReport[] | null;
+}
+
+export interface McpServerReport {
+  name: string;
+  connected: boolean;
+  /** The tools the run may use. */
+  tools: string[];
+  error: string | null;
 }
 
 export interface Verification {
@@ -456,10 +476,38 @@ export interface ToolSettings {
   webSearchOnReadOnlyTurns: boolean;
 }
 
+export type McpAccess = 'Full' | 'Deny';
+
+/** One MCP server (Core/Settings/McpSettings.cs). Its variables' values are secrets. */
+export interface McpServerSettings {
+  name: string;
+  transport: 'Stdio' | 'Http';
+  command: string | null;
+  args: string[];
+  url: string | null;
+  enabled: boolean;
+  permission: McpAccess;
+  /** By the server's own tool name. */
+  toolOverrides: Record<string, McpAccess>;
+  secretVariables: string[];
+}
+
+export interface McpSettings {
+  servers: McpServerSettings[];
+}
+
+/** A Test connection result. */
+export interface McpTestResult {
+  connected: boolean;
+  tools: { name: string; description: string | null }[];
+  error: string | null;
+}
+
 export interface AdminSettings {
   budgets: SettingsSection<BudgetSettings>;
   providers: SettingsSection<ProviderSettings>;
   tools: SettingsSection<ToolSettings>;
+  mcp: SettingsSection<McpSettings>;
   knownProviders: KnownProvider[];
   secrets: SecretStatus[];
 }

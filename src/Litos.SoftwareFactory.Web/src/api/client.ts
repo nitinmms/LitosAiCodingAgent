@@ -11,6 +11,9 @@ import type {
   FindingVerdict,
   Invitation,
   InvitationPreview,
+  McpServerSettings,
+  McpSettings,
+  McpTestResult,
   Person,
   ProviderCatalog,
   ProviderSettings,
@@ -114,6 +117,9 @@ export interface FactoryApi {
   saveBudgets(revision: number, settings: BudgetSettings): Promise<SettingsSection<BudgetSettings>>;
   saveProviders(revision: number, settings: ProviderSettings): Promise<SettingsSection<ProviderSettings>>;
   saveTools(revision: number, settings: ToolSettings): Promise<SettingsSection<ToolSettings>>;
+  saveMcp(revision: number, settings: McpSettings): Promise<SettingsSection<McpSettings>>;
+  /** Starts the server as described, with the secrets set for it, and lists its tools. */
+  testMcp(server: McpServerSettings): Promise<McpTestResult>;
   /** Sets or replaces a secret; its value is never sent back. */
   setSecret(name: string, value: string): Promise<void>;
   clearSecret(name: string): Promise<void>;
@@ -236,6 +242,9 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
       send<SettingsSection<ProviderSettings>>('PUT', '/api/admin/settings/providers', { revision, settings }),
     saveTools: (revision, settings) =>
       send<SettingsSection<ToolSettings>>('PUT', '/api/admin/settings/tools', { revision, settings }),
+    saveMcp: (revision, settings) =>
+      send<SettingsSection<McpSettings>>('PUT', '/api/admin/settings/mcp', { revision, settings }),
+    testMcp: (server) => send<McpTestResult>('POST', '/api/admin/mcp/test', server),
     setSecret: async (name, value) => void (await send<unknown>('PUT', `/api/admin/secrets/${encodeURIComponent(name)}`, { value })),
     clearSecret: async (name) => void (await send<unknown>('DELETE', `/api/admin/secrets/${encodeURIComponent(name)}`)),
     contextLength: async (model) =>
