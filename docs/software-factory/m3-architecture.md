@@ -131,6 +131,13 @@ How quotas count, as built:
 - **Shell command time limit:** passed to the worker (`--shell-timeout`) into its `LitosConfig`.
 - **Web search:** on or off, with its key held by the host. The worker gets a `web_search` tool that calls the host (`/internal/runs/{id}/web-search`), which calls the provider and writes the query and result URLs to the run log. Implement and Repair turns get it; read-only turns get it only if the Admin says so.
 
+As built (step 4):
+
+- **The `tools` section** holds PTC for new threads (on) and whether Members may choose otherwise (yes; Admins always may), the shell command limit (300 seconds, from 30 to 3,600), web search (off) and web search on read-only turns (off). The first start writes it with the host's PTC option as the default. The web search key is the secret `websearch:tavily`.
+- **PTC per thread:** `TaskThread.PtcEnabled` (migration `M3ThreadPtc`) is set at creation from `CreateThreadRequest.PtcEnabled` or the default; a Member asking for other than the default while Members may not choose is refused. A thread from before M3 has none and follows the host's `PtcEnabled`. Every worker the thread's runs launch, chats and specs included, uses it.
+- **Launch:** the worker gets `--shell-timeout` (into its `LitosConfig.ShellCommandTimeoutSeconds`) and `--web-search work|all`, read from the settings at launch; with web search on but no key set, it gets none.
+- **Searching:** the engine's `WebSearchTool` now takes a backend. The other faces keep Tavily with their own key; the worker's backend posts to `/internal/runs/{id}/web-search`. The host reads the settings again on every search, so turning web search off or clearing the key stops a run mid-way; it refuses a read-only turn unless allowed, cuts a query to 400 characters and asks for at most 10 results, and appends one JSON line per search (time, turn, query, URLs or the refusal or error) to `<data>/runs/<runId>/web-search.log`.
+
 ## 7. MCP servers and skills (build steps 5 and 6)
 
 ### 7.1 MCP servers
@@ -185,7 +192,7 @@ Each step ends green (all test projects and the web tests) and is committed sepa
 3. **Providers and models** (§4), including Gemini's output cap. Split on 2026-10-09 into 3a and 3b. Decided then: a model's context length is kept per allowed model (looked up when it is added, editable) and copied to the thread, with `FACTORY_CONTEXT_LENGTH` left only for threads created before M3; all six providers can be enabled, strict-only starts on and hides MeshApi and Local from Members only; OpenAI's cache reporting is fixed alongside Gemini's.
    - **3a, done 2026-10-09:** `8c0b33a` (Gemini sends its output limit and temperature; Gemini and OpenAI report cached input apart and thinking as output), `423f570` (the `providers` section; `FactoryProviders` builds the engine's providers from settings and keys, rebuilt on change; no key needed to start), `3acda03` (a thread chooses its provider and model; `TaskThread.ContextLength`, migration `M3ThreadContextLength`; strict/estimated per provider), `25f15d5` (the GitHub token read from settings when used), `15275a3` (Providers tab; provider and model in New thread).
    - **3b, done 2026-10-10:** the catalog fetch into `model_catalog` (migration `M3ModelCatalog`), the Providers tab's picker with its filters, retired models, "allow every model", the save bar, and New thread's searchable model list with the default and three recent models pinned (§4.3, as built). Decided then, without asking: catalogs are fetched on an Admin's action only; a retired model is refused to Admins too; "allow every model" leaves out models reported unable to take tools.
-4. **Tools** (§6).
+4. **Tools** (§6). **Done 2026-10-10:** the Tools tab and section, PTC per thread, the shell limit and web search through the host (§6, as built).
 5. **MCP servers** (§7.1, §7.2, §7.4).
 6. **Skills** (§7.3).
 7. **Verification presets** (§8).
