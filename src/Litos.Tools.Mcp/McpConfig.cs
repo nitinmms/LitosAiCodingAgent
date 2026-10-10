@@ -27,6 +27,13 @@ public sealed record McpServerDefinition(
     ToolPermission DefaultPermission,
     IReadOnlyDictionary<string, ToolPermission>? ToolOverrides)
 {
+    /// <summary>
+    /// Whether a stdio server starts with this process's environment, Env added on top (the
+    /// default, what every face but the factory host wants), or with Env alone. The factory host
+    /// tests a server with an allowlisted environment, so its own settings never reach it.
+    /// </summary>
+    public bool InheritEnvironment { get; init; } = true;
+
     /// <summary>Per-tool override for the full mcp__{server}__{tool} name, falling back to
     /// DefaultPermission, falling back to Deny — the same safe-by-default fallback
     /// TelegramConfig.PermissionFor uses.</summary>

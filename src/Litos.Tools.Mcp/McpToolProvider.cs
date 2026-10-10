@@ -118,7 +118,8 @@ public sealed class McpToolProvider(McpConfigStore configStore, ILoggerFactory l
         && (a.Args ?? []).SequenceEqual(b.Args ?? [])
         && (a.Env ?? new Dictionary<string, string>()).OrderBy(kv => kv.Key)
             .SequenceEqual((b.Env ?? new Dictionary<string, string>()).OrderBy(kv => kv.Key))
-        && a.Url == b.Url;
+        && a.Url == b.Url
+        && a.InheritEnvironment == b.InheritEnvironment;
 
     private void RebuildToolsSnapshot()
     {

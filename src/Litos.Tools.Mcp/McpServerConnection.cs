@@ -205,6 +205,7 @@ public sealed class McpServerConnection(
             Command = definition.Command ?? throw new InvalidOperationException(
                 $"Stdio server '{definition.Name}' has no Command configured."),
             Arguments = definition.Args?.ToList() ?? [],
+            InheritEnvironmentVariables = definition.InheritEnvironment,
             StandardErrorLines = line => _logger.LogInformation("[{Server} stderr] {Line}", definition.Name, line),
         };
 
