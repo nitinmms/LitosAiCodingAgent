@@ -151,6 +151,15 @@ At run start the host writes the snapshot's servers, secrets included, to `<data
 - **Ready means ready:** the engine's MCP initialization becomes awaitable, the worker reports `McpReady` only once every enabled server has connected or failed, and the host waits for it (up to 30 seconds) before the first turn. A server that failed is named in the run log.
 - **Tool sets:** MCP tools join Implement and Repair turns only. Read-only turns never get them.
 
+As built (step 5):
+
+- **The `mcp` section** lists servers by name (letters, digits, `.`, `-`, single `_`; no `__`, which would make `mcp__{server}__{tool}` ambiguous), each a command with arguments or an http(s) URL, on or off, Full or Deny, with Full/Deny exceptions per tool, and the names of its secret variables, whose values are the secrets `mcp:{server}:{variable}`. Saving the section clears the secrets of servers or variables it no longer lists. At most 20 servers. Its enums travel as words in the app's API, as `FactoryWire.Json` already sends them.
+- **Test connection** (`POST /api/admin/mcp/test`) starts the server as the form describes it, with its secrets, in the host rather than a scratch worker: the engine's `McpServerDefinition` gained `InheritEnvironment`, and the host starts the server with only the toolchain allowlist and its own variables, never the host's environment. It lists the tools, and the tab sets an exception for any of them.
+- **Runs:** the capability snapshot is `TaskRun.CapabilitiesJson` (migration `M3RunCapabilities`): PTC, the shell limit, web search, the enabled servers (no secrets) and, once the worker reports, how each connected and which tools the run may use. A resumed run keeps its snapshot; a rework copies its task's last one (blueprint §8.2), so a settings change after a handoff does not reach the rework; any other run snapshots the settings as they are. Only implement and rework runs (the task's work) start servers; chat and spec runs, whose turns only read, never do.
+- **Worker:** the host writes `<data>/runs/<runId>/mcp.json` (secrets included) before launch, passes `--mcp-config`, and deletes it when the run ends. The worker connects every server (30-second handshake each), then reports ready with a report per server. The host waits up to 45 seconds for that; a server that failed, or a worker that never says, is logged and recorded in the snapshot, and the run goes on without it. A run is offered a server's tool only where its access is Full; the engine's approval gate refuses a denied one as well. MCP tools join implement, repair and rework turns, directly and through the PTC bridge, and never a read-only turn.
+- **Thread details** show the latest run's tool settings and each server with its tool count, "connecting" or "not available".
+- **Tests** start a real stdio server, `tests/Litos.SoftwareFactory.TestMcpServer`, built beside the worker and host tests.
+
 ### 7.3 Skills
 
 - **First (build step 1):** stop advertising repository skills. Until the policy exists, the worker discovers no skills at all.
@@ -193,7 +202,7 @@ Each step ends green (all test projects and the web tests) and is committed sepa
    - **3a, done 2026-10-09:** `8c0b33a` (Gemini sends its output limit and temperature; Gemini and OpenAI report cached input apart and thinking as output), `423f570` (the `providers` section; `FactoryProviders` builds the engine's providers from settings and keys, rebuilt on change; no key needed to start), `3acda03` (a thread chooses its provider and model; `TaskThread.ContextLength`, migration `M3ThreadContextLength`; strict/estimated per provider), `25f15d5` (the GitHub token read from settings when used), `15275a3` (Providers tab; provider and model in New thread).
    - **3b, done 2026-10-10:** the catalog fetch into `model_catalog` (migration `M3ModelCatalog`), the Providers tab's picker with its filters, retired models, "allow every model", the save bar, and New thread's searchable model list with the default and three recent models pinned (§4.3, as built). Decided then, without asking: catalogs are fetched on an Admin's action only; a retired model is refused to Admins too; "allow every model" leaves out models reported unable to take tools.
 4. **Tools** (§6). **Done 2026-10-10:** the Tools tab and section, PTC per thread, the shell limit and web search through the host (§6, as built).
-5. **MCP servers** (§7.1, §7.2, §7.4).
+5. **MCP servers** (§7.1, §7.2, §7.4). **Done 2026-10-10:** the MCP servers tab and section, Test connection, the run capability snapshot, and MCP in work runs (§7, as built). Decided then, without asking: Deny is a server's default for its tools with Full exceptions possible (and the reverse), so Deny still means something beside "off"; Test connection runs in the host with a scrubbed environment rather than in a scratch worker.
 6. **Skills** (§7.3).
 7. **Verification presets** (§8).
 8. **M3 check** (§9).
