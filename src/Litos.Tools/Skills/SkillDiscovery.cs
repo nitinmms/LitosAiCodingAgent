@@ -57,7 +57,12 @@ public sealed class SkillDiscovery(string? startDirectory = null, IReadOnlyList<
         return roots;
     }
 
-    private static IEnumerable<SkillMetadata> ScanRoot(string root)
+    /// <summary>
+    /// The skills directly under one root: each subfolder with a SKILL.md whose frontmatter names
+    /// it and describes it. No walk upward and no other root; a host with its own idea of where
+    /// skills come from (the software factory) builds on this.
+    /// </summary>
+    public static IEnumerable<SkillMetadata> ScanRoot(string root)
     {
         if (!Directory.Exists(root))
             yield break;

@@ -232,4 +232,25 @@ public class SkillDiscoveryTests : IDisposable
             [Path.Combine(userProfile, ".litos", "skills"), Path.Combine(userProfile, ".claude", "skills")],
             SkillDiscovery.DefaultUserRoots());
     }
+
+    [Fact]
+    public void ScanRoot_ListsOnlyTheRootsOwnSkills_WithoutWalkingUpward()
+    {
+        WriteSkill(Path.Combine(_tempRoot, ".litos", "skills"), "above", "above", "From an ancestor.");
+        var root = Path.Combine(_tempRoot, "work", "skills");
+        WriteSkill(root, "here", "here", "Right here.");
+        // A folder without a SKILL.md, and one whose frontmatter has no description, are not skills.
+        Directory.CreateDirectory(Path.Combine(root, "empty"));
+        var noDescription = Path.Combine(root, "partial");
+        Directory.CreateDirectory(noDescription);
+        File.WriteAllText(Path.Combine(noDescription, "SKILL.md"), "---\nname: partial\n---\nBody.");
+
+        var skill = Assert.Single(SkillDiscovery.ScanRoot(root));
+
+        Assert.Equal(("here", "Right here.", Path.Combine(root, "here")), (skill.Name, skill.Description, skill.DirectoryPath));
+    }
+
+    [Fact]
+    public void ScanRoot_OfAMissingFolder_IsEmpty() =>
+        Assert.Empty(SkillDiscovery.ScanRoot(Path.Combine(_tempRoot, "nowhere")));
 }
