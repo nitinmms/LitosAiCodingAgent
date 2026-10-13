@@ -51,7 +51,8 @@ export interface Settings {
   canChoosePtc: boolean;
   /** The fraction of a cached input token that counts against a task's budget, 0 to 1. */
   cachedInputWeight: number;
-  presets: string[];
+  /** The presets a project can be registered with, in the Admin's order. */
+  presets: PresetName[];
   taskTypes: string[];
   promptRevision: string;
 }
@@ -65,6 +66,26 @@ export interface Project {
   profileRevision: number;
   coverageThresholdPercent: number | null;
   createdAt: string;
+  /** The verification profile as JSON: sent to Admins only, who may replace it. */
+  profile?: string | null;
+  /** Where its baseline stands: on the Projects page only. */
+  baseline?: ProjectBaseline | null;
+}
+
+/** A project's baseline at its current profile revision (Api/FactoryApi.cs, m3-architecture.md §8). */
+export interface ProjectBaseline {
+  state: 'NotMeasured' | 'Measuring' | 'Measured' | 'CouldNotMeasure';
+  /** Why it could not be measured at all. */
+  problem: string | null;
+  commit: string | null;
+  measuredAt: string | null;
+  build: 'Passed' | 'Failed' | 'NotApplicable' | 'Unavailable' | null;
+  unitTests: 'Passed' | 'Failed' | 'NoTests' | 'NotRun' | 'Unavailable' | null;
+  passedCount: number | null;
+  failedCount: number | null;
+  skippedCount: number | null;
+  /** What went wrong in a baseline that ran: a failed restore, a missing report. */
+  problems: string[] | null;
 }
 
 export interface RegisterProject {
@@ -74,6 +95,13 @@ export interface RegisterProject {
   preset: string;
   coverageThresholdPercent?: number;
   pullRequestEnabled: boolean;
+}
+
+/** A project's new profile: a preset's, or one written out; the threshold alone changes only the threshold. */
+export interface UpdateProfile {
+  preset?: string;
+  profileJson?: string;
+  coverageThresholdPercent?: number;
 }
 
 /** Whose move a task is (§7.1), as the host computes it. */
@@ -555,12 +583,28 @@ export interface FoundRepositorySkill {
   latest: boolean;
 }
 
+export interface PresetName {
+  name: string;
+  displayName: string;
+}
+
+/** One verification preset (Core/Settings/PresetSettings.cs): its profile is JSON text, edited as written. */
+export interface VerificationPreset extends PresetName {
+  profile: string;
+}
+
+/** The Presets tab. */
+export interface PresetSettings {
+  presets: VerificationPreset[];
+}
+
 export interface AdminSettings {
   budgets: SettingsSection<BudgetSettings>;
   providers: SettingsSection<ProviderSettings>;
   tools: SettingsSection<ToolSettings>;
   mcp: SettingsSection<McpSettings>;
   skills: SettingsSection<SkillSettings>;
+  presets: SettingsSection<PresetSettings>;
   knownProviders: KnownProvider[];
   secrets: SecretStatus[];
 }

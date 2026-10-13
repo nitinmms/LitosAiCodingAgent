@@ -16,6 +16,8 @@ import type {
   McpTestResult,
   FoundRepositorySkill,
   SkillSettings,
+  PresetSettings,
+  UpdateProfile,
   Person,
   ProviderCatalog,
   ProviderSettings,
@@ -73,6 +75,8 @@ export interface FactoryApi {
   settings(): Promise<Settings>;
   projects(): Promise<Project[]>;
   registerProject(request: RegisterProject): Promise<Project>;
+  /** Replaces a project's profile; its revision moves on and its baseline is measured again. */
+  updateProjectProfile(projectId: string, request: UpdateProfile): Promise<Project>;
   threads(): Promise<Thread[]>;
   /** The thread list with where the board's live stream starts, read before the list. */
   threadList(): Promise<{ threads: Thread[]; cursor: number }>;
@@ -123,6 +127,7 @@ export interface FactoryApi {
   /** Starts the server as described, with the secrets set for it, and lists its tools. */
   testMcp(server: McpServerSettings): Promise<McpTestResult>;
   saveSkills(revision: number, settings: SkillSettings): Promise<SettingsSection<SkillSettings>>;
+  savePresets(revision: number, settings: PresetSettings): Promise<SettingsSection<PresetSettings>>;
   /** Every version of every skill found in a project's repository. */
   repositorySkills(): Promise<FoundRepositorySkill[]>;
   /** Approves one version of a repository skill, or takes the approval back; audited. */
@@ -203,6 +208,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     settings: () => send<Settings>('GET', '/api/settings'),
     projects: () => send<Project[]>('GET', '/api/projects'),
     registerProject: (request) => send<Project>('POST', '/api/projects', request),
+    updateProjectProfile: (projectId, request) => send<Project>('PATCH', `/api/projects/${projectId}`, request),
     threads: () => send<Thread[]>('GET', '/api/threads'),
     async threadList() {
       const { json, headers } = await request<Thread[]>('GET', '/api/threads');
@@ -254,6 +260,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     testMcp: (server) => send<McpTestResult>('POST', '/api/admin/mcp/test', server),
     saveSkills: (revision, settings) =>
       send<SettingsSection<SkillSettings>>('PUT', '/api/admin/settings/skills', { revision, settings }),
+    savePresets: (revision, settings) =>
+      send<SettingsSection<PresetSettings>>('PUT', '/api/admin/settings/presets', { revision, settings }),
     repositorySkills: async () => (await send<{ skills: FoundRepositorySkill[] }>('GET', '/api/admin/skills/repository')).skills,
     setRepositorySkillApproval: async (projectId, name, hash, approved) =>
       void (await send<unknown>('PUT', '/api/admin/skills/repository/approval', { projectId, name, hash, approved })),

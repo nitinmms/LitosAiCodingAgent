@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 
 /**
- * The tabs of the settings area, in the blueprint's order (§8.3). A later M3 step adds presets.
+ * The tabs of the settings area, in the blueprint's order (§8.3).
  */
-export const SETTINGS_TABS = ['providers', 'budgets', 'tools', 'mcp', 'skills'] as const;
+export const SETTINGS_TABS = ['providers', 'budgets', 'tools', 'mcp', 'skills', 'presets'] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 export type Route =

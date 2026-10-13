@@ -285,8 +285,13 @@ export function App({ createClient, openEvents }: AppProps) {
           isAdmin={user.roles.includes('Admin')}
           onRegistered={(project) => {
             setProjects((current) => [...current, project]);
-            say(`${project.name} is registered. Create a thread to delegate work on it.`);
+            say(`${project.name} is registered, and its baseline is being measured. Create a thread to delegate work on it.`);
           }}
+          onUpdated={(project) => {
+            setProjects((current) => current.map((p) => (p.id === project.id ? project : p)));
+            say(`${project.name} has a new profile, revision ${project.profileRevision}. Its baseline is being measured again.`);
+          }}
+          onReloaded={setProjects}
         />
       ) : (
         <ThreadsPage

@@ -6,6 +6,8 @@ import type {
   CatalogModel,
   KnownProvider,
   ChatProgress,
+  PresetSettings,
+  ProjectBaseline,
   FoundRepositorySkill,
   CurrentUser,
   Decision,
@@ -91,6 +93,34 @@ export class FakeEventSource implements EventSourceLike {
 
 const NOW = '2026-10-01T09:00:00Z';
 
+/** The shipped presets' profiles, enough of them for the pages that show one. */
+export const DOTNET_PROFILE = JSON.stringify({
+  profileVersion: 2,
+  steps: [{ name: 'dotnet', unitTests: [{ executable: 'dotnet', arguments: ['test'], testReport: { format: 'trx', path: '*.trx' } }] }],
+});
+export const NODE_PROFILE = JSON.stringify({
+  profileVersion: 2,
+  steps: [{ name: 'node', unitTests: [{ executable: 'npm', arguments: ['run', 'test:ci'], testReport: { format: 'junit', path: 'junit.xml' } }] }],
+});
+
+/** A project's baseline as the host reports it. */
+export function baselineOf(state: ProjectBaseline['state'], overrides: Partial<ProjectBaseline> = {}): ProjectBaseline {
+  const measured = state === 'Measured';
+  return {
+    state,
+    problem: null,
+    commit: measured ? 'abc1234' : null,
+    measuredAt: measured ? NOW : null,
+    build: measured ? 'Passed' : null,
+    unitTests: measured ? 'Passed' : null,
+    passedCount: measured ? 0 : null,
+    failedCount: measured ? 0 : null,
+    skippedCount: measured ? 0 : null,
+    problems: measured ? [] : null,
+    ...overrides,
+  };
+}
+
 /** The host's turn-label table (Core/Lifecycle/TurnLabels.cs): the fake answers as the host does. */
 export function turnOf(state: LifecycleState, stage: Stage = 'Discuss'): Turn {
   switch (state) {
@@ -173,7 +203,10 @@ export class FakeHost {
     ptcEnabled: true,
     canChoosePtc: true,
     cachedInputWeight: 0.1,
-    presets: ['dotnet', 'node-react'],
+    presets: [
+      { name: 'dotnet', displayName: '.NET' },
+      { name: 'node-react', displayName: 'Node / React' },
+    ],
     taskTypes: ['bug', 'feature', 'refactor', 'chore'],
     promptRevision: 'm1.1',
   };
@@ -200,6 +233,20 @@ export class FakeHost {
   mcp: SettingsSection<McpSettings> = { revision: 0, settings: { servers: [] } };
   /** The Skills tab as stored: an empty library, repository skills waiting for approval. */
   skills: SettingsSection<SkillSettings> = { revision: 0, settings: { repositoryPolicy: 'ApproveEach', library: [] } };
+  /** The Presets tab as stored, seeded as the host's first start does; /api/settings lists their names. */
+  presetSettings: SettingsSection<PresetSettings> = {
+    revision: 1,
+    settings: {
+      presets: [
+        { name: 'dotnet', displayName: '.NET', profile: DOTNET_PROFILE },
+        { name: 'node-react', displayName: 'Node / React', profile: NODE_PROFILE },
+      ],
+    },
+  };
+  /** Programs registration finds missing from the host's PATH, as ProfileExecutables would. */
+  readonly missingPrograms = new Set<string>();
+  /** The baseline a newly registered or re-profiled project shows: the host measures it at once. */
+  baselineOnRegistration: ProjectBaseline = baselineOf('Measuring');
   /** Every version of every skill runs have found in a project's repository. */
   repositorySkills: FoundRepositorySkill[] = [];
   /** What Test connection answers; the servers it was asked about are in sent(). */
@@ -320,10 +367,41 @@ export class FakeHost {
       profileRevision: 1,
       coverageThresholdPercent: 80,
       createdAt: NOW,
+      profile: DOTNET_PROFILE,
+      baseline: baselineOf('Measured', { passedCount: 12 }),
       ...overrides,
     };
     this.projects.push(project);
     return project;
+  }
+
+  /** The baseline the host now reports for a project, as its measurement would leave it. */
+  setBaseline(projectId: string, baseline: ProjectBaseline): void {
+    const project = this.projects.find((p) => p.id === projectId)!;
+    project.baseline = baseline;
+  }
+
+  /** The profile registration or a replacement asks for, or why the host would refuse it (FactoryApi.ProfileFor). */
+  private profileFor(data: Record<string, unknown>, current?: Project): { profile: string } | { error: string } {
+    let profile: string;
+    if (typeof data.profileJson === 'string' && data.profileJson.length) {
+      profile = data.profileJson;
+    } else if (data.preset === undefined && current) {
+      profile = current.profile ?? DOTNET_PROFILE;
+    } else {
+      const name = (data.preset as string | undefined) ?? this.presetSettings.settings.presets[0]?.name;
+      const preset = this.presetSettings.settings.presets.find((p) => p.name === name);
+      if (!preset) return { error: `There is no preset named "${String(data.preset)}".` };
+      profile = preset.profile;
+    }
+    try {
+      JSON.parse(profile);
+    } catch {
+      return { error: 'The verification profile is not valid JSON.' };
+    }
+    const missing = [...this.missingPrograms].filter((program) => profile.includes(`"${program}"`));
+    if (missing.length) return { error: `The host cannot find ${missing.join(', ')} on its PATH, so it could not build or test this project.` };
+    return { profile };
   }
 
   addThread(project: Project, overrides: Partial<Thread> = {}): Thread {
@@ -613,6 +691,8 @@ export class FakeHost {
       if (!match) return [400, { error: 'gitHubUrl must be a GitHub repository URL, such as https://github.com/owner/repo.' }];
       const gitHub = `${match[1]}/${match[2]}`;
       if (this.projects.some((p) => p.gitHub === gitHub)) return [409, { error: `${gitHub} is already registered.` }];
+      const chosen = this.profileFor(data);
+      if ('error' in chosen) return [400, chosen];
       return [
         201,
         this.addProject({
@@ -621,8 +701,23 @@ export class FakeHost {
           defaultBranch: String(data.defaultBranch),
           pullRequestEnabled: data.pullRequestEnabled !== false,
           coverageThresholdPercent: (data.coverageThresholdPercent as number | undefined) ?? 80,
+          profile: chosen.profile,
+          baseline: this.baselineOnRegistration,
         }),
       ];
+    }
+    const projectPath = /^\/api\/projects\/([^/]+)$/.exec(path);
+    if (projectPath && method === 'PATCH') {
+      if (!this.user.roles.includes('Admin')) return [403];
+      const project = this.projects.find((p) => p.id === projectPath[1]);
+      if (!project) return [404];
+      const chosen = this.profileFor(data, project);
+      if ('error' in chosen) return [400, chosen];
+      project.profile = chosen.profile;
+      project.profileRevision += 1;
+      if (typeof data.coverageThresholdPercent === 'number') project.coverageThresholdPercent = data.coverageThresholdPercent;
+      project.baseline = this.baselineOnRegistration;
+      return [200, { ...project }];
     }
 
     if (path === '/api/threads' && method === 'GET') return [200, [...this.threads.values()].map((d) => d.thread)];
@@ -840,7 +935,7 @@ export class FakeHost {
     if (path === '/api/admin/settings' && method === 'GET')
       return [
         200,
-        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, mcp: this.mcp, skills: this.skills, knownProviders: this.knownProviders, secrets: this.secrets },
+        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, mcp: this.mcp, skills: this.skills, presets: this.presetSettings, knownProviders: this.knownProviders, secrets: this.secrets },
       ];
     if (path === '/api/admin/settings/mcp' && method === 'PUT') {
       if (data.revision !== this.mcp.revision)
@@ -876,6 +971,22 @@ export class FakeHost {
       if (errors.length) return [400, { error: errors.join(' '), errors }];
       this.skills = { revision: this.skills.revision + 1, settings: skills };
       return [200, this.skills];
+    }
+    if (path === '/api/admin/settings/presets' && method === 'PUT') {
+      if (data.revision !== this.presetSettings.revision)
+        return [409, { error: 'The presets settings were changed by someone else. Reload them and make your change again.' }];
+      const presets = data.settings as PresetSettings;
+      // A few of PresetSettings.Validate's rules.
+      const errors: string[] = [];
+      if (!presets.presets.length) errors.push('Keep at least one preset: a project is registered from one.');
+      for (const p of presets.presets) {
+        if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(p.name)) errors.push(`"${p.name}" is not a usable preset name.`);
+        else if (!p.displayName.trim()) errors.push(`${p.name}: give it a name people see.`);
+      }
+      if (errors.length) return [400, { error: errors.join(' '), errors }];
+      this.presetSettings = { revision: this.presetSettings.revision + 1, settings: presets };
+      this.settings.presets = presets.presets.map((p) => ({ name: p.name, displayName: p.displayName }));
+      return [200, this.presetSettings];
     }
     if (path === '/api/admin/skills/repository' && method === 'GET') return [200, { skills: this.repositorySkills }];
     if (path === '/api/admin/skills/repository/approval' && method === 'PUT') {

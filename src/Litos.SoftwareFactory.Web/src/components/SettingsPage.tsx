@@ -7,9 +7,10 @@ import { ErrorNote, SaveBar } from './bits';
 import { ProvidersTab } from './ProvidersTab';
 import { McpTab } from './McpTab';
 import { SkillsTab } from './SkillsTab';
+import { PresetsTab } from './PresetsTab';
 import { ToolsTab } from './ToolsTab';
 
-const TAB_LABELS: Record<SettingsTab, string> = { providers: 'Providers', budgets: 'Budgets and limits', tools: 'Tools', mcp: 'MCP servers', skills: 'Skills' };
+const TAB_LABELS: Record<SettingsTab, string> = { providers: 'Providers', budgets: 'Budgets and limits', tools: 'Tools', mcp: 'MCP servers', skills: 'Skills', presets: 'Presets' };
 
 /**
  * The Admin's factory settings (blueprint §8.3, m3-architecture.md §3.4), one tab per section.
@@ -60,7 +61,7 @@ export function SettingsPage({
   };
 
   /** A section was saved: shown here at its new revision, and what members are offered may have changed. */
-  const saved = <K extends 'budgets' | 'providers' | 'tools' | 'mcp' | 'skills'>(key: K, section: AdminSettings[K], text: string) => {
+  const saved = <K extends 'budgets' | 'providers' | 'tools' | 'mcp' | 'skills' | 'presets'>(key: K, section: AdminSettings[K], text: string) => {
     setSettings((current) => (current ? { ...current, [key]: section } : current));
     onNotice(text);
     onSaved();
@@ -122,6 +123,15 @@ export function SettingsPage({
             await reload();
             onNotice(text);
           }}
+          onReload={reload}
+        />
+      ) : tab === 'presets' ? (
+        <PresetsTab
+          key={`presets-${settings.presets.revision}`}
+          api={api}
+          section={settings.presets}
+          // Registration offers the presets: what members see of the settings changes too.
+          onSaved={(presets) => saved('presets', presets, 'The presets are saved.')}
           onReload={reload}
         />
       ) : tab === 'skills' ? (
