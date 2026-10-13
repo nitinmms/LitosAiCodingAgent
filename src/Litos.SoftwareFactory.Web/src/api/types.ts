@@ -166,6 +166,20 @@ export interface RunCapabilities {
   mcpServers: McpServerSettings[];
   /** How each server connected, once the worker said; null until then. */
   mcpStatus: McpServerReport[] | null;
+  /** The library skills it was given; absent on a run from before step 6. */
+  librarySkills?: { name: string; description: string }[];
+  repositorySkillPolicy?: RepositorySkillPolicy;
+  /** What became of each skill its working copy had, once its worker started; null until then. */
+  repositorySkills?: RepositorySkillUse[] | null;
+}
+
+/** What became of one repository skill in a run (Core/Settings/SkillSettings.cs). */
+export interface RepositorySkillUse {
+  name: string;
+  hash: string;
+  status: 'Used' | 'WaitingForApproval' | 'ChangedSinceApproved' | 'NotUsedByPolicy';
+  /** It is used, in place of a library skill of the same name. */
+  replacesLibrarySkill: boolean;
 }
 
 export interface McpServerReport {
@@ -503,11 +517,50 @@ export interface McpTestResult {
   error: string | null;
 }
 
+/** How runs treat the skills a repository brings in its .litos/skills. */
+export type RepositorySkillPolicy = 'ApproveEach' | 'Always' | 'Never';
+
+/** One skill of the factory library (Core/Settings/SkillSettings.cs): a SKILL.md written from these fields. */
+export interface LibrarySkill {
+  name: string;
+  /** One line: all the agent sees until it loads the skill. */
+  description: string;
+  body: string;
+  enabled: boolean;
+}
+
+/** The Skills tab (Core/Settings/SkillSettings.cs). */
+export interface SkillSettings {
+  repositoryPolicy: RepositorySkillPolicy;
+  library: LibrarySkill[];
+}
+
+/** One version of a skill found in a project's repository (Api/SettingsApi.cs). */
+export interface FoundRepositorySkill {
+  projectId: string;
+  project: string;
+  name: string;
+  hash: string;
+  description: string;
+  /** Its folder, relative to the repository's root. */
+  folder: string;
+  /** Its SKILL.md as found. */
+  content: string;
+  /** The other files in its folder, relative to it. */
+  otherFiles: string[];
+  firstFoundAt: string;
+  lastFoundAt: string;
+  approvedAt: string | null;
+  /** The version found most recently: the one a run would meet now. */
+  latest: boolean;
+}
+
 export interface AdminSettings {
   budgets: SettingsSection<BudgetSettings>;
   providers: SettingsSection<ProviderSettings>;
   tools: SettingsSection<ToolSettings>;
   mcp: SettingsSection<McpSettings>;
+  skills: SettingsSection<SkillSettings>;
   knownProviders: KnownProvider[];
   secrets: SecretStatus[];
 }

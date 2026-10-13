@@ -247,9 +247,18 @@ export function Details({
 
 const WEB_SEARCH: Record<RunCapabilities['webSearch'], string> = { Off: 'off', WorkTurns: 'while it changes code', AllTurns: 'on every turn' };
 
-/** What the run started with (m3-architecture.md §7.4): tool settings, and each MCP server as it connected. */
+const SKIPPED: Record<string, string> = {
+  WaitingForApproval: 'waiting for approval',
+  ChangedSinceApproved: 'changed since approved',
+  NotUsedByPolicy: 'not used by policy',
+};
+
+/** What the run started with (m3-architecture.md §7.4): tool settings, each MCP server as it connected, and its skills. */
 function CapabilityRows({ capabilities }: { capabilities: RunCapabilities }) {
   const { ptc, shellTimeoutSeconds, webSearch, mcpServers, mcpStatus } = capabilities;
+  const repository = capabilities.repositorySkills ?? [];
+  // A repository skill that is used hides the library's of the same name.
+  const library = (capabilities.librarySkills ?? []).filter((l) => !repository.some((r) => r.replacesLibrarySkill && r.name === l.name));
   return (
     <>
       <dt>Tools</dt>
@@ -279,6 +288,33 @@ function CapabilityRows({ capabilities }: { capabilities: RunCapabilities }) {
                 </span>
               );
             })}
+      </dd>
+      <dt>Skills</dt>
+      <dd>
+        {library.length === 0 && repository.length === 0
+          ? 'None'
+          : [
+              ...library.map((skill) => (
+                <span key={`l-${skill.name}`} className="mono" title={skill.description}>
+                  {skill.name}
+                </span>
+              )),
+              ...repository.map((skill) => (
+                <span key={`r-${skill.name}`}>
+                  <span className="mono">{skill.name}</span>{' '}
+                  {skill.status === 'Used' ? (
+                    <span className="muted">(repository)</span>
+                  ) : (
+                    <span className="muted">(repository, skipped: {SKIPPED[skill.status]})</span>
+                  )}
+                </span>
+              )),
+            ].map((item, i) => (
+              <span key={i}>
+                {i ? ', ' : ''}
+                {item}
+              </span>
+            ))}
       </dd>
     </>
   );

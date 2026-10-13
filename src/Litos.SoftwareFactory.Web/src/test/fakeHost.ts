@@ -6,6 +6,7 @@ import type {
   CatalogModel,
   KnownProvider,
   ChatProgress,
+  FoundRepositorySkill,
   CurrentUser,
   Decision,
   Finding,
@@ -23,6 +24,7 @@ import type {
   SecretStatus,
   Settings,
   SettingsSection,
+  SkillSettings,
   SpecPayload,
   Stage,
   Thread,
@@ -196,6 +198,10 @@ export class FakeHost {
   };
   /** The MCP servers tab as stored: none until an Admin adds one. */
   mcp: SettingsSection<McpSettings> = { revision: 0, settings: { servers: [] } };
+  /** The Skills tab as stored: an empty library, repository skills waiting for approval. */
+  skills: SettingsSection<SkillSettings> = { revision: 0, settings: { repositoryPolicy: 'ApproveEach', library: [] } };
+  /** Every version of every skill runs have found in a project's repository. */
+  repositorySkills: FoundRepositorySkill[] = [];
   /** What Test connection answers; the servers it was asked about are in sent(). */
   mcpTestResult: McpTestResult = { connected: true, tools: [{ name: 'create_issue', description: 'Opens an issue.' }], error: null };
   /** The Providers tab as stored, seeded as the host's first start does. */
@@ -834,7 +840,7 @@ export class FakeHost {
     if (path === '/api/admin/settings' && method === 'GET')
       return [
         200,
-        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, mcp: this.mcp, knownProviders: this.knownProviders, secrets: this.secrets },
+        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, mcp: this.mcp, skills: this.skills, knownProviders: this.knownProviders, secrets: this.secrets },
       ];
     if (path === '/api/admin/settings/mcp' && method === 'PUT') {
       if (data.revision !== this.mcp.revision)
@@ -856,6 +862,28 @@ export class FakeHost {
       return [200, this.mcp];
     }
     if (path === '/api/admin/mcp/test' && method === 'POST') return [200, this.mcpTestResult];
+    if (path === '/api/admin/settings/skills' && method === 'PUT') {
+      if (data.revision !== this.skills.revision)
+        return [409, { error: 'The skills settings were changed by someone else. Reload them and make your change again.' }];
+      const skills = data.settings as SkillSettings;
+      // A few of SkillSettings.Validate's rules.
+      const errors: string[] = [];
+      for (const s of skills.library) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(s.name)) errors.push(`"${s.name}" is not a usable skill name.`);
+        else if (!s.description.trim()) errors.push(`${s.name}: describe when the agent should use it.`);
+        else if (!s.body.trim()) errors.push(`${s.name}: write its instructions.`);
+      }
+      if (errors.length) return [400, { error: errors.join(' '), errors }];
+      this.skills = { revision: this.skills.revision + 1, settings: skills };
+      return [200, this.skills];
+    }
+    if (path === '/api/admin/skills/repository' && method === 'GET') return [200, { skills: this.repositorySkills }];
+    if (path === '/api/admin/skills/repository/approval' && method === 'PUT') {
+      const skill = this.repositorySkills.find((s) => s.projectId === data.projectId && s.name === data.name && s.hash === data.hash);
+      if (!skill) return [404, { error: 'That repository skill was never found in the project.' }];
+      skill.approvedAt = data.approved ? NOW : null;
+      return [200, { projectId: skill.projectId, name: skill.name, hash: skill.hash, approvedAt: skill.approvedAt }];
+    }
     if (path === '/api/admin/settings/tools' && method === 'PUT') {
       if (data.revision !== this.tools.revision)
         return [409, { error: 'The tools settings were changed by someone else. Reload them and make your change again.' }];

@@ -6,9 +6,10 @@ import { navigate, SETTINGS_TABS, type SettingsTab } from '../domain/route';
 import { ErrorNote, SaveBar } from './bits';
 import { ProvidersTab } from './ProvidersTab';
 import { McpTab } from './McpTab';
+import { SkillsTab } from './SkillsTab';
 import { ToolsTab } from './ToolsTab';
 
-const TAB_LABELS: Record<SettingsTab, string> = { providers: 'Providers', budgets: 'Budgets and limits', tools: 'Tools', mcp: 'MCP servers' };
+const TAB_LABELS: Record<SettingsTab, string> = { providers: 'Providers', budgets: 'Budgets and limits', tools: 'Tools', mcp: 'MCP servers', skills: 'Skills' };
 
 /**
  * The Admin's factory settings (blueprint §8.3, m3-architecture.md §3.4), one tab per section.
@@ -59,7 +60,7 @@ export function SettingsPage({
   };
 
   /** A section was saved: shown here at its new revision, and what members are offered may have changed. */
-  const saved = <K extends 'budgets' | 'providers' | 'tools' | 'mcp'>(key: K, section: AdminSettings[K], text: string) => {
+  const saved = <K extends 'budgets' | 'providers' | 'tools' | 'mcp' | 'skills'>(key: K, section: AdminSettings[K], text: string) => {
     setSettings((current) => (current ? { ...current, [key]: section } : current));
     onNotice(text);
     onSaved();
@@ -121,6 +122,15 @@ export function SettingsPage({
             await reload();
             onNotice(text);
           }}
+          onReload={reload}
+        />
+      ) : tab === 'skills' ? (
+        <SkillsTab
+          key={`skills-${settings.skills.revision}`}
+          api={api}
+          section={settings.skills}
+          onSaved={(skills) => saved('skills', skills, 'The skills are saved.')}
+          onNotice={onNotice}
           onReload={reload}
         />
       ) : tab === 'tools' ? (

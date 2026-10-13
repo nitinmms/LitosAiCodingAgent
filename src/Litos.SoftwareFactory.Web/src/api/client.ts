@@ -14,6 +14,8 @@ import type {
   McpServerSettings,
   McpSettings,
   McpTestResult,
+  FoundRepositorySkill,
+  SkillSettings,
   Person,
   ProviderCatalog,
   ProviderSettings,
@@ -120,6 +122,11 @@ export interface FactoryApi {
   saveMcp(revision: number, settings: McpSettings): Promise<SettingsSection<McpSettings>>;
   /** Starts the server as described, with the secrets set for it, and lists its tools. */
   testMcp(server: McpServerSettings): Promise<McpTestResult>;
+  saveSkills(revision: number, settings: SkillSettings): Promise<SettingsSection<SkillSettings>>;
+  /** Every version of every skill found in a project's repository. */
+  repositorySkills(): Promise<FoundRepositorySkill[]>;
+  /** Approves one version of a repository skill, or takes the approval back; audited. */
+  setRepositorySkillApproval(projectId: string, name: string, hash: string, approved: boolean): Promise<void>;
   /** Sets or replaces a secret; its value is never sent back. */
   setSecret(name: string, value: string): Promise<void>;
   clearSecret(name: string): Promise<void>;
@@ -245,6 +252,11 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     saveMcp: (revision, settings) =>
       send<SettingsSection<McpSettings>>('PUT', '/api/admin/settings/mcp', { revision, settings }),
     testMcp: (server) => send<McpTestResult>('POST', '/api/admin/mcp/test', server),
+    saveSkills: (revision, settings) =>
+      send<SettingsSection<SkillSettings>>('PUT', '/api/admin/settings/skills', { revision, settings }),
+    repositorySkills: async () => (await send<{ skills: FoundRepositorySkill[] }>('GET', '/api/admin/skills/repository')).skills,
+    setRepositorySkillApproval: async (projectId, name, hash, approved) =>
+      void (await send<unknown>('PUT', '/api/admin/skills/repository/approval', { projectId, name, hash, approved })),
     setSecret: async (name, value) => void (await send<unknown>('PUT', `/api/admin/secrets/${encodeURIComponent(name)}`, { value })),
     clearSecret: async (name) => void (await send<unknown>('DELETE', `/api/admin/secrets/${encodeURIComponent(name)}`)),
     contextLength: async (model) =>
