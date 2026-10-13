@@ -18,7 +18,12 @@ const newKey = () => `skill-${++nextKey}`;
 export const toSkillForm = (s: LibrarySkill): SkillForm => ({ ...s, key: newKey() });
 
 /** The skill the form describes; the host checks it. */
-export const fromSkillForm = ({ key: _key, ...s }: SkillForm): LibrarySkill => ({ ...s, name: s.name.trim(), description: s.description.trim() });
+export const fromSkillForm = (s: SkillForm): LibrarySkill => ({
+  name: s.name.trim(),
+  description: s.description.trim(),
+  body: s.body,
+  enabled: s.enabled,
+});
 
 const comparable = (policy: RepositorySkillPolicy, library: SkillForm[]) =>
   JSON.stringify({ repositoryPolicy: policy, library: library.map(fromSkillForm) });
@@ -84,7 +89,8 @@ export function SkillsTab({
   const [stale, setStale] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const changed = comparable(policy, library) !== JSON.stringify(section.settings);
+  // Compared field by field, as the form holds them, so nothing else the host sends reads as a change.
+  const changed = comparable(policy, library) !== comparable(section.settings.repositoryPolicy, section.settings.library.map(toSkillForm));
   const update = (key: string, change: Partial<LibrarySkill>) => setLibrary((all) => all.map((s) => (s.key === key ? { ...s, ...change } : s)));
 
   const submit = async (event: FormEvent) => {

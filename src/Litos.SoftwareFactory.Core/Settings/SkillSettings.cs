@@ -46,7 +46,8 @@ public sealed partial record SkillSettings
     public const int MaxDescriptionChars = 1_024;
     public const int MaxBodyChars = 100_000;
 
-    /// <summary>The library skills runs are given.</summary>
+    /// <summary>The library skills runs are given. Not part of the stored or sent section.</summary>
+    [JsonIgnore]
     public IReadOnlyList<LibrarySkill> Enabled => [.. Library.Where(s => s.Enabled)];
 
     /// <summary>What is wrong with these settings, one sentence each; empty when they are usable.</summary>

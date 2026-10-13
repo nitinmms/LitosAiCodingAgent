@@ -68,6 +68,21 @@ describe('the Skills tab', () => {
     expect(sent).toEqual({ revision: 0, settings: { repositoryPolicy: 'Never', library: [releaseNotes] } });
   });
 
+  it('shows nothing unsaved until something is changed, even with a field it does not edit', async () => {
+    const host = new FakeHost();
+    host.skills = {
+      revision: 2,
+      settings: { repositoryPolicy: 'ApproveEach', library: [releaseNotes], enabled: [releaseNotes] } as SkillSettings,
+    };
+    const user = await onSkills(host);
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText(/Runs use the skills a repository keeps/), 'Always');
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText(/Runs use the skills a repository keeps/), 'ApproveEach');
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+  });
+
   it('turns a skill off without removing it, and removes another', async () => {
     const host = new FakeHost();
     host.skills = { revision: 3, settings: { repositoryPolicy: 'ApproveEach', library: [releaseNotes, { ...releaseNotes, name: 'old' }] } };
