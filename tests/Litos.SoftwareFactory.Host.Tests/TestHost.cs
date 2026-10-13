@@ -569,6 +569,9 @@ public sealed class TestHost : IAsyncDisposable
         // The scripted changes are small and clean, so the planner would skip their review; the
         // tests of the review pipeline need one. NoReviewRunTests turns this back on.
         Options.Limits = Options.Limits with { AllowNoReview = false };
+        // The tests script their verifications; one measured at registration would take one of
+        // theirs. ProjectProfileTests turns it back on.
+        Options.BaselineOnRegistration = false;
         configure?.Invoke(Options);
 
         App = FactoryHostApp.Build(["--urls", "http://127.0.0.1:0"], Options, s =>

@@ -123,6 +123,14 @@ public interface IFactoryStore
 
     Task<Project?> GetProjectAsync(Guid projectId, CancellationToken ct);
 
+    /// <summary>
+    /// Replaces a project's verification profile and moves its revision on, so the next run
+    /// measures its baseline again (m3-architecture.md §8); audited. A run already started keeps
+    /// the profile it read.
+    /// </summary>
+    /// <exception cref="StoreNotFoundException">No such project.</exception>
+    Task<Project> UpdateProjectProfileAsync(Guid projectId, string profileJson, Guid actorId, DateTimeOffset now, CancellationToken ct);
+
     Task<TaskThread> AddThreadAsync(TaskThread thread, CancellationToken ct);
 
     Task<IReadOnlyList<TaskThread>> ListThreadsAsync(Guid? projectId, CancellationToken ct);
@@ -253,6 +261,9 @@ public interface IFactoryStore
     Task SaveVerificationAsync(VerificationRecord record, CancellationToken ct);
 
     Task<VerificationRecord?> FindBaselineAsync(Guid projectId, string commit, int profileRevision, CancellationToken ct);
+
+    /// <summary>Each project's newest baseline at its current profile revision; a project with none is left out.</summary>
+    Task<IReadOnlyList<VerificationRecord>> LatestBaselinesAsync(CancellationToken ct);
 
     /// <summary>Replaces the run's findings with those the review reported.</summary>
     Task SaveFindingsAsync(Guid runId, IReadOnlyList<ReviewFinding> findings, CancellationToken ct);

@@ -3002,6 +3002,63 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         await Assert.ThrowsAsync<StoreNotFoundException>(() =>
             Store.SetRepositorySkillApprovalAsync(Guid.NewGuid(), "deploy", "sha256:a", true, Admin, T0, default));
     }
+
+    // ---- Project profiles (m3-architecture.md §8) ----
+
+    [SkippableFact]
+    public async Task ReplacingAProfile_MovesTheRevisionOn_AndIsAudited()
+    {
+        var project = await AddProjectAsync();
+        const string replaced = """{"profileVersion":2,"steps":[{"name":"replaced"}]}""";
+
+        var updated = await Store.UpdateProjectProfileAsync(project.Id, replaced, Admin, T0.AddHours(1), default);
+
+        Assert.Equal(2, updated.ProfileRevision);
+        var stored = (await Store.GetProjectAsync(project.Id, default))!;
+        Assert.Equal(2, stored.ProfileRevision);
+        // jsonb does not keep the text as written, so compare what it says.
+        Assert.Equal("replaced", JsonDocument.Parse(stored.VerificationProfileJson).RootElement.GetProperty("steps")[0].GetProperty("name").GetString());
+        var audited = (await AuditAsync(project.Id)).First(a => a.Action == AuditActions.ProjectProfileUpdate);
+        Assert.Equal((Admin, AuditTargets.Project, T0.AddHours(1)), (audited.ActorId, audited.TargetType, audited.CreatedAt));
+
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.UpdateProjectProfileAsync(Guid.NewGuid(), replaced, Admin, T0, default));
+    }
+
+    private static VerificationRecord Baseline(Project project, int revision, DateTimeOffset at, int passed = 1) => new()
+    {
+        ProjectId = project.Id,
+        Kind = VerificationKind.Baseline,
+        Commit = "abc123",
+        ProfileRevision = revision,
+        Build = BuildStatus.Passed,
+        UnitTests = UnitTestStatus.Passed,
+        Coverage = CoverageStatus.NotMeasured,
+        PassedCount = passed,
+        OutcomeJson = "{}",
+        CreatedAt = at,
+    };
+
+    [SkippableFact]
+    public async Task TheLatestBaselines_AreEachProjectsNewest_AtItsCurrentRevision()
+    {
+        var a = await AddProjectAsync("a");
+        var b = await AddProjectAsync("b");
+        var none = await AddProjectAsync("none");
+        await Store.SaveVerificationAsync(Baseline(a, 1, T0, passed: 1), default);
+        await Store.SaveVerificationAsync(Baseline(a, 1, T0.AddHours(1), passed: 2), default);
+        await Store.SaveVerificationAsync(Baseline(b, 1, T0, passed: 5), default);
+        // b's profile is replaced: its old baseline no longer describes it.
+        await Store.UpdateProjectProfileAsync(b.Id, b.VerificationProfileJson, Admin, T0, default);
+
+        var latest = await Store.LatestBaselinesAsync(default);
+
+        var only = Assert.Single(latest);
+        Assert.Equal((a.Id, 2), (only.ProjectId, only.PassedCount));
+        Assert.DoesNotContain(latest, v => v.ProjectId == none.Id);
+
+        await Store.SaveVerificationAsync(Baseline(b, 2, T0.AddHours(2), passed: 7), default);
+        Assert.Equal(7, (await Store.LatestBaselinesAsync(default)).Single(v => v.ProjectId == b.Id).PassedCount);
+    }
 }
 
 public sealed class SqliteFactoryStoreTests : FactoryStoreContract

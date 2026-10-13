@@ -17,9 +17,13 @@ using Microsoft.AspNetCore.Identity;
 
 namespace Litos.SoftwareFactory.Host.Api;
 
+/// <param name="Preset">Null for the first preset on the Presets tab.</param>
 public sealed record RegisterProjectRequest(
-    string GitHubUrl, string? Name = null, string DefaultBranch = "main", string Preset = VerificationPresets.DotNet,
+    string GitHubUrl, string? Name = null, string DefaultBranch = "main", string? Preset = null,
     double? CoverageThresholdPercent = null, bool PullRequestEnabled = true, string? ProfileJson = null);
+
+/// <summary>Replaces a project's profile: with a preset's, or with one written out; the threshold, when given, overrides either.</summary>
+public sealed record UpdateProfileRequest(string? Preset = null, string? ProfileJson = null, double? CoverageThresholdPercent = null);
 
 /// <param name="Provider">Null for the factory's default provider.</param>
 /// <param name="Model">Null for the provider's default model.</param>
@@ -157,7 +161,8 @@ public static class FactoryApi
                 CanChoosePtc = isAdmin || settings.Tools.MembersMayChoosePtc,
                 // What fraction of a cached input token counts against a task's budget (§9).
                 options.Budget.CachedInputWeight,
-                Presets = VerificationPresets.Names,
+                // The presets a project can be registered with, in the Admin's order (m3-architecture.md §8).
+                Presets = settings.Presets.Presets.Select(p => new { p.Name, p.DisplayName }),
                 TaskTypes = TaskTypes.All,
                 PromptRevision = Core.Briefs.BriefComposer.Revision,
             });
@@ -165,35 +170,30 @@ public static class FactoryApi
 
         // ---- Projects ----
 
-        api.MapGet("/projects", async (ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, CancellationToken ct) =>
+        api.MapGet("/projects", async (
+            ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, ProjectBaselines baselines, CancellationToken ct) =>
         {
             var visible = await access.VisibleProjectsAsync(user, ct);
-            return Results.Ok((await store.ListProjectsAsync(ct)).Where(p => visible?.Contains(p.Id) ?? true).Select(ProjectView));
+            var states = baselines.Snapshot();
+            var latest = (await store.LatestBaselinesAsync(ct)).ToDictionary(b => b.ProjectId);
+            var isAdmin = user.IsInRole(FactoryRoles.Admin);
+            return Results.Ok((await store.ListProjectsAsync(ct))
+                .Where(p => visible?.Contains(p.Id) ?? true)
+                .Select(p => ProjectView(p, BaselineView(states, p, latest.GetValueOrDefault(p.Id)), includeProfile: isAdmin)));
         });
 
-        api.MapPost("/projects", async (RegisterProjectRequest request, ClaimsPrincipal user, IFactoryStore store, IClock clock, CancellationToken ct) =>
+        api.MapPost("/projects", async (
+            RegisterProjectRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, ProjectBaselines baselines,
+            IClock clock, CancellationToken ct) =>
         {
             if (!GitHubRepository.TryParse(request.GitHubUrl ?? "", out var repository))
                 return Problem("gitHubUrl must be a GitHub repository URL, such as https://github.com/owner/repo.");
             if (string.IsNullOrWhiteSpace(request.DefaultBranch))
                 return Problem("defaultBranch is required.");
 
-            VerificationProfile profile;
-            try
-            {
-                profile = request.ProfileJson is { Length: > 0 } json ? VerificationProfile.Parse(json) : VerificationPresets.Load(request.Preset);
-            }
-            catch (Exception ex) when (ex is ArgumentException or JsonException)
-            {
-                return Problem(ex.Message);
-            }
-
-            if (request.CoverageThresholdPercent is { } threshold)
-                profile = profile with { Coverage = new CoverageRule(threshold) };
-
-            var problems = profile.Validate();
-            if (problems.Count > 0)
-                return Problem("The verification profile is not usable: " + string.Join(" ", problems));
+            var (profile, error) = ProfileFor(settings, request.Preset, request.ProfileJson, request.CoverageThresholdPercent);
+            if (profile is null)
+                return Problem(error!);
 
             try
             {
@@ -208,11 +208,39 @@ public static class FactoryApi
                     CreatedBy = user.UserId(),
                     CreatedAt = clock.UtcNow,
                 }, ct);
-                return Results.Created($"/api/projects/{project.Id}", ProjectView(project));
+                baselines.Start(project.Id);
+                return Results.Created($"/api/projects/{project.Id}", ProjectView(project, BaselineView(baselines.Snapshot(), project, null), includeProfile: true));
             }
             catch (StoreConflictException ex)
             {
                 return Results.Conflict(new { error = ex.Message });
+            }
+        }).RequireAuthorization(FactoryRoles.Admin);
+
+        // A new profile for a registered project: its revision moves on, so its baseline is measured again (m3-architecture.md §8).
+        api.MapPatch("/projects/{id:guid}", async (
+            Guid id, UpdateProfileRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, ProjectBaselines baselines,
+            IClock clock, CancellationToken ct) =>
+        {
+            if (await store.GetProjectAsync(id, ct) is not { } current)
+                return Results.NotFound();
+
+            // With neither a preset nor a profile, only the threshold changes, on the profile the project has.
+            var (profile, error) = request.Preset is null && request.ProfileJson is not { Length: > 0 }
+                ? ProfileFor(settings, null, current.VerificationProfileJson, request.CoverageThresholdPercent)
+                : ProfileFor(settings, request.Preset, request.ProfileJson, request.CoverageThresholdPercent);
+            if (profile is null)
+                return Problem(error!);
+
+            try
+            {
+                var project = await store.UpdateProjectProfileAsync(id, profile.ToJson(), user.UserId(), clock.UtcNow, ct);
+                baselines.Start(project.Id);
+                return Results.Ok(ProjectView(project, BaselineView(baselines.Snapshot(), project, null), includeProfile: true));
+            }
+            catch (StoreNotFoundException)
+            {
+                return Results.NotFound();
             }
         }).RequireAuthorization(FactoryRoles.Admin);
 
@@ -633,7 +661,9 @@ public static class FactoryApi
 
     private static IResult Problem(string message) => Results.BadRequest(new { error = message });
 
-    private static object ProjectView(Project project) => new
+    /// <param name="baseline">Where its baseline stands; shown on the Projects page only.</param>
+    /// <param name="includeProfile">Its profile as JSON, for an Admin who may replace it.</param>
+    private static object ProjectView(Project project, object? baseline = null, bool includeProfile = false) => new
     {
         project.Id,
         project.Name,
@@ -643,7 +673,73 @@ public static class FactoryApi
         project.ProfileRevision,
         CoverageThresholdPercent = VerificationProfile.Parse(project.VerificationProfileJson).Coverage?.ChangedLinesThresholdPercent,
         project.CreatedAt,
+        Profile = includeProfile ? project.VerificationProfileJson : null,
+        Baseline = baseline,
     };
+
+    private static object BaselineView(BaselineStates states, Project project, VerificationRecord? latest)
+    {
+        var (state, problem) = states.StateOf(project.Id, latest is not null);
+        var outcome = latest is null ? null : JsonSerializer.Deserialize<VerificationOutcome>(latest.OutcomeJson, FactoryWire.Json);
+        return new
+        {
+            State = state.ToString(),
+            Problem = problem,
+            latest?.Commit,
+            MeasuredAt = latest?.CreatedAt,
+            Build = latest?.Build.ToString(),
+            UnitTests = latest?.UnitTests.ToString(),
+            latest?.PassedCount,
+            latest?.FailedCount,
+            latest?.SkippedCount,
+            // Why a baseline that ran did not pass: a missing tool, a failed restore, no report.
+            Problems = outcome?.Problems.Take(5).ToList(),
+        };
+    }
+
+    /// <summary>
+    /// The profile a registration or a replacement asks for, as it will be stored, or why it cannot
+    /// be: written out, or a preset's; a usable profile; and every program it names found on the
+    /// host's PATH, so a missing toolchain is said now rather than at the project's first task.
+    /// </summary>
+    private static (VerificationProfile? Profile, string? Error) ProfileFor(
+        FactorySettings settings, string? presetName, string? profileJson, double? coverageThresholdPercent)
+    {
+        VerificationProfile profile;
+        try
+        {
+            if (profileJson is { Length: > 0 } json)
+            {
+                profile = VerificationProfile.Parse(json);
+            }
+            else
+            {
+                var presets = settings.Presets;
+                var name = presetName ?? presets.Presets.FirstOrDefault()?.Name;
+                if (name is null || presets.Find(name) is not { } preset)
+                    return (null, $"There is no preset named \"{presetName}\". Known presets: {string.Join(", ", presets.Presets.Select(p => p.Name))}.");
+                profile = VerificationProfile.Parse(preset.Profile);
+            }
+        }
+        catch (JsonException ex)
+        {
+            return (null, $"The verification profile is not valid JSON: {ex.Message}");
+        }
+
+        if (coverageThresholdPercent is { } threshold)
+            profile = profile with { Coverage = new CoverageRule(threshold) };
+
+        var problems = profile.Validate();
+        if (problems.Count > 0)
+            return (null, "The verification profile is not usable: " + string.Join(" ", problems));
+
+        var missing = ProfileExecutables.Missing(profile, ProfileExecutables.HostPath());
+        if (missing.Count > 0)
+            return (null, $"The host cannot find {string.Join(", ", missing)} on its PATH, so it could not build or test this project. "
+                + "Install the toolchain on the machine that runs the factory, restart the host, and try again.");
+
+        return (profile, null);
+    }
 
     internal static object ThreadView(TaskThread thread) => new
     {

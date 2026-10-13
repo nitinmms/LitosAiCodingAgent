@@ -52,6 +52,11 @@ public sealed class FactoryOptions
     /// (FACTORY_VERIFY_CONCURRENCY). Other runs' verify steps wait their turn.</summary>
     public int VerifyConcurrency { get; set; } = 1;
 
+    /// <summary>Whether a project's baseline is measured as soon as it is registered or its profile
+    /// replaced (m3-architecture.md §8). On; the host tests turn it off where it would run alongside
+    /// what they measure.</summary>
+    public bool BaselineOnRegistration { get; set; } = true;
+
     /// <summary>How often the coordinator looks for Running runs that no executor in this host
     /// owns, and marks them Interrupted (§16).</summary>
     public TimeSpan LivenessInterval { get; set; } = TimeSpan.FromSeconds(30);

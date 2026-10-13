@@ -16,11 +16,14 @@ public static class ToolchainEnvironment
         "USERPROFILE", "HOME", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "ProgramData",
         "ProgramFiles", "ProgramFiles(x86)", "CommonProgramFiles", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
         "OS", "LANG", "LC_ALL",
+        // Maven's home, and Go's settings by name: a GO prefix would also pass GOOGLE_ and the like.
+        "M2_HOME", "GOROOT", "GOPATH", "GOBIN", "GOCACHE", "GOMODCACHE", "GOENV", "GOFLAGS", "GOPROXY", "GOPRIVATE",
+        "GONOPROXY", "GONOSUMDB", "GOSUMDB", "GOTOOLCHAIN", "GOTELEMETRY", "GOINSECURE", "GOEXPERIMENT",
     ];
 
     /// <summary>Passed through by prefix: toolchain configuration such as DOTNET_ROOT,
-    /// NUGET_PACKAGES and npm_config_cache.</summary>
-    private static readonly string[] AllowedPrefixes = ["DOTNET_", "NUGET_", "npm_config_"];
+    /// NUGET_PACKAGES, npm_config_cache, JAVA_HOME, MAVEN_OPTS, GRADLE_USER_HOME and PIP_CACHE_DIR.</summary>
+    private static readonly string[] AllowedPrefixes = ["DOTNET_", "NUGET_", "npm_config_", "JAVA_", "MAVEN_", "GRADLE_", "PIP_", "UV_"];
 
     /// <summary>Never passed, even when a name or prefix above would allow it: these carry
     /// credentials (npm's registry token, a NuGet feed key).</summary>

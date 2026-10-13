@@ -3,6 +3,7 @@ using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
+using Litos.SoftwareFactory.Infrastructure.Verification;
 
 namespace Litos.SoftwareFactory.Host.Settings;
 
@@ -50,6 +51,8 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
     public McpSettings Mcp => Read<McpSettings>(SettingsSections.Mcp);
 
     public SkillSettings Skills => Read<SkillSettings>(SettingsSections.Skills);
+
+    public PresetSettings Presets => Read<PresetSettings>(SettingsSections.Presets);
 
     /// <summary>Which turns of a run starting now may search the web: none without a key.</summary>
     public WebSearchAccess WebSearch => Tools.WebSearch(IsSet(SecretNames.WebSearch));
@@ -150,6 +153,7 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
         SettingsSections.Tools => JsonSerializer.Deserialize<ToolSettings>(row.Json, FactoryWire.Json) ?? new ToolSettings(),
         SettingsSections.Mcp => JsonSerializer.Deserialize<McpSettings>(row.Json, FactoryWire.Json) ?? new McpSettings(),
         SettingsSections.Skills => JsonSerializer.Deserialize<SkillSettings>(row.Json, FactoryWire.Json) ?? new SkillSettings(),
+        SettingsSections.Presets => JsonSerializer.Deserialize<PresetSettings>(row.Json, FactoryWire.Json) ?? new PresetSettings(),
         _ => JsonDocument.Parse(row.Json).RootElement.Clone(),
     };
 }
@@ -210,6 +214,21 @@ public static class SettingsSeeding
         if (settings.RevisionOf(SettingsSections.Tools) == 0)
         {
             await settings.SaveAsync(SettingsSections.Tools, new ToolSettings { PtcByDefault = options.PtcEnabled }, 0, actorId: null, ct);
+            seeded = true;
+        }
+
+        if (settings.RevisionOf(SettingsSections.Presets) == 0)
+        {
+            // The presets the factory ships, which an Admin then edits (m3-architecture.md §8).
+            await settings.SaveAsync(SettingsSections.Presets, new PresetSettings
+            {
+                Presets = [.. VerificationPresets.Names.Select(name => new VerificationPreset
+                {
+                    Name = name,
+                    DisplayName = VerificationPresets.DisplayName(name),
+                    Profile = VerificationPresets.LoadJson(name),
+                })],
+            }, 0, actorId: null, ct);
             seeded = true;
         }
 

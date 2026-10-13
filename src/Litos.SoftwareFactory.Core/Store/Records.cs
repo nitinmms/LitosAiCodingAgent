@@ -613,6 +613,7 @@ public static class AuditTargets
 public static class AuditActions
 {
     public const string ProjectRegister = "project.register";
+    public const string ProjectProfileUpdate = "project.profile_update";
     public const string MemberAdd = "project.member.add";
     public const string MemberRemove = "project.member.remove";
     public const string InvitationCreate = "invitation.create";

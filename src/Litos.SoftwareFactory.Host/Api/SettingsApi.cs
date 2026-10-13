@@ -35,6 +35,7 @@ public static class SettingsApi
             Tools = Section(settings, SettingsSections.Tools, settings.Tools),
             Mcp = Section(settings, SettingsSections.Mcp, settings.Mcp),
             Skills = Section(settings, SettingsSections.Skills, settings.Skills),
+            Presets = Section(settings, SettingsSections.Presets, settings.Presets),
             // What the Providers tab lists, in order, with what each needs to be called.
             KnownProviders = KnownProviders.All.Select(p => new
             {
@@ -111,6 +112,18 @@ public static class SettingsApi
                 return Results.BadRequest(new { error = string.Join(" ", errors), errors });
 
             return Results.Ok(await tester.TestAsync(server, ct));
+        });
+
+        // Editing a preset changes what a project is registered with from now on, never a registered project (m3-architecture.md §8).
+        admin.MapPut("/settings/presets", async (
+            SaveSettingsRequest<PresetSettings> request, ClaimsPrincipal user, FactorySettings settings, CancellationToken ct) =>
+        {
+            if (request.Settings is not { } presets)
+                return Results.BadRequest(new { error = "settings are required." });
+            if (presets.Validate() is { Count: > 0 } errors)
+                return Results.BadRequest(new { error = string.Join(" ", errors), errors });
+
+            return await SaveAsync(settings, SettingsSections.Presets, presets, request.Revision, user, ct);
         });
 
         admin.MapPut("/settings/skills", async (

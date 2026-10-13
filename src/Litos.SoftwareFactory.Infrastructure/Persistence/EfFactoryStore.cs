@@ -64,6 +64,20 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         return project;
     }
 
+    public async Task<Project> UpdateProjectProfileAsync(Guid projectId, string profileJson, Guid actorId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == projectId, ct)
+            ?? throw new StoreNotFoundException("No such project.");
+
+        project.VerificationProfileJson = profileJson;
+        project.ProfileRevision++;
+        Audit(db, actorId, AuditActions.ProjectProfileUpdate, AuditTargets.Project, project.Id, project.Id,
+            new { project.ProfileRevision }, now);
+        await db.SaveChangesAsync(ct);
+        return project;
+    }
+
     public async Task<IReadOnlyList<Project>> ListProjectsAsync(CancellationToken ct)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
@@ -1026,6 +1040,20 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             record.Id = Guid.NewGuid();
         db.Verifications.Add(record);
         await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<VerificationRecord>> LatestBaselinesAsync(CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        // Chosen without their outcomes first: each holds every test case of its run.
+        var candidates = await (
+                from v in db.Verifications.AsNoTracking()
+                join p in db.Projects on v.ProjectId equals p.Id
+                where v.Kind == VerificationKind.Baseline && v.ProfileRevision == p.ProfileRevision
+                select new { v.Id, v.ProjectId, v.CreatedAt })
+            .ToListAsync(ct);
+        var newest = candidates.GroupBy(v => v.ProjectId).Select(g => g.MaxBy(v => v.CreatedAt)!.Id).ToList();
+        return await db.Verifications.AsNoTracking().Where(v => newest.Contains(v.Id)).ToListAsync(ct);
     }
 
     public async Task<VerificationRecord?> FindBaselineAsync(Guid projectId, string commit, int profileRevision, CancellationToken ct)

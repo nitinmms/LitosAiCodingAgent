@@ -151,7 +151,8 @@ public sealed class ApiTests : IAsyncLifetime
 
         Assert.Equal("openrouter", settings.GetProperty("provider").GetString());
         Assert.Equal("deepseek/deepseek-v4.1-flash", settings.GetProperty("model").GetString());
-        Assert.Equal(["dotnet", "node-react"], settings.GetProperty("presets").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["dotnet", "node-react"], settings.GetProperty("presets").EnumerateArray().Select(p => p.GetProperty("name").GetString()));
+        Assert.Equal([".NET", "Node / React"], settings.GetProperty("presets").EnumerateArray().Select(p => p.GetProperty("displayName").GetString()));
         Assert.Equal(["bug", "feature", "refactor", "chore"], settings.GetProperty("taskTypes").EnumerateArray().Select(p => p.GetString()));
         Assert.Equal(300_000, settings.GetProperty("defaultBudget").GetInt64());
         Assert.True(settings.GetProperty("ptcEnabled").GetBoolean());
@@ -176,7 +177,7 @@ public sealed class ApiTests : IAsyncLifetime
     [Theory]
     [InlineData("https://gitlab.com/acme/salesapp", "dotnet", "GitHub repository URL")]
     [InlineData("not a url", "dotnet", "GitHub repository URL")]
-    [InlineData("https://github.com/acme/salesapp", "cobol", "Unknown verification preset")]
+    [InlineData("https://github.com/acme/salesapp", "cobol", "There is no preset named \"cobol\"")]
     public async Task RegisterProject_BadInput_Is400_WithTheReason(string url, string preset, string expected)
     {
         var error = await _host.PostAsync("api/projects", new { gitHubUrl = url, preset }, HttpStatusCode.BadRequest);

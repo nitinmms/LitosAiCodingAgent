@@ -89,6 +89,8 @@ public static class FactoryHostApp
             sp.GetRequiredService<VerificationGate>()));
         services.AddSingleton<VerificationGate>();
         services.AddSingleton<ReadingCopies>();
+        // A project's first baseline, measured on registration and on a new profile (m3-architecture.md §8).
+        services.AddSingleton<ProjectBaselines>();
         services.AddSingleton<ChatExecutor>();
         services.AddSingleton<SpecExecutor>();
         // The factory-wide token is a setting (m3-architecture.md §2): read when it is used.

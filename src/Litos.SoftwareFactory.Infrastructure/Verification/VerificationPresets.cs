@@ -3,10 +3,10 @@ using Litos.SoftwareFactory.Core.Verification;
 namespace Litos.SoftwareFactory.Infrastructure.Verification;
 
 /// <summary>
-/// Ready-made profiles an Admin picks when registering a project and then adjusts
-/// (ReadMe_LitosSoftwareFactory_V1.md §10.2). They are data shipped with the factory — JSON
-/// files embedded here — not special code paths: the verifier treats a preset exactly like any
-/// hand-written profile.
+/// The profiles the factory ships (ReadMe_LitosSoftwareFactory_V1.md §10.2): JSON files embedded
+/// here, not special code paths, since the verifier treats a preset exactly like any hand-written
+/// profile. They seed the editable presets section on the host's first start; after that the
+/// section is what registration offers (m3-architecture.md §8).
 /// </summary>
 public static class VerificationPresets
 {
@@ -14,6 +14,14 @@ public static class VerificationPresets
     public const string NodeReact = "node-react";
 
     public static IReadOnlyList<string> Names { get; } = [DotNet, NodeReact];
+
+    /// <summary>What people see a shipped preset called.</summary>
+    public static string DisplayName(string name) => name switch
+    {
+        DotNet => ".NET",
+        NodeReact => "Node / React",
+        _ => name,
+    };
 
     /// <exception cref="ArgumentException">No preset has this name.</exception>
     public static VerificationProfile Load(string name) => VerificationProfile.Parse(LoadJson(name));

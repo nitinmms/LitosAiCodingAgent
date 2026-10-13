@@ -75,6 +75,26 @@ public class EnvironmentIsolationTests : IDisposable
 
     // ---- ToolchainEnvironment ----
 
+    [Theory]
+    [InlineData("JAVA_HOME")]
+    [InlineData("MAVEN_OPTS")]
+    [InlineData("M2_HOME")]
+    [InlineData("GRADLE_USER_HOME")]
+    [InlineData("GOPATH")]
+    [InlineData("GOMODCACHE")]
+    [InlineData("GOFLAGS")]
+    [InlineData("PIP_CACHE_DIR")]
+    [InlineData("UV_CACHE_DIR")]
+    public void TheJavaGoAndPythonToolchainsSettings_ArePassed(string name) => Assert.True(ToolchainEnvironment.IsAllowed(name));
+
+    [Theory]
+    [InlineData("GOOGLE_CLOUD_PROJECT")]
+    [InlineData("GOPRIVATE_TOKEN")]
+    [InlineData("MAVEN_PASSWORD")]
+    [InlineData("PIP_INDEX_PASSWORD")]
+    [InlineData("UV_PUBLISH_TOKEN")]
+    public void ANameThatOnlyLooksLikeOne_OrCarriesASecret_IsNot(string name) => Assert.False(ToolchainEnvironment.IsAllowed(name));
+
     [Fact]
     public void Scrub_KeepsToolchainVariables_AndDropsEverythingElse()
     {
