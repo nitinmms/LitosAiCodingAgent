@@ -34,12 +34,34 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
 
     public async Task EnsureClonedAsync(CancellationToken ct)
     {
-        if (Directory.Exists(System.IO.Path.Combine(options.Path, ".git")))
+        if (!Directory.Exists(System.IO.Path.Combine(options.Path, ".git")))
+        {
+            var parent = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(options.Path))!;
+            Directory.CreateDirectory(parent);
+            await GitAsync(parent, ["clone", "--", options.RemoteUrl, options.Path], authenticated: true, ct);
+        }
+
+        ExcludeFactoryFolder();
+    }
+
+    /// <summary>Where the verification presets write their reports, in every working copy (m3-architecture.md §8).</summary>
+    public const string FactoryFolderPattern = "/.factory/";
+
+    /// <summary>
+    /// Keeps the presets' reports out of every diff and commit through the copy's own
+    /// .git/info/exclude, whatever the repository's .gitignore says, without changing a file the
+    /// repository tracks. Like build output, they also survive the clean before a reading checkout.
+    /// </summary>
+    private void ExcludeFactoryFolder()
+    {
+        var exclude = System.IO.Path.Combine(options.Path, ".git", "info", "exclude");
+        var text = File.Exists(exclude) ? File.ReadAllText(exclude) : "";
+        if (text.Split('\n').Any(l => l.Trim() == FactoryFolderPattern))
             return;
 
-        var parent = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(options.Path))!;
-        Directory.CreateDirectory(parent);
-        await GitAsync(parent, ["clone", "--", options.RemoteUrl, options.Path], authenticated: true, ct);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(exclude)!);
+        var separator = text.Length == 0 || text.EndsWith('\n') ? "" : "\n";
+        File.AppendAllText(exclude, $"{separator}# The Litos software factory's verification reports.\n{FactoryFolderPattern}\n");
     }
 
     // Fetch and push name the remote by its URL, not as "origin": the working copy's own config

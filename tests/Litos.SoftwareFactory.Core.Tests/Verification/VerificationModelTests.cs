@@ -98,6 +98,85 @@ public class VerificationProfileTests
     }
 
     /// <summary>"Every command is optional except unit tests": an interpreted stack leaves build out.</summary>
+    private static VerificationProfile With(CommandSpec test, params CommandSpec[] prepare) => new(
+        2,
+        [new VerificationStep("s", UnitTests: [new UnitTestCommand(test.Executable, test.Arguments, 300, new TestReportSpec(TestReportFormat.GoTest, "r.json")) { StandardOutput = test.StandardOutput }], Prepare: prepare)]);
+
+    [Theory]
+    [InlineData("../out.json")]
+    [InlineData("/tmp/out.json")]
+    [InlineData("reports/*.json")]
+    [InlineData(" ")]
+    public void Validate_AStandardOutputFileOutsideTheStep_OrAPattern_IsInvalid(string path)
+    {
+        var problems = With(new CommandSpec("go", ["test"]) { StandardOutput = path }).Validate();
+
+        Assert.Contains(problems, p => p.Contains("standardOutput must be a file path inside the step's working directory"));
+    }
+
+    [Fact]
+    public void PrepareCommands_ComeFirst_AndAreCheckedLikeTheOthers()
+    {
+        var profile = With(new CommandSpec("go", ["test"]) { StandardOutput = ".factory/out.json" }, new CommandSpec("python", ["-m", "venv", "{venv}"]), new CommandSpec("", []));
+
+        Assert.Equal(["prepare", "prepare", "unitTests"], profile.Steps[0].Commands().Select(c => c.Label));
+        Assert.Contains(profile.Validate(), p => p.Contains("the prepare command has no executable"));
+    }
+
+    [Fact]
+    public void ThePrepareCommandsAndStandardOutput_SurviveJson()
+    {
+        var profile = With(new CommandSpec("go", ["test"]) { StandardOutput = ".factory/out.json" }, new CommandSpec("python", ["-m", "venv", "{venv}"]));
+
+        var json = profile.ToJson();
+        var read = VerificationProfile.Parse(json);
+
+        Assert.Contains("\"standardOutput\": \".factory/out.json\"", json);
+        Assert.Contains("\"format\": \"goTest\"", json);
+        Assert.Equal(".factory/out.json", read.Steps[0].UnitTests![0].StandardOutput);
+        Assert.Equal(["-m", "venv", "{venv}"], read.Steps[0].Prepare![0].Arguments);
+    }
+
+    [Theory]
+    [InlineData("goTest", TestReportFormat.GoTest)]
+    [InlineData("GoTest", TestReportFormat.GoTest)]
+    public void Parse_TheGoTestFormat(string format, TestReportFormat expected)
+    {
+        var json = $$$"""{"profileVersion":2,"steps":[{"name":"s","unitTests":[{"executable":"go","arguments":[],"testReport":{"format":"{{{format}}}","path":"r.json"}}]}]}""";
+        Assert.Equal(expected, VerificationProfile.Parse(json).Steps[0].UnitTests![0].TestReport!.Format);
+    }
+
+    [Theory]
+    [InlineData("jacoco", CoverageReportFormat.Jacoco)]
+    [InlineData("goCover", CoverageReportFormat.GoCover)]
+    public void Parse_TheJacocoAndGoCoverFormats(string format, CoverageReportFormat expected)
+    {
+        var json = $$$"""{"profileVersion":2,"steps":[{"name":"s","unitTests":[{"executable":"t","arguments":[],"testReport":{"format":"junit","path":"r.xml"},"coverageReport":{"format":"{{{format}}}","path":"c"}}]}]}""";
+        Assert.Equal(expected, VerificationProfile.Parse(json).Steps[0].UnitTests![0].CoverageReport!.Format);
+    }
+
+    [Fact]
+    public void ProfileVariables_AreTheProjectsVenvAndItsProgramsFolder_FilledInWhereWritten()
+    {
+        var values = ProfileVariables.For("data", Guid.Parse("00000000-0000-0000-0000-000000000007"));
+        var venv = Path.Combine(Path.GetFullPath("data"), "venvs", "00000000000000000000000000000007");
+
+        Assert.Equal(venv, values[ProfileVariables.Venv]);
+        Assert.Equal(Path.Combine(venv, OperatingSystem.IsWindows() ? "Scripts" : "bin"), values[ProfileVariables.VenvBin]);
+        Assert.Equal($"{values[ProfileVariables.VenvBin]}/python -m venv {venv}", ProfileVariables.Expand("{venvBin}/python -m venv {venv}", values));
+        Assert.Equal("{other} stays", ProfileVariables.Expand("{other} stays", values));
+        Assert.Equal("{venv}", ProfileVariables.Expand("{venv}", null));
+    }
+
+    [Fact]
+    public void AProfileUsesAVirtualEnvironment_WhenACommandOrVariableNamesIt()
+    {
+        Assert.True(With(new CommandSpec("{venvBin}/python", [])).UsesVirtualEnvironment());
+        Assert.True(With(new CommandSpec("python", ["-m", "venv", "{venv}"])).UsesVirtualEnvironment());
+        Assert.False(With(new CommandSpec("go", ["test"])).UsesVirtualEnvironment());
+        Assert.True((With(new CommandSpec("go", ["test"])) with { Environment = new Dictionary<string, string> { ["X"] = "{venv}" } }).UsesVirtualEnvironment());
+    }
+
     [Fact]
     public void Validate_NoRestoreOrBuild_IsValid()
     {

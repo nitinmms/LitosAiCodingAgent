@@ -626,7 +626,9 @@ public sealed class RunExecutor(
     {
         using var permit = await _verificationGate.EnterAsync(
             () => NoteAsync(data, "Waiting for another task's verification to finish before running this one's."), ct);
-        return await verifier.VerifyAsync(request with { TempDirectory = options.RunTempDirectory(data.Run.Id) }, ct);
+        return await verifier.VerifyAsync(
+            request with { TempDirectory = options.RunTempDirectory(data.Run.Id), Variables = ProfileVariables.For(options.DataDirectory, data.Project.Id) },
+            ct);
     }
 
     /// <param name="ct">Cancelled by a person's stop: the commands' process trees are killed and
@@ -890,6 +892,9 @@ public sealed class RunExecutor(
                 McpConfigPath = mcpConfig,
                 SkillsPath = prepared.Path,
                 TempDirectory = options.RunTempDirectory(claimed.Run.Id),
+                VirtualEnvironment = VerificationProfile.Parse(claimed.Project.VerificationProfileJson).UsesVirtualEnvironment()
+                    ? ProfileVariables.VirtualEnvironment(options.DataDirectory, claimed.Project.Id)
+                    : null,
             },
             ct);
         await store.SetRunWorkerAsync(claimed.Run.Id, handle.ProcessId, handle.StartTime, CancellationToken.None);

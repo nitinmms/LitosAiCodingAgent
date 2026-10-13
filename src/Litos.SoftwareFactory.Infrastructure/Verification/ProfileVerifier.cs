@@ -35,7 +35,7 @@ public sealed class ProfileVerifier(
         foreach (var (name, value) in ToolchainEnvironment.Scrub(_hostEnvironment()))
             environment[name] = value;
         foreach (var (name, value) in profile.Environment ?? new Dictionary<string, string>())
-            environment[name] = value;
+            environment[name] = ProfileVariables.Expand(value, request.Variables);
         foreach (var (name, value) in ToolchainEnvironment.TempDirectory(request.TempDirectory))
             environment[name] = value;
 
@@ -73,7 +73,18 @@ public sealed class ProfileVerifier(
             DeleteMatches(directory, test.CoverageReport?.Path);
         }
 
-        foreach (var (label, command) in new[] { ("restore", step.Restore), ("build", step.Build) })
+        foreach (var (_, command) in step.Commands())
+        {
+            if (command.StandardOutput is { } output && File.Exists(Path.Combine(directory, output)))
+                File.Delete(Path.Combine(directory, output));
+        }
+
+        // Not every tool makes the folder it is told to write to (go test -coverprofile does not).
+        foreach (var path in ReportPaths(step))
+            CreateFolderOf(directory, path);
+
+        var beforeTests = (step.Prepare ?? []).Select(c => ("prepare", (CommandSpec?)c)).Concat([("restore", step.Restore), ("build", step.Build)]);
+        foreach (var (label, command) in beforeTests)
         {
             if (command is null)
                 continue;
@@ -139,12 +150,16 @@ public sealed class ProfileVerifier(
     {
         var logPath = Path.Combine(request.LogDirectory, $"{run.Commands.Count + 1:00}-{SafeName(step.Name)}-{label}.log");
         var result = await _processRunner.RunAsync(
-            new ProcessRequest(command.Executable, command.Arguments, directory)
+            new ProcessRequest(
+                ProfileVariables.Expand(command.Executable, request.Variables),
+                [.. command.Arguments.Select(a => ProfileVariables.Expand(a, request.Variables))],
+                directory)
             {
                 Timeout = TimeSpan.FromSeconds(command.TimeoutSeconds),
                 Environment = environment,
                 ReplaceEnvironment = true,
                 LogPath = logPath,
+                StandardOutputPath = command.StandardOutput is { } output ? Path.GetFullPath(Path.Combine(directory, output)) : null,
             },
             ct);
 
@@ -167,7 +182,12 @@ public sealed class ProfileVerifier(
             try
             {
                 var text = File.ReadAllText(file);
-                cases.AddRange(spec.Format == TestReportFormat.Trx ? TrxReportParser.Parse(text) : JUnitReportParser.Parse(text));
+                cases.AddRange(spec.Format switch
+                {
+                    TestReportFormat.Trx => TrxReportParser.Parse(text),
+                    TestReportFormat.GoTest => GoTestReportParser.Parse(text),
+                    _ => JUnitReportParser.Parse(text),
+                });
             }
             catch (Exception ex) when (ex is ReportFormatException or IOException)
             {
@@ -190,7 +210,13 @@ public sealed class ProfileVerifier(
             try
             {
                 var text = File.ReadAllText(file);
-                var report = spec.Format == CoverageReportFormat.Lcov ? LcovParser.Parse(text) : CoberturaParser.Parse(text);
+                var report = spec.Format switch
+                {
+                    CoverageReportFormat.Lcov => LcovParser.Parse(text),
+                    CoverageReportFormat.Jacoco => JacocoParser.Parse(text, file),
+                    CoverageReportFormat.GoCover => GoCoverParser.Parse(text, GoCoverParser.ModulePathIn(directory)),
+                    _ => CoberturaParser.Parse(text),
+                };
                 run.Coverage.AddRange(ChangedLineCoverageCalculator.Normalize(report, request.WorkingCopy, directory));
                 run.CoverageReportsRead++;
             }
@@ -215,6 +241,20 @@ public sealed class ProfileVerifier(
     {
         foreach (var file in Matches(directory, pattern).ToList())
             File.Delete(file);
+    }
+
+    private static IEnumerable<string> ReportPaths(VerificationStep step) =>
+        (step.UnitTests ?? []).SelectMany(t => new[] { t.TestReport?.Path, t.CoverageReport?.Path })
+            .Concat(step.Commands().Select(c => c.Command.StandardOutput))
+            .OfType<string>();
+
+    /// <summary>Creates the folders a report path names before its first wildcard; a glob such as **/target/... names none.</summary>
+    private static void CreateFolderOf(string directory, string path)
+    {
+        var segments = path.Replace('\\', '/').Split('/');
+        var literal = segments[..^1].TakeWhile(s => s.IndexOfAny(['*', '?', '[']) < 0).ToArray();
+        if (literal.Length > 0)
+            Directory.CreateDirectory(Path.Combine([directory, .. literal]));
     }
 
     private static string SafeName(string name) =>

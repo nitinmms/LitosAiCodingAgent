@@ -151,8 +151,8 @@ public sealed class ApiTests : IAsyncLifetime
 
         Assert.Equal("openrouter", settings.GetProperty("provider").GetString());
         Assert.Equal("deepseek/deepseek-v4.1-flash", settings.GetProperty("model").GetString());
-        Assert.Equal(["dotnet", "node-react"], settings.GetProperty("presets").EnumerateArray().Select(p => p.GetProperty("name").GetString()));
-        Assert.Equal([".NET", "Node / React"], settings.GetProperty("presets").EnumerateArray().Select(p => p.GetProperty("displayName").GetString()));
+        Assert.Equal(["dotnet", "node-react", "python", "java-maven", "go"], settings.GetProperty("presets").EnumerateArray().Select(p => p.GetProperty("name").GetString()));
+        Assert.Equal([".NET", "Node / React", "Python (pytest)", "Java (Maven)", "Go"], settings.GetProperty("presets").EnumerateArray().Select(p => p.GetProperty("displayName").GetString()));
         Assert.Equal(["bug", "feature", "refactor", "chore"], settings.GetProperty("taskTypes").EnumerateArray().Select(p => p.GetString()));
         Assert.Equal(300_000, settings.GetProperty("defaultBudget").GetInt64());
         Assert.True(settings.GetProperty("ptcEnabled").GetBoolean());

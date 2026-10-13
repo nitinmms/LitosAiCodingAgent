@@ -86,6 +86,25 @@ public class WorkerEnvironmentTests
     }
 
     [Fact]
+    public void Build_WithAVirtualEnvironment_PutsItsProgramsFirstOnThePath()
+    {
+        var venv = Path.Combine(Path.GetTempPath(), "venvs", "p1");
+
+        var environment = WorkerEnvironment.Build(Host, Launch with { VirtualEnvironment = venv });
+
+        Assert.Equal(venv, environment["VIRTUAL_ENV"]);
+        var path = environment.Single(e => e.Key.Equals("PATH", StringComparison.OrdinalIgnoreCase)).Value;
+        Assert.StartsWith(Litos.SoftwareFactory.Core.Verification.ProfileVariables.BinOf(venv) + Path.PathSeparator, path);
+        Assert.Single(environment, e => e.Key.Equals("PATH", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Build_WithoutAVirtualEnvironment_SetsNone()
+    {
+        Assert.DoesNotContain("VIRTUAL_ENV", WorkerEnvironment.Build(Host, Launch).Keys);
+    }
+
+    [Fact]
     public void Build_WithNoRunTempDirectory_KeepsTheHostsTemp()
     {
         var environment = WorkerEnvironment.Build(Host, Launch);

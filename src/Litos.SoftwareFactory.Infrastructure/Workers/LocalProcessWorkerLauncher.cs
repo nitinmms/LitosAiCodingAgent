@@ -4,6 +4,7 @@ using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Settings;
+using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Infrastructure.Processes;
 
 namespace Litos.SoftwareFactory.Infrastructure.Workers;
@@ -30,6 +31,15 @@ public static class WorkerEnvironment
         var environment = ToolchainEnvironment.Scrub(hostEnvironment);
         foreach (var (name, value) in ToolchainEnvironment.TempDirectory(launch.TempDirectory))
             environment[name] = value;
+        if (launch.VirtualEnvironment is { } venv)
+        {
+            environment["VIRTUAL_ENV"] = venv;
+            var path = environment.FirstOrDefault(e => string.Equals(e.Key, "PATH", StringComparison.OrdinalIgnoreCase));
+            environment[path.Key ?? "PATH"] = path.Value is { Length: > 0 } existing
+                ? ProfileVariables.BinOf(venv) + Path.PathSeparator + existing
+                : ProfileVariables.BinOf(venv);
+        }
+
         environment[FactoryWire.WorkerSecretVariable] = launch.Secret;
         environment[FactoryWire.HostUrlVariable] = launch.HostUrl;
         environment[FactoryWire.RunIdVariable] = launch.RunId;

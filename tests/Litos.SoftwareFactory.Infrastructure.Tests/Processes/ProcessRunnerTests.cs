@@ -182,6 +182,24 @@ public class ProcessRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_StandardOutputPath_GetsStandardOutputAlone_ReplacedEachRun_WithNoByteOrderMark()
+    {
+        var output = _temp.Combine("reports", "out.json");
+        var request = Shell.Request("echo report-line & echo to-err 1>&2", _temp.Path) with { StandardOutputPath = output };
+        if (!OperatingSystem.IsWindows())
+            request = Shell.Request("echo report-line; echo to-err 1>&2", _temp.Path) with { StandardOutputPath = output };
+
+        await _runner.RunAsync(request, default);
+        await _runner.RunAsync(request, default);
+
+        var bytes = File.ReadAllBytes(output);
+        Assert.Equal((byte)'r', bytes[0]);
+        var text = File.ReadAllText(output);
+        Assert.Equal(1, text.Split("report-line").Length - 1);
+        Assert.DoesNotContain("to-err", text);
+    }
+
+    [Fact]
     public async Task RunAsync_OutputBeyondTheCap_IsTruncatedInMemory_ButCompleteInTheLog()
     {
         var log = _temp.Combine("big.log");

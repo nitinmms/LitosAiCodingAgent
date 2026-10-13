@@ -5,6 +5,7 @@ using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Host.Settings;
+using Litos.SoftwareFactory.Infrastructure.Verification;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Litos.SoftwareFactory.Host.Tests;
@@ -79,12 +80,55 @@ public sealed class ProjectProfileTests : IAsyncLifetime
 
         Assert.Equal(1, presets.GetProperty("revision").GetInt64());
         var list = presets.GetProperty("settings").GetProperty("presets").EnumerateArray().ToList();
-        Assert.Equal(["dotnet", "node-react"], list.Select(p => p.GetProperty("name").GetString()));
-        Assert.Equal([".NET", "Node / React"], list.Select(p => p.GetProperty("displayName").GetString()));
+        Assert.Equal(["dotnet", "node-react", "python", "java-maven", "go"], list.Select(p => p.GetProperty("name").GetString()));
+        Assert.Equal([".NET", "Node / React", "Python (pytest)", "Java (Maven)", "Go"], list.Select(p => p.GetProperty("displayName").GetString()));
         // The profile is the shipped JSON as text, its formats spelled as the profile spells them.
         var dotnet = list[0].GetProperty("profile").GetString()!;
         Assert.Contains("\"format\": \"trx\"", dotnet);
         Assert.Empty(VerificationProfile.Parse(dotnet).Validate());
+    }
+
+    private async Task SeedAsync() => await SettingsSeeding.SeedAsync(_settings, _host.Options, default);
+
+    [Fact]
+    public async Task AFactorySeededBeforeAShippedPresetExisted_GetsItOnItsNextStart_AfterItsOwn()
+    {
+        // As a factory seeded by an earlier version left it: two presets, one of them edited, and no record of what was offered.
+        await _settings.SaveAsync(SettingsSections.Presets, new PresetSettings
+        {
+            Presets = [new VerificationPreset { Name = "node-react", DisplayName = "Our React", Profile = Profile() }, new VerificationPreset { Name = "dotnet", DisplayName = ".NET", Profile = Profile() }],
+        }, _settings.RevisionOf(SettingsSections.Presets), null, default);
+
+        await SeedAsync();
+
+        var presets = _settings.Presets;
+        Assert.Equal(["node-react", "dotnet", "python", "java-maven", "go"], presets.Presets.Select(p => p.Name));
+        Assert.Equal("Our React", presets.Presets[0].DisplayName);
+        Assert.Equal(["node-react", "dotnet", "python", "java-maven", "go"], presets.Offered);
+
+        // Nothing new: the next start writes nothing.
+        var revision = _settings.RevisionOf(SettingsSections.Presets);
+        await SeedAsync();
+        Assert.Equal(revision, _settings.RevisionOf(SettingsSections.Presets));
+    }
+
+    [Fact]
+    public async Task AShippedPresetAnAdminRemoved_StaysRemoved_ForSavingKeepsWhatWasOffered()
+    {
+        using var saved = await PutPresetsAsync(new object[] { new { name = "dotnet", displayName = ".NET", profile = Profile() } });
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.Equal(5, _settings.Presets.Offered.Count);
+
+        await SeedAsync();
+
+        Assert.Equal(["dotnet"], _settings.Presets.Presets.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void EveryShippedPreset_IsUsableAsShipped()
+    {
+        foreach (var preset in _settings.Presets.Presets)
+            Assert.Empty(PresetSettings.ProblemsOf(preset));
     }
 
     [Fact]

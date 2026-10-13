@@ -129,6 +129,7 @@ public sealed class ProjectBaselines(
         var request = new VerificationRequest(workspace.Path, VerificationProfile.Parse(project.VerificationProfileJson), ChangedFiles: null, directory)
         {
             TempDirectory = Path.Combine(directory, "tmp"),
+            Variables = ProfileVariables.For(options.DataDirectory, project.Id),
         };
 
         VerificationOutcome outcome;

@@ -123,7 +123,7 @@ public static class SettingsApi
             if (presets.Validate() is { Count: > 0 } errors)
                 return Results.BadRequest(new { error = string.Join(" ", errors), errors });
 
-            return await SaveAsync(settings, SettingsSections.Presets, presets, request.Revision, user, ct);
+            return await SaveAsync(settings, SettingsSections.Presets, presets with { Offered = settings.Presets.Offered }, request.Revision, user, ct);
         });
 
         admin.MapPut("/settings/skills", async (

@@ -1,0 +1,32 @@
+{
+  "profileVersion": 2,
+  "environment": {
+    "MAVEN_OPTS": "-Djava.awt.headless=true"
+  },
+  "steps": [
+    {
+      "name": "maven",
+      "build": {
+        "executable": "mvn",
+        "arguments": ["-B", "-ntp", "-DskipTests", "test-compile"],
+        "timeoutSeconds": 900
+      },
+      "unitTests": [
+        {
+          "executable": "mvn",
+          "arguments": [
+            "-B", "-ntp", "-Dmaven.test.failure.ignore=true",
+            "org.jacoco:jacoco-maven-plugin:0.8.13:prepare-agent",
+            "test",
+            "org.jacoco:jacoco-maven-plugin:0.8.13:report"
+          ],
+          "timeoutSeconds": 1200,
+          "testReport": { "format": "junit", "path": "**/target/surefire-reports/TEST-*.xml" },
+          "coverageReport": { "format": "jacoco", "path": "**/target/site/jacoco/jacoco.xml" }
+        }
+      ]
+    }
+  ],
+  "coverage": { "changedLinesThresholdPercent": 80 },
+  "maximumRepairCycles": 2
+}

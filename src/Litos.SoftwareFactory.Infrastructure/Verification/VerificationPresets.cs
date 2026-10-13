@@ -12,14 +12,20 @@ public static class VerificationPresets
 {
     public const string DotNet = "dotnet";
     public const string NodeReact = "node-react";
+    public const string Python = "python";
+    public const string JavaMaven = "java-maven";
+    public const string Go = "go";
 
-    public static IReadOnlyList<string> Names { get; } = [DotNet, NodeReact];
+    public static IReadOnlyList<string> Names { get; } = [DotNet, NodeReact, Python, JavaMaven, Go];
 
     /// <summary>What people see a shipped preset called.</summary>
     public static string DisplayName(string name) => name switch
     {
         DotNet => ".NET",
         NodeReact => "Node / React",
+        Python => "Python (pytest)",
+        JavaMaven => "Java (Maven)",
+        Go => "Go",
         _ => name,
     };
 

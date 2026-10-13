@@ -1,0 +1,25 @@
+{
+  "profileVersion": 2,
+  "environment": {
+    "GOFLAGS": "-mod=readonly"
+  },
+  "steps": [
+    {
+      "name": "go",
+      "restore": { "executable": "go", "arguments": ["mod", "download"], "timeoutSeconds": 600 },
+      "build": { "executable": "go", "arguments": ["build", "./..."], "timeoutSeconds": 600 },
+      "unitTests": [
+        {
+          "executable": "go",
+          "arguments": ["test", "-json", "-coverprofile=.factory/coverage.out", "./..."],
+          "standardOutput": ".factory/go-test.json",
+          "timeoutSeconds": 900,
+          "testReport": { "format": "goTest", "path": ".factory/go-test.json" },
+          "coverageReport": { "format": "goCover", "path": ".factory/coverage.out" }
+        }
+      ]
+    }
+  ],
+  "coverage": { "changedLinesThresholdPercent": 80 },
+  "maximumRepairCycles": 2
+}

@@ -29,6 +29,12 @@ public sealed partial record PresetSettings
 {
     public IReadOnlyList<VerificationPreset> Presets { get; init; } = [];
 
+    /// <summary>
+    /// The shipped presets this factory has offered already, kept by the host and never edited: a
+    /// later version's new presets are added once, and one an Admin removed stays removed.
+    /// </summary>
+    public IReadOnlyList<string> Offered { get; init; } = [];
+
     public const int MaxPresets = 30;
     public const int MaxProfileChars = 50_000;
 

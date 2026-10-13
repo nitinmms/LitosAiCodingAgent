@@ -263,6 +263,19 @@ public class GitWorkspaceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EveryWorkingCopy_KeepsTheFactorysReportFolder_OutOfItsDiffsAndCommits_Once()
+    {
+        // The clone made in InitializeAsync, and a second look at it.
+        await _workspace.EnsureClonedAsync(default);
+        Directory.CreateDirectory(InWorkspace(".factory"));
+        File.WriteAllText(InWorkspace(Path.Combine(".factory", "junit.xml")), "<testsuite/>");
+
+        Assert.True((await _workspace.GetStatusAsync(default)).IsClean);
+        var exclude = File.ReadAllText(InWorkspace(Path.Combine(".git", "info", "exclude")));
+        Assert.Equal(1, exclude.Split(GitWorkspace.FactoryFolderPattern).Length - 1);
+    }
+
+    [Fact]
     public async Task EnsureClonedAsync_UnreachableRemote_ThrowsWorkspaceException()
     {
         var workspace = new GitWorkspace(new GitWorkspaceOptions(_temp.Combine("workspaces", "bad"), _temp.Combine("no-such-remote.git")));

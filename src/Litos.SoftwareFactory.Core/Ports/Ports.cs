@@ -160,6 +160,10 @@ public sealed record VerificationRequest(
     /// <summary>The run's own TEMP, TMP and TMPDIR for the commands, so runs going on at the same
     /// time never share temporary files; null keeps the host's.</summary>
     public string? TempDirectory { get; init; }
+
+    /// <summary>The values of the profile's variables for this project, such as {venv}
+    /// (Verification.ProfileVariables); none leaves them as written.</summary>
+    public IReadOnlyDictionary<string, string>? Variables { get; init; }
 }
 
 public interface IVerifier
@@ -192,6 +196,11 @@ public sealed record WorkerLaunch(
     /// <summary>The run's own TEMP, TMP and TMPDIR for the worker and every command it starts;
     /// null keeps the host's.</summary>
     public string? TempDirectory { get; init; }
+
+    /// <summary>The project's Python virtual environment, for a profile that uses one: the worker
+    /// gets it as VIRTUAL_ENV and first on its PATH, so the agent's shell runs the same pytest as
+    /// the verifier (m3-architecture.md §8). Null for every other project.</summary>
+    public string? VirtualEnvironment { get; init; }
 }
 
 /// <summary>A running worker process.</summary>

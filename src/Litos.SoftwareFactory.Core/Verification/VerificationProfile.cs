@@ -74,27 +74,83 @@ public sealed record VerificationProfile(
                 if (test.TestReport is null || string.IsNullOrWhiteSpace(test.TestReport.Path))
                     problems.Add($"Step '{name}': a unit-test command must declare a testReport, because counts come only from reports.");
                 foreach (var report in new[] { test.TestReport?.Path, test.CoverageReport?.Path })
-                    if (report is not null && (Path.IsPathRooted(report) || report.Split('/', '\\').Contains("..")))
+                    if (report is not null && !StaysInside(report))
                         problems.Add($"Step '{name}': report path '{report}' must stay inside the step's working directory.");
+            }
+
+            foreach (var (label, command) in step.Commands())
+            {
+                if (command.StandardOutput is { } output && (string.IsNullOrWhiteSpace(output) || !StaysInside(output) || output.IndexOfAny(['*', '?']) >= 0))
+                    problems.Add($"Step '{name}': the {label} command's standardOutput must be a file path inside the step's working directory.");
             }
         }
 
         return problems;
     }
+
+    private static bool StaysInside(string path) => !Path.IsPathRooted(path) && !path.Split('/', '\\').Contains("..");
+
+    /// <summary>Whether any command names the project's virtual environment, which the host then keeps for it.</summary>
+    public bool UsesVirtualEnvironment() =>
+        Steps.SelectMany(s => s.Commands()).Any(c => ProfileVariables.Mentions(c.Command.Executable) || c.Command.Arguments.Any(ProfileVariables.Mentions))
+        || (Environment?.Values.Any(ProfileVariables.Mentions) ?? false);
+}
+
+/// <summary>
+/// What a profile may write in its commands for a place only the host knows (m3-architecture.md §8):
+/// <c>{venv}</c>, the project's Python virtual environment in the factory's data folder, and
+/// <c>{venvBin}</c>, the folder of its programs, which is <c>Scripts</c> on Windows and <c>bin</c>
+/// elsewhere, so one profile works on both.
+/// </summary>
+public static class ProfileVariables
+{
+    public const string Venv = "{venv}";
+    public const string VenvBin = "{venvBin}";
+
+    /// <summary>The values for one project, whose virtual environment is <c>&lt;data&gt;/venvs/&lt;projectId&gt;</c>.</summary>
+    public static IReadOnlyDictionary<string, string> For(string dataDirectory, Guid projectId)
+    {
+        var venv = VirtualEnvironment(dataDirectory, projectId);
+        return new Dictionary<string, string> { [Venv] = venv, [VenvBin] = BinOf(venv) };
+    }
+
+    public static string VirtualEnvironment(string dataDirectory, Guid projectId) =>
+        Path.Combine(Path.GetFullPath(dataDirectory), "venvs", projectId.ToString("N"));
+
+    /// <summary>Where a virtual environment keeps its programs on this platform.</summary>
+    public static string BinOf(string venv) => Path.Combine(venv, OperatingSystem.IsWindows() ? "Scripts" : "bin");
+
+    public static bool Mentions(string? text) => text is not null && text.Contains("{venv", StringComparison.Ordinal);
+
+    /// <summary>The text with each variable replaced; one with no value is left as written.</summary>
+    public static string Expand(string text, IReadOnlyDictionary<string, string>? values)
+    {
+        if (values is null || !text.Contains('{'))
+            return text;
+        // {venvBin} first: {venv} is a prefix of it.
+        foreach (var name in values.Keys.OrderByDescending(k => k.Length))
+            text = text.Replace(name, values[name], StringComparison.Ordinal);
+        return text;
+    }
 }
 
 /// <summary>One part of a repository — a multi-stack repository lists several, each with its
 /// own subdirectory, commands and reports.</summary>
+/// <param name="Prepare">Commands run before restore, in order, such as creating a virtual
+/// environment; one that fails stops the step as a failed restore or build would.</param>
 public sealed record VerificationStep(
     string Name,
     string? WorkingDirectory = null,
     CommandSpec? Restore = null,
     CommandSpec? Build = null,
-    IReadOnlyList<UnitTestCommand>? UnitTests = null)
+    IReadOnlyList<UnitTestCommand>? UnitTests = null,
+    IReadOnlyList<CommandSpec>? Prepare = null)
 {
     /// <summary>Every command in this step, in run order, with a label for messages.</summary>
     public IEnumerable<(string Label, CommandSpec Command)> Commands()
     {
+        foreach (var command in Prepare ?? [])
+            yield return ("prepare", command);
         if (Restore is not null)
             yield return ("restore", Restore);
         if (Build is not null)
@@ -107,6 +163,13 @@ public sealed record VerificationStep(
 /// <summary>A command as an argument array — never a concatenated shell string.</summary>
 public record CommandSpec(string Executable, IReadOnlyList<string> Arguments, int TimeoutSeconds = 600)
 {
+    /// <summary>
+    /// A file, relative to the step's working directory, that the command's standard output is
+    /// written to: for a tool that prints its report rather than writing it, such as
+    /// <c>go test -json</c>. The log still gets all of it.
+    /// </summary>
+    public string? StandardOutput { get; init; }
+
     /// <summary>For logs and the handoff. Not for execution.</summary>
     public string Display() => Arguments.Count == 0 ? Executable : $"{Executable} {string.Join(' ', Arguments)}";
 }
@@ -122,12 +185,21 @@ public enum TestReportFormat
 {
     Junit,
     Trx,
+
+    /// <summary>The JSON lines <c>go test -json</c> prints.</summary>
+    GoTest,
 }
 
 public enum CoverageReportFormat
 {
     Cobertura,
     Lcov,
+
+    /// <summary>JaCoCo's XML report, as Maven's and Gradle's JaCoCo plugins write it.</summary>
+    Jacoco,
+
+    /// <summary>The profile <c>go test -coverprofile</c> writes.</summary>
+    GoCover,
 }
 
 /// <summary>Path is a glob relative to the step's working directory.</summary>

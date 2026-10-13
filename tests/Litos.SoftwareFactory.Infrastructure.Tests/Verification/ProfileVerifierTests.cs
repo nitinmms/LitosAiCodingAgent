@@ -103,6 +103,123 @@ public class ProfileVerifierTests : IDisposable
     private ScriptedRunner PassingRunner(string? cobertura = null) =>
         new ScriptedRunner().On("test", effect: r => WriteReports(r, PassingTrx, cobertura ?? Cobertura((10, 1), (11, 1), (12, 1), (13, 1))));
 
+    // ---- Prepare commands, variables and printed reports (m3-architecture.md §8) ----
+
+    private static readonly IReadOnlyDictionary<string, string> Venv = new Dictionary<string, string>
+    {
+        [ProfileVariables.Venv] = @"D:\data\venvs\p1",
+        [ProfileVariables.VenvBin] = @"D:\data\venvs\p1\Scripts",
+    };
+
+    private static VerificationProfile PythonLike() => new(
+        2,
+        [
+            new VerificationStep(
+                "py",
+                Restore: new CommandSpec("{venvBin}/python", ["restore", "-r", "requirements.txt"]),
+                UnitTests: [new UnitTestCommand("{venvBin}/python", ["test", "--junitxml=.factory/junit.xml"], 300, new TestReportSpec(TestReportFormat.Junit, ".factory/junit.xml"))],
+                Prepare: [new CommandSpec("python", ["prepare", "-m", "venv", "{venv}"])]),
+        ],
+        Environment: new Dictionary<string, string> { ["TOOL_HOME"] = "{venv}/home" });
+
+    [Fact]
+    public async Task PrepareCommands_RunFirst_AndTheProjectsVariablesAreFilledIn()
+    {
+        var runner = new ScriptedRunner().On("test", effect: r => File.WriteAllText(Path.Combine(r.WorkingDirectory, ".factory", "junit.xml"),
+            "<testsuite><testcase classname=\"t\" name=\"one\"/></testsuite>"));
+
+        var outcome = await new ProfileVerifier(runner).VerifyAsync(
+            new VerificationRequest(_repo.Path, PythonLike(), null, _logs.Path) { Variables = Venv }, default);
+
+        Assert.Equal(["prepare", "restore", "test"], runner.Requests.Select(r => r.Arguments[0]));
+        Assert.Equal("python", runner.Requests[0].Executable);
+        Assert.Equal(@"D:\data\venvs\p1", runner.Requests[0].Arguments[^1]);
+        Assert.Equal(@"D:\data\venvs\p1\Scripts/python", runner.Requests[1].Executable);
+        Assert.All(runner.Requests, r => Assert.Equal(@"D:\data\venvs\p1/home", r.Environment["TOOL_HOME"]));
+        Assert.Equal(UnitTestStatus.Passed, outcome.UnitTests);
+        Assert.Equal("prepare", outcome.Commands[0].Label);
+    }
+
+    [Fact]
+    public async Task AFailedPrepareCommand_StopsTheStep_AsAFailedBuild()
+    {
+        var runner = new ScriptedRunner().On("prepare", exitCode: 1);
+
+        var outcome = await new ProfileVerifier(runner).VerifyAsync(new VerificationRequest(_repo.Path, PythonLike(), null, _logs.Path) { Variables = Venv }, default);
+
+        Assert.Equal(BuildStatus.Failed, outcome.Build);
+        Assert.Equal(["prepare"], runner.Requests.Select(r => r.Arguments[0]));
+        Assert.Contains(outcome.Problems, p => p.Contains("prepare failed with exit code 1"));
+    }
+
+    [Fact]
+    public async Task WithoutVariables_ACommandIsRunAsWritten()
+    {
+        var runner = new ScriptedRunner();
+
+        await new ProfileVerifier(runner).VerifyAsync(new VerificationRequest(_repo.Path, PythonLike(), null, _logs.Path), default);
+
+        Assert.Equal("{venvBin}/python", runner.Requests[1].Executable);
+    }
+
+    private static VerificationProfile GoLike() => new(
+        2,
+        [
+            new VerificationStep("go", UnitTests:
+            [
+                new UnitTestCommand("go", ["test", "-json", "-coverprofile=.factory/coverage.out", "./..."], 300,
+                    new TestReportSpec(TestReportFormat.GoTest, ".factory/go-test.json"),
+                    new CoverageReportSpec(CoverageReportFormat.GoCover, ".factory/coverage.out"))
+                {
+                    StandardOutput = ".factory/go-test.json",
+                },
+            ]),
+        ],
+        new CoverageRule(80));
+
+    [Fact]
+    public async Task APrintedReport_IsSavedWhereTheProfileSays_AndItsFolderExistsBeforeTheCommandRuns()
+    {
+        File.WriteAllText(Path.Combine(_repo.Path, "go.mod"), "module example.com/calc\n\ngo 1.22\n");
+        var folderExisted = false;
+        var runner = new ScriptedRunner().On("test", effect: r =>
+        {
+            folderExisted = Directory.Exists(Path.Combine(r.WorkingDirectory, ".factory"));
+            // As the real runner does with StandardOutputPath: the events land in the file.
+            File.WriteAllText(r.StandardOutputPath!, """
+                {"Action":"run","Package":"example.com/calc","Test":"TestAdd"}
+                {"Action":"pass","Package":"example.com/calc","Test":"TestAdd","Elapsed":0.01}
+                {"Action":"pass","Package":"example.com/calc","Elapsed":0.02}
+                """);
+            File.WriteAllText(Path.Combine(r.WorkingDirectory, ".factory", "coverage.out"),
+                "mode: set\nexample.com/calc/calc.go:3.24,5.2 1 1\nexample.com/calc/calc.go:7.40,9.2 1 0\n");
+        });
+
+        var outcome = await new ProfileVerifier(runner).VerifyAsync(
+            new VerificationRequest(_repo.Path, GoLike(), [new FileChange("calc.go", [new LineRange(3, 9)])], _logs.Path), default);
+
+        Assert.True(folderExisted);
+        Assert.Equal(Path.Combine(_repo.Path, ".factory", "go-test.json"), runner.Requests[0].StandardOutputPath);
+        Assert.Equal(UnitTestStatus.Passed, outcome.UnitTests);
+        Assert.Equal("example.com/calc :: TestAdd", Assert.Single(outcome.Tests).Name);
+        // calc.go is named by import path in the profile; go.mod's module path turns it into a repository path.
+        Assert.Equal((3, 6), (outcome.ChangedLines!.Covered, outcome.ChangedLines.Measurable));
+        Assert.Equal(CoverageStatus.BelowThreshold, outcome.Coverage);
+    }
+
+    [Fact]
+    public async Task APrintedReportLeftFromAnEarlierRun_NeverCounts()
+    {
+        Directory.CreateDirectory(Path.Combine(_repo.Path, ".factory"));
+        File.WriteAllText(Path.Combine(_repo.Path, ".factory", "go-test.json"), """{"Action":"pass","Package":"p","Test":"TestOld"}""");
+        var runner = new ScriptedRunner().On("test", exitCode: 1);
+
+        var outcome = await new ProfileVerifier(runner).VerifyAsync(new VerificationRequest(_repo.Path, GoLike(), null, _logs.Path), default);
+
+        Assert.Empty(outcome.Tests);
+        Assert.Equal(UnitTestStatus.Failed, outcome.UnitTests);
+    }
+
     // ---- The happy path ----
 
     [Fact]
@@ -589,9 +706,9 @@ public class VerificationPresetTests
     }
 
     [Fact]
-    public void Names_ListTheM1Presets()
+    public void Names_ListTheShippedPresets_InTheOrderTheyAreOffered()
     {
-        Assert.Equal(["dotnet", "node-react"], VerificationPresets.Names);
+        Assert.Equal(["dotnet", "node-react", "python", "java-maven", "go"], VerificationPresets.Names);
     }
 
     [Fact]

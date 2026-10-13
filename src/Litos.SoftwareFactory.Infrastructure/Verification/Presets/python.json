@@ -1,0 +1,37 @@
+{
+  "profileVersion": 2,
+  "environment": {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUTF8": "1",
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    "COVERAGE_FILE": ".factory/.coverage"
+  },
+  "steps": [
+    {
+      "name": "python",
+      "prepare": [
+        { "executable": "python", "arguments": ["-m", "venv", "{venv}"], "timeoutSeconds": 300 }
+      ],
+      "restore": {
+        "executable": "{venvBin}/python",
+        "arguments": ["-m", "pip", "install", "--quiet", "-r", "requirements.txt", "pytest", "pytest-cov"],
+        "timeoutSeconds": 900
+      },
+      "unitTests": [
+        {
+          "executable": "{venvBin}/python",
+          "arguments": [
+            "-m", "pytest", "-p", "no:cacheprovider",
+            "--junitxml=.factory/junit.xml",
+            "--cov=.", "--cov-report=xml:.factory/coverage.xml"
+          ],
+          "timeoutSeconds": 900,
+          "testReport": { "format": "junit", "path": ".factory/junit.xml" },
+          "coverageReport": { "format": "cobertura", "path": ".factory/coverage.xml" }
+        }
+      ]
+    }
+  ],
+  "coverage": { "changedLinesThresholdPercent": 80 },
+  "maximumRepairCycles": 2
+}

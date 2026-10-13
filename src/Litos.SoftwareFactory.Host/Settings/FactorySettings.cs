@@ -217,18 +217,27 @@ public static class SettingsSeeding
             seeded = true;
         }
 
-        if (settings.RevisionOf(SettingsSections.Presets) == 0)
+        // The presets the factory ships, which an Admin then edits (m3-architecture.md §8). A
+        // shipped preset is offered once: added at the end, unless one of that name is there.
+        var (presets, presetsRevision) = settings.ReadWithRevision<PresetSettings>(SettingsSections.Presets);
+        var offered = presetsRevision == 0 ? [] : presets.Offered.Count > 0 ? presets.Offered : presets.Presets.Select(p => p.Name).ToList();
+        var newlyShipped = VerificationPresets.Names.Where(name => !offered.Contains(name)).ToList();
+        if (presetsRevision == 0 || newlyShipped.Count > 0 || presets.Offered.Count == 0)
         {
-            // The presets the factory ships, which an Admin then edits (m3-architecture.md §8).
-            await settings.SaveAsync(SettingsSections.Presets, new PresetSettings
+            await settings.SaveAsync(SettingsSections.Presets, presets with
             {
-                Presets = [.. VerificationPresets.Names.Select(name => new VerificationPreset
-                {
-                    Name = name,
-                    DisplayName = VerificationPresets.DisplayName(name),
-                    Profile = VerificationPresets.LoadJson(name),
-                })],
-            }, 0, actorId: null, ct);
+                Presets =
+                [
+                    .. presets.Presets,
+                    .. newlyShipped.Where(name => presets.Find(name) is null).Select(name => new VerificationPreset
+                    {
+                        Name = name,
+                        DisplayName = VerificationPresets.DisplayName(name),
+                        Profile = VerificationPresets.LoadJson(name),
+                    }),
+                ],
+                Offered = [.. offered, .. newlyShipped],
+            }, presetsRevision, actorId: null, ct);
             seeded = true;
         }
 

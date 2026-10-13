@@ -21,6 +21,10 @@ public sealed record ProcessRequest(string Executable, IReadOnlyList<string> Arg
     /// <summary>When set, everything the command writes is also appended to this file.</summary>
     public string? LogPath { get; init; }
 
+    /// <summary>When set, the command's standard output alone is written to this file as well, for a
+    /// tool that prints its report rather than writing one.</summary>
+    public string? StandardOutputPath { get; init; }
+
     /// <summary>How much of each stream is kept in memory. The log file always gets all of it.</summary>
     public int MaxCapturedChars { get; init; } = 200_000;
 }
@@ -77,33 +81,35 @@ public sealed class ProcessRunner : IProcessRunner
         var stdout = new BoundedBuffer(request.MaxCapturedChars);
         var stderr = new BoundedBuffer(request.MaxCapturedChars);
         using var log = OpenLog(request.LogPath);
+        using var output = OpenLog(request.StandardOutputPath, append: false);
         var logLock = new Lock();
 
-        void Capture(BoundedBuffer buffer, string? line)
+        void Capture(BoundedBuffer buffer, string? line, StreamWriter? alsoTo)
         {
             if (line is null)
                 return;
             buffer.AppendLine(line);
-            if (log is not null)
+            if (log is null && alsoTo is null)
+                return;
+
+            lock (logLock)
             {
-                lock (logLock)
+                try
                 {
-                    try
-                    {
-                        log.WriteLine(line);
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        // A line delivered after a timeout or cancellation already returned and
-                        // closed the log. This runs on the process's reader thread, where an
-                        // unhandled exception would take the host down; the line is dropped.
-                    }
+                    log?.WriteLine(line);
+                    alsoTo?.WriteLine(line);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // A line delivered after a timeout or cancellation already returned and
+                    // closed the log. This runs on the process's reader thread, where an
+                    // unhandled exception would take the host down; the line is dropped.
                 }
             }
         }
 
-        process.OutputDataReceived += (_, e) => Capture(stdout, e.Data);
-        process.ErrorDataReceived += (_, e) => Capture(stderr, e.Data);
+        process.OutputDataReceived += (_, e) => Capture(stdout, e.Data, output);
+        process.ErrorDataReceived += (_, e) => Capture(stderr, e.Data, null);
 
         var stopwatch = Stopwatch.StartNew();
         try
@@ -149,13 +155,14 @@ public sealed class ProcessRunner : IProcessRunner
             ? path.Value
             : System.Environment.GetEnvironmentVariable("PATH");
 
-    private static StreamWriter? OpenLog(string? path)
+    private static StreamWriter? OpenLog(string? path, bool append = true)
     {
         if (path is null)
             return null;
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        return new StreamWriter(path, append: true, Encoding.UTF8) { AutoFlush = true };
+        // No byte-order mark: a report read as JSON lines must start with its first line.
+        return new StreamWriter(path, append, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)) { AutoFlush = true };
     }
 
     internal static void TryKillProcessTree(Process process)
