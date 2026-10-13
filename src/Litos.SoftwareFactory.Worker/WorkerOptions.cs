@@ -31,6 +31,9 @@ public sealed record WorkerOptions(
     /// <summary>The run's MCP servers, as the host wrote them; null when it has none.</summary>
     public string? McpConfigPath { get; init; }
 
+    /// <summary>The run's skills, as the host wrote them (Contracts.RunSkills); null when it has none.</summary>
+    public string? SkillsPath { get; init; }
+
     /// <summary>
     /// How many lines a read_file with no 'limit' returns, and the most any one read returns.
     /// R1 printed ten whole files of 9,000 to 24,000 characters while exploring, and paused on
@@ -121,6 +124,7 @@ public sealed record WorkerOptions(
             ShellTimeoutSeconds = OptionalInt("--shell-timeout"),
             WebSearch = webSearch,
             McpConfigPath = values.TryGetValue("--mcp-config", out var mcpConfig) ? Path.GetFullPath(mcpConfig) : null,
+            SkillsPath = values.TryGetValue("--skills", out var skills) ? Path.GetFullPath(skills) : null,
         };
     }
 }

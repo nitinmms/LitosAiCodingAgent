@@ -186,6 +186,9 @@ public sealed record WorkerLaunch(
     /// <summary>The run's MCP servers, secrets included, in the engine's mcp.json shape; null with none (m3-architecture.md §7.2).</summary>
     public string? McpConfigPath { get; init; }
 
+    /// <summary>The run's skills (Contracts.RunSkills as JSON); null with none (m3-architecture.md §7.3).</summary>
+    public string? SkillsPath { get; init; }
+
     /// <summary>The run's own TEMP, TMP and TMPDIR for the worker and every command it starts;
     /// null keeps the host's.</summary>
     public string? TempDirectory { get; init; }

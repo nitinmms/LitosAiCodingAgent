@@ -1,5 +1,7 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Litos.Agent.Providers;
+using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Auth;
@@ -12,6 +14,9 @@ namespace Litos.SoftwareFactory.Host.Api;
 public sealed record SaveSettingsRequest<T>(long Revision, T? Settings);
 
 public sealed record SetSecretRequest(string? Value);
+
+/// <summary>Approves one version of a repository skill, or takes the approval back.</summary>
+public sealed record RepositorySkillApprovalRequest(Guid ProjectId, string? Name, string? Hash, bool Approved);
 
 /// <summary>
 /// Factory settings, for Admins only (m3-architecture.md §3.4). Each section is read and written
@@ -29,6 +34,7 @@ public static class SettingsApi
             Providers = Section(settings, SettingsSections.Providers, settings.Providers),
             Tools = Section(settings, SettingsSections.Tools, settings.Tools),
             Mcp = Section(settings, SettingsSections.Mcp, settings.Mcp),
+            Skills = Section(settings, SettingsSections.Skills, settings.Skills),
             // What the Providers tab lists, in order, with what each needs to be called.
             KnownProviders = KnownProviders.All.Select(p => new
             {
@@ -105,6 +111,61 @@ public static class SettingsApi
                 return Results.BadRequest(new { error = string.Join(" ", errors), errors });
 
             return Results.Ok(await tester.TestAsync(server, ct));
+        });
+
+        admin.MapPut("/settings/skills", async (
+            SaveSettingsRequest<SkillSettings> request, ClaimsPrincipal user, FactorySettings settings, CancellationToken ct) =>
+        {
+            if (request.Settings is not { } skills)
+                return Results.BadRequest(new { error = "settings are required." });
+            if (skills.Validate() is { Count: > 0 } errors)
+                return Results.BadRequest(new { error = string.Join(" ", errors), errors });
+
+            return await SaveAsync(settings, SettingsSections.Skills, skills, request.Revision, user, ct);
+        });
+
+        // Every skill found in a project's repository, each version of it once (m3-architecture.md §7.3).
+        admin.MapGet("/skills/repository", async (IFactoryStore store, CancellationToken ct) =>
+        {
+            var projects = (await store.ListProjectsAsync(ct)).ToDictionary(p => p.Id, p => p.Name);
+            var skills = await store.ListRepositorySkillsAsync(ct);
+            // The version found most recently is the one a run would meet now; older ones are kept for their approvals.
+            var newest = skills.GroupBy(s => (s.ProjectId, s.Name)).ToDictionary(g => g.Key, g => g.Max(s => s.LastFoundAt));
+            return Results.Ok(new
+            {
+                Skills = skills.Select(s => new
+                {
+                    s.ProjectId,
+                    Project = projects.GetValueOrDefault(s.ProjectId, ""),
+                    s.Name,
+                    s.Hash,
+                    s.Description,
+                    s.Folder,
+                    s.Content,
+                    OtherFiles = JsonSerializer.Deserialize<List<string>>(s.OtherFilesJson) ?? [],
+                    s.FirstFoundAt,
+                    s.LastFoundAt,
+                    s.ApprovedAt,
+                    Latest = s.LastFoundAt == newest[(s.ProjectId, s.Name)],
+                }),
+            });
+        });
+
+        admin.MapPut("/skills/repository/approval", async (
+            RepositorySkillApprovalRequest request, ClaimsPrincipal user, IFactoryStore store, IClock clock, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Hash))
+                return Results.BadRequest(new { error = "name and hash are required." });
+            try
+            {
+                var skill = await store.SetRepositorySkillApprovalAsync(
+                    request.ProjectId, request.Name, request.Hash, request.Approved, user.UserId(), clock.UtcNow, ct);
+                return Results.Ok(new { skill.ProjectId, skill.Name, skill.Hash, skill.ApprovedAt });
+            }
+            catch (StoreNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
         });
 
         admin.MapPut("/settings/budgets", async (

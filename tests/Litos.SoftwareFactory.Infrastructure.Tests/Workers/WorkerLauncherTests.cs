@@ -406,6 +406,15 @@ public class LocalProcessWorkerLauncherTests : IDisposable
     }
 
     [Fact]
+    public void BuildArguments_NameTheRunsSkillsFile_OnlyWhenItHasOne()
+    {
+        var path = Path.Combine(_dataDirectory, "runs", "run-1", "skills.json");
+
+        Assert.Equal(["--skills", path], LocalProcessWorkerLauncher.BuildArguments(Launch() with { SkillsPath = path }, 1).Skip(10));
+        Assert.DoesNotContain("--skills", LocalProcessWorkerLauncher.BuildArguments(Launch(), 1));
+    }
+
+    [Fact]
     public void BuildArguments_UnknownContextLength_IsOmitted()
     {
         var arguments = LocalProcessWorkerLauncher.BuildArguments(Launch() with { ContextLength = null }, 1);

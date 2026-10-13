@@ -2909,6 +2909,99 @@ public abstract class FactoryStoreContract : IAsyncLifetime
             await Store.ListRecentModelsAsync(Admin, 2, default));
         Assert.Empty(await Store.ListRecentModelsAsync(Guid.NewGuid(), 3, default));
     }
+
+    // ---- Repository skills (m3-architecture.md §7.3) ----
+
+    private static RepositorySkill Found(string name, string hash, string content = "---\nname: x\n---\nDo it.") => new()
+    {
+        Name = name, Hash = hash, Description = $"About {name}.", Folder = $".litos/skills/{name}", Content = content, OtherFilesJson = """["run.ps1"]""",
+    };
+
+    [SkippableFact]
+    public async Task AFoundSkill_IsRecorded_WaitingForApproval_WithWhatTheAdminReads()
+    {
+        var project = await AddProjectAsync();
+
+        var rows = await Store.RecordRepositorySkillsAsync(project.Id, [Found("deploy", "sha256:a")], T0, default);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(("deploy", "sha256:a", "About deploy.", ".litos/skills/deploy", T0, T0), (row.Name, row.Hash, row.Description, row.Folder, row.FirstFoundAt, row.LastFoundAt));
+        Assert.Null(row.ApprovedAt);
+        var listed = Assert.Single(await Store.ListRepositorySkillsAsync(default));
+        Assert.Equal(("---\nname: x\n---\nDo it.", project.Id), (listed.Content, listed.ProjectId));
+        Assert.Contains("run.ps1", listed.OtherFilesJson);
+    }
+
+    [SkippableFact]
+    public async Task FindingASkillAgain_MovesItsLastFoundTime_AndAChangedOne_IsANewRow()
+    {
+        var project = await AddProjectAsync();
+        await Store.RecordRepositorySkillsAsync(project.Id, [Found("deploy", "sha256:a")], T0, default);
+
+        var rows = await Store.RecordRepositorySkillsAsync(project.Id, [Found("deploy", "sha256:a"), Found("deploy", "sha256:b")], T0.AddHours(1), default);
+
+        Assert.Equal(2, rows.Count);
+        var first = rows.Single(r => r.Hash == "sha256:a");
+        Assert.Equal((T0, T0.AddHours(1)), (first.FirstFoundAt, first.LastFoundAt));
+        Assert.Equal(T0.AddHours(1), rows.Single(r => r.Hash == "sha256:b").FirstFoundAt);
+    }
+
+    [SkippableFact]
+    public async Task RecordingReturns_TheProjectsRowsOnly_ThoseNotFoundThisTimeIncluded()
+    {
+        var a = await AddProjectAsync("a");
+        var b = await AddProjectAsync("b");
+        await Store.RecordRepositorySkillsAsync(a.Id, [Found("old", "sha256:o")], T0, default);
+        await Store.RecordRepositorySkillsAsync(b.Id, [Found("other", "sha256:x")], T0, default);
+
+        var rows = await Store.RecordRepositorySkillsAsync(a.Id, [Found("new", "sha256:n")], T0.AddMinutes(1), default);
+
+        Assert.Equal(["new", "old"], rows.Select(r => r.Name).Order());
+        Assert.Equal(3, (await Store.ListRepositorySkillsAsync(default)).Count);
+    }
+
+    [SkippableFact]
+    public async Task ASkillsContent_IsCutToTheLimit()
+    {
+        var project = await AddProjectAsync();
+
+        await Store.RecordRepositorySkillsAsync(project.Id, [Found("big", "sha256:a", new string('x', RepositorySkill.MaxContentChars + 10))], T0, default);
+
+        Assert.Equal(RepositorySkill.MaxContentChars, Assert.Single(await Store.ListRepositorySkillsAsync(default)).Content.Length);
+    }
+
+    [SkippableFact]
+    public async Task ApprovingAVersion_IsAudited_AndTakingItBack_Too_WhileApprovingTwiceChangesNothing()
+    {
+        var project = await AddProjectAsync();
+        await Store.RecordRepositorySkillsAsync(project.Id, [Found("deploy", "sha256:a")], T0, default);
+
+        var approved = await Store.SetRepositorySkillApprovalAsync(project.Id, "deploy", "sha256:a", true, Admin, T0.AddMinutes(1), default);
+        await Store.SetRepositorySkillApprovalAsync(project.Id, "deploy", "sha256:a", true, Admin, T0.AddMinutes(2), default);
+
+        Assert.Equal((T0.AddMinutes(1), Admin), (approved.ApprovedAt, approved.ApprovedBy));
+        var audited = Assert.Single(await AuditAsync(project.Id));
+        Assert.Equal((AuditActions.RepositorySkillApprove, AuditTargets.RepositorySkill), (audited.Action, audited.TargetType));
+        Assert.Contains("sha256:a", audited.DetailsJson);
+
+        var revoked = await Store.SetRepositorySkillApprovalAsync(project.Id, "deploy", "sha256:a", false, Admin, T0.AddMinutes(3), default);
+
+        Assert.Equal((null, null), (revoked.ApprovedAt, revoked.ApprovedBy));
+        Assert.Equal(AuditActions.RepositorySkillRevoke, (await AuditAsync(project.Id))[0].Action);
+        Assert.Null(Assert.Single(await Store.ListRepositorySkillsAsync(default)).ApprovedAt);
+    }
+
+    [SkippableFact]
+    public async Task ApprovingAVersionNeverFound_IsRefused()
+    {
+        var project = await AddProjectAsync();
+        await Store.RecordRepositorySkillsAsync(project.Id, [Found("deploy", "sha256:a")], T0, default);
+
+        await Assert.ThrowsAsync<StoreNotFoundException>(() =>
+            Store.SetRepositorySkillApprovalAsync(project.Id, "deploy", "sha256:other", true, Admin, T0, default));
+        await Assert.ThrowsAsync<StoreNotFoundException>(() =>
+            Store.SetRepositorySkillApprovalAsync(Guid.NewGuid(), "deploy", "sha256:a", true, Admin, T0, default));
+    }
 }
 
 public sealed class SqliteFactoryStoreTests : FactoryStoreContract

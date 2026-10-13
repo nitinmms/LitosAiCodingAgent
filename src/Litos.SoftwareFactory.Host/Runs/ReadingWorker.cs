@@ -22,11 +22,15 @@ public sealed class ReadingWorker : IAsyncDisposable
 
     public IWorkerClient Client { get; }
 
+    /// <remarks>Its skills are the library and the reading copy's repository skills as they are
+    /// now; a read-only run records no capability snapshot and posts no note about them.</remarks>
     public static async Task<ReadingWorker> StartAsync(
         IWorkerLauncher launcher, IWorkerClientFactory clients, IFactoryStore store, FactoryOptions options, Settings.FactorySettings settings,
-        string hostUrl, ClaimedRun claimed, ActiveRun active, string workingCopy, CancellationToken ct)
+        Settings.FactorySkills skills, string hostUrl, ClaimedRun claimed, ActiveRun active, string workingCopy, CancellationToken ct)
     {
-        var (run, thread, _) = claimed;
+        var (run, thread, project) = claimed;
+        var (revision, library, policy) = skills.Current();
+        var prepared = await skills.PrepareAsync(run.Id, project.Id, workingCopy, revision, library, policy, ct);
         var handle = await launcher.LaunchAsync(
             new WorkerLaunch(
                 run.Id.ToString("N"), workingCopy, thread.Provider, thread.Model,
@@ -35,6 +39,7 @@ public sealed class ReadingWorker : IAsyncDisposable
                 PtcEnabled = options.PtcOf(thread),
                 ShellTimeoutSeconds = settings.Tools.ShellTimeoutSeconds,
                 WebSearch = settings.WebSearch,
+                SkillsPath = prepared.Path,
                 TempDirectory = options.RunTempDirectory(run.Id),
             },
             ct);

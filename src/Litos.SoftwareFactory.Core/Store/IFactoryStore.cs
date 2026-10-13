@@ -406,6 +406,24 @@ public interface IFactoryStore
     /// <summary>Records a failed fetch, keeping the rows of the last one that worked.</summary>
     Task<ModelCatalogFetch> RecordModelCatalogFailureAsync(string provider, string error, DateTimeOffset now, CancellationToken ct);
 
+    // ---- Repository skills (m3-architecture.md §7.3) ----
+
+    /// <summary>
+    /// Records the skills found in a project's working copy just now: a new name or a changed folder
+    /// is a new row, waiting for approval; one seen before has its last-found time moved. Returns
+    /// every row the project has, approved or not.
+    /// </summary>
+    Task<IReadOnlyList<RepositorySkill>> RecordRepositorySkillsAsync(
+        Guid projectId, IReadOnlyList<RepositorySkill> found, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Every repository skill ever found, of every project.</summary>
+    Task<IReadOnlyList<RepositorySkill>> ListRepositorySkillsAsync(CancellationToken ct);
+
+    /// <summary>Approves one version of a repository skill, or takes its approval back; audited.</summary>
+    /// <exception cref="StoreNotFoundException">No such version was ever found in the project.</exception>
+    Task<RepositorySkill> SetRepositorySkillApprovalAsync(
+        Guid projectId, string name, string hash, bool approved, Guid actorId, DateTimeOffset now, CancellationToken ct);
+
     /// <summary>
     /// The provider and model of a person's newest threads, each pair once, newest first: what
     /// New thread pins as their recent models (m3-architecture.md §4.4).

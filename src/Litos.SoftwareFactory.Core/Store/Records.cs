@@ -553,6 +553,38 @@ public sealed class ModelCatalogFetch
     public string? Error { get; set; }
 }
 
+/// <summary>
+/// A skill found in a project's repository (blueprint §8.2, m3-architecture.md §7.3), one row per
+/// version of its folder: an approval is of one hash, so a changed skill is a new row that waits
+/// for its own. Recorded whenever a worker starts on a working copy that has it.
+/// </summary>
+public sealed class RepositorySkill
+{
+    public Guid ProjectId { get; set; }
+
+    /// <summary>The name its SKILL.md gives it, which is how the agent asks for it.</summary>
+    public required string Name { get; set; }
+
+    /// <summary>Of every file in its folder (Contracts.SkillHash).</summary>
+    public required string Hash { get; set; }
+    public string Description { get; set; } = "";
+
+    /// <summary>Its folder, relative to the repository's root.</summary>
+    public string Folder { get; set; } = "";
+
+    /// <summary>Its SKILL.md as found, for the Admin who approves it; cut at <see cref="MaxContentChars"/>.</summary>
+    public string Content { get; set; } = "";
+
+    /// <summary>The other files in its folder, relative to it, as a JSON array: the Admin reads those in the repository.</summary>
+    public string OtherFilesJson { get; set; } = "[]";
+    public DateTimeOffset FirstFoundAt { get; set; }
+    public DateTimeOffset LastFoundAt { get; set; }
+    public DateTimeOffset? ApprovedAt { get; set; }
+    public Guid? ApprovedBy { get; set; }
+
+    public const int MaxContentChars = 100_000;
+}
+
 public static class SettingsSections
 {
     public const string Budgets = "budgets";
@@ -575,6 +607,7 @@ public static class AuditTargets
     public const string Invitation = "invitation";
     public const string Settings = "settings";
     public const string Secret = "secret";
+    public const string RepositorySkill = "repository_skill";
 }
 
 public static class AuditActions
@@ -618,6 +651,8 @@ public static class AuditActions
     public const string SettingsUpdate = "settings.update";
     public const string SecretSet = "secret.set";
     public const string SecretClear = "secret.clear";
+    public const string RepositorySkillApprove = "repository_skill.approve";
+    public const string RepositorySkillRevoke = "repository_skill.revoke";
 }
 
 public static class EventTypes

@@ -13,7 +13,8 @@ namespace Litos.SoftwareFactory.Host.Runs;
 /// </summary>
 public sealed class ChatExecutor(
     IFactoryStore store, FactoryOptions options, ReadingCopies readingCopies, IWorkerLauncher launcher,
-    IWorkerClientFactory clients, FactorySignals signals, IClock clock, Settings.FactorySettings settings, ILogger<ChatExecutor> logger)
+    IWorkerClientFactory clients, FactorySignals signals, IClock clock, Settings.FactorySettings settings, Settings.FactorySkills skills,
+    ILogger<ChatExecutor> logger)
 {
     internal const string Failed = "Litos could not answer that. Send the message again.";
     internal const string NoAnswer = "Litos read the code but did not write an answer. Ask again, perhaps more narrowly.";
@@ -46,7 +47,7 @@ public sealed class ChatExecutor(
             var branch = await CheckOutAsync(workspace, details, ct);
             progress.Set(ChatProgressTracker.Starting);
 
-            worker = await ReadingWorker.StartAsync(launcher, clients, store, options, settings, HostUrl, claimed, active, workspace.Path, ct);
+            worker = await ReadingWorker.StartAsync(launcher, clients, store, options, settings, skills, HostUrl, claimed, active, workspace.Path, ct);
 
             var sessionId = $"chat-{run.Id:N}";
             var brief = BriefComposer.Chat(new ChatContext(

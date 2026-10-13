@@ -1778,6 +1778,83 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         return fetch;
     }
 
+    // ---- Repository skills ----
+
+    public async Task<IReadOnlyList<RepositorySkill>> RecordRepositorySkillsAsync(
+        Guid projectId, IReadOnlyList<RepositorySkill> found, DateTimeOffset now, CancellationToken ct)
+    {
+        // Two workers starting on one project's copies at once can both find a new skill; the one
+        // that loses the insert reads the winner's row and records again.
+        for (var attempt = 1; ; attempt++)
+        {
+            await using var write = await BeginWriteAsync(ct);
+            var db = write.Db;
+
+            var rows = await db.RepositorySkills.Where(s => s.ProjectId == projectId).ToListAsync(ct);
+            foreach (var skill in found.DistinctBy(s => (s.Name, s.Hash)))
+            {
+                if (rows.FirstOrDefault(r => r.Name == skill.Name && r.Hash == skill.Hash) is { } seen)
+                {
+                    seen.LastFoundAt = now;
+                    seen.Folder = skill.Folder;
+                    continue;
+                }
+
+                var added = new RepositorySkill
+                {
+                    ProjectId = projectId,
+                    Name = skill.Name,
+                    Hash = skill.Hash,
+                    Description = skill.Description.Length > 2000 ? skill.Description[..2000] : skill.Description,
+                    Folder = skill.Folder,
+                    Content = skill.Content.Length > RepositorySkill.MaxContentChars ? skill.Content[..RepositorySkill.MaxContentChars] : skill.Content,
+                    OtherFilesJson = skill.OtherFilesJson,
+                    FirstFoundAt = now,
+                    LastFoundAt = now,
+                };
+                db.RepositorySkills.Add(added);
+                rows.Add(added);
+            }
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                await write.CommitAsync(ct);
+                return rows;
+            }
+            catch (DbUpdateException) when (attempt == 1)
+            {
+            }
+        }
+    }
+
+    public async Task<IReadOnlyList<RepositorySkill>> ListRepositorySkillsAsync(CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.RepositorySkills.AsNoTracking().OrderBy(s => s.ProjectId).ThenBy(s => s.Name).ThenBy(s => s.FirstFoundAt).ToListAsync(ct);
+    }
+
+    public async Task<RepositorySkill> SetRepositorySkillApprovalAsync(
+        Guid projectId, string name, string hash, bool approved, Guid actorId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+
+        var skill = await db.RepositorySkills.FirstOrDefaultAsync(s => s.ProjectId == projectId && s.Name == name && s.Hash == hash, ct)
+            ?? throw new StoreNotFoundException("That repository skill was never found in the project.");
+        if ((skill.ApprovedAt is not null) == approved)
+            return skill;
+
+        skill.ApprovedAt = approved ? now : null;
+        skill.ApprovedBy = approved ? actorId : null;
+        Audit(db, actorId, approved ? AuditActions.RepositorySkillApprove : AuditActions.RepositorySkillRevoke,
+            AuditTargets.RepositorySkill, null, projectId, new { Name = name, Hash = hash }, now);
+
+        await db.SaveChangesAsync(ct);
+        await write.CommitAsync(ct);
+        return skill;
+    }
+
     public async Task<IReadOnlyList<(string Provider, string Model)>> ListRecentModelsAsync(Guid ownerId, int limit, CancellationToken ct)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);

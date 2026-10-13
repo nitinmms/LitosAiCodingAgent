@@ -39,7 +39,11 @@ public static class WorkerApp
 
         // Registered after AddLitosAgent, so these replace its user-profile defaults.
         builder.Services.AddSingleton<ITranscriptStore>(_ => new JsonlTranscriptStore(options.SessionsDirectory));
-        builder.Services.AddSingleton<ISkillDiscovery, NoSkills>();
+        // Only the skills the host gave the run (m3-architecture.md §7.3); without any, none at all.
+        ISkillDiscovery skills = options.SkillsPath is { } skillsPath
+            ? FactorySkillDiscovery.Load(skillsPath, Directory.GetCurrentDirectory())
+            : new NoSkills();
+        builder.Services.AddSingleton(skills);
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(_ => new FactoryHostClient(hostHttp ?? new HttpClient(), options));
@@ -58,7 +62,8 @@ public static class WorkerApp
             sp.GetRequiredService<FactoryHostClient>(),
             testOutputDirectory: options.TestOutputDirectory,
             webSearch: options.WebSearch,
-            mcpTools: sp.GetService<WorkerMcp>() is { } mcp ? mcp.PermittedTools : null));
+            mcpTools: sp.GetService<WorkerMcp>() is { } mcp ? mcp.PermittedTools : null,
+            skills: skills is FactorySkillDiscovery { Skills.IsEmpty: false }));
         builder.Services.AddSingleton<IToolSetPolicy>(sp => sp.GetRequiredService<FactoryToolSetPolicy>());
         builder.Services.AddSingleton<IWorkingDirectoryResolver, ProcessWorkingDirectoryResolver>();
 

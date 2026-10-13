@@ -71,6 +71,8 @@ public static class FactoryHostApp
         services.AddSingleton<RunWebSearch>();
         // Test connection for an MCP server an Admin is setting up (m3-architecture.md §7.1).
         services.AddSingleton<IMcpConnectionTester, McpConnectionTester>();
+        // The skill library on disk, and the repository skills each worker may use (m3-architecture.md §7.3).
+        services.AddSingleton<FactorySkills>();
         services.AddSingleton<ModelGateway>();
 
         services.AddSingleton<IWorkspaceProvider, GitWorkspaceProvider>();
@@ -82,7 +84,8 @@ public static class FactoryHostApp
             sp.GetRequiredService<IFactoryStore>(), options,
             sp.GetRequiredService<IWorkspaceProvider>(), sp.GetRequiredService<IVerifier>(), sp.GetRequiredService<IWorkerLauncher>(),
             sp.GetRequiredService<IWorkerClientFactory>(), sp.GetRequiredService<IUserDirectory>(), sp.GetRequiredService<FactorySignals>(),
-            sp.GetRequiredService<IClock>(), sp.GetRequiredService<FactorySettings>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
+            sp.GetRequiredService<IClock>(), sp.GetRequiredService<FactorySettings>(),
+            sp.GetRequiredService<FactorySkills>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
             sp.GetRequiredService<VerificationGate>()));
         services.AddSingleton<VerificationGate>();
         services.AddSingleton<ReadingCopies>();

@@ -402,6 +402,54 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.ToTable("project_members", (string)null);
                 });
 
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.RepositorySkill", b =>
+                {
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Hash")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ApprovedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset>("FirstFoundAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Folder")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset>("LastFoundAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OtherFilesJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("ProjectId", "Name", "Hash");
+
+                    b.ToTable("repository_skills", (string)null);
+                });
+
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ReviewFindingRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1205,6 +1253,15 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ProjectMember", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.RepositorySkill", b =>
                 {
                     b.HasOne("Litos.SoftwareFactory.Core.Store.Project", null)
                         .WithMany()

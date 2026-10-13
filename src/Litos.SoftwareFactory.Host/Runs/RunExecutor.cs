@@ -46,7 +46,7 @@ public interface IUserDirectory
 public sealed class RunExecutor(
     IFactoryStore store, FactoryOptions options, IWorkspaceProvider workspaces, IVerifier verifier,
     IWorkerLauncher launcher, IWorkerClientFactory clients, IUserDirectory users, FactorySignals signals, IClock clock, Settings.FactorySettings settings,
-    ILogger<RunExecutor> logger, IGitHub? gitHub = null, VerificationGate? verificationGate = null)
+    FactorySkills skills, ILogger<RunExecutor> logger, IGitHub? gitHub = null, VerificationGate? verificationGate = null)
 {
     private readonly VerificationGate _verificationGate = verificationGate ?? new VerificationGate(options);
 
@@ -811,9 +811,11 @@ public sealed class RunExecutor(
         }
     }
 
-    private async Task NoteAsync(RunData data, string text)
+    private Task NoteAsync(RunData data, string text) => NoteAsync(data.Thread.Id, text);
+
+    private async Task NoteAsync(Guid threadId, string text)
     {
-        await store.AddFactoryMessageAsync(data.Thread.Id, MessageKind.Status, text, null, clock.UtcNow, CancellationToken.None);
+        await store.AddFactoryMessageAsync(threadId, MessageKind.Status, text, null, clock.UtcNow, CancellationToken.None);
         signals.EventsWritten();
     }
 
@@ -845,9 +847,10 @@ public sealed class RunExecutor(
         if (run.CapabilitiesJson is { Length: > 0 } held)
             return JsonSerializer.Deserialize<RunCapabilities>(held, FactoryWire.Json)!;
 
+        var (skillSettings, skillRevision) = settings.ReadWithRevision<SkillSettings>(SettingsSections.Skills);
         var capabilities = run.Kind == RunKind.Rework && await store.LatestCapabilitiesAsync(thread.Id, run.Id, CancellationToken.None) is { } last
             ? JsonSerializer.Deserialize<RunCapabilities>(last, FactoryWire.Json)!.ForRework()
-            : RunCapabilities.From(settings.Tools, settings.WebSearch, settings.Mcp, options.PtcOf(thread));
+            : RunCapabilities.From(settings.Tools, settings.WebSearch, settings.Mcp, options.PtcOf(thread), skillSettings, skillRevision);
         await store.SetRunCapabilitiesAsync(run.Id, JsonSerializer.Serialize(capabilities, FactoryWire.Json), CancellationToken.None);
         return capabilities;
     }
@@ -855,6 +858,19 @@ public sealed class RunExecutor(
     private async Task<(IWorkerHandle Handle, IWorkerClient Client)> StartWorkerAsync(WorkerSession session, CancellationToken ct)
     {
         var (active, claimed, capabilities) = (session.Active, session.Claimed, session.Capabilities);
+        var workingCopy = workspaces.For(claimed.Project).Path;
+
+        // The repository's skills are looked at in the working copy the worker starts on. The
+        // thread hears what was skipped once per run, not again when a worker is restarted.
+        var prepared = await skills.PrepareAsync(
+            claimed.Run.Id, claimed.Project.Id, workingCopy, capabilities.SkillLibraryRevision, capabilities.LibrarySkills,
+            capabilities.RepositorySkillPolicy, ct);
+        var firstLook = capabilities.RepositorySkills is null;
+        capabilities = session.Capabilities = capabilities with { RepositorySkills = prepared.Repository };
+        await store.SetRunCapabilitiesAsync(claimed.Run.Id, JsonSerializer.Serialize(capabilities, FactoryWire.Json), CancellationToken.None);
+        if (firstLook && SkillSelection.Describe(prepared.Repository) is { } skipped)
+            await NoteAsync(claimed.Thread.Id, skipped);
+
         string? mcpConfig = null;
         if (capabilities.McpServers.Count > 0)
         {
@@ -865,13 +881,14 @@ public sealed class RunExecutor(
 
         var handle = await launcher.LaunchAsync(
             new WorkerLaunch(
-                claimed.Run.Id.ToString("N"), workspaces.For(claimed.Project).Path, claimed.Thread.Provider, claimed.Thread.Model,
+                claimed.Run.Id.ToString("N"), workingCopy, claimed.Thread.Provider, claimed.Thread.Model,
                 options.ContextLengthOf(claimed.Thread), options.DataDirectory, HostUrl, active.Secret)
             {
                 PtcEnabled = capabilities.Ptc,
                 ShellTimeoutSeconds = capabilities.ShellTimeoutSeconds,
                 WebSearch = capabilities.WebSearch,
                 McpConfigPath = mcpConfig,
+                SkillsPath = prepared.Path,
                 TempDirectory = options.RunTempDirectory(claimed.Run.Id),
             },
             ct);

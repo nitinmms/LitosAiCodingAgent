@@ -19,7 +19,8 @@ namespace Litos.SoftwareFactory.Host.Runs;
 /// </summary>
 public sealed class SpecExecutor(
     IFactoryStore store, FactoryOptions options, ReadingCopies readingCopies, IWorkerLauncher launcher,
-    IWorkerClientFactory clients, FactorySignals signals, IClock clock, Settings.FactorySettings settings, ILogger<SpecExecutor> logger)
+    IWorkerClientFactory clients, FactorySignals signals, IClock clock, Settings.FactorySettings settings, Settings.FactorySkills skills,
+    ILogger<SpecExecutor> logger)
 {
     internal const string NoSpec = "The spec turn ended without proposing a specification. Resume to try again, or ask with @factory spec in other words.";
 
@@ -46,7 +47,7 @@ public sealed class SpecExecutor(
             await workspace.FetchAsync(ct);
             await workspace.CheckoutForReadingAsync(project.DefaultBranch, ct);
 
-            worker = await ReadingWorker.StartAsync(launcher, clients, store, options, settings, HostUrl, claimed, active, workspace.Path, ct);
+            worker = await ReadingWorker.StartAsync(launcher, clients, store, options, settings, skills, HostUrl, claimed, active, workspace.Path, ct);
 
             var sessionId = $"spec-{run.Id:N}";
             var brief = BriefComposer.Spec(new SpecContext(

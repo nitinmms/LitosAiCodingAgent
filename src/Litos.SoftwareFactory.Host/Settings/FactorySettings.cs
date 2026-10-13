@@ -49,6 +49,8 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
 
     public McpSettings Mcp => Read<McpSettings>(SettingsSections.Mcp);
 
+    public SkillSettings Skills => Read<SkillSettings>(SettingsSections.Skills);
+
     /// <summary>Which turns of a run starting now may search the web: none without a key.</summary>
     public WebSearchAccess WebSearch => Tools.WebSearch(IsSet(SecretNames.WebSearch));
 
@@ -61,6 +63,13 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
     {
         lock (_lock)
             return _sections.TryGetValue(section, out var held) && held.Value is T value ? value : new T();
+    }
+
+    /// <summary>A section's settings with the revision they are at, read together.</summary>
+    public (T Settings, long Revision) ReadWithRevision<T>(string section) where T : class, new()
+    {
+        lock (_lock)
+            return _sections.TryGetValue(section, out var held) && held.Value is T value ? (value, held.Row.Revision) : (new T(), 0);
     }
 
     /// <summary>The revision a change must name; 0 for a section never written.</summary>
@@ -140,6 +149,7 @@ public sealed class FactorySettings(IFactoryStore store, ISecretProtector protec
         SettingsSections.Providers => JsonSerializer.Deserialize<ProviderSettings>(row.Json, FactoryWire.Json) ?? new ProviderSettings(),
         SettingsSections.Tools => JsonSerializer.Deserialize<ToolSettings>(row.Json, FactoryWire.Json) ?? new ToolSettings(),
         SettingsSections.Mcp => JsonSerializer.Deserialize<McpSettings>(row.Json, FactoryWire.Json) ?? new McpSettings(),
+        SettingsSections.Skills => JsonSerializer.Deserialize<SkillSettings>(row.Json, FactoryWire.Json) ?? new SkillSettings(),
         _ => JsonDocument.Parse(row.Json).RootElement.Clone(),
     };
 }

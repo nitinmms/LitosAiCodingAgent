@@ -7,8 +7,8 @@ using Litos.Tools.Web;
 namespace Litos.SoftwareFactory.Worker;
 
 /// <summary>
-/// Which tools each kind of turn gets (ReadMe_LitosSoftwareFactory_V1.md §8). No MCP and no
-/// skills yet; web search only where the run was launched with it (m3-architecture.md §6):
+/// Which tools each kind of turn gets (ReadMe_LitosSoftwareFactory_V1.md §8), with web search only
+/// where the run was launched with it (m3-architecture.md §6):
 ///
 /// - implement, repair and rework turns edit code and finish with submit_work or request_decision;
 /// - a review turn can only read, and finishes with submit_review;
@@ -17,7 +17,9 @@ namespace Litos.SoftwareFactory.Worker;
 /// - a chat turn can only read;
 /// - web_search joins the implement, repair and rework turns when it is on, and the read-only
 ///   turns too when the Admin allows it there;
-/// - the run's MCP tools join the implement, repair and rework turns only (m3-architecture.md §7.2).
+/// - the run's MCP tools join the implement, repair and rework turns only (m3-architecture.md §7.2);
+/// - the skill tool joins every turn when the run has skills (m3-architecture.md §7.3): it only
+///   reads a SKILL.md, and every turn's system prompt lists the skills it can load.
 ///
 /// A nudge carries no kind of its own: it gets whatever the turn it follows had, so a nudged
 /// review still cannot edit files.
@@ -31,6 +33,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     private readonly FactoryHostClient _host;
     private readonly WorkerWebSearch _webSearch;
     private readonly Func<IEnumerable<ITool>> _mcpTools;
+    private readonly bool _skills;
     private readonly ConcurrentDictionary<string, TurnKind> _lastKind = new();
 
     private static readonly string[] FileTools = ["read_file", "write_file", "edit_file", "list_directory", "search_code"];
@@ -41,13 +44,15 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     /// shell cuts it to its failures and summary (TestOutputTrimmer); null keeps test output whole.</param>
     /// <param name="webSearch">Which turns may search the web, through the host.</param>
     /// <param name="mcpTools">The run's MCP tools it may call, read on every turn; none by default.</param>
+    /// <param name="skills">Whether the run has skills, so every turn gets the engine's skill tool.</param>
     public FactoryToolSetPolicy(
         IEnumerable<ITool> registeredTools, FactoryHostClient host, string? workingCopy = null, string? testOutputDirectory = null,
-        WorkerWebSearch webSearch = WorkerWebSearch.Off, Func<IEnumerable<ITool>>? mcpTools = null)
+        WorkerWebSearch webSearch = WorkerWebSearch.Off, Func<IEnumerable<ITool>>? mcpTools = null, bool skills = false)
     {
         _host = host;
         _webSearch = webSearch;
         _mcpTools = mcpTools ?? (() => []);
+        _skills = skills;
         _builtIn = registeredTools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
 
         // An agent gets the shell and the file tools behind guards, whether it calls them directly
@@ -61,7 +66,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
                 _builtIn[name] = new ConfinedFileTool(tool, guard);
         }
 
-        var missing = WorkTools.Where(name => !_builtIn.ContainsKey(name)).ToList();
+        var missing = WorkTools.Concat(skills ? [SkillToolName] : []).Where(name => !_builtIn.ContainsKey(name)).ToList();
         if (missing.Count > 0)
             throw new InvalidOperationException($"The factory tool set needs tools that are not registered: {string.Join(", ", missing)}.");
     }
@@ -97,7 +102,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     private ToolRegistry ToolsFor(TurnKind kind, string sessionId) => kind switch
     {
         TurnKind.Implement or TurnKind.Repair or TurnKind.Rework => new ToolRegistry(
-            [.. BuiltIn(WorkTools), .. WebSearch(sessionId, readOnly: false), .. _mcpTools(),
+            [.. BuiltIn(WorkTools), .. Skill(), .. WebSearch(sessionId, readOnly: false), .. _mcpTools(),
              new SubmitWorkTool(_host, sessionId), new RequestDecisionTool(_host, sessionId)]),
         TurnKind.Review => new ToolRegistry([.. ReadOnly(sessionId), new SubmitReviewTool(_host, sessionId)]),
         TurnKind.Spec => new ToolRegistry([.. ReadOnly(sessionId), new SubmitSpecTool(_host, sessionId)]),
@@ -106,7 +111,12 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
         _ => throw new InvalidOperationException($"No tool set is defined for a {kind} turn."),
     };
 
-    private IEnumerable<ITool> ReadOnly(string sessionId) => [.. BuiltIn(ReadOnlyTools), .. WebSearch(sessionId, readOnly: true)];
+    private IEnumerable<ITool> ReadOnly(string sessionId) => [.. BuiltIn(ReadOnlyTools), .. Skill(), .. WebSearch(sessionId, readOnly: true)];
+
+    private const string SkillToolName = "skill";
+
+    /// <summary>The engine's skill tool, reading what the worker's skill discovery offers.</summary>
+    private IEnumerable<ITool> Skill() => _skills ? [_builtIn[SkillToolName]] : [];
 
     /// <summary>The engine's web_search tool, searching through the host, where this run allows it.</summary>
     private IEnumerable<ITool> WebSearch(string sessionId, bool readOnly) =>

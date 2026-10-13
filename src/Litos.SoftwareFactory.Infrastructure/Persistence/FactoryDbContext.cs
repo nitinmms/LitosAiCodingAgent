@@ -41,6 +41,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<FactorySecret> Secrets => Set<FactorySecret>();
     public DbSet<ModelCatalogEntry> ModelCatalog => Set<ModelCatalogEntry>();
     public DbSet<ModelCatalogFetch> ModelCatalogFetches => Set<ModelCatalogFetch>();
+    public DbSet<RepositorySkill> RepositorySkills => Set<RepositorySkill>();
 
     /// <summary>Set by the store once this context's transaction holds the outbox lock.</summary>
     internal bool HoldsOutboxLock { get; set; }
@@ -267,6 +268,18 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.HasKey(f => f.Provider);
             e.Property(f => f.Provider).HasMaxLength(40);
             e.Property(f => f.Error).HasMaxLength(1000);
+        });
+
+        model.Entity<RepositorySkill>(e =>
+        {
+            e.ToTable("repository_skills");
+            e.HasKey(s => new { s.ProjectId, s.Name, s.Hash });
+            e.Property(s => s.Name).HasMaxLength(200);
+            e.Property(s => s.Hash).HasMaxLength(80);
+            e.Property(s => s.Description).HasMaxLength(2000);
+            e.Property(s => s.Folder).HasMaxLength(500);
+            Json(e.Property(s => s.OtherFilesJson));
+            e.HasOne<Project>().WithMany().HasForeignKey(s => s.ProjectId).OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<AuditEvent>(e =>
