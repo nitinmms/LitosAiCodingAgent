@@ -263,21 +263,25 @@ Every handoff had tests passing and changed-line coverage measured (91.5–100%)
 
 **A defect in starting a run's C# kernel (2026-10-14), found during the F2/F4/R3/F8 re-runs.** F4 was blocked three times with "The worker did not report its port within 30 seconds", and R3's review stalled for 12 minutes after one model call. Both had the same cause, in `KernelHostLocator` (§12): a worker running from source builds `Litos.Kernel.Host` before its kernel starts; that build had files to copy (a Release build of the solution, run while testing the Gemini fixes, had refreshed `Litos.Kernel.Wire.dll`), a running kernel of another session held them locked, and the build then hung instead of failing. Recovered by stopping the stale kernel and the hung build and building the kernel host once; not fixed in code yet (§12).
 
-**The M1 task set, F2, F4 and R3 (2026-10-14): two pass, one fails on cost.** Run as m1-task-set.md says: on M1's provider and model (`openrouter`, `deepseek/deepseek-v4.1-flash`), from M1's baseline commits (each project's default branch pointed for the check at an `m3-check-base` branch on `07fb8b8` and `324ec0e`), the request text exactly as written, M1's budgets, at most one rework, judged on every acceptance criterion. Their PRs are not merged.
+**The M1 task set, F2, F4, R3 and F8 (2026-10-14): three pass at or under M1's cost, one fails on cost.** Run as m1-task-set.md says: on M1's provider and model (`openrouter`, `deepseek/deepseek-v4.1-flash`), from M1's baseline commits (each project's default branch pointed for the check at an `m3-check-base` branch on `07fb8b8` and `324ec0e`), the request text exactly as written, M1's budgets, at most one rework, judged on every acceptance criterion. Their PRs are not merged.
 
 | Task | Result | Tokens | M1 | Questions |
 |---|---|---|---|---|
 | F2 JSON Lines export and import | Accepted after one rework (criteria 2, 3 and 5 under-tested at first) | 430,086 | 575,884, accepted after one rework | 4: 1 fair, 3 unnecessary |
 | R3 Cancel a running generation | Accepted after one rework (the late-answer race untested; the rework found the code could let it through and fixed it) | 686,741 | 701,093, accepted after one rework | 2: 1 fair, 1 unnecessary |
 | F4 Read-only open mode | **Failed: paused for budget at 592,783 of 600,000**, during its full review. Raised to 700,000 to see the work out: 69 tests, the criteria met, but it had also carried F1's size limits over from `main` (about 245 of 636 lines, and the repair that tested them), so it was cancelled | 609,277 | 401,521, accepted after one rework | 2: 1 fair, 1 unnecessary |
+| F8 Secondary indexes | Accepted after one rework. The first handoff had no test that a lookup skips non-matching documents (criterion 4); the rework found `FindByIndex` still deserialized the whole collection and fixed it, and split a merged null/empty-string index value that made a lookup for "" disagree with `Find` (criterion 2). The first review found a blocking transaction bug, repaired | 533,605 | 577,612, accepted after one rework | 3: 2 fair, 1 whose recommendation would have failed criterion 2 |
 
 Found by these runs:
 
 - **The decision scan's recommendation can contradict the acceptance criteria**, which it does not see: for F2 it recommended refusing to import over existing keys (criterion 4 requires upsert), for F4 a new exception type where criterion 4 names `InvalidOperationException`. An answer taken from its recommendation would have failed the task.
+- **A review that does not finish still lets a handoff through.** F8's rework had a light review that ended with "DidNotFinish" and no findings, and the run handed off anyway; the first round's full review had finished and found a real bug.
 - **An agent can read newer code on other branches.** F4's working copy holds the whole repository, and the agent copied `main`'s size limits into a branch made from an older commit. It matters for re-runs from an old baseline; for ordinary tasks `main` is the base.
 - **F4's cost went to a repair for changed-line coverage** (77.9% against 80%): 23 calls and 209,890 tokens, its context near 70,000 tokens mostly of command output. About 19,000 more went to a second decision scan after the kernel defect above blocked its start.
 
-Still to run: F8, paused at the user's request.
+Against M1, then: F2 −25%, R3 −2%, F8 −8%, all accepted after one rework as in M1; F4 failed on budget (+52% at its cap) and went out of scope. Every question the four asked came from the decision scan, which M1's F2 and F4 ran without; 11 in all, about half of them unnecessary. Afterwards the projects' default branches were set back to `main`, and the `m3-check-base` branches deleted.
+
+With this the M3 check (§9) has been run in full.
 
 ## 10. Build order
 
