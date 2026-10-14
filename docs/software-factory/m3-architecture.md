@@ -261,6 +261,8 @@ Every handoff had tests passing and changed-line coverage measured (91.5–100%)
 
 **MCP Full and Deny (2026-10-14): passed.** `erpplus-db-mcp-server` (HTTP, three tools) was left at Full with `run_select_query` set to Deny; task P3 on `forms-api` (`gpt-6-luna`) was asked to call all three and build an example form from a real order table. The run's MCP status offered only `list_tables` and `get_table_schema`; the agent used both (finding `pohead` and `poitems` and their columns) and its call to `run_select_query` failed, which its handoff reported. Accepted at 131,798 tokens after a review repair. Two things to improve: a denied tool reaches the agent as a C# compile error ("the name … does not exist"), indistinguishable from a typo, where a message naming the policy would be clearer; and, as with `skill` and `search_code`, the agent guessed MCP argument shapes several times (`request` must be an object, `table_name` not `table`). The override was removed afterwards. While MCP was not running, earlier runs logged the refused connection and carried on without it.
 
+**A defect in starting a run's C# kernel (2026-10-14), found during the F2/F4/R3/F8 re-runs.** F4 was blocked three times with "The worker did not report its port within 30 seconds", and R3's review stalled for 12 minutes after one model call. Both had the same cause, in `KernelHostLocator` (§12): a worker running from source builds `Litos.Kernel.Host` before its kernel starts; that build had files to copy (a Release build of the solution, run while testing the Gemini fixes, had refreshed `Litos.Kernel.Wire.dll`), a running kernel of another session held them locked, and the build then hung instead of failing. Recovered by stopping the stale kernel and the hung build and building the kernel host once; not fixed in code yet (§12).
+
 Still to run: F2, F4, R3 and F8.
 
 ## 10. Build order
@@ -296,3 +298,24 @@ Raised by the user on 2026-10-14, during the M3 check, and folded for later. Not
 **Left out on purpose:** an explicit Archive action, and server-side filtering or paging, which become worth having at hundreds of threads, not tens.
 
 **Open when it is picked up:** whether the finished group shows the last 10 or a time window such as the last 7 days.
+
+## 12. Follow-up: starting a run's kernel without building
+
+Found on 2026-10-14 during the M3 check (§9.1); not fixed in M3 yet.
+
+**What happens.** A factory worker started from a build directory, not a published layout, finds no published `Litos.Kernel.Host` beside it, so `KernelHostLocator.Resolve()` (in `Litos.Kernel`) runs `dotnet build src/Litos.Kernel.Host -c Release` synchronously, then launches the result with `dotnet exec`. It does this whenever a kernel starts: once at worker start-up (the PTC probe in `Litos.Hosting`) and again for every session's kernel.
+
+**Two defects.**
+
+1. **A worker builds while it starts.** When the build has anything to copy and another run's kernel is running from `src/Litos.Kernel.Host/bin/Release`, the files are locked: MSBuild retries ten times a second apart and fails. Together with the build, that is longer than the host's 30 s for the worker to report its port, so the run is blocked with "The worker did not report its port within 30 seconds" (F4, three times). Any Release build of the solution while runs are live sets this up, because it refreshes the kernel's dependencies.
+2. **A failing build hangs instead of failing.** `BuildAndLocateDll` redirects the build's output but calls `WaitForExit()` before reading it. A failing build's locked-file warnings (about 8 KB) fill the pipe, so the build blocks writing and the worker blocks waiting: R3's review session waited 12 minutes on one kernel start, on files its own earlier kernel held.
+
+**To do.**
+
+- A factory worker must not build anything when it starts. Ship `Litos.Kernel.Host` beside the worker (a build step of the worker, or a path the host passes), or have the host build it once at its own start-up and tell each worker where it is.
+- `BuildAndLocateDll`, where a build is still needed (local development of other faces), reads stdout and stderr while it waits (or discards them), and has a timeout, so a failing build fails with its message.
+- A test that a failing build with a large output ends with an error rather than hanging.
+
+**Until then.** Don't run a Release build of the solution while factory runs are live. After one, build `src/Litos.Kernel.Host` in Release once while no kernel is running.
+
+**Also from the M3 check, smaller.** A tool denied by the MCP settings reaches the agent as a C# compile error ("the name … does not exist"), indistinguishable from a typo; a message naming the policy would be clearer. And agents repeatedly guess the argument shapes of the kernel's helpers (`skill("name", "tdd")`, `search_code("pattern", …)`, MCP tools' `request` object), costing calls in most runs: their descriptions should show a call.
