@@ -1,6 +1,6 @@
 import { Fragment, useEffect, type ReactNode } from 'react';
 import type { LifecycleState, Stage, Turn } from '../api/types';
-import { STAGES, taskLabel } from '../domain/task';
+import { finishedLabel, STAGES, taskLabel } from '../domain/task';
 
 /** The factory's mark: a carrier on a line. */
 export function Mark() {
@@ -17,6 +17,12 @@ export function Mark() {
 /** Whose turn it is, as a pill; a cancelled task's says Cancelled. */
 export function TurnPill({ turn, state }: { turn: Turn; state: LifecycleState }) {
   const label = taskLabel(turn, state);
+  return <span className={`pill ${label.cls}`}>{label.text}</span>;
+}
+
+/** How a finished task ended, as a pill: Accepted or Cancelled. */
+export function FinishedPill({ state }: { state: LifecycleState }) {
+  const label = finishedLabel(state);
   return <span className={`pill ${label.cls}`}>{label.text}</span>;
 }
 

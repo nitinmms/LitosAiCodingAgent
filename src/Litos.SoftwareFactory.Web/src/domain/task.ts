@@ -53,6 +53,50 @@ export const awaitsYou = (thread: Thread, userId: string): boolean => thread.tur
 /** Accepted and Cancelled: nothing more can happen to the task. */
 export const isClosed = (state: LifecycleState): boolean => state === 'Accepted' || state === 'Cancelled';
 
+/** The pill on a finished task in a list of finished work, where "Done" would say less than "Accepted". */
+export const finishedLabel = (state: LifecycleState): TurnLabel =>
+  state === 'Accepted' ? { text: 'Accepted', cls: 'done' } : { text: 'Cancelled', cls: 'neutral' };
+
+/** How many finished tasks a Closed column or a Finished group shows before "Show all" or a search. */
+export const FINISHED_SHOWN = 10;
+
+const newestFirst = (a: Thread, b: Thread) => b.updatedAt.localeCompare(a.updatedAt);
+
+/** Live work in the order it wants attention (m3-architecture.md §11): what awaits this user, then the latest activity. */
+export const liveOrder =
+  (userId: string) =>
+  (a: Thread, b: Thread): number =>
+    Number(awaitsYou(b, userId)) - Number(awaitsYou(a, userId)) || newestFirst(a, b);
+
+/** Finished work on the board's Closed column: accepted first, then cancelled, each newest first. */
+export const closedOrder = (threads: Thread[]): Thread[] => [
+  ...threads.filter((t) => t.state === 'Accepted').sort(newestFirst),
+  ...threads.filter((t) => t.state === 'Cancelled').sort(newestFirst),
+];
+
+export interface ThreadGroup {
+  projectId: string;
+  live: Thread[];
+  /** Newest first, every one: the list decides how many to show. */
+  finished: Thread[];
+}
+
+/** The Threads list for one project: live threads in `liveOrder`, then the finished ones, newest first. */
+export function threadGroup(projectId: string, threads: Thread[], userId: string): ThreadGroup {
+  const mine = threads.filter((t) => t.projectId === projectId);
+  return {
+    projectId,
+    live: mine.filter((t) => !isClosed(t.state)).sort(liveOrder(userId)),
+    finished: mine.filter((t) => isClosed(t.state)).sort(newestFirst),
+  };
+}
+
+/** The thread the Threads page opens when the address names none: the top of the list's order, across projects. */
+export function firstThread(threads: Thread[], userId: string): Thread | undefined {
+  const live = threads.filter((t) => !isClosed(t.state)).sort(liveOrder(userId));
+  return live[0] ?? threads.filter((t) => isClosed(t.state)).sort(newestFirst)[0];
+}
+
 /** The states the one "Resume" action applies to (FactoryApi.cs, POST .../resume). */
 export const canResume = (state: LifecycleState): boolean =>
   state === 'PausedUser' || state === 'PausedBudget' || state === 'Blocked' || state === 'Interrupted';

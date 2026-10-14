@@ -319,6 +319,8 @@ Raised by the user on 2026-10-14, during the M3 check, and folded for later. Not
 
 **Open when it is picked up:** whether the finished group shows the last 10 or a time window such as the last 7 days.
 
+**Built 2026-10-14**, as proposed, in the web app only (`BoardPage.tsx`, `ThreadsPage.tsx`, the ordering in `domain/task.ts`). Decided with the user: the finished group shows the last 10; the Closed column replaces the Done stage column, which only accepted tasks ever reach; "needs you" counts only the tasks the user owns (§7.1), and its count sets the Owner and Turn filters rather than a filter of its own; with no thread in the address, the Threads page opens the top of the new order; the search matches every title, finished ones past the 10 most recent included. Decided then, without asking: the Turn filter no longer offers Done; a finished thread named in the address opens its group and is listed even when older than the 10; the order uses `updatedAt` from the last load, so a live thread does not move while its events arrive.
+
 ## 12. Follow-up: starting a run's kernel without building
 
 Found on 2026-10-14 during the M3 check (§9.1); not fixed in M3 yet.

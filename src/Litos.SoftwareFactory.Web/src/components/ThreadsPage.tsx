@@ -4,8 +4,9 @@ import type { EventSourceFactory } from '../api/events';
 import type { CurrentUser, Project, Settings, Thread } from '../api/types';
 import { pinnedChoices } from '../domain/catalog';
 import { fmt } from '../domain/format';
+import { FINISHED_SHOWN, firstThread, threadGroup } from '../domain/task';
 import { useThread } from '../useThread';
-import { ErrorNote, TurnPill } from './bits';
+import { ErrorNote, FinishedPill, TurnPill } from './bits';
 import { Details } from './Details';
 import { ModelChooser } from './ModelChooser';
 import { ThreadMain } from './ThreadMain';
@@ -40,9 +41,29 @@ export function ThreadsPage({
 }) {
   const [creating, setCreating] = useState(false);
   const [listOpen, setListOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  /** Finished groups opened or closed by hand, by project id; any other follows the open thread. */
+  const [opened, setOpened] = useState<Record<string, boolean>>({});
   // Showing another thread under this one's address would invite acting on the wrong task.
   const missing = selectedId !== null && !threads.some((t) => t.id === selectedId);
-  const shownId = missing ? null : (selectedId ?? threads[0]?.id ?? null);
+  const shownId = missing ? null : (selectedId ?? firstThread(threads, user.id)?.id ?? null);
+  const select = (threadId: string) => {
+    onSelect(threadId);
+    setListOpen(false);
+  };
+  const item = (t: Thread, finished: boolean) => (
+    <button
+      key={t.id}
+      className={`list-item${finished ? ' finished' : ''}`}
+      aria-current={t.id === shownId ? 'true' : 'false'}
+      onClick={() => select(t.id)}
+    >
+      <span>{t.title}</span>
+      <span>{finished ? <FinishedPill state={t.state} /> : <TurnPill turn={t.turn} state={t.state} />}</span>
+    </button>
+  );
+  const needle = query.trim().toLowerCase();
+  const matching = needle ? threads.filter((t) => t.title.toLowerCase().includes(needle)) : threads;
   const view = useThread(api, shownId, openEvents, onThread);
 
   return (
@@ -57,31 +78,61 @@ export function ThreadsPage({
               {listOpen ? 'Hide threads' : 'Show threads'}
             </button>
           </div>
+          {threads.length > 0 ? (
+            <input
+              className="list-search"
+              type="search"
+              placeholder="Search titles"
+              aria-label="Search threads"
+              autoComplete="off"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          ) : null}
           {projects.map((project) => {
-            const mine = threads.filter((t) => t.projectId === project.id);
+            const { live, finished } = threadGroup(project.id, matching, user.id);
+            if (needle && live.length + finished.length === 0) return null;
+            if (!needle && live.length + finished.length === 0)
+              return (
+                <div className="list-proj" key={project.id}>
+                  <h3>{project.name}</h3>
+                  <p className="small muted list-empty">No threads yet.</p>
+                </div>
+              );
+            // A search opens every group it matches in; otherwise the open thread's group opens by itself.
+            const holdsShown = finished.some((t) => t.id === shownId);
+            const open = needle ? true : (opened[project.id] ?? holdsShown);
+            const toggle = () => setOpened({ ...opened, [project.id]: !open });
+            // Older finished threads are found by searching; the open one is listed wherever it falls.
+            const listed = needle ? finished : finished.filter((t, i) => i < FINISHED_SHOWN || t.id === shownId);
+            const older = needle ? 0 : Math.max(0, finished.length - FINISHED_SHOWN);
+            const disclosure = (text: string) => (
+              <button className="list-disclose" aria-expanded={open} onClick={toggle}>
+                {text}
+              </button>
+            );
             return (
               <div className="list-proj" key={project.id}>
-                <h3>{project.name}</h3>
-                {mine.map((t) => (
-                  <button
-                    key={t.id}
-                    className="list-item"
-                    aria-current={t.id === shownId ? 'true' : 'false'}
-                    onClick={() => {
-                      onSelect(t.id);
-                      setListOpen(false);
-                    }}
-                  >
-                    <span>{t.title}</span>
-                    <span>
-                      <TurnPill turn={t.turn} state={t.state} />
-                    </span>
-                  </button>
-                ))}
-                {mine.length === 0 ? <p className="small muted list-empty">No threads yet.</p> : null}
+                {live.length === 0 && !open ? (
+                  // Nothing live: one line, the project's finished count.
+                  disclosure(`${project.name} · ${finished.length} finished`)
+                ) : (
+                  <>
+                    <h3>{project.name}</h3>
+                    {live.map((t) => item(t, false))}
+                    {finished.length > 0 ? disclosure(`Finished (${finished.length})`) : null}
+                    {open && finished.length > 0 ? (
+                      <div className="list-finished">
+                        {listed.map((t) => item(t, true))}
+                        {older > 0 ? <p className="small muted list-empty">{older} older. Search to find them.</p> : null}
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </div>
             );
           })}
+          {needle && matching.length === 0 ? <p className="small muted list-empty">No thread title matches.</p> : null}
         </aside>
 
         {projects.length === 0 ? (

@@ -12,15 +12,20 @@ import {
   canResume,
   canWithdraw,
   chatWork,
+  closedOrder,
+  finishedLabel,
+  firstThread,
   isBareMention,
   isClosed,
   isPlainMessage,
+  liveOrder,
   newer,
   parseMention,
   parseSpec,
   pullRequestLabel,
   stateName,
   taskLabel,
+  threadGroup,
   turnLabel,
   withMention,
 } from './task';
@@ -312,5 +317,48 @@ describe('routes', () => {
       { view: 'invite', token: 'AbC-12_x' },
     ] as const)
       expect(parseRoute(routeHash(route))).toEqual(route);
+  });
+});
+
+describe('ordering the board and the threads list (m3-architecture.md §11)', () => {
+  const at = (day: number) => `2026-10-${String(day).padStart(2, '0')}T10:00:00Z`;
+  const ids = (threads: Thread[]) => threads.map((t) => t.id);
+  const me = 'u-me';
+  const live = [
+    thread({ id: 'old', state: 'Running', turn: 'AgentWorking', ownerId: me, updatedAt: at(1) }),
+    thread({ id: 'new', state: 'Queued', turn: 'AwaitingAgent', ownerId: me, updatedAt: at(5) }),
+    thread({ id: 'mine', state: 'Blocked', turn: 'AwaitingYou', ownerId: me, updatedAt: at(2) }),
+    thread({ id: 'bens', state: 'Blocked', turn: 'AwaitingYou', ownerId: 'u-ben', updatedAt: at(3) }),
+  ];
+  const done = [
+    thread({ id: 'cancelled-new', state: 'Cancelled', turn: 'Done', updatedAt: at(9) }),
+    thread({ id: 'accepted-old', state: 'Accepted', turn: 'Done', updatedAt: at(4) }),
+    thread({ id: 'accepted-new', state: 'Accepted', turn: 'Done', updatedAt: at(8) }),
+  ];
+
+  it('puts what awaits this user first, then the latest activity', () => {
+    expect(ids([...live].sort(liveOrder(me)))).toEqual(['mine', 'new', 'bens', 'old']);
+  });
+
+  it('closes with accepted work first, then cancelled, each newest first', () => {
+    expect(ids(closedOrder(done))).toEqual(['accepted-new', 'accepted-old', 'cancelled-new']);
+  });
+
+  it('splits a project into its live and finished threads', () => {
+    const other = thread({ id: 'elsewhere', projectId: 'p-other', state: 'Running' });
+    const group = threadGroup('p', [...live, ...done, other], me);
+    expect(ids(group.live)).toEqual(['mine', 'new', 'bens', 'old']);
+    expect(ids(group.finished)).toEqual(['cancelled-new', 'accepted-new', 'accepted-old']);
+  });
+
+  it('opens the top of the live order, or the newest finished thread when nothing is live', () => {
+    expect(firstThread([...done, ...live], me)?.id).toBe('mine');
+    expect(firstThread(done, me)?.id).toBe('cancelled-new');
+    expect(firstThread([], me)).toBeUndefined();
+  });
+
+  it('labels finished work by how it ended', () => {
+    expect(finishedLabel('Accepted')).toEqual({ text: 'Accepted', cls: 'done' });
+    expect(finishedLabel('Cancelled')).toEqual({ text: 'Cancelled', cls: 'neutral' });
   });
 });

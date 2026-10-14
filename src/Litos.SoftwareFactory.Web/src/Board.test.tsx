@@ -46,13 +46,11 @@ describe('the board', () => {
       'Verify',
       'Review',
       'Handoff',
-      'Done',
     ]);
     expect(column('Discuss').getByRole('button', { name: 'Speed up reads' })).toBeInTheDocument();
     expect(column('Implement').getByRole('button', { name: 'Fix the footer' })).toBeInTheDocument();
     expect(column('Implement').getByRole('button', { name: 'Compact the file' })).toBeInTheDocument();
     expect(column('Handoff').getByRole('button', { name: 'Add CSV export' })).toBeInTheDocument();
-    expect(column('Done').queryAllByRole('button')).toHaveLength(0);
   });
 
   it('shows on each card whose move it is, its type, project, owner, budget, pull request and what it waits for', async () => {
@@ -76,19 +74,79 @@ describe('the board', () => {
     expect(within(screen.getByRole('button', { name: 'Speed up reads' })).getByText('Not started')).toBeInTheDocument();
   });
 
-  /** Found on the M2 check: a task cancelled mid-way stays in its stage's column, and its green
-   * "Done" read as finished work. */
-  it('says Cancelled on a cancelled task, and Done only on accepted work', async () => {
+  /** Found on the M3 check (m3-architecture.md §11): cancelled tasks sat in the stage they stopped
+   * at, so the in-progress columns were mostly dead work. */
+  it('shows live tasks only, until finished ones are asked for', async () => {
     const host = new FakeHost();
     const project = host.addProject();
+    host.addThread(project, { title: 'In progress', state: 'Running', stage: 'Implement' });
     host.addThread(project, { title: 'Abandoned attempt', state: 'Cancelled', stage: 'Implement', turn: 'Done' });
     host.addThread(project, { title: 'Shipped', state: 'Accepted', stage: 'Done', turn: 'Done' });
+    const user = start(host);
+
+    await screen.findByRole('button', { name: 'In progress' });
+    expect(column('Implement').getByRole('button', { name: 'In progress' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Abandoned attempt' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('listitem', { name: 'Closed' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Show finished (2)'));
+
+    expect(column('Implement').queryByRole('button', { name: 'Abandoned attempt' })).not.toBeInTheDocument();
+    const closed = column('Closed');
+    expect(closed.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Shipped', 'Abandoned attempt']);
+    const cancelled = within(closed.getByRole('button', { name: 'Abandoned attempt' }));
+    expect(cancelled.getByText('Cancelled')).toHaveClass('pill', 'neutral');
+    expect(cancelled.getByText('Stopped in Implement')).toBeInTheDocument();
+    expect(within(closed.getByRole('button', { name: 'Shipped' })).getByText('Accepted')).toHaveClass('pill', 'done');
+  });
+
+  it('orders the Closed column accepted first, newest first, and shows the last 10 until asked for all', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const at = (day: number) => `2026-10-${String(day).padStart(2, '0')}T10:00:00Z`;
+    for (let day = 1; day <= 11; day++) host.addThread(project, { title: `Accepted ${day}`, state: 'Accepted', stage: 'Done', turn: 'Done', updatedAt: at(day) });
+    host.addThread(project, { title: 'Cancelled late', state: 'Cancelled', stage: 'Review', turn: 'Done', updatedAt: at(20) });
+    const user = start(host);
+
+    await user.click(await screen.findByLabelText('Show finished (12)'));
+    const titles = () => column('Closed').getAllByRole('button').filter((b) => b.classList.contains('card')).map((b) => b.getAttribute('aria-label'));
+    expect(titles()).toEqual(['Accepted 11', 'Accepted 10', 'Accepted 9', 'Accepted 8', 'Accepted 7', 'Accepted 6', 'Accepted 5', 'Accepted 4', 'Accepted 3', 'Accepted 2']);
+
+    await user.click(column('Closed').getByRole('button', { name: 'Show all 12' }));
+    expect(titles()).toHaveLength(12);
+    expect(titles().at(-1)).toBe('Cancelled late');
+  });
+
+  it('counts the live work in a strip, and each count filters to it', async () => {
+    const { host } = scene();
+    host.addThread(host.addProject({ name: 'Third' }), { title: 'Being built', state: 'Running', stage: 'Implement' });
+    const user = start(host);
+    const strip = within(await screen.findByRole('group', { name: 'Live tasks' }));
+    const cards = () => screen.getAllByRole('button').filter((b) => b.classList.contains('card')).map((b) => b.getAttribute('aria-label'));
+
+    // Ben's decision waits on a person, but not on this user (§7.1).
+    expect(strip.getAllByRole('button').map((b) => b.textContent)).toEqual(['1 needs you', '1 working', '1 queued', '1 not started']);
+
+    await user.click(strip.getByRole('button', { name: '1 needs you' }));
+    expect(cards()).toEqual(['Add CSV export']);
+    expect(screen.getByLabelText('Owner')).toHaveValue(host.user.id);
+    expect(screen.getByLabelText('Turn')).toHaveValue('AwaitingYou');
+    expect(strip.getByRole('button', { name: '1 needs you' })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(strip.getByRole('button', { name: '1 working' }));
+    expect(cards()).toEqual(['Being built']);
+    expect(screen.getByLabelText('Owner')).toHaveValue('');
+
+    await user.click(strip.getByRole('button', { name: '1 working' }));
+    expect(cards()).toHaveLength(5);
+  });
+
+  it('says so when nothing is live', async () => {
+    const host = new FakeHost();
+    host.addThread(host.addProject(), { title: 'Shipped', state: 'Accepted', stage: 'Done', turn: 'Done' });
     start(host);
 
-    const cancelled = within(await screen.findByRole('button', { name: 'Abandoned attempt' }));
-    expect(cancelled.getByText('Cancelled')).toHaveClass('pill', 'neutral');
-    expect(cancelled.queryByText('Done')).not.toBeInTheDocument();
-    expect(within(screen.getByRole('button', { name: 'Shipped' })).getByText('Done')).toHaveClass('pill', 'done');
+    expect(await within(await screen.findByRole('group', { name: 'Live tasks' })).findByText('Nothing live')).toBeInTheDocument();
   });
 
   /** §7.1: "Awaiting you" is personal. Ben's decision is not the Admin's to count. */

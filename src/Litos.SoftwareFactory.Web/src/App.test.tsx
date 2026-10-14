@@ -1148,3 +1148,103 @@ describe('loading problems', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('The database is not reachable.');
   });
 });
+
+/** m3-architecture.md §11: with tens of threads, live work first and finished work folded away. */
+describe('the threads list', () => {
+  const at = (day: number) => `2026-10-${String(day).padStart(2, '0')}T10:00:00Z`;
+  const list = () => within(screen.getByRole('complementary', { name: 'Threads' }));
+  const titles = () =>
+    list()
+      .getAllByRole('button')
+      .filter((b) => b.classList.contains('list-item'))
+      .map((b) => b.firstElementChild!.textContent);
+
+  it('lists live threads first, those awaiting you on top, then by latest activity', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const ben = host.addPerson({ projectIds: [project.id] });
+    host.addThread(project, { title: 'Older work', state: 'Running', stage: 'Implement', updatedAt: at(2) });
+    host.addThread(project, { title: 'Newer work', state: 'Running', stage: 'Implement', updatedAt: at(5) });
+    host.addThread(project, { title: 'Needs testing', state: 'AwaitingHumanTesting', stage: 'Handoff', updatedAt: at(1) });
+    host.addThread(project, { title: "Ben's decision", state: 'AwaitingDecision', stage: 'Implement', ownerId: ben.id, updatedAt: at(3) });
+    host.addThread(project, { title: 'Shipped', state: 'Accepted', stage: 'Done', updatedAt: at(9) });
+    start(host);
+
+    // With no thread in the address, the top of the list opens.
+    expect(await screen.findByRole('heading', { level: 1, name: 'Needs testing' })).toBeInTheDocument();
+    expect(titles()).toEqual(['Needs testing', 'Newer work', "Ben's decision", 'Older work']);
+    expect(list().getByRole('button', { name: 'Finished (1)' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('folds finished threads into a group showing the 10 most recent, with Accepted or Cancelled', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.addThread(project, { title: 'Live', state: 'Running', stage: 'Implement' });
+    for (let day = 1; day <= 11; day++) host.addThread(project, { title: `Done ${day}`, state: 'Accepted', stage: 'Done', updatedAt: at(day) });
+    host.addThread(project, { title: 'Dropped', state: 'Cancelled', stage: 'Implement', updatedAt: at(20) });
+    const user = start(host);
+    await screen.findByRole('heading', { level: 1, name: 'Live' });
+
+    await user.click(list().getByRole('button', { name: 'Finished (12)' }));
+
+    expect(titles()).toEqual(['Live', 'Dropped', 'Done 11', 'Done 10', 'Done 9', 'Done 8', 'Done 7', 'Done 6', 'Done 5', 'Done 4', 'Done 3']);
+    expect(within(list().getByRole('button', { name: /Dropped/ })).getByText('Cancelled')).toHaveClass('pill', 'neutral');
+    expect(within(list().getByRole('button', { name: /Done 11/ })).getByText('Accepted')).toHaveClass('pill', 'done');
+    expect(list().getByText('2 older. Search to find them.')).toBeInTheDocument();
+
+    await user.click(list().getByRole('button', { name: 'Finished (12)' }));
+    expect(titles()).toEqual(['Live']);
+  });
+
+  it('collapses a project with nothing live to one line, and opens it on a click', async () => {
+    const host = new FakeHost();
+    const busy = host.addProject({ name: 'Busy' });
+    const quiet = host.addProject({ name: 'Quiet', gitHub: 'harbor-tools/quiet' });
+    host.addThread(busy, { title: 'Live', state: 'Running', stage: 'Implement' });
+    host.addThread(quiet, { title: 'Old one', state: 'Accepted', stage: 'Done' });
+    host.addThread(quiet, { title: 'Older one', state: 'Cancelled', stage: 'Spec' });
+    const user = start(host);
+    await screen.findByRole('heading', { level: 1, name: 'Live' });
+
+    expect(list().queryByRole('heading', { name: 'Quiet' })).not.toBeInTheDocument();
+    await user.click(list().getByRole('button', { name: 'Quiet · 2 finished' }));
+
+    expect(list().getByRole('heading', { name: 'Quiet' })).toBeInTheDocument();
+    expect(titles()).toEqual(['Live', 'Old one', 'Older one']);
+  });
+
+  it('opens the group of a finished thread named in the address, even past the 10 most recent', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.addThread(project, { title: 'Live', state: 'Running', stage: 'Implement' });
+    const oldest = host.addThread(project, { title: 'The oldest', state: 'Accepted', stage: 'Done', updatedAt: at(1) });
+    for (let day = 2; day <= 12; day++) host.addThread(project, { title: `Done ${day}`, state: 'Accepted', stage: 'Done', updatedAt: at(day) });
+    window.location.hash = `#/threads/${oldest.id}`;
+    start(host);
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'The oldest' })).toBeInTheDocument();
+    expect(list().getByRole('button', { name: 'Finished (12)' })).toHaveAttribute('aria-expanded', 'true');
+    expect(list().getByRole('button', { name: /The oldest/ })).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('searches every title, finished ones past the 10 most recent included, and hides projects with no match', async () => {
+    const host = new FakeHost();
+    const sales = host.addProject({ name: 'SalesApp' });
+    const db = host.addProject({ name: 'filedb-sharp', gitHub: 'harbor-tools/filedb-sharp' });
+    host.addThread(sales, { title: 'Add CSV export', state: 'Running', stage: 'Implement' });
+    host.addThread(sales, { title: 'Export customers', state: 'Accepted', stage: 'Done', updatedAt: at(1) });
+    for (let day = 2; day <= 12; day++) host.addThread(sales, { title: `Done ${day}`, state: 'Accepted', stage: 'Done', updatedAt: at(day) });
+    host.addThread(db, { title: 'Compact the file', state: 'Running', stage: 'Implement' });
+    const user = start(host);
+    await screen.findByRole('heading', { level: 1 });
+
+    await user.type(list().getByRole('searchbox', { name: 'Search threads' }), 'EXPORT');
+
+    expect(titles()).toEqual(['Add CSV export', 'Export customers']);
+    expect(list().queryByRole('heading', { name: 'filedb-sharp' })).not.toBeInTheDocument();
+
+    await user.clear(list().getByRole('searchbox', { name: 'Search threads' }));
+    await user.type(list().getByRole('searchbox', { name: 'Search threads' }), 'nothing like it');
+    expect(list().getByText('No thread title matches.')).toBeInTheDocument();
+  });
+});
