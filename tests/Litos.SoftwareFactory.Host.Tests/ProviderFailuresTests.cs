@@ -40,6 +40,7 @@ public class ProviderFailuresTests
         new SdkException(529), // Anthropic: overloaded
         new SdkStatusCodeException(HttpStatusCode.GatewayTimeout),
         new ClientResultException("The response ended early.", null, new IOException("The connection was reset.")),
+        new ChatProviderEmptyResponseException("Gemini returned no content (finish reason MALFORMED_FUNCTION_CALL).", transient: true),
     ];
 
     [Theory]
@@ -56,6 +57,9 @@ public class ProviderFailuresTests
         new InvalidOperationException("The model does not exist."),
         new NotSupportedException("Unsupported content block."),
         new SdkException(400, new IOException("not the cause")), // the provider answered: the status decides
+        new ChatProviderEmptyResponseException("Gemini returned no content (finish reason SAFETY).", transient: false),
+        // The provider answered and said why: its own judgement decides, not anything wrapped inside.
+        new InvalidOperationException("Wrapped.", new ChatProviderEmptyResponseException("blocked", transient: false)),
     ];
 
     [Theory]

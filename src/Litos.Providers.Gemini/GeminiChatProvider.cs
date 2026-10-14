@@ -46,11 +46,14 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
         var toolCalls = new List<(string CallId, string Name, JsonElement Args)>();
         var usage = new UsageInfo(0, 0);
         var callCounter = 0;
+        Candidate? lastCandidate = null;
 
         await foreach (var chunk in model.StreamContentAsync(contentRequest, ct))
         {
             if (chunk.UsageMetadata is not null)
                 usage = ToUsage(chunk.UsageMetadata);
+            if (chunk.Candidates is { Length: > 0 } candidates)
+                lastCandidate = candidates[^1];
 
             if (!string.IsNullOrEmpty(chunk.Text))
             {
@@ -72,6 +75,9 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
             }
         }
 
+        if (textBuilder.Length == 0 && toolCalls.Count == 0 && EmptyResponseFailure(lastCandidate) is { } failure)
+            throw failure;
+
         foreach (var call in toolCalls)
             yield return new ToolCallCompleted(call.CallId, call.Name, call.Args);
 
@@ -82,6 +88,27 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
             contentBlocks.Add(new LM.ToolUseBlock(call.CallId, call.Name, call.Args));
 
         yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), usage);
+    }
+
+    /// <summary>
+    /// Why an answer with no text and no function call is a failure, or null when it is not one.
+    /// Gemini reports the reason as the candidate's finishReason, apart from the content, so an
+    /// empty answer would otherwise pass for a reply that chose to say nothing. MAX_TOKENS is left
+    /// to the caller, which knows its own output limit and reports the cut-off itself. A malformed
+    /// function call or an answer with no reason (as when the model is overloaded) is worth sending
+    /// again; a block for safety, recitation and the like is not.
+    /// </summary>
+    internal static ChatProviderEmptyResponseException? EmptyResponseFailure(Candidate? candidate)
+    {
+        var reason = candidate?.FinishReason;
+        if (reason == FinishReason.MAX_TOKENS)
+            return null;
+
+        var transient = reason is null or FinishReason.STOP or FinishReason.OTHER
+            or FinishReason.FINISH_REASON_UNSPECIFIED or FinishReason.MALFORMED_FUNCTION_CALL;
+        var detail = candidate?.FinishMessage is { Length: > 0 } finishMessage ? $": {finishMessage}" : "";
+        return new ChatProviderEmptyResponseException(
+            $"Gemini returned no content (finish reason {reason?.ToString() ?? "none"}{detail}).", transient);
     }
 
     /// <summary>

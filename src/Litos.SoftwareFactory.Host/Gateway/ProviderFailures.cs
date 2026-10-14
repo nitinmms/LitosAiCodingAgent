@@ -21,13 +21,16 @@ public static class ProviderFailures
 
     /// <summary>
     /// The connection failed, or the provider was briefly unable to answer (408, 500, 502, 503,
-    /// 504, or Anthropic's 529 "overloaded"): worth sending again. A request the provider rejected
-    /// (400, 401, 404 and the like) is not.
+    /// 504, or Anthropic's 529 "overloaded"), or it answered with nothing for a reason it says is
+    /// worth retrying (ChatProviderEmptyResponseException.Transient): worth sending again. A request
+    /// the provider rejected (400, 401, 404 and the like) is not.
     /// </summary>
     public static bool IsTransient(Exception exception)
     {
         foreach (var e in Chain(exception))
         {
+            if (e is ChatProviderEmptyResponseException empty)
+                return empty.Transient;
             if (e is IOException or TimeoutException or SocketException)
                 return true;
             if (StatusOf(e) is { } status)

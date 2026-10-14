@@ -307,6 +307,74 @@ public class GeminiChatProviderTests
         Assert.Equal((1_500, 1_200), (usage.OutputTokens, usage.ReasoningTokens));
     }
 
+    // ---- An answer with no content (finishReason) ----
+
+    [Theory]
+    [InlineData("MALFORMED_FUNCTION_CALL", true)]
+    [InlineData("STOP", true)]
+    [InlineData("OTHER", true)]
+    [InlineData("SAFETY", false)]
+    [InlineData("RECITATION", false)]
+    [InlineData("PROHIBITED_CONTENT", false)]
+    public async Task StreamAsync_AnswerWithNoContent_ThrowsNamingTheFinishReason(string reason, bool transient)
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse($$$"""
+            [{"candidates":[{"finishReason":"{{{reason}}}","finishMessage":"Malformed function call: run_kernel_code"}],
+              "usageMetadata":{"promptTokenCount":5948,"candidatesTokenCount":0}}]
+            """));
+
+        var failure = await Assert.ThrowsAsync<ChatProviderEmptyResponseException>(
+            () => DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "model"), CancellationToken.None)));
+
+        Assert.Equal(transient, failure.Transient);
+        Assert.Contains($"finish reason {reason}", failure.Message);
+        Assert.Contains("Malformed function call: run_kernel_code", failure.Message);
+    }
+
+    [Fact]
+    public async Task StreamAsync_AnswerWithNoContentAndNoReason_IsATransientFailure()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""[{"candidates":[{"content":{"parts":[]}}]}]"""));
+
+        var failure = await Assert.ThrowsAsync<ChatProviderEmptyResponseException>(
+            () => DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "model"), CancellationToken.None)));
+
+        Assert.True(failure.Transient);
+        Assert.Contains("finish reason none", failure.Message);
+    }
+
+    /// <summary>A cut-off at the output limit is the caller's to report: it knows the limit it set.</summary>
+    [Fact]
+    public async Task StreamAsync_AnswerWithNoContentAtTheOutputLimit_CompletesEmpty()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            [{"candidates":[{"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":100,"thoughtsTokenCount":4096}}]
+            """));
+
+        var events = await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "model", MaxOutputTokens: 4_096), CancellationToken.None));
+
+        var completed = Assert.Single(events.OfType<MessageCompleted>());
+        Assert.Empty(completed.Message.Content);
+        Assert.Equal(4_096, completed.Usage.OutputTokens);
+    }
+
+    [Fact]
+    public async Task StreamAsync_FunctionCallWithAFinishReason_IsAnOrdinaryAnswer()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            [{"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_file","args":{"path":"a.go"}}}]},"finishReason":"STOP"}]}]
+            """));
+
+        var events = await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "model"), CancellationToken.None));
+
+        Assert.Single(events.OfType<ToolCallCompleted>());
+        Assert.Single(events.OfType<MessageCompleted>());
+    }
+
     [Fact]
     public async Task StreamAsync_UsageOverSeveralChunks_KeepsTheLastReport()
     {
