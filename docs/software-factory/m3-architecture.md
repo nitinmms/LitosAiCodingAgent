@@ -223,6 +223,31 @@ Manual, with real providers:
 - a task on a Python, a Java and a Go sample repository each reaches a handoff with tests and coverage measured;
 - **the M1 task set does not regress:** four tasks spanning both repositories and sizes, F2, F4, R3 and F8, each against its M1 result, rather than all twelve, which cost several million tokens. M2's check 5 cost regression is reported alongside, not fixed here.
 
+### 9.1 Results
+
+**Python, Java and Go presets, on OpenAI (2026-10-14): passed.** Three private sample repositories in one domain, dynamic digital forms: `nitinmms/forms-api` (Python, FastAPI; storage behind an interface with a Postgres adapter), `forms-rules` (Java, Maven; submission validation) and `forms-export` (Go; CSV and JSON Lines export). Each seed passed its preset's exact commands before registration, and each baseline was measured at registration (16, 14 and 8 tests). Five tasks ran on `openai` / `gpt-6-luna`, every brief naming the library skills it should use (`tdd`, `fix-root-causes`, `prove-it-works`); all were accepted and merged.
+
+| Task | Repository | Result | Tokens | Questions |
+|---|---|---|---|---|
+| P1 master-detail forms | forms-api | accepted after one change request (negative `minRows` accepted) | 95,251 | 1 |
+| G1 master-detail export | forms-export | accepted | 113,974 | 2 |
+| J1 detail-row validation and `sumMustEqual` | forms-rules | accepted as handed off; one minor finding left open | 166,809 | 3 |
+| J2 validator crashes on NaN (bug seeded on purpose) | forms-rules | first run cancelled at 33,084: it started from `main` before J1 merged; re-run accepted | 48,868 | 0 |
+| P2 AI form generator (Anthropic Messages API) | forms-api | accepted after one change request from a live test | 194,391 | 3 |
+
+Every handoff had tests passing and changed-line coverage measured (91.5–100%). Found along the way:
+
+- **Skills are loaded and followed.** Every run loaded the skills its brief named; the transcripts show tests written and seen failing before the code. The J2 re-run is the clearest case: J1 had added two more `new BigDecimal(number.toString())` conversions, and the run found all three and replaced them with one helper rather than guarding the one in the report; the first run, on the older code, had guarded the one site there was. P2's repair turn loaded `fix-root-causes` unprompted.
+- **The kernel's `skill` call is a trap.** `skill("tdd")` fails with "A 'name' argument is required"; it must be `skill("name", "tdd")`. Most runs failed once or twice before finding the form.
+- **The library's `tdd` skill covers bug fixes only** (its text is "TDD bug fix"); feature runs applied it anyway.
+- **Over-asking persists** (M1 open item). Nine questions across five tasks; in each, the agent's own recommended option was the one chosen. About half were gaps in the briefs, half edge details with an obvious default.
+- **Out-of-scope reformatting.** J1 collapsed untouched methods into one-liners and fully qualified `java.util` types, against the run brief's "do not reformat".
+- **Partial follow-through on a change request.** P2's rework did two of the four instruction changes asked for; the result still passed the live test (three generated forms, all valid on the first attempt with `claude-haiku-5-5`, where one of three had failed before).
+- **Tasks on one repository start from the same `main`.** J2 waited for J1's lease, but started from the commit before J1, because J1 was not yet merged; its PR conflicted. Dispatch dependent work after the merge.
+- **Accept does not merge.** The factory reads the PR's state; merging is a separate step on GitHub.
+
+Still to run: Gemini with the cap enforced, a setting changed with no restart, MCP Full/Deny (the configured MCP server was not running, and runs carried on without it), an unapproved repository skill, and F2, F4, R3 and F8.
+
 ## 10. Build order
 
 Each step ends green (all test projects and the web tests) and is committed separately.
