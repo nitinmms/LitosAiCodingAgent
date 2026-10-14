@@ -259,7 +259,9 @@ Every handoff had tests passing and changed-line coverage measured (91.5–100%)
   - Step 3 had been tried on Gemini 2.5 only, which tolerates all three.
 - After the fixes G2 was accepted and merged: 155,674 of 300,000 tokens, never over the cap and nothing left reserved; 12 tests, 100% changed-line coverage, review not needed (7 lines). It loaded no skill, although the brief named two (every OpenAI run did), and cost three times the OpenAI bug fix (J2, 48,868).
 
-Still to run: MCP Full/Deny (the configured MCP server was not running, and runs carried on without it), and F2, F4, R3 and F8.
+**MCP Full and Deny (2026-10-14): passed.** `erpplus-db-mcp-server` (HTTP, three tools) was left at Full with `run_select_query` set to Deny; task P3 on `forms-api` (`gpt-6-luna`) was asked to call all three and build an example form from a real order table. The run's MCP status offered only `list_tables` and `get_table_schema`; the agent used both (finding `pohead` and `poitems` and their columns) and its call to `run_select_query` failed, which its handoff reported. Accepted at 131,798 tokens after a review repair. Two things to improve: a denied tool reaches the agent as a C# compile error ("the name … does not exist"), indistinguishable from a typo, where a message naming the policy would be clearer; and, as with `skill` and `search_code`, the agent guessed MCP argument shapes several times (`request` must be an object, `table_name` not `table`). The override was removed afterwards. While MCP was not running, earlier runs logged the refused connection and carried on without it.
+
+Still to run: F2, F4, R3 and F8.
 
 ## 10. Build order
 
