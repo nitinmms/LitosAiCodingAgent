@@ -307,6 +307,29 @@ public class GeminiChatProviderTests
         Assert.Equal((1_500, 1_200), (usage.OutputTokens, usage.ReasoningTokens));
     }
 
+    /// <summary>Gemini 3 refuses a function response named after anything but the function it answers.</summary>
+    [Fact]
+    public async Task StreamAsync_ToolResult_IsNamedAfterTheToolItsCallInvoked()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalTextResponse));
+        var args = JsonDocument.Parse("""{"code":"1"}""").RootElement;
+        var request = new ChatRequest(
+            [
+                ChatMessage.User("hi"),
+                ChatMessage.Assistant([new ToolUseBlock("call_1", "run_kernel_code", args)]),
+                ChatMessage.ToolResult("call_1", ToolResult.Ok("done")),
+            ],
+            [], "model");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        var response = json.RootElement.GetProperty("contents")[2].GetProperty("parts")[0].GetProperty("functionResponse");
+        Assert.Equal("run_kernel_code", response.GetProperty("name").GetString());
+        Assert.Equal("call_1", response.GetProperty("id").GetString());
+    }
+
     // ---- Thought signatures (Gemini 3 refuses a replayed call without its own) ----
 
     [Fact]

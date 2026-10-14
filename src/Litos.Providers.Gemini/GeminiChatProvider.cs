@@ -41,9 +41,10 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
         // IFunctionTool implementations and would throw "invalid function" for every call.
         model.FunctionCallingBehaviour = new FunctionCallingBehaviour { AutoCallFunction = false, AutoReplyFunction = false };
 
+        var toolNames = ToolNamesByCallId(request.Messages);
         var contentRequest = new GenerateContentRequest
         {
-            Contents = [.. request.Messages.Select(ToGeminiContent)],
+            Contents = [.. request.Messages.Select(m => ToGeminiContent(m, toolNames))],
             Tools = request.Tools.Count == 0 ? null : [ToGeminiTool(request.Tools)],
             GenerationConfig = ToGenerationConfig(request),
         };
@@ -145,7 +146,20 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
 
     private static int Count(int? tokens) => tokens ?? 0;
 
-    private static Content ToGeminiContent(LM.ChatMessage message)
+    /// <summary>
+    /// The tool each call in the conversation invoked. Gemini names a function response after the
+    /// function, not the call, and Gemini 3 refuses a response whose name matches no function
+    /// (400 "Request contains an invalid argument"); a result carries only its call's id.
+    /// </summary>
+    private static Dictionary<string, string> ToolNamesByCallId(IEnumerable<LM.ChatMessage> messages)
+    {
+        var names = new Dictionary<string, string>();
+        foreach (var call in messages.SelectMany(m => m.Content).OfType<LM.ToolUseBlock>())
+            names[call.CallId] = call.ToolName;
+        return names;
+    }
+
+    private static Content ToGeminiContent(LM.ChatMessage message, IReadOnlyDictionary<string, string> toolNames)
     {
         var parts = new List<Part>();
         foreach (var block in message.Content)
@@ -172,7 +186,8 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
                 case LM.ToolResultBlock r:
                     parts.Add(new Part
                     {
-                        FunctionResponse = new FunctionResponse(r.CallId)
+                        // The call's id stands in only if the call itself is no longer in the conversation.
+                        FunctionResponse = new FunctionResponse(toolNames.GetValueOrDefault(r.CallId, r.CallId))
                         {
                             Id = r.CallId,
                             Response = JsonNode.Parse(JsonSerializer.Serialize(new { result = r.Text, isError = r.IsError })),
