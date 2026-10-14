@@ -277,3 +277,22 @@ Each step ends green (all test projects and the web tests) and is committed sepa
 6. **Skills** (§7.3). **Done 2026-10-13:** `b4f9d9e` (the engine scans one skills folder), `301c489` (backend incl. migration `M3RepositorySkills`), `6234518` (Skills tab; skills in the run details): the Skills tab and section, the library written per revision, repository skills found, recorded and approved per folder hash, and skills in every worker (§7.3, as built). Decided then, without asking: the `skill` tool joins every turn of a run that has skills, read-only turns included; a repository skill replaces a library skill of the same name; an approval is of every file in the skill's folder, not only its SKILL.md.
 7. **Verification presets** (§8). Split into 7a and 7b on 2026-10-13. **7a, done 2026-10-13:** the Presets tab and section, `PATCH /api/projects/{id}`, the PATH check at registration, the baseline measured at once, and the wider allowlist (§8, as built). Decided then, without asking: a missing program refuses registration rather than warning; the baseline runs on the reading copy, not the task copy; presets are edited as JSON text. **7b, done 2026-10-13:** the Python, Java (Maven) and Go presets, with prepare commands, printed reports, the `{venv}` variables, the `goTest`, `jacoco` and `goCover` formats, and `.factory/` excluded in every working copy (§8, as built). Decided then, without asking: reports go to `.factory/` rather than relying on a repository's `.gitignore`; JaCoCo is named on Maven's command line rather than required in the pom; Gradle is left for an Admin's own preset.
 8. **M3 check** (§9).
+
+## 11. Deferred: organising the Board and Threads lists
+
+Raised by the user on 2026-10-14, during the M3 check, and folded for later. Not built in M3.
+
+**The problem.** With 41 threads, of which 5 were live (24 accepted, 12 cancelled), both screens had become hard to use:
+
+- The Threads sidebar lists every thread under its project, finished or not, with no ordering by state.
+- The Board keeps a cancelled task in the column of the stage it stopped at, so 7 cancelled cards sat in Implement, 3 in Handoff and 2 in Review: the in-progress columns were mostly dead work.
+
+**Proposed.**
+
+- **Board:** live tasks only by default (not Accepted, not Cancelled), with a toggle "Show finished (n)". Finished tasks shown leave the stage columns for one **Closed** column at the end: accepted first, then cancelled, newest first, the last 10 with "Show all". A strip above the board counts what matters ("1 needs you · 2 working · 1 queued"), each count a filter.
+- **Threads sidebar:** per project, live threads first, those awaiting the user at the top, then by latest activity. Below them a collapsed **Finished (n)** group per project, the 10 most recent with an Accepted or Cancelled pill. A project with nothing live collapses to one line with its finished count. A search box above the list filters by title.
+- **Scope:** the web app only (`BoardPage.tsx`, `ThreadsPage.tsx` and their tests); everything is derived from each thread's state, so no migration and no new API.
+
+**Left out on purpose:** an explicit Archive action, and server-side filtering or paging, which become worth having at hundreds of threads, not tens.
+
+**Open when it is picked up:** whether the finished group shows the last 10 or a time window such as the last 7 days.
