@@ -359,3 +359,36 @@ Found by the M3 check (§9.1): skills in the library are used only when a task's
 **Also.** Widen `tdd`, whose text covers bug fixes only, to new behaviour. Measure the effect with an A/B run: the same task twice on one model, once with the phases set and once without, comparing tests written first, the fix's scope and tokens.
 
 **Open when it is picked up:** whether a thread may turn applied skills off for itself (as PTC can be, §6), and whether "before submitting" runs as part of the submit turn or as a separate check.
+
+## 14. Proposed: files and images as task input
+
+Asked for by the user on 2026-10-14. Researched and recorded only; nothing is built.
+
+**Today.** A task takes text only. A message is `PostMessageRequest(MessageId, Text)` (`FactoryApi.cs`); the factory has no upload, storage or attachment UI. Every brief reaches the worker as one string (`RunExecutor` calls `client.RunTurnAsync(sessionId, kind, brief, …)`), and the worker's `/sessions/{id}/turns` uses `Litos.Hosting`'s default request reader, which turns the input into one `TextBlock`. "Attach" and "files" were left in VsCodeHost in M1 (m1-architecture.md, "What stays in VsCodeHost"). Committing a file to the repository and naming its path works for text, but not for an image: a tool result is text only (`ToolResultBlock(CallId, Text)`), so an agent that reads a PNG from disk never sees it.
+
+**What already exists to build on.**
+
+- **The engine carries images.** `ImageBlock(MediaType, Data)` is a content block, compaction estimates it (`EstimatedImageChars`), and Api, Gui, Console, Telegram and VsCodeHost all send images this way.
+- **Documents convert to Markdown.** `Litos.Tools.Attachments` (`IAttachmentConverter`, MarkItDown) handles PDF, Word, PowerPoint, Excel, EPUB and mail, and passes plain text through. `PlainTextMedia` refuses unknown binaries, `ImageMedia` recognises images by extension, and `UntrustedContent.Wrap` fences converted content as untrusted. `AttachmentContentBuilder` (Api) and `AttachEndpoints` (VsCodeHost) are two working callers, both with a 20 MB cap.
+- **The worker's turn reader is pluggable.** `Litos.Hosting`'s turns endpoint takes a `readTurnRequest`; VsCodeHost passes its own so a turn's content can be `[TextBlock, …attachments]`. The factory worker can do the same.
+- **`.factory/` is already outside every commit.** Every working copy lists `/.factory/` in `.git/info/exclude` (§8), so files placed there never reach a diff.
+
+**Proposed.**
+
+1. **Stored per thread, by the host.** A new `thread_attachments` table: id, thread, project, the message it came with, file name, media type, size, SHA-256, uploader and time. The bytes go to `<data>/attachments/<threadId>/<id>`, not the database and not `wwwroot`. Uploading is `POST /api/threads/{id}/attachments` (multipart, one file), which returns an id. `PostMessageRequest` gains `AttachmentIds`, and `GET /api/attachments/{id}` downloads a file under the same membership rule as threads (a 404 outside the user's projects). Downloads are sent with `Content-Disposition: attachment` and `nosniff`.
+2. **Limits, in settings (§3).** Allowed types: images (PNG, JPEG, GIF, WebP), the documents MarkItDown converts, and plain text by extension, with unknown binaries refused as `PlainTextMedia` does. Proposed defaults: 20 MB per file, matching the other faces; 5 files per message; 50 MB per thread. Images over a size such as 1,568 px on the long side are scaled down before they are sent, since providers resize them anyway and charge for what they receive.
+3. **Into the run.** At preflight the host copies the thread's attachments into the working copy's `.factory/attachments/`. The worker gets them as files, so the agent can open a CSV sample, or copy an icon to where the task wants it and commit it there. The brief gains an **Attachments** section that lists each file by path, with the message it came with:
+   - **Documents** are converted to Markdown and included in the brief, wrapped as untrusted, up to a cap of about 50,000 characters each. Beyond the cap the brief says so and points to the file.
+   - **Images** go into the first turn as `ImageBlock`s, after the brief's text. A factory turn reader takes `attachments: [{ path, mediaType }]`, relative to the working copy, and reads the bytes on the worker's side, so no base64 crosses the host-to-worker HTTP call.
+4. **Which runs see them.** Implement, rework, spec and chat runs get every attachment on the thread up to the run's start, since a thread is one change. A rework's brief marks the attachments that came with the change request (a screenshot of what is wrong) as new. Review turns get none in V1: they judge the diff.
+5. **Budget.** An image is charged by the provider's own count where it reports one. Until the run's first call reports, the reservation estimate adds a fixed allowance per image, as compaction does, so the budget check (§5) stays honest. Converted documents count as text.
+6. **Models that cannot see images.** The catalog (§4.3) does not record whether a model accepts images. Add `acceptsImages` to each allowed model, filled from the catalog where the provider says (OpenRouter lists input modalities) and editable by an Admin. A thread on a model without it gets each image as a file and a line in the brief, not an `ImageBlock`, and the composer says so when an image is attached.
+7. **In the app.** The composer gets an attach button, paste and drag-and-drop, and shows each pending file as a chip that can be removed. Files upload when they are added and are sent with the message by id. A message shows its attachments: thumbnails for images and a chip for anything else, each downloadable. The run details list what the run was given.
+
+**Not in V1.** A tool that lets the agent look at an image again after compaction: it needs image tool results in the engine, which `ToolResultBlock` cannot carry today. Also out: attachments on a follow-up to a running task, since steering a running turn takes text only (`SteerAsync`) and Api's `AgentWorker` notes that it drops `ImageBlock`s; such a message is refused with a reason. Also out: virus scanning, storage outside the data directory, and deleting attachments, since threads are never deleted.
+
+**To verify first, before any UI.** Check that an `ImageBlock` survives the whole factory path (worker, `ModelGateway`, provider) on each strict provider, and what each one reports for it. The other faces call providers directly; the factory's gateway has never carried an image. Then measure what one screenshot costs on the default model, to set the per-image allowance.
+
+**Build order, when picked up.** (1) The worker's turn reader, gateway pass-through and the budget allowance, tested with a fixture image. (2) The store, migration, upload, download and limits. (3) Copying into the working copy, the brief's Attachments section (a prompt revision) and the runs that receive them. (4) The composer and message display. (5) A check: a UI bug fixed from a screenshot alone, and a feature built from an attached CSV sample and a PDF note.
+
+**Open when it is picked up:** the limits above; whether a member's upload needs any Admin switch to turn attachments on; and whether review turns should see images for UI tasks.
