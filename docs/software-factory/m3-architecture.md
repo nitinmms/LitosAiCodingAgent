@@ -246,7 +246,20 @@ Every handoff had tests passing and changed-line coverage measured (91.5–100%)
 - **Tasks on one repository start from the same `main`.** J2 waited for J1's lease, but started from the commit before J1, because J1 was not yet merged; its PR conflicted. Dispatch dependent work after the merge.
 - **Accept does not merge.** The factory reads the PR's state; merging is a separate step on GitHub.
 
-Still to run: Gemini with the cap enforced, a setting changed with no restart, MCP Full/Deny (the configured MCP server was not running, and runs carried on without it), an unapproved repository skill, and F2, F4, R3 and F8.
+**A setting changed with no restart (2026-10-14): passed.** The default task budget was changed from 300,000 to 250,000 through the Budgets API with the host running; the next thread, created without a budget, got 250,000. The default was set back to 300,000.
+
+**An unapproved repository skill (2026-10-14): passed.** `forms-export` was given `.litos/skills/csv-conventions/SKILL.md`; under the default policy (approve each), the next run's thread said "Skipped repository skills waiting for an Admin's approval: csv-conventions.", and its `skills.json` listed no repository skill.
+
+**Gemini, cap enforced and labelled strict (2026-10-14): passed after four provider fixes.** Task G2 (prefix CSV cells that a spreadsheet would run as a formula) ran with the default budget, which is how it also showed the setting above.
+
+- On `gemini-2.5-flash` the first run was blocked: Gemini answered with no content, and the provider passed that on as an empty reply, so the turn "changed no files" with no cause given. The model was overloaded at the time (503 on direct calls). **Fix `5db10db`:** an answer with no text and no function call raises `ChatProviderEmptyResponseException` naming Gemini's `finishReason`; transient (sent again by the gateway) for a malformed call or no reason, not for safety or recitation; `MAX_TOKENS` stays with the gateway's cut-off report.
+- On `gemini-3.1-flash-lite` every run failed on its second call with 400. Two causes, each found by replaying the conversation against the live API one change at a time:
+  - **`8d92099`:** Gemini 3 attaches a thought signature to each function call and refuses a history that sends the call back without it. `ToolUseBlock` keeps an optional provider `Signature` (through the transcript and the gateway), which the provider reads and sends back. **`ec7129e`:** a call recorded without one (before the fix, or on another provider) goes with Google's documented placeholder, which Gemini 2.5 and 3 both accept.
+  - **`f9589a4`:** the provider named a function response after the call's id; Gemini 3 requires the function's name.
+  - Step 3 had been tried on Gemini 2.5 only, which tolerates all three.
+- After the fixes G2 was accepted and merged: 155,674 of 300,000 tokens, never over the cap and nothing left reserved; 12 tests, 100% changed-line coverage, review not needed (7 lines). It loaded no skill, although the brief named two (every OpenAI run did), and cost three times the OpenAI bug fix (J2, 48,868).
+
+Still to run: MCP Full/Deny (the configured MCP server was not running, and runs carried on without it), and F2, F4, R3 and F8.
 
 ## 10. Build order
 
