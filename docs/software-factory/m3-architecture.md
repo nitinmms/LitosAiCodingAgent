@@ -281,6 +281,8 @@ Found by these runs:
 
 Against M1, then: F2 −25%, R3 −2%, F8 −8%, all accepted after one rework as in M1; F4 failed on budget (+52% at its cap) and went out of scope. Every question the four asked came from the decision scan, which M1's F2 and F4 ran without; 11 in all, about half of them unnecessary. Afterwards the projects' default branches were set back to `main`, and the `m3-check-base` branches deleted.
 
+**Skills: used when the brief names them, otherwise not (2026-10-14).** The library held three skills (`tdd`, `fix-root-causes`, `prove-it-works`), their descriptions sent with every request. Every `gpt-6-luna` run whose brief named them loaded them, and its work followed them (tests written and seen failing first; the J2 re-run fixed all three crash sites), though no run without them was made to compare, so their effect on quality is not proven. Where the brief did not name them, they were not used: the eight deepseek runs of F2, F4, R3 and F8 (reworks included) made no skill call, and the Gemini run made none although its brief named two. The only unprompted load was one `gpt-6-luna` repair turn. Their cost is not visible: the deepseek re-runs came in under M1. Follow-up in §13.
+
 With this the M3 check (§9) has been run in full.
 
 ## 10. Build order
@@ -337,3 +339,21 @@ Found on 2026-10-14 during the M3 check (§9.1); not fixed in M3 yet.
 **Until then.** Don't run a Release build of the solution while factory runs are live. After one, build `src/Litos.Kernel.Host` in Release once while no kernel is running.
 
 **Also from the M3 check, smaller.** A tool denied by the MCP settings reaches the agent as a C# compile error ("the name … does not exist"), indistinguishable from a typo; a message naming the policy would be clearer. And agents repeatedly guess the argument shapes of the kernel's helpers (`skill("name", "tdd")`, `search_code("pattern", …)`, MCP tools' `request` object), costing calls in most runs: their descriptions should show a call.
+
+## 13. Follow-up: applying skills by phase, set by the factory
+
+Found by the M3 check (§9.1): skills in the library are used only when a task's brief names them, and agents ignore them otherwise. Chosen on 2026-10-14 to address: the factory, not the person writing the brief, says when a skill applies. Not built in M3.
+
+**Why not name skills in the run brief.** A brief that names a skill breaks quietly once the skill is gone: the agent's `skill("tdd")` returns "not found" and it carries on without it, and with an empty library there is no `skill` tool at all, so the call fails as a C# compile error, the same message as a denied MCP tool. Skills are configuration an Admin may change or delete at any time; nothing that runs should depend on one being there.
+
+**Proposed.**
+
+- **A phase per skill**, set on the Skills tab: before implementing, on a repair turn, before submitting, or never (the default, so today's library behaves as now until an Admin chooses). Stored in the `skills` section beside each skill.
+- **Built at run start from what exists.** When a run starts, the factory reads the library revision it snapshots (§7.4) and attaches only skills that are present, enabled and given a phase. A deleted or disabled skill is simply not attached, so no turn can point at a missing one.
+- **The skill's text in the turn's instructions**, not a request to call `skill(...)`: the implement brief carries the "before implementing" skills, a repair brief the "repair" skills, and the submit reminder the "before submitting" skills. This removes the call-shape trap (§12) and the question of whether the agent bothered to load it. It costs the text on each turn it applies to, acceptable for short skills; a size limit per attached skill (or for all of them) keeps it bounded, with an over-long skill refused on save. The `skill` tool stays for skills without a phase.
+- **Visible.** The run's details list the skills applied, by phase; the Skills tab shows each skill's phase, and deleting one with a phase says which phase it leaves empty.
+- **Repository skills** follow the same rule once approved (§7.3); an unapproved one is never attached.
+
+**Also.** Widen `tdd`, whose text covers bug fixes only, to new behaviour. Measure the effect with an A/B run: the same task twice on one model, once with the phases set and once without, comparing tests written first, the fix's scope and tokens.
+
+**Open when it is picked up:** whether a thread may turn applied skills off for itself (as PTC can be, §6), and whether "before submitting" runs as part of the submit turn or as a separate check.
