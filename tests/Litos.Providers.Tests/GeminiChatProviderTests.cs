@@ -339,9 +339,12 @@ public class GeminiChatProviderTests
         Assert.Equal("CiQBjz1rX2sig==", part.GetProperty("thoughtSignature").GetString());
     }
 
-    /// <summary>Gemini 2.5 gives no signature; the request then carries none, as before.</summary>
+    /// <summary>
+    /// A call recorded before signatures were kept, or by another provider, has none of its own;
+    /// Gemini 3 would refuse it bare, so it goes with Google's placeholder (accepted by 2.5 too).
+    /// </summary>
     [Fact]
-    public async Task StreamAsync_ToolUseBlockWithoutASignature_SendsNone()
+    public async Task StreamAsync_ToolUseBlockWithoutASignature_SendsThePlaceholder()
     {
         var (provider, handler) = CreateProvider();
         handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalTextResponse));
@@ -351,7 +354,7 @@ public class GeminiChatProviderTests
 
         using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
         var part = json.RootElement.GetProperty("contents")[0].GetProperty("parts")[0];
-        Assert.False(part.TryGetProperty("thoughtSignature", out var signature) && signature.ValueKind != JsonValueKind.Null);
+        Assert.Equal("skip_thought_signature_validator", part.GetProperty("thoughtSignature").GetString());
     }
 
     // ---- An answer with no content (finishReason) ----

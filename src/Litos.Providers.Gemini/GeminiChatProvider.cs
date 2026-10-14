@@ -15,6 +15,12 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
 {
     public string ProviderName => "gemini";
 
+    /// <summary>
+    /// What Google documents sending for a function call that has no thought signature of its own
+    /// (https://ai.google.dev/gemini-api/docs/thought-signatures).
+    /// </summary>
+    internal const string PlaceholderThoughtSignature = "skip_thought_signature_validator";
+
     public async Task<IReadOnlyList<ModelInfo>> ListModelsAsync(CancellationToken ct)
     {
         var response = await client.ModelClient.ListModelsAsync(pageSize: 100, pageToken: null, ct);
@@ -154,11 +160,13 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
                     break;
                 case LM.ToolUseBlock u:
                     // Gemini 3 refuses a conversation whose earlier function call comes back
-                    // without the thought signature it was given with.
+                    // without the thought signature it was given with. A call that has none of
+                    // its own (recorded before signatures were kept, or by another provider) is
+                    // sent with Google's documented placeholder, which every Gemini model accepts.
                     parts.Add(new Part
                     {
                         FunctionCall = new FunctionCall(u.ToolName) { Id = u.CallId, Args = JsonNode.Parse(u.Arguments.GetRawText()) },
-                        ThoughtSignature = u.Signature,
+                        ThoughtSignature = u.Signature ?? PlaceholderThoughtSignature,
                     });
                     break;
                 case LM.ToolResultBlock r:
