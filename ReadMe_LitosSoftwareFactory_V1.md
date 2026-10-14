@@ -48,7 +48,7 @@ Humans test the running application and decide acceptance. Passing unit tests ne
 ### Included
 
 - Multiple **trusted** users with local username/password accounts, reaching the factory by URL on a machine or network the operator controls.
-- Admin-registered projects backed by GitHub repositories, cloned and managed by the factory. An optional local-folder mode is available for folders with no remote (§6.2).
+- Admin-registered projects backed by GitHub repositories, cloned and managed by the factory. An optional local-folder mode for folders with no remote (§6.2) is designed but not taken up for V1.
 - Threads, real Litos conversation before delegation, `@factory` delegation, optional spec stage, pause/resume/cancel.
 - Reuse of the existing Litos engine, providers, tools, PTC kernel, MCP, skills and web search.
 - Code inspection, edits, dependency restore, compilation, unit tests and changed-line coverage for projects in any language or stack whose build and tests can run from the command line on the factory machine and produce standard reports (§10).
@@ -198,6 +198,8 @@ After build and tests pass, the host decides how deep a review the change needs,
 - Conflicts between factory branches are resolved by humans at merge time, as for any two branches.
 
 ### 6.2 Optional mode: registered local folder
+
+**Not taken up (decided 2026-10-14).** Local-folder projects are out of V1's scope and not scheduled; the factory stays GitHub-only. The design below is kept for if they are picked up later.
 
 This is for folders with no reachable Git remote. It keeps the Rev 2 behavior:
 
@@ -1058,7 +1060,7 @@ The implementation architecture, decisions and build order are in [docs/software
   - budgets, limits and quotas;
   - verification presets.
 - All Litos providers, with strict/estimated labels. Gemini's output cap made effective.
-- Python, Java and Go presets validated; local-folder mode (§6.2).
+- Python, Java and Go presets validated. Local-folder mode (§6.2) was moved to M4, then not taken up (see M4).
 - Re-run the M1 task set, which must not regress.
 
 ### M4: lessons, operations and V1 release
@@ -1067,6 +1069,7 @@ The implementation architecture, decisions and build order are in [docs/software
 - Flow metrics (§12.1) and operational counters (§24).
 - Backup and restore procedure, tested.
 - The full §19 acceptance scenarios pass, and the M1 task set does not regress. That is V1.
+- **Not in M4:** local-folder projects (§6.2), moved here from M3 and then not taken up on 2026-10-14. V1 is GitHub-only.
 
 ## 19. Acceptance scenarios for the factory itself
 

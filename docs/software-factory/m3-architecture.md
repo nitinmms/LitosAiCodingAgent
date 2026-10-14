@@ -16,7 +16,7 @@ M3 is "factory settings and breadth" in [ReadMe_LitosSoftwareFactory_V1.md](../.
 | Presets (§10.2) | `dotnet` and `node-react`; JUnit, TRX, Cobertura and LCOV parsers | Python, Java and Go; editable presets; editing a project's profile (`ProfileRevision` never changes); the registration checks |
 | Re-run the M1 task set | The task set and M1's results | — |
 
-Local-folder projects (§6.2) are moved to M4 (§2).
+Local-folder projects (§6.2) are moved to M4 (§2), and on 2026-10-14 were not taken up at all.
 
 ## 2. Decisions
 
@@ -26,7 +26,7 @@ Made with the user on 2026-10-09, before any M3 code:
 - **Settings live in the factory database** and are edited in the app. `.env.factory` seeds them on first start only. It keeps what the host needs before it can read the database: the connection strings, the data directory and the first Admin.
 - **Secrets are encrypted in the database** with ASP.NET Data Protection, its key ring in `<data>/keys`. Provider keys, MCP secrets and the GitHub token are set or replaced, never shown again. Backing up the data directory becomes necessary to read them (noted for M4's backup work).
 - **MCP permissions in the factory are Full or Deny.** There is no Ask: nobody watches a run to approve a call. The other Litos faces keep Ask.
-- **Local-folder projects move to M4.** M3 stays GitHub-only.
+- **Local-folder projects move to M4.** M3 stays GitHub-only. *Later, 2026-10-14:* the user decided not to take them up for now, in M4 or V1; the design in the V1 readme §6.2 is kept.
 - **M2's cost regression is recorded and parked** (m2-architecture.md §10.1). It is looked at again later, not in M3's first steps.
 - **Carried from M2 and done first:** a question sent to a working task blocks it (m2-architecture.md §10.1). It is an M2 feature that does not work.
 
