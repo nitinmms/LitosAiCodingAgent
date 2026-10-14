@@ -307,6 +307,53 @@ public class GeminiChatProviderTests
         Assert.Equal((1_500, 1_200), (usage.OutputTokens, usage.ReasoningTokens));
     }
 
+    // ---- Thought signatures (Gemini 3 refuses a replayed call without its own) ----
+
+    [Fact]
+    public async Task StreamAsync_FunctionCallWithAThoughtSignature_KeepsItOnTheToolUseBlock()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            [{"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_code","args":{"pattern":"WriteCSV"}},"thoughtSignature":"CiQBjz1rX2sig=="}]}}]}]
+            """));
+
+        var events = await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.User("hi")], [], "model"), CancellationToken.None));
+
+        var completed = Assert.Single(events.OfType<MessageCompleted>());
+        Assert.Equal("CiQBjz1rX2sig==", Assert.IsType<ToolUseBlock>(Assert.Single(completed.Message.Content)).Signature);
+    }
+
+    [Fact]
+    public async Task StreamAsync_ToolUseBlockWithASignature_SendsItBackOnTheFunctionCallPart()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalTextResponse));
+        var args = JsonDocument.Parse("""{"pattern":"WriteCSV"}""").RootElement;
+        var request = new ChatRequest([ChatMessage.Assistant([new ToolUseBlock("call_1", "search_code", args, "CiQBjz1rX2sig==")])], [], "model");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        var part = json.RootElement.GetProperty("contents")[0].GetProperty("parts")[0];
+        Assert.Equal("search_code", part.GetProperty("functionCall").GetProperty("name").GetString());
+        Assert.Equal("CiQBjz1rX2sig==", part.GetProperty("thoughtSignature").GetString());
+    }
+
+    /// <summary>Gemini 2.5 gives no signature; the request then carries none, as before.</summary>
+    [Fact]
+    public async Task StreamAsync_ToolUseBlockWithoutASignature_SendsNone()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse(MinimalTextResponse));
+        var args = JsonDocument.Parse("""{"pattern":"WriteCSV"}""").RootElement;
+
+        await DrainAsync(provider.StreamAsync(new ChatRequest([ChatMessage.Assistant([new ToolUseBlock("call_1", "search_code", args)])], [], "model"), CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        var part = json.RootElement.GetProperty("contents")[0].GetProperty("parts")[0];
+        Assert.False(part.TryGetProperty("thoughtSignature", out var signature) && signature.ValueKind != JsonValueKind.Null);
+    }
+
     // ---- An answer with no content (finishReason) ----
 
     [Theory]

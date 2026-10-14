@@ -58,6 +58,28 @@ public class ContentBlockTests
         Assert.Equal("call_1", toolUse.CallId);
         Assert.Equal("read_file", toolUse.ToolName);
         Assert.Equal("foo.cs", toolUse.Arguments.GetProperty("path").GetString());
+        Assert.Null(toolUse.Signature);
+    }
+
+    /// <summary>Gemini 3 needs a call's signature back on every later request, so it must survive the transcript.</summary>
+    [Fact]
+    public void ToolUseBlock_RoundTrips_ItsProviderSignature()
+    {
+        var args = JsonDocument.Parse("""{"path":"foo.cs"}""").RootElement;
+        ContentBlock original = new ToolUseBlock("call_1", "read_file", args, Signature: "CiQBjz1rX2sig==");
+
+        var roundTripped = JsonSerializer.Deserialize<ContentBlock>(JsonSerializer.Serialize(original));
+
+        Assert.Equal("CiQBjz1rX2sig==", Assert.IsType<ToolUseBlock>(roundTripped).Signature);
+    }
+
+    /// <summary>A transcript written before signatures existed still reads.</summary>
+    [Fact]
+    public void ToolUseBlock_WithoutASignatureProperty_ReadsAsNone()
+    {
+        var block = JsonSerializer.Deserialize<ContentBlock>("""{"type":"tool_use","CallId":"c","ToolName":"t","Arguments":{}}""");
+
+        Assert.Null(Assert.IsType<ToolUseBlock>(block).Signature);
     }
 
     [Fact]

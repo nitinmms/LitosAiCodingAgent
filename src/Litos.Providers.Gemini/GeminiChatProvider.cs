@@ -43,7 +43,7 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
         };
 
         var textBuilder = new System.Text.StringBuilder();
-        var toolCalls = new List<(string CallId, string Name, JsonElement Args)>();
+        var toolCalls = new List<(string CallId, string Name, JsonElement Args, string? Signature)>();
         var usage = new UsageInfo(0, 0);
         var callCounter = 0;
         Candidate? lastCandidate = null;
@@ -69,7 +69,7 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
                 var callId = part.FunctionCall.Id ?? $"call_{++callCounter}";
                 var argsJson = part.FunctionCall.Args?.ToJsonString() ?? "{}";
                 var args = JsonDocument.Parse(argsJson).RootElement;
-                toolCalls.Add((callId, part.FunctionCall.Name, args));
+                toolCalls.Add((callId, part.FunctionCall.Name, args, part.ThoughtSignature));
                 yield return new ToolCallStarted(callId, part.FunctionCall.Name);
                 yield return new ToolCallArgsDelta(callId, argsJson);
             }
@@ -85,7 +85,7 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
         if (textBuilder.Length > 0)
             contentBlocks.Add(new LM.TextBlock(textBuilder.ToString()));
         foreach (var call in toolCalls)
-            contentBlocks.Add(new LM.ToolUseBlock(call.CallId, call.Name, call.Args));
+            contentBlocks.Add(new LM.ToolUseBlock(call.CallId, call.Name, call.Args, call.Signature));
 
         yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), usage);
     }
@@ -153,7 +153,13 @@ public sealed class GeminiChatProvider(GoogleAi client, OpenRouterModelCatalog c
                     parts.Add(new Part { InlineData = new Blob { MimeType = i.MediaType, Data = Convert.ToBase64String(i.Data) } });
                     break;
                 case LM.ToolUseBlock u:
-                    parts.Add(new Part { FunctionCall = new FunctionCall(u.ToolName) { Id = u.CallId, Args = JsonNode.Parse(u.Arguments.GetRawText()) } });
+                    // Gemini 3 refuses a conversation whose earlier function call comes back
+                    // without the thought signature it was given with.
+                    parts.Add(new Part
+                    {
+                        FunctionCall = new FunctionCall(u.ToolName) { Id = u.CallId, Args = JsonNode.Parse(u.Arguments.GetRawText()) },
+                        ThoughtSignature = u.Signature,
+                    });
                     break;
                 case LM.ToolResultBlock r:
                     parts.Add(new Part

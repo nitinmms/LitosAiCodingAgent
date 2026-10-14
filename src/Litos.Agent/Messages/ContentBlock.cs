@@ -15,7 +15,12 @@ public sealed record TextBlock(string Text) : ContentBlock;
 
 public sealed record ImageBlock(string MediaType, byte[] Data) : ContentBlock;
 
-public sealed record ToolUseBlock(string CallId, string ToolName, JsonElement Arguments) : ContentBlock;
+/// <param name="Signature">
+/// Opaque data the provider attached to the call and requires back when the conversation is sent
+/// again: Gemini 3's thought signature, without which it refuses the request (400). Null for
+/// providers that attach none.
+/// </param>
+public sealed record ToolUseBlock(string CallId, string ToolName, JsonElement Arguments, string? Signature = null) : ContentBlock;
 
 public sealed record ToolResultBlock(string CallId, string Text, bool IsError = false) : ContentBlock;
 
