@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Briefs;
+using Litos.SoftwareFactory.Core.Lessons;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
@@ -887,10 +888,15 @@ public sealed class RunExecutor(
         var capabilities = run.Kind == RunKind.Rework && await store.LatestCapabilitiesAsync(thread.Id, run.Id, CancellationToken.None) is { } last
             ? JsonSerializer.Deserialize<RunCapabilities>(last, FactoryWire.Json)!.ForRework()
             : RunCapabilities.From(settings.Tools, settings.WebSearch, settings.Mcp, options.PtcOf(thread), skillSettings, skillRevision);
-        capabilities = capabilities with { TaskSkills = chosen.Applied };
+        // Lessons are chosen afresh for every new run, a rework included, and recorded once (m4-architecture.md §4.2).
+        var picks = await skills.LessonsForAsync(claimed, CancellationToken.None);
+        await store.SaveRunLessonsAsync(run.Id, picks, clock.UtcNow, CancellationToken.None);
+        capabilities = capabilities with { TaskSkills = chosen.Applied, Lessons = FactorySkills.RunLessons(picks) };
         await store.SetRunCapabilitiesAsync(run.Id, JsonSerializer.Serialize(capabilities, FactoryWire.Json), CancellationToken.None);
         if (TaskSkillSelection.Describe(chosen) is { } notApplied)
             await NoteAsync(thread.Id, notApplied);
+        if (LessonRetrieval.Describe(picks) is { } lessonsNote)
+            await NoteAsync(thread.Id, lessonsNote);
         return capabilities;
     }
 
@@ -907,7 +913,7 @@ public sealed class RunExecutor(
         // thread hears what was skipped once per run, not again when a worker is restarted.
         var prepared = await skills.PrepareAsync(
             claimed.Run.Id, claimed.Project.Id, workingCopy, capabilities.SkillLibraryRevision, capabilities.LibrarySkills,
-            capabilities.RepositorySkillPolicy, capabilities.TaskSkills, ct);
+            capabilities.RepositorySkillPolicy, capabilities.TaskSkills, ct, capabilities.Lessons);
         var firstLook = capabilities.RepositorySkills is null;
         capabilities = session.Capabilities = capabilities with { RepositorySkills = prepared.Repository };
         await store.SetRunCapabilitiesAsync(claimed.Run.Id, JsonSerializer.Serialize(capabilities, FactoryWire.Json), CancellationToken.None);

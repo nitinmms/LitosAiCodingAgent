@@ -142,6 +142,8 @@ export interface Thread {
   ptcEnabled: boolean | null;
   /** The library skills chosen for the task; absent from a host before m3-architecture.md §13. */
   skills?: string[];
+  /** Approved lessons a person picked for the task's runs. */
+  manualLessons?: string[];
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -338,6 +340,8 @@ export interface ThreadDetails {
   findings: Finding[];
   /** The earlier runs' findings, oldest first, still open to a verdict; absent from an older host. */
   earlierFindings?: Finding[];
+  /** The latest run's lesson snapshot: what it was given, and left out. */
+  runLessons?: RunLesson[];
   handoff: Handoff | null;
   /** A plain message is being answered; another waits until the reply arrives. */
   chatPending: boolean;
@@ -714,3 +718,20 @@ export interface LessonInput {
 }
 
 export type LessonCommand = 'approve' | 'dismiss' | 'disable' | 'enable';
+
+/** What a person judged an included lesson to have done for a run. */
+export type LessonVerdict = 'Helped' | 'DidNotMatter' | 'Misled';
+
+/** One lesson in a run's snapshot (Api/LessonsApi.cs RunLessonView). */
+export interface RunLesson {
+  lessonId: string;
+  number: number;
+  revision: number;
+  rule: string;
+  score: number;
+  inclusion: 'Retrieved' | 'Manual' | 'NotIncluded';
+  manual: boolean;
+  includedAt: string;
+  verdict: LessonVerdict | null;
+  verdictAt: string | null;
+}

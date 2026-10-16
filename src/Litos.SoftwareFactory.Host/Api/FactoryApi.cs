@@ -791,6 +791,8 @@ public static class FactoryApi
         thread.PtcEnabled,
         // The skills chosen for the task (m3-architecture.md §13).
         Skills = TaskSkillSelection.Parse(thread.SkillsJson),
+        // The lessons a person picked for the task's runs (m4-architecture.md §4.1).
+        ManualLessons = JsonSerializer.Deserialize<List<Guid>>(thread.ManualLessonsJson) ?? [],
         thread.Revision,
         thread.CreatedAt,
         thread.UpdatedAt,
@@ -879,6 +881,8 @@ public static class FactoryApi
         Findings = details.Findings.Select(FindingView),
         // The earlier runs' findings, so a person can still judge them after a rework.
         EarlierFindings = details.EarlierFindings.Select(FindingView),
+        // The latest run's lesson snapshot (m4-architecture.md §4.4).
+        RunLessons = details.RunLessons.Select(LessonsApi.RunLessonView),
         Handoff = details.LatestHandoff is null ? null : new
         {
             details.LatestHandoff.Branch,

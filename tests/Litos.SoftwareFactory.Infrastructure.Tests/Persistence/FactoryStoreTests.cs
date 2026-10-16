@@ -2646,6 +2646,97 @@ public abstract class FactoryStoreContract : IAsyncLifetime
             () => Store.AddLessonAsync(running.Project.Id, Lesson("Other.", LessonSource.ReviewFinding, Guid.NewGuid()), Ben, false, null, T0, default));
     }
 
+    // ---- What runs are given of a project's lessons (m4-architecture.md §4) ----
+
+    [SkippableFact]
+    public async Task Retrievable_AreOnlyApprovedEnabledLessons_AtTheirApprovedRevision()
+    {
+        var project = await AddProjectAsync();
+        var approved = await Store.AddLessonAsync(project.Id, Lesson(), Admin, approve: true, null, T0, default);
+        await Store.ReviseLessonAsync(approved.Lesson.Id, 1, Lesson("Money is integer cents in a long."), Ben, approve: false, T0, default);
+        await Store.AddLessonAsync(project.Id, Lesson("Suggestion."), Ben, approve: false, null, T0, default);
+        var disabled = await Store.AddLessonAsync(project.Id, Lesson("Disabled."), Admin, approve: true, null, T0, default);
+        await Store.SetLessonEnabledAsync(disabled.Lesson.Id, 1, false, Admin, T0, default);
+        await Store.AddLessonAsync((await AddProjectAsync("billing")).Id, Lesson("Elsewhere."), Admin, approve: true, null, T0, default);
+
+        var candidate = Assert.Single(await Store.ListRetrievableLessonsAsync(project.Id, default));
+
+        // Acceptance scenario 16: a pending, dismissed or disabled lesson is never retrieved, and none leaks across projects.
+        Assert.Equal((approved.Lesson.Id, 1, "Money is stored as integer cents, never as floating point."), (candidate.LessonId, candidate.Revision, candidate.Rule));
+        Assert.Equal(["money"], candidate.Topics);
+        Assert.Equal(["src/Money/**"], candidate.Paths);
+    }
+
+    [SkippableFact]
+    public async Task ARunsSnapshot_IsRecordedOnce_InOrder_AndKeepsItsTextWhenTheLessonChanges()
+    {
+        var running = await RunningAsync();
+        var first = await Store.AddLessonAsync(running.Project.Id, Lesson(), Admin, approve: true, null, T0, default);
+        var second = await Store.AddLessonAsync(running.Project.Id, Lesson("Dates are UTC."), Admin, approve: true, null, T0, default);
+        var candidates = await Store.ListRetrievableLessonsAsync(running.Project.Id, default);
+        var picks = LessonRetrieval.Select(candidates, "money and dates", [], null);
+
+        await Store.SaveRunLessonsAsync(running.Run.Id, picks, T0, default);
+        await Store.SaveRunLessonsAsync(running.Run.Id, [], T0, default);
+        await Store.SaveRunLessonsAsync(running.Run.Id, [picks[0]], T0.AddHours(1), default);
+        // Acceptance scenario 17: editing a lesson preserves past run snapshots.
+        await Store.ReviseLessonAsync(first.Lesson.Id, 1, Lesson("Money is decimals."), Admin, approve: true, T0, default);
+
+        var snapshot = await Store.ListRunLessonsAsync(running.Run.Id, default);
+        Assert.Equal(2, snapshot.Count);
+        Assert.Contains(snapshot, s => s.LessonId == first.Lesson.Id && s.Rule == "Money is stored as integer cents, never as floating point." && s.Revision == 1);
+        Assert.All(snapshot, s => Assert.Equal(T0, s.IncludedAt));
+        Assert.Equal([0, 1], snapshot.Select(s => s.Position));
+        Assert.Equal(snapshot.Select(s => s.LessonId), (await Store.GetThreadAsync(running.Thread.Id, default))!.RunLessons.Select(s => s.LessonId));
+        Assert.Contains(second.Lesson.Id, snapshot.Select(s => s.LessonId));
+    }
+
+    [SkippableFact]
+    public async Task AVerdictOnAnIncludedLesson_IsRecordedAndAudited_ButNotOnOneLeftOut()
+    {
+        var running = await RunningAsync();
+        var given = await Store.AddLessonAsync(running.Project.Id, Lesson(), Admin, approve: true, null, T0, default);
+        var candidate = Assert.Single(await Store.ListRetrievableLessonsAsync(running.Project.Id, default));
+        // A second approved lesson, recorded as left out of the run.
+        var other = await Store.AddLessonAsync(running.Project.Id, Lesson("Left out."), Admin, approve: true, null, T0, default);
+        var left = new LessonCandidate(other.Lesson.Id, other.Lesson.Number, 1, "Left out.", ["money"], [], T0);
+
+        await Store.SaveRunLessonsAsync(running.Run.Id,
+            [new LessonPick(candidate, 2, LessonInclusion.Retrieved), new LessonPick(left, 2, LessonInclusion.NotIncluded)], T0, default);
+
+        var judged = await Store.SetRunLessonVerdictAsync(running.Run.Id, given.Lesson.Id, LessonVerdict.Helped, Ben, T0, default);
+        Assert.Equal((LessonVerdict.Helped, (Guid?)Ben), (judged.Verdict!.Value, judged.VerdictBy));
+        await Store.SetRunLessonVerdictAsync(running.Run.Id, given.Lesson.Id, LessonVerdict.Helped, Ben, T0, default);
+        Assert.Single(await RowsAsync(AuditActions.RunLessonVerdict));
+        var cleared = await Store.SetRunLessonVerdictAsync(running.Run.Id, given.Lesson.Id, null, Ben, T0, default);
+        Assert.Null(cleared.Verdict);
+
+        Assert.Contains("left out", (await Assert.ThrowsAsync<StoreConflictException>(
+            () => Store.SetRunLessonVerdictAsync(running.Run.Id, left.LessonId, LessonVerdict.Misled, Ben, T0, default))).Message);
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.SetRunLessonVerdictAsync(running.Run.Id, Guid.NewGuid(), LessonVerdict.Helped, Ben, T0, default));
+        Assert.Equal(running.Project.Id, await Store.FindProjectIdAsync(ProjectScoped.Run, running.Run.Id, default));
+    }
+
+    [SkippableFact]
+    public async Task ATasksPickedLessons_MustBeApprovedAndEnabledInItsProject_AndThePickIsAuditedAndNoted()
+    {
+        var project = await AddProjectAsync();
+        var thread = await AddThreadAsync(project);
+        var approved = await Store.AddLessonAsync(project.Id, Lesson(), Admin, approve: true, null, T0, default);
+        var suggestion = await Store.AddLessonAsync(project.Id, Lesson("Suggestion."), Ben, approve: false, null, T0, default);
+        var elsewhere = await Store.AddLessonAsync((await AddProjectAsync("billing")).Id, Lesson("Elsewhere."), Admin, approve: true, null, T0, default);
+
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.SetThreadLessonsAsync(thread.Id, [suggestion.Lesson.Id], Ben, T0, default));
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.SetThreadLessonsAsync(thread.Id, [elsewhere.Lesson.Id], Ben, T0, default));
+        var picked = await Store.SetThreadLessonsAsync(thread.Id, [approved.Lesson.Id], Ben, T0, default);
+        await Store.SetThreadLessonsAsync(thread.Id, [approved.Lesson.Id], Ben, T0, default);
+
+        Assert.Equal([approved.Lesson.Id], JsonSerializer.Deserialize<Guid[]>(picked.ManualLessonsJson)!);
+        Assert.Single(await RowsAsync(AuditActions.ThreadLessons));
+        Assert.Equal("Lessons picked for this task: L-1. Its next run is given them first, as they fit.",
+            (await Store.GetThreadAsync(thread.Id, default))!.Messages[^1].Text);
+    }
+
     [SkippableFact]
     public async Task ALessonOrProjectThatDoesNotExist_IsNotFound_AndALessonsProjectIsFound()
     {

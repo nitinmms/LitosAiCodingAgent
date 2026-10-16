@@ -44,10 +44,11 @@ public static class WorkerApp
             ? FactorySkillDiscovery.Load(skillsPath, Directory.GetCurrentDirectory())
             : new NoSkills();
         builder.Services.AddSingleton(skills);
-        // The task's chosen skills, whole, in every session's system prompt (m3-architecture.md §13).
-        if (skills is FactorySkillDiscovery { Skills.TaskSkills: { Count: > 0 } taskSkills })
+        // The task's chosen skills and the run's project lessons, whole, in every session's system
+        // prompt (m3-architecture.md §13, m4-architecture.md §4.3).
+        if (skills is FactorySkillDiscovery { Skills: var given } && (given.TaskSkills.Count > 0 || given.Lessons.Count > 0))
             builder.Services.AddSingleton<ISystemPromptProvider>(sp =>
-                new FactorySystemPromptProvider(ActivatorUtilities.CreateInstance<LitosSystemPromptProvider>(sp), taskSkills));
+                new FactorySystemPromptProvider(ActivatorUtilities.CreateInstance<LitosSystemPromptProvider>(sp), given.TaskSkills, given.Lessons));
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(_ => new FactoryHostClient(hostHttp ?? new HttpClient(), options));

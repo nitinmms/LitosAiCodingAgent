@@ -18,9 +18,6 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
 
     public IReadOnlyList<string> AcceptanceCriteria { get; init; } = [];
 
-    /// <summary>Approved project lessons included in this run (empty until lessons arrive in M4).</summary>
-    public IReadOnlyList<string> Lessons { get; init; } = [];
-
     /// <summary>The commands the factory will run, for the agent's information.</summary>
     public string VerificationSummary { get; init; } = "";
 
@@ -89,8 +86,9 @@ public static partial class BriefComposer
     /// m2.1: a resumed run is told how the working copy changed since its last checkpoint;
     /// m2.2: chat, a read-only answer to a plain message;
     /// m2.3: the spec brief, and an approved specification's criteria reported on in their own words;
-    /// m2.4: work submitted with no change is sent back once to check its edits were written).</summary>
-    public const string Revision = "m2.4";
+    /// m2.4: work submitted with no change is sent back once to check its edits were written;
+    /// m2.5: project lessons leave the run brief for every session's system prompt).</summary>
+    public const string Revision = "m2.5";
 
     private const int CharsPerToken = 4;
 
@@ -200,7 +198,6 @@ public static partial class BriefComposer
         ["specification"] = Specification(context),
         ["decisions"] = Decisions(state),
         ["plan"] = Plan(state),
-        ["lessons"] = Section("Project lessons (guidance from earlier accepted work)", Bullets(context.Lessons)),
         ["verification"] = VerificationSummary(context),
         ["baseline"] = BaselineFailures(state),
     });

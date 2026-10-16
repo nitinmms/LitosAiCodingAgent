@@ -185,6 +185,26 @@ export function ThreadsPage({
                   (error: unknown) => onNotice(error instanceof Error ? error.message : 'The verdict could not be saved.'),
                 )
               }
+              lessonActions={{
+                onVerdict: (lessonId, verdict) => {
+                  const runId = view.details!.run?.id;
+                  if (!runId) return;
+                  void api.setRunLessonVerdict(runId, lessonId, verdict).then(
+                    () => view.reload(),
+                    (error: unknown) => onNotice(error instanceof Error ? error.message : 'The verdict could not be saved.'),
+                  );
+                },
+                loadApproved: async () =>
+                  (await api.lessons(view.details!.thread.projectId)).filter((l) => l.status === 'Approved' && l.enabled),
+                onPick: async (lessonIds) => {
+                  try {
+                    await api.setThreadLessons(view.details!.thread.id, lessonIds);
+                    await view.reload();
+                  } catch (error: unknown) {
+                    onNotice(error instanceof Error ? error.message : 'The lessons could not be picked.');
+                  }
+                },
+              }}
             />
           </>
         ) : (

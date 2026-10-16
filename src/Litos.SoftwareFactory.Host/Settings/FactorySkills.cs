@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
+using Litos.SoftwareFactory.Core.Lessons;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
@@ -26,6 +27,28 @@ public sealed class FactorySkills(FactorySettings settings, IFactoryStore store,
         return (revision, [.. skills.Enabled.Select(s => new RunLibrarySkill(s.Name, s.Description))], skills.RepositoryPolicy);
     }
 
+    /// <summary>
+    /// Which of the project's approved lessons a run of this task is given (m4-architecture.md §4.1),
+    /// from the task's words — title, type, the request that delegated it, this run's request and any
+    /// approved specification — its manual picks and what its budget has left. Nothing is recorded here.
+    /// </summary>
+    public async Task<IReadOnlyList<LessonPick>> LessonsForAsync(ClaimedRun claimed, CancellationToken ct)
+    {
+        var (run, thread, project) = claimed;
+        var details = await store.GetThreadAsync(thread.Id, ct);
+        var spec = details?.LatestSpec is { ApprovedAt: not null } approved
+            ? approved.Summary + "\n" + string.Join("\n", JsonSerializer.Deserialize<List<string>>(approved.AcceptanceCriteriaJson) ?? [])
+            : null;
+        var taskText = string.Join("\n", new[] { thread.Title, thread.TypeLabel, details?.TaskRequest, run.Request, spec }.OfType<string>());
+        long? remaining = thread.BudgetCap is { } cap ? cap - thread.TokensUsed - thread.TokensReserved : null;
+        var manual = JsonSerializer.Deserialize<List<Guid>>(thread.ManualLessonsJson) ?? [];
+        return LessonRetrieval.Select(await store.ListRetrievableLessonsAsync(project.Id, ct), taskText, manual, remaining);
+    }
+
+    /// <summary>The lessons a run is given, as the worker carries them.</summary>
+    public static IReadOnlyList<RunLesson> RunLessons(IReadOnlyList<LessonPick> picks) =>
+        [.. LessonRetrieval.Included(picks).Select(c => new RunLesson(c.Number, c.Revision, c.Rule))];
+
     /// <summary>The skills chosen for the task, with their text as the library has it now.</summary>
     public TaskSkillSelection.Resolved ForTask(TaskThread thread) =>
         TaskSkillSelection.Resolve(TaskSkillSelection.Parse(thread.SkillsJson), settings.Skills);
@@ -36,9 +59,10 @@ public sealed class FactorySkills(FactorySettings settings, IFactoryStore store,
     /// </summary>
     /// <param name="libraryRevision">The library revision the run was given; its folder is written if it is not there yet.</param>
     /// <param name="taskSkills">The skills chosen for the task, whole, for every session's system prompt (m3-architecture.md §13).</param>
+    /// <param name="lessons">The approved project lessons the run is given, for the same place (m4-architecture.md §4.3).</param>
     public async Task<PreparedSkills> PrepareAsync(
         Guid runId, Guid projectId, string workingCopy, long libraryRevision, IReadOnlyList<RunLibrarySkill> library,
-        RepositorySkillPolicy policy, IReadOnlyList<TaskSkill> taskSkills, CancellationToken ct)
+        RepositorySkillPolicy policy, IReadOnlyList<TaskSkill> taskSkills, CancellationToken ct, IReadOnlyList<RunLesson>? lessons = null)
     {
         var libraryRoot = library.Count == 0 ? null : LibraryRoot(libraryRevision);
 
@@ -64,6 +88,7 @@ public sealed class FactorySkills(FactorySettings settings, IFactoryStore store,
         var skills = new RunSkills(libraryRoot, [.. uses.Where(u => u.Used).Select(u => new AllowedRepositorySkill(u.Name, u.Hash))])
         {
             TaskSkills = taskSkills,
+            Lessons = lessons ?? [],
         };
         if (skills.IsEmpty)
             return new PreparedSkills(null, uses);

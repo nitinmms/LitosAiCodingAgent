@@ -14,6 +14,7 @@ import type {
   Lesson,
   LessonCommand,
   LessonInput,
+  LessonVerdict,
   McpServerSettings,
   McpSettings,
   McpTestResult,
@@ -103,6 +104,10 @@ export interface FactoryApi {
   reviseLesson(id: string, expectedRevision: number, lesson: LessonInput): Promise<Lesson>;
   lessonCommand(id: string, command: LessonCommand, expectedRevision: number): Promise<Lesson>;
   supersedeLesson(id: string, expectedRevision: number, replacementId: string): Promise<Lesson>;
+  /** Whether a lesson a run was given helped it; null clears the verdict. */
+  setRunLessonVerdict(runId: string, lessonId: string, verdict: LessonVerdict | null): Promise<unknown>;
+  /** The approved lessons picked for a task's next runs. */
+  setThreadLessons(threadId: string, lessonIds: string[]): Promise<Thread>;
   accept(id: string): Promise<Thread>;
   /** `stopping`: the task is running, and stops at its next safe point; the new state arrives as an event. */
   pause(id: string): Promise<StopResult>;
@@ -243,6 +248,9 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
       send<Lesson>('POST', `/api/lessons/${encodeURIComponent(id)}/${command}`, { expectedRevision }),
     supersedeLesson: (id, expectedRevision, replacementId) =>
       send<Lesson>('POST', `/api/lessons/${encodeURIComponent(id)}/supersede`, { expectedRevision, replacementId }),
+    setRunLessonVerdict: (runId, lessonId, verdict) =>
+      send<unknown>('POST', `/api/runs/${encodeURIComponent(runId)}/lessons/${encodeURIComponent(lessonId)}/verdict`, { verdict }),
+    setThreadLessons: (threadId, lessonIds) => send<Thread>('POST', `${thread(threadId)}/lessons`, { lessonIds }),
     accept: (id) => send<Thread>('POST', `${thread(id)}/accept`),
     // Pausing or cancelling a running task answers 202 with { stopping: true } before the task
     // has stopped; the new state arrives on the event stream, so neither returns a thread to trust.

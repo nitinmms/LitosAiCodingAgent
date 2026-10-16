@@ -31,7 +31,9 @@ public sealed class ReadingWorker : IAsyncDisposable
         var (run, thread, project) = claimed;
         var (revision, library, policy) = skills.Current();
         var chosen = skills.ForTask(thread);
-        var prepared = await skills.PrepareAsync(run.Id, project.Id, workingCopy, revision, library, policy, chosen.Applied, ct);
+        // A chat or a spec takes the lessons that match now, without a snapshot (m4-architecture.md §4.2).
+        var lessons = Settings.FactorySkills.RunLessons(await skills.LessonsForAsync(claimed, ct));
+        var prepared = await skills.PrepareAsync(run.Id, project.Id, workingCopy, revision, library, policy, chosen.Applied, ct, lessons);
         var handle = await launcher.LaunchAsync(
             new WorkerLaunch(
                 run.Id.ToString("N"), workingCopy, thread.Provider, thread.Model,

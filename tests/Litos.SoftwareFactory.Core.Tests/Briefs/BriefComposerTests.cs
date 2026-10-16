@@ -63,9 +63,9 @@ public class BriefComposerTests
     }
 
     [Fact]
-    public void RunBrief_IncludesDecisionsLessonsAndPreExistingFailures()
+    public void RunBrief_IncludesDecisionsAndPreExistingFailures_ButNotLessons_WhichAreInTheSystemPrompt()
     {
-        var context = Context with { Lessons = ["Exports must honour the tenant filter."], SpecificationSummary = "Export orders as CSV." };
+        var context = Context with { SpecificationSummary = "Export orders as CSV." };
         var state = State() with
         {
             Decisions = [new AnsweredDecision("All rows or the current page?", "All filtered rows.")],
@@ -77,7 +77,7 @@ public class BriefComposerTests
         Assert.Contains("## Approved specification", brief);
         Assert.Contains("Export orders as CSV.", brief);
         Assert.Contains("**All rows or the current page?** — All filtered rows.", brief);
-        Assert.Contains("- Exports must honour the tenant filter.", brief);
+        Assert.DoesNotContain("Project lessons", brief);
         Assert.Contains("- `Legacy.BrokenTest`", brief);
     }
 
@@ -876,7 +876,8 @@ public class BriefComposerTests
         // m2.2: the chat brief, for a read-only answer to a plain message.
         // m2.3: the spec brief; approved criteria reported on in their own words.
         // m2.4: work submitted with no change is sent back once to check its edits were written.
-        Assert.Equal("m2.4", BriefComposer.Revision);
+        // m2.5: project lessons leave the run brief for every session's system prompt.
+        Assert.Equal("m2.5", BriefComposer.Revision);
     }
 
     [Theory]

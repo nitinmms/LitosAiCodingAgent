@@ -45,6 +45,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<RepositorySkill> RepositorySkills => Set<RepositorySkill>();
     public DbSet<Lesson> Lessons => Set<Lesson>();
     public DbSet<LessonRevision> LessonRevisions => Set<LessonRevision>();
+    public DbSet<RunLessonSnapshot> RunLessons => Set<RunLessonSnapshot>();
 
     /// <summary>Set by the store once this context's transaction holds the outbox lock.</summary>
     internal bool HoldsOutboxLock { get; set; }
@@ -108,6 +109,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(t => t.Branch).HasMaxLength(250);
             // Threads created before skills could be chosen have none.
             Json(e.Property(t => t.SkillsJson).HasDefaultValue("[]"));
+            Json(e.Property(t => t.ManualLessonsJson).HasDefaultValue("[]"));
             e.HasOne<Project>().WithMany().HasForeignKey(t => t.ProjectId).OnDelete(DeleteBehavior.Restrict);
             // Board queries and the coordinator's search for queued work.
             e.HasIndex(t => new { t.ProjectId, t.Stage, t.State });
@@ -308,6 +310,16 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.HasOne<Lesson>().WithMany().HasForeignKey(r => r.LessonId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(r => new { r.LessonId, r.Revision }).IsUnique();
             e.HasIndex(r => r.NormalizedHash);
+        });
+
+        // What each run was given (m4-architecture.md §4.4): copied text, never updated but for a verdict.
+        model.Entity<RunLessonSnapshot>(e =>
+        {
+            e.ToTable("run_lesson_snapshots");
+            e.HasKey(s => new { s.RunId, s.LessonId });
+            e.Property(s => s.Rule).HasMaxLength(LessonRules.MaxRuleChars);
+            e.HasOne<TaskRun>().WithMany().HasForeignKey(s => s.RunId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Lesson>().WithMany().HasForeignKey(s => s.LessonId).OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<AuditEvent>(e =>

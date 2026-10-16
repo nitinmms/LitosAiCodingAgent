@@ -37,6 +37,10 @@ public sealed record RunCapabilities
     /// carries them (m3-architecture.md §13). Unlike the rest, taken afresh when the run resumes.</summary>
     public IReadOnlyList<TaskSkill> TaskSkills { get; init; } = [];
 
+    /// <summary>The approved project lessons it was given, as its snapshot copied them (m4-architecture.md
+    /// §4.4). Chosen when the run starts and kept when it resumes; a rework chooses afresh.</summary>
+    public IReadOnlyList<RunLesson> Lessons { get; init; } = [];
+
     /// <summary>A snapshot of the settings as they are now.</summary>
     public static RunCapabilities From(
         ToolSettings tools, WebSearchAccess webSearch, McpSettings mcp, bool ptc, SkillSettings? skills = null, long skillLibraryRevision = 0) => new()

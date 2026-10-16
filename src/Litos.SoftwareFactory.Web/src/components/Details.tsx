@@ -1,5 +1,6 @@
 import type { Finding, FindingVerdict, RunCapabilities, ThreadDetails, UsageCall } from '../api/types';
 import { fmt, pct, shortSha, toneOf, words } from '../domain/format';
+import { RunLessonsBox, type RunLessonsActions } from './RunLessons';
 
 function humanTesting(state: ThreadDetails['thread']['state']): { text: string; tone: string } {
   if (state === 'Accepted') return { text: 'Accepted', tone: 'done' };
@@ -76,6 +77,7 @@ export function Details({
   usage,
   cachedInputWeight,
   onVerdict,
+  lessonActions,
 }: {
   details: ThreadDetails;
   usage: UsageCall[];
@@ -83,6 +85,8 @@ export function Details({
   cachedInputWeight?: number;
   /** Judges a review finding; without it the findings are shown without buttons. */
   onVerdict?: (findingId: string, verdict: FindingVerdict | null) => void;
+  /** Acts on the run's lessons; without it they are shown without buttons. */
+  lessonActions?: RunLessonsActions;
 }) {
   const { thread, verification, findings, handoff, run } = details;
   const evidence = handoff?.evidence ?? null;
@@ -206,6 +210,8 @@ export function Details({
           </>
         ) : null}
       </section>
+
+      <RunLessonsBox lessons={details.runLessons ?? []} manual={thread.manualLessons ?? []} actions={lessonActions} />
 
       <section className="box" aria-label="Changed files">
         <h3>Changed files</h3>

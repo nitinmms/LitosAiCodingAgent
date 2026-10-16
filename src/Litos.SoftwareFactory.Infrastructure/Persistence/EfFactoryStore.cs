@@ -180,6 +180,9 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             ChatProgress = chatProgress,
             LatestSpec = latestSpec,
             EarlierFindings = earlierFindings,
+            RunLessons = latestRun is null
+                ? []
+                : await db.RunLessons.AsNoTracking().Where(s => s.RunId == latestRun.Id).OrderBy(s => s.Position).ToListAsync(ct),
             TaskRequest = taskRequest,
         };
     }
@@ -1520,6 +1523,8 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
                 select (Guid?)t.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Project => await db.Projects.Where(p => p.Id == id).Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct),
             ProjectScoped.Lesson => await db.Lessons.Where(l => l.Id == id).Select(l => (Guid?)l.ProjectId).FirstOrDefaultAsync(ct),
+            ProjectScoped.Run => await (
+                from r in db.Runs join t in db.Threads on r.ThreadId equals t.Id where r.Id == id select (Guid?)t.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Finding => await (
                 from f in db.ReviewFindings
                 join r in db.Runs on f.RunId equals r.Id

@@ -96,7 +96,7 @@ public sealed class MigrationTests : IAsyncLifetime
             """);
         // The thread is written with today's model, whose columns added since M2Chat this schema
         // lacks: they are there for the insert only.
-        await ExecuteAsync("""ALTER TABLE task_threads ADD COLUMN "ContextLength" integer, ADD COLUMN "PtcEnabled" boolean, ADD COLUMN "SkillsJson" jsonb NOT NULL DEFAULT '[]';""");
+        await ExecuteAsync("""ALTER TABLE task_threads ADD COLUMN "ContextLength" integer, ADD COLUMN "PtcEnabled" boolean, ADD COLUMN "SkillsJson" jsonb NOT NULL DEFAULT '[]', ADD COLUMN "ManualLessonsJson" jsonb NOT NULL DEFAULT '[]';""");
         await using (var before = Context())
         {
             before.Threads.Add(new Core.Store.TaskThread
@@ -106,7 +106,7 @@ public sealed class MigrationTests : IAsyncLifetime
             await before.SaveChangesAsync();
         }
 
-        await ExecuteAsync("""ALTER TABLE task_threads DROP COLUMN "ContextLength", DROP COLUMN "PtcEnabled", DROP COLUMN "SkillsJson";""");
+        await ExecuteAsync("""ALTER TABLE task_threads DROP COLUMN "ContextLength", DROP COLUMN "PtcEnabled", DROP COLUMN "SkillsJson", DROP COLUMN "ManualLessonsJson";""");
 
         await ExecuteAsync($$"""
             INSERT INTO specifications ("Id", "ThreadId", "Revision", "Summary", "AcceptanceCriteriaJson", "CreatedAt")

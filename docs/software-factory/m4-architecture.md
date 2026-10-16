@@ -82,14 +82,14 @@ As §23, under `RequireProjectAccess`:
 Deterministic, with no model call (§22):
 
 1. **Candidates:** approved, enabled lessons of the task's project. Suggested, dismissed and disabled lessons are never candidates (scenario 16), and no lesson of another project is.
-2. **Score:** each lesson topic found in the task's words (title, request, type label and any approved specification, lower-cased, split on non-letters, stop words dropped) scores 2; a lesson path matching a file the decision scan named (`PlanSubmission.Files`) scores 1. A lesson scoring 0 is not retrieved.
+2. **Score:** each lesson topic found, as whole words, in the task's words (title, type label, the request that delegated it, this run's request and any approved specification, lower-cased and split on everything but letters and digits) scores 2; a lesson path matching a path or file name the task's words name scores 1. A lesson scoring 0 is not retrieved.
 3. **Order:** score, then most recently approved, then id.
 4. **Limits:** at most five lessons and 1,500 tokens (four characters a token), and never more than 2% of the task's remaining budget. A lesson that does not fit is left out and named in the run's snapshot as `NotIncluded: limit`.
 5. **Manual selection:** on the thread, "Include a lesson" picks any approved lesson of the project for the next run. A manual pick always ranks first; one that cannot fit is reported, not silently dropped.
 
 ### 4.2 When
 
-Lessons are retrieved once per run, after the decision scan (so its named files can count) and before the first implement turn. A resumed run keeps its snapshot. A rework takes a fresh one, and the thread says which lessons changed. Chat and spec runs take the current set without a snapshot, as they do for skills.
+Lessons are retrieved once per run, **when the run starts**, as task skills are (built 2026-10-16; the plan first said after the decision scan, so its named files could count, but a worker's system prompt is fixed when it starts, before the scan). A resumed run keeps its snapshot. A rework takes a fresh one, and the thread says which lessons it was given. Chat and spec runs take the current set without a snapshot, as they do for skills.
 
 ### 4.3 In the system prompt
 
@@ -104,11 +104,11 @@ run_lesson_snapshots   RunId, LessonId, Revision, Text, Score, Reason (Retrieved
                        IncludedAt, HelpedVerdict?, VerdictBy?, VerdictAt?
 ```
 
-The text is copied, so a lesson's later revisions never change the record (scenario 17). `GET /api/runs/{runId}/lessons` returns it, and the run's details list the lessons included, each linked to its lesson and source.
+The text is copied, so a lesson's later revisions never change the record (scenario 17). `GET /api/runs/{runId}/lessons` returns it, and the run's details list the lessons given and those left out.
 
 ### 4.5 Inclusion is not evidence that a lesson helped
 
-§12.1 asks for the two to be recorded separately. Inclusion is the snapshot. Whether it helped is a person's verdict, given on the handoff card next to each included lesson: Helped, Did not matter, Misled. The Metrics tab reports both (§6).
+§12.1 asks for the two to be recorded separately. Inclusion is the snapshot. Whether it helped is a person's verdict, given in the run's details next to each included lesson (`POST /api/runs/{runId}/lessons/{lessonId}/verdict`): Helped, Didn't matter, Misled. A lesson left out cannot be judged. The Metrics tab reports both (§6).
 
 ## 5. Reflection jobs (build step 4)
 
@@ -231,6 +231,8 @@ Each step lands with its tests and an update to this document, as in M3.
 - **Helper signatures show an object argument's fields**, one level deep, as the anonymous object to pass: `run_select_query("request", new { sql = <string>[, limit = <int>] })`, where `<object>` was shown before. Byte-stable, as the rest of the description must be for the prompt cache.
 
 **Step 2, lesson store, API and Lessons page (2026-10-16).** As §3, with the approved-revision model above. Migration `M4Lessons`. `LessonRules` cleans and checks a draft (length, topics, paths, a source when the kind needs one, no secret, no stack trace) and normalizes the rule for duplicates; the store re-checks it. `ProjectScoped.Project` and `ProjectScoped.Lesson` put the project's lesson routes and every lesson route behind membership, and the route guard test now covers them. A reflection's proposal (no author) is stored but not audited: its job is the record (step 4). Tests: Core `LessonRulesTests`; store (SQLite and PostgreSQL) numbering, approval, the pending edit, stale revisions, duplicates, dismissal, supersession, source checks, and that earlier revisions never change; Host `LessonsApiTests` for who may do what and 404 outside the project; web `Lessons.test.tsx`.
+
+**Step 3, retrieval, snapshots and the system prompt (2026-10-16).** `LessonRetrieval` (Core) scores and limits as §4.1. `FactorySkills.LessonsForAsync` gathers the task's words, its manual picks and its remaining budget; `RunExecutor` chooses and records the snapshot when a new run starts (a rework included) and the thread is told which lessons were given and which left out; a resumed run keeps its `RunCapabilities.Lessons`. Lessons reach the worker in the run's skills file (`RunSkills.Lessons`) and `FactorySystemPromptProvider` adds a "Project lessons" section after the task's skills, saying they do not override the request, decisions or the factory's rules. The run brief's empty lessons section is gone (prompt revision m2.5). Migration `M4RunLessons`: `run_lesson_snapshots` and `task_threads.ManualLessonsJson`. API: `GET /api/runs/{id}/lessons`, the verdict, and `POST /api/threads/{id}/lessons` for picks (anyone on the project; audited; the thread is told). The run's details have a Lessons box with verdicts and "Pick a lesson for the next run". Tests: Core `LessonRetrievalTests`; store (both databases) retrievable lessons (scenario 16), a snapshot recorded once and unchanged by later edits (scenario 17), verdicts, picks; worker prompt; Host `RunLessonsTests`; web.
 
 ## 11. Open, not blocking
 

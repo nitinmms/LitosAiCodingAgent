@@ -4,6 +4,7 @@ using Litos.SoftwareFactory.Core.Lessons;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Auth;
+using Litos.SoftwareFactory.Host.Runs;
 using Litos.SoftwareFactory.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 
@@ -25,6 +26,11 @@ public sealed record LessonCommandRequest(int ExpectedRevision, string? Idempote
 
 public sealed record SupersedeLessonRequest(int ExpectedRevision, Guid ReplacementId);
 
+/// <param name="Verdict">Helped, DidNotMatter or Misled; null clears it.</param>
+public sealed record RunLessonVerdictRequest(string? Verdict);
+
+public sealed record SetThreadLessonsRequest(IReadOnlyList<Guid>? LessonIds);
+
 /// <summary>
 /// Lessons (ReadMe_LitosSoftwareFactory_V1.md §23, m4-architecture.md §3.3). Everyone on a project
 /// sees its lessons and may write and edit suggestions; only an Admin approves, edits an approved
@@ -37,6 +43,58 @@ public static class LessonsApi
         var api = app.MapGroup("/api").RequireAuthorization();
         var projectLessons = api.MapGroup("/projects/{id:guid}/lessons").RequireProjectAccess(ProjectScoped.Project);
         var lessonRoutes = api.MapGroup("/lessons/{id:guid}").RequireProjectAccess(ProjectScoped.Lesson);
+        var runRoutes = api.MapGroup("/runs/{id:guid}").RequireProjectAccess(ProjectScoped.Run);
+        var threadRoutes = api.MapGroup("/threads/{id:guid}").RequireProjectAccess(ProjectScoped.Thread);
+
+        // What a run was given, and left out (m4-architecture.md §4.4).
+        runRoutes.MapGet("/lessons", async (Guid id, IFactoryStore store, CancellationToken ct) =>
+            Results.Ok((await store.ListRunLessonsAsync(id, ct)).Select(RunLessonView)));
+
+        // Whether an included lesson helped: recorded apart from its inclusion (§4.5). Anyone on the project.
+        runRoutes.MapPost("/lessons/{lessonId:guid}/verdict", async (
+            Guid id, Guid lessonId, RunLessonVerdictRequest request, ClaimsPrincipal user, IFactoryStore store, IClock clock, CancellationToken ct) =>
+        {
+            LessonVerdict? verdict = null;
+            if (!string.IsNullOrWhiteSpace(request.Verdict))
+            {
+                if (!Enum.TryParse<LessonVerdict>(request.Verdict.Trim(), ignoreCase: true, out var parsed) || !Enum.IsDefined(parsed))
+                    return Problem("verdict must be Helped, DidNotMatter or Misled, or empty to clear it.");
+                verdict = parsed;
+            }
+
+            try
+            {
+                return Results.Ok(RunLessonView(await store.SetRunLessonVerdictAsync(id, lessonId, verdict, user.UserId(), clock.UtcNow, ct)));
+            }
+            catch (StoreNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (StoreConflictException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+        });
+
+        // Lessons a person picks for the task's next runs (§4.1). Anyone on the project, as with its skills.
+        threadRoutes.MapPost("/lessons", async (
+            Guid id, SetThreadLessonsRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        {
+            try
+            {
+                var thread = await store.SetThreadLessonsAsync(id, request.LessonIds ?? [], user.UserId(), clock.UtcNow, ct);
+                signals.EventsWritten();
+                return Results.Ok(FactoryApi.ThreadView(thread));
+            }
+            catch (StoreNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (StoreConflictException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+        });
 
         projectLessons.MapGet("", async (Guid id, string? status, IFactoryStore store, UserManager<FactoryUser> users, CancellationToken ct) =>
         {
@@ -190,4 +248,18 @@ public static class LessonsApi
     };
 
     private static string? Name(IReadOnlyDictionary<Guid, string> names, Guid? id) => id is { } known ? names.GetValueOrDefault(known) : null;
+
+    internal static object RunLessonView(RunLessonSnapshot s) => new
+    {
+        s.LessonId,
+        s.Number,
+        s.Revision,
+        s.Rule,
+        s.Score,
+        Inclusion = s.Inclusion.ToString(),
+        s.Manual,
+        s.IncludedAt,
+        Verdict = s.Verdict?.ToString(),
+        s.VerdictAt,
+    };
 }

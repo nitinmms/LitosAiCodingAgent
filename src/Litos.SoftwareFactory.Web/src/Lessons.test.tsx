@@ -148,6 +148,46 @@ describe('the Lessons page', () => {
     expect(await card(1).findByText(/has changed since you read it/)).toBeInTheDocument();
   });
 
+  it("lists a run's lessons on its thread, takes a verdict on each, and lets a person pick one for the next run", async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'AwaitingHumanTesting', stage: 'Handoff' });
+    const given = host.addLesson(project.id, { status: 'Approved', approvedRevision: 1 }, { rule: 'Quote every CSV value.' });
+    const spare = host.addLesson(project.id, { status: 'Approved', approvedRevision: 1 }, { rule: 'Dates are UTC.' });
+    const details = host.details(thread.id);
+    details.run = { id: 'r-1', kind: 'Implement', status: 'Finished', stopReason: null, baselineCommit: null, headCommit: null, promptRevision: 'm2.5' };
+    details.runLessons = [
+      { lessonId: given.id, number: given.number, revision: 1, rule: 'Quote every CSV value.', score: 2, inclusion: 'Retrieved', manual: false, includedAt: '2026-10-16T09:00:00Z', verdict: null, verdictAt: null },
+      { lessonId: spare.id, number: spare.number, revision: 1, rule: 'Dates are UTC.', score: 2, inclusion: 'NotIncluded', manual: false, includedAt: '2026-10-16T09:00:00Z', verdict: null, verdictAt: null },
+    ];
+    const user = start(host, '#/threads');
+    const box = within(await screen.findByRole('region', { name: 'Lessons' }));
+
+    expect(box.getByText('Quote every CSV value.')).toBeInTheDocument();
+    expect(box.getByText(`Left out, past the limit: L-${spare.number}.`)).toBeInTheDocument();
+    const verdicts = within(box.getByRole('group', { name: `Did L-${given.number} help?` }));
+    await user.click(verdicts.getByRole('button', { name: 'Helped' }));
+    expect(host.sent('POST', `/api/runs/r-1/lessons/${given.id}/verdict`)[0]!.body).toEqual({ verdict: 'Helped' });
+    await waitFor(() => expect(verdicts.getByRole('button', { name: 'Helped' })).toHaveAttribute('aria-pressed', 'true'));
+
+    await user.click(box.getByRole('button', { name: 'Pick a lesson for the next run' }));
+    await user.selectOptions(await box.findByLabelText('Lesson'), spare.id);
+    await user.click(box.getByRole('button', { name: 'Pick' }));
+
+    expect(host.sent('POST', `/api/threads/${thread.id}/lessons`)[0]!.body).toEqual({ lessonIds: [spare.id] });
+    expect(await box.findByText(/Picked for the next run:/)).toBeInTheDocument();
+    await user.click(box.getByRole('button', { name: `Unpick L-${spare.number}` }));
+    expect(host.sent('POST', `/api/threads/${thread.id}/lessons`)[1]!.body).toEqual({ lessonIds: [] });
+  });
+
+  it('says so when a run was given no lessons', async () => {
+    const host = new FakeHost();
+    host.addThread(host.addProject());
+    start(host, '#/threads');
+
+    expect(await within(await screen.findByRole('region', { name: 'Lessons' })).findByText('This run was given no project lessons.')).toBeInTheDocument();
+  });
+
   it('links a lesson to the thread it rests on', async () => {
     const host = new FakeHost();
     const project = host.addProject();

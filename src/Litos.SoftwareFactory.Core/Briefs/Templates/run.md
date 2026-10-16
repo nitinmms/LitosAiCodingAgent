@@ -38,8 +38,6 @@ Every call you make re-sends this whole conversation, and the task has a token b
 
 {{plan}}
 
-{{lessons}}
-
 ## Verification the factory will run
 
 {{verification}}

@@ -3,6 +3,7 @@ import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
   Lesson,
   LessonRevision,
+  RunLesson,
   AccountRole,
   BudgetSettings,
   CatalogModel,
@@ -1181,6 +1182,27 @@ export class FakeHost {
           },
         ),
       ];
+    }
+
+    const runVerdict = /^\/api\/runs\/([^/]+)\/lessons\/([^/]+)\/verdict$/.exec(path);
+    if (runVerdict && method === 'POST') {
+      for (const details of this.threads.values()) {
+        if (details.run?.id !== runVerdict[1]) continue;
+        const given = (details.runLessons ?? []).find((l) => l.lessonId === runVerdict[2]);
+        if (!given) return [404, { error: 'The run was not given that lesson.' }];
+        const judged = { ...given, verdict: (data.verdict as RunLesson['verdict']) ?? null };
+        details.runLessons = (details.runLessons ?? []).map((l) => (l.lessonId === given.lessonId ? judged : l));
+        return [200, judged];
+      }
+      return [404];
+    }
+
+    const picks = /^\/api\/threads\/([^/]+)\/lessons$/.exec(path);
+    if (picks && method === 'POST') {
+      const ids = (data.lessonIds as string[] | undefined) ?? [];
+      if (ids.some((id) => !this.lessons.some((l) => l.id === id && l.status === 'Approved' && l.enabled)))
+        return [409, { error: "Only an approved, enabled lesson of this task's project can be picked for it." }];
+      return [200, this.change(picks[1]!, { manualLessons: ids })];
     }
 
     const one = /^\/api\/lessons\/([^/]+)\/(revisions|approve|dismiss|disable|enable|supersede)$/.exec(path);

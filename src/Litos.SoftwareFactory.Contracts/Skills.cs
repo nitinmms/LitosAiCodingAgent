@@ -17,8 +17,12 @@ public sealed record RunSkills(string? LibraryRoot, IReadOnlyList<AllowedReposit
     /// to load.</summary>
     public IReadOnlyList<TaskSkill> TaskSkills { get; init; } = [];
 
-    /// <summary>Whether the run has any skill at all.</summary>
-    public bool IsEmpty => !HasLoadableSkills && TaskSkills.Count == 0;
+    /// <summary>The approved project lessons the run is given (m4-architecture.md §4.3), also in every
+    /// session's system prompt. Carried here because the system prompt is the worker's to build.</summary>
+    public IReadOnlyList<RunLesson> Lessons { get; init; } = [];
+
+    /// <summary>Whether the run has any skill or lesson at all.</summary>
+    public bool IsEmpty => !HasLoadableSkills && TaskSkills.Count == 0 && Lessons.Count == 0;
 
     /// <summary>Whether there are skills to load by name; without any, the skill tool is not offered.</summary>
     public bool HasLoadableSkills => LibraryRoot is not null || Repository.Count > 0;
@@ -28,6 +32,12 @@ public sealed record AllowedRepositorySkill(string Name, string Hash);
 
 /// <summary>A skill chosen for a task, with the instructions the agent is given.</summary>
 public sealed record TaskSkill(string Name, string Text);
+
+/// <summary>An approved lesson as a run is given it, at the revision its snapshot copied.</summary>
+public sealed record RunLesson(long Number, int Revision, string Rule)
+{
+    public string Text => $"[L-{Number} r{Revision}] {Rule}";
+}
 
 /// <summary>Where a repository keeps its skills, relative to its root (blueprint §8.2).</summary>
 public static class RepositorySkillFolder

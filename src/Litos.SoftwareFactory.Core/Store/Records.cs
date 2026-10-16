@@ -81,6 +81,10 @@ public sealed class TaskThread
     /// (m3-architecture.md §13; read with <see cref="Settings.TaskSkillSelection.Parse"/>).</summary>
     public string SkillsJson { get; set; } = "[]";
 
+    /// <summary>Approved lessons a person picked for the task's runs, beyond those retrieved
+    /// (m4-architecture.md §4.1), as a JSON array of lesson ids.</summary>
+    public string ManualLessonsJson { get; set; } = "[]";
+
     /// <summary>The next message's sequence number within this thread.</summary>
     public long NextMessageSequence { get; set; } = 1;
 
@@ -664,6 +668,12 @@ public static class AuditActions
     public const string LessonDisable = "lesson.disable";
     public const string LessonEnable = "lesson.enable";
     public const string LessonSupersede = "lesson.supersede";
+
+    /// <summary>A person's verdict on a lesson a run was given (m4-architecture.md §4.5).</summary>
+    public const string RunLessonVerdict = "run_lesson.verdict";
+
+    /// <summary>The lessons a person picked for a task changed.</summary>
+    public const string ThreadLessons = "thread.lessons";
     public const string DecisionAnswer = "decision.answer";
     public const string FindingVerdict = "finding.verdict";
     public const string SettingsUpdate = "settings.update";

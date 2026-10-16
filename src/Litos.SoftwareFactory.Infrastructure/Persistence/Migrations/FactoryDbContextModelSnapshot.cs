@@ -141,6 +141,59 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.ToTable("lesson_revisions", (string)null);
                 });
 
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Lessons.RunLessonSnapshot", b =>
+                {
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("LessonId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("IncludedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Inclusion")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<bool>("Manual")
+                        .HasColumnType("boolean");
+
+                    b.Property<long>("Number")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Rule")
+                        .IsRequired()
+                        .HasMaxLength(600)
+                        .HasColumnType("character varying(600)");
+
+                    b.Property<int>("Score")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Verdict")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset?>("VerdictAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("VerdictBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("RunId", "LessonId");
+
+                    b.HasIndex("LessonId");
+
+                    b.ToTable("run_lesson_snapshots", (string)null);
+                });
+
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.AuditEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -828,6 +881,12 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.Property<long?>("InitialBudgetCap")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("ManualLessonsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("[]");
+
                     b.Property<string>("Model")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1373,6 +1432,21 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.HasOne("Litos.SoftwareFactory.Core.Lessons.Lesson", null)
                         .WithMany()
                         .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Lessons.RunLessonSnapshot", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Lessons.Lesson", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.TaskRun", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -1295,6 +1295,38 @@ public class WorkerSkillsTests
         Assert.Contains("skill", worker.Services.GetRequiredService<FactoryToolSetPolicy>().Create("s", "Implement").Schemas.Select(s => s.Name));
     }
 
+    /// <summary>m4-architecture.md §4.3: a run's approved lessons sit in every session's system prompt,
+    /// after the task's skills, with what they are and what they do not override.</summary>
+    [Fact]
+    public async Task ARunsLessons_AreInTheSystemPrompt_OfEverySession_AfterTheTasksSkills()
+    {
+        using var data = new TempDirectory();
+        await using var worker = WorkerWith(data, new RunSkills(null, [])
+        {
+            TaskSkills = [new TaskSkill("tdd", "Test first.")],
+            Lessons = [new RunLesson(3, 2, "Money is stored as integer cents."), new RunLesson(7, 1, "Dates are UTC.")],
+        });
+
+        foreach (var turnKind in new[] { "Chat", "Implement", "Review" })
+        {
+            var prompt = (await SystemPromptAsync(worker, turnKind)).SkillsCatalog!;
+            Assert.Contains("Project lessons: guidance from earlier accepted work on this project", prompt);
+            Assert.Contains("- [L-3 r2] Money is stored as integer cents.\n- [L-7 r1] Dates are UTC.", prompt);
+            Assert.True(prompt.IndexOf("### Skill: tdd", StringComparison.Ordinal) < prompt.IndexOf("Project lessons", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public async Task AWorkerWithOnlyLessons_StillGetsThemInItsSystemPrompt()
+    {
+        using var data = new TempDirectory();
+        await using var worker = WorkerWith(data, new RunSkills(null, []) { Lessons = [new RunLesson(1, 1, "Use cents.")] });
+
+        Assert.IsType<FactorySystemPromptProvider>(worker.Services.GetRequiredService<Litos.Agent.Session.ISystemPromptProvider>());
+        Assert.Contains("- [L-1 r1] Use cents.", (await SystemPromptAsync(worker)).SkillsCatalog);
+        Assert.DoesNotContain("Skills for this task", (await SystemPromptAsync(worker)).SkillsCatalog);
+    }
+
     [Fact]
     public async Task AWorkerWithOnlyChosenSkills_HasNoSkillTool_AndNoCatalog()
     {

@@ -46,6 +46,7 @@ public enum ProjectScoped
     /// <summary>The project itself, for routes such as its lessons.</summary>
     Project,
     Lesson,
+    Run,
 }
 
 /// <summary>Everything needed to stop a run, applied in one transaction.</summary>
@@ -111,6 +112,9 @@ public sealed record ThreadDetails(
     /// are the latest run's; these stay listed so a person can still judge them after a rework
     /// (on J3 a change request hid the first review's findings before they were judged).</summary>
     public IReadOnlyList<ReviewFindingRecord> EarlierFindings { get; init; } = [];
+
+    /// <summary>The latest run's lesson snapshot (m4-architecture.md §4.4), included and left out.</summary>
+    public IReadOnlyList<RunLessonSnapshot> RunLessons { get; init; } = [];
 
     /// <summary>What the task was delegated to do: its first implement run's request. Not the
     /// first message, which may be a question or a request for a specification.</summary>
@@ -250,6 +254,21 @@ public interface IFactoryStore
     Task<LessonDetails> DismissLessonAsync(Guid lessonId, int expectedRevision, Guid userId, DateTimeOffset now, CancellationToken ct);
 
     Task<LessonDetails> SetLessonEnabledAsync(Guid lessonId, int expectedRevision, bool enabled, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>The project's approved, enabled lessons at their approved revisions: what retrieval chooses from.</summary>
+    Task<IReadOnlyList<LessonCandidate>> ListRetrievableLessonsAsync(Guid projectId, CancellationToken ct);
+
+    /// <summary>Records a run's lesson snapshot once; a run that already has one keeps it.</summary>
+    Task SaveRunLessonsAsync(Guid runId, IReadOnlyList<LessonPick> picks, DateTimeOffset now, CancellationToken ct);
+
+    Task<IReadOnlyList<RunLessonSnapshot>> ListRunLessonsAsync(Guid runId, CancellationToken ct);
+
+    /// <summary>A person's verdict on a lesson the run was given; null clears it. Audited.</summary>
+    Task<RunLessonSnapshot> SetRunLessonVerdictAsync(Guid runId, Guid lessonId, LessonVerdict? verdict, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>The approved lessons a person picked for the task's next runs. Each must be an approved,
+    /// enabled lesson of the task's project. Audited, and the thread is told. No change, nothing recorded.</summary>
+    Task<TaskThread> SetThreadLessonsAsync(Guid threadId, IReadOnlyList<Guid> lessonIds, Guid userId, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>Disables an approved lesson and links the approved lesson of the same project that replaces it.</summary>
     Task<LessonDetails> SupersedeLessonAsync(Guid lessonId, int expectedRevision, Guid replacementId, Guid userId, DateTimeOffset now, CancellationToken ct);

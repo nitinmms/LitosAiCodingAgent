@@ -111,3 +111,39 @@ public sealed record LessonDraft(
 
 /// <summary>A lesson with its newest revision, and its approved revision when it has one.</summary>
 public sealed record LessonDetails(Lesson Lesson, LessonRevision Current, LessonRevision? Approved);
+
+/// <summary>What a person judged an included lesson to have done for a run (m4-architecture.md §4.5).</summary>
+public enum LessonVerdict
+{
+    Helped,
+    DidNotMatter,
+    Misled,
+}
+
+/// <summary>
+/// One lesson in one run's snapshot (ReadMe_LitosSoftwareFactory_V1.md §22 "RunLessonSnapshot"): the
+/// exact text copied when the run started, so a later revision never changes what the run was told,
+/// and whether a person found it helped, which is recorded apart from the inclusion itself (§12.1).
+/// </summary>
+public sealed class RunLessonSnapshot
+{
+    public Guid RunId { get; set; }
+    public Guid LessonId { get; set; }
+    public long Number { get; set; }
+    public int Revision { get; set; }
+    public required string Rule { get; set; }
+
+    /// <summary>Its place in the order retrieval ranked the run's lessons.</summary>
+    public int Position { get; set; }
+
+    public int Score { get; set; }
+    public LessonInclusion Inclusion { get; set; }
+
+    /// <summary>A person picked it for the task.</summary>
+    public bool Manual { get; set; }
+
+    public DateTimeOffset IncludedAt { get; set; }
+    public LessonVerdict? Verdict { get; set; }
+    public Guid? VerdictBy { get; set; }
+    public DateTimeOffset? VerdictAt { get; set; }
+}
