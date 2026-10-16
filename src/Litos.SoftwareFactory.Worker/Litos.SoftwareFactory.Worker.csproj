@@ -8,6 +8,13 @@
     <ProjectReference Include="..\Litos.SoftwareFactory.Contracts\Litos.SoftwareFactory.Contracts.csproj" />
   </ItemGroup>
 
+  <!-- The kernel subprocess, built beside the worker so KernelHostLocator finds it there and a
+       worker never builds anything while it starts (m3-architecture.md §12): building it on the
+       fly took longer than the host's 30 s handshake whenever another run's kernel held its files. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.Kernel.Host\Litos.Kernel.Host.csproj" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

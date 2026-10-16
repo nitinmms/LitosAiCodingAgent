@@ -96,6 +96,12 @@ public static class KernelHostLocator
         return null;
     }
 
+    /// <summary>The longest a dev-mode build may take before it is killed and reported as failed.</summary>
+    internal static readonly TimeSpan BuildTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>The most of each output stream an error message carries: the end of it, where MSBuild's errors are.</summary>
+    internal const int BuildOutputTailChars = 4_000;
+
     /// <summary>
     /// Runs `dotnet build` synchronously (this only happens once per Gui process — subsequent
     /// KernelSession spawns reuse whatever's already on disk from here, since Resolve() is called
@@ -105,14 +111,7 @@ public static class KernelHostLocator
     /// </summary>
     private static string BuildAndLocateDll(string projectPath)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var startInfo = new ProcessStartInfo { FileName = "dotnet" };
         startInfo.ArgumentList.Add("build");
         startInfo.ArgumentList.Add(projectPath);
         startInfo.ArgumentList.Add("-c");
@@ -120,19 +119,70 @@ public static class KernelHostLocator
         startInfo.ArgumentList.Add("--nologo");
         startInfo.ArgumentList.Add("-v");
         startInfo.ArgumentList.Add("quiet");
+        // A reused MSBuild node outlives the build and inherits its output pipes, so reading them
+        // to the end would wait for that node instead of for the build.
+        startInfo.ArgumentList.Add("-nodeReuse:false");
 
-        using var process = Process.Start(startInfo)!;
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-        {
-            var stderr = process.StandardError.ReadToEnd();
-            throw new InvalidOperationException($"Failed to build {ExeName} for dev-mode launch: {stderr}");
-        }
+        RunBuild(startInfo, BuildTimeout);
 
         var projectDir = Path.GetDirectoryName(projectPath)!;
         var dllPath = Path.Combine(projectDir, "bin", "Release", "net10.0", ExeName + ".dll");
         if (!File.Exists(dllPath))
             throw new FileNotFoundException($"Built {ExeName} but did not find the expected output at '{dllPath}'.", dllPath);
         return dllPath;
+    }
+
+    /// <summary>
+    /// Runs a build to completion and throws, with the end of its output, if it fails or runs past
+    /// <paramref name="timeout"/>. Both output streams are read while the build runs: waiting for
+    /// exit first, as this once did, deadlocks as soon as a failing build's output fills the pipe —
+    /// the build blocks writing and the caller blocks waiting (m3-architecture.md §12, where one
+    /// kernel start waited 12 minutes on a build reporting locked files).
+    /// </summary>
+    /// <remarks>internal so KernelHostLocatorTests can run it against a stand-in command.</remarks>
+    internal static void RunBuild(ProcessStartInfo startInfo, TimeSpan timeout)
+    {
+        startInfo.RedirectStandardOutput = true;
+        startInfo.RedirectStandardError = true;
+        startInfo.UseShellExecute = false;
+        startInfo.CreateNoWindow = true;
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Failed to build {ExeName} for dev-mode launch: '{startInfo.FileName}' did not start.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+
+        if (!process.WaitForExit(timeout))
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // It exited between the wait and the kill.
+            }
+
+            throw new InvalidOperationException(
+                $"Failed to build {ExeName} for dev-mode launch: the build did not finish within {timeout.TotalSeconds:0} seconds and was stopped.{OutputTail(stdout, stderr)}");
+        }
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"Failed to build {ExeName} for dev-mode launch: the build exited with code {process.ExitCode}.{OutputTail(stdout, stderr)}");
+    }
+
+    /// <summary>The end of what the build wrote — MSBuild reports errors on stdout, not stderr — or
+    /// nothing if a process that outlived the build still holds the pipes open.</summary>
+    private static string OutputTail(Task<string> stdout, Task<string> stderr)
+    {
+        if (!Task.WaitAll([stdout, stderr], TimeSpan.FromSeconds(5)))
+            return " Its output could not be read.";
+
+        // Each stream keeps its own tail, so a noisy stderr cannot push MSBuild's stdout errors out.
+        return string.Concat(new[] { stdout.Result, stderr.Result }
+            .Select(output => output.Trim())
+            .Where(output => output.Length > 0)
+            .Select(output => Environment.NewLine + (output.Length > BuildOutputTailChars ? "…" + output[^BuildOutputTailChars..] : output)));
     }
 }

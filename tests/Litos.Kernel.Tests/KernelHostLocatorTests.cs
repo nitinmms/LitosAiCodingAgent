@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace Litos.Kernel.Tests;
 
 /// <summary>
@@ -86,5 +88,55 @@ public sealed class KernelHostLocatorTests
         // coincide (the usual Windows test-host case) candidates[0] already satisfies this.
         var baseDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         Assert.Contains(candidates, d => string.Equals(d, baseDirectory, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Regression coverage for m3-architecture.md §12: a failing dev-mode build's output (locked-file
+    /// warnings, about 8 KB) filled the redirected pipe while the locator waited for exit before
+    /// reading it, so the build blocked writing and the kernel start blocked waiting — 12 minutes on
+    /// one factory run. Here a stand-in "build" writes far more than any pipe buffer to both streams
+    /// and fails; it must end with an error carrying the end of that output, not hang.
+    /// </summary>
+    [Fact]
+    public async Task RunBuild_AFailingBuildWithMoreOutputThanAPipeHolds_FailsWithTheEndOfItsOutput()
+    {
+        var build = Shell(OperatingSystem.IsWindows()
+            ? "(for /L %i in (1,1,3000) do @echo warning %i: the file is locked by another process) & (for /L %i in (1,1,3000) do @echo error %i 1>&2) & exit /b 3"
+            : "i=1; while [ $i -le 3000 ]; do echo \"warning $i: the file is locked by another process\"; echo \"error $i\" 1>&2; i=$((i+1)); done; exit 3");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Task.Run(() => KernelHostLocator.RunBuild(build, TimeSpan.FromMinutes(2))).WaitAsync(TimeSpan.FromMinutes(1)));
+
+        Assert.Contains("exited with code 3", ex.Message);
+        Assert.Contains("warning 3000: the file is locked", ex.Message);
+        Assert.Contains("error 3000", ex.Message);
+        Assert.DoesNotContain("warning 1: the file", ex.Message); // only the end of the output is kept
+    }
+
+    [Fact]
+    public async Task RunBuild_ABuildPastItsTimeout_IsStoppedAndReported()
+    {
+        var build = Shell(OperatingSystem.IsWindows() ? "ping -n 60 127.0.0.1 >nul" : "sleep 60");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Task.Run(() => KernelHostLocator.RunBuild(build, TimeSpan.FromSeconds(1))).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.Contains("did not finish within 1 seconds", ex.Message);
+    }
+
+    [Fact]
+    public void RunBuild_ASucceedingBuild_Returns()
+    {
+        KernelHostLocator.RunBuild(Shell("echo built"), TimeSpan.FromMinutes(1));
+    }
+
+    private static ProcessStartInfo Shell(string script)
+    {
+        var startInfo = new ProcessStartInfo(OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh");
+        if (OperatingSystem.IsWindows())
+            startInfo.ArgumentList.Add("/d");
+        startInfo.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+        startInfo.ArgumentList.Add(script);
+        return startInfo;
     }
 }

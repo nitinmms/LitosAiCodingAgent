@@ -323,7 +323,7 @@ Raised by the user on 2026-10-14, during the M3 check, and folded for later. Not
 
 ## 12. Follow-up: starting a run's kernel without building
 
-Found on 2026-10-14 during the M3 check (§9.1); not fixed in M3 yet.
+Found on 2026-10-14 during the M3 check (§9.1). **Both defects fixed on 2026-10-16** (see "Built" below); the two smaller items at the end are still open.
 
 **What happens.** A factory worker started from a build directory, not a published layout, finds no published `Litos.Kernel.Host` beside it, so `KernelHostLocator.Resolve()` (in `Litos.Kernel`) runs `dotnet build src/Litos.Kernel.Host -c Release` synchronously, then launches the result with `dotnet exec`. It does this whenever a kernel starts: once at worker start-up (the PTC probe in `Litos.Hosting`) and again for every session's kernel.
 
@@ -338,7 +338,10 @@ Found on 2026-10-14 during the M3 check (§9.1); not fixed in M3 yet.
 - `BuildAndLocateDll`, where a build is still needed (local development of other faces), reads stdout and stderr while it waits (or discards them), and has a timeout, so a failing build fails with its message.
 - A test that a failing build with a large output ends with an error rather than hanging.
 
-**Until then.** Don't run a Release build of the solution while factory runs are live. After one, build `src/Litos.Kernel.Host` in Release once while no kernel is running.
+**Built (2026-10-16).**
+
+- **The kernel ships beside the worker.** `Litos.SoftwareFactory.Worker` references `Litos.Kernel.Host`, so every worker build puts `Litos.Kernel.Host.exe` and its dependencies in the worker's own output, where `KernelHostLocator.Resolve()` finds it before considering a build. Checked by starting a worker from `bin/Debug`: it reported its port and `src/Litos.Kernel.Host/bin/Release` was not touched. A test reads the worker's `deps.json`, so dropping the reference fails it. Release builds of the solution no longer collide with live runs, whose kernels now run from the worker's folder. A Debug rebuild of the worker while runs are live fails on locked files, as it already did for the worker's own DLLs: the failure is the developer's build, not a run.
+- **`KernelHostLocator.RunBuild`** reads both streams while the build runs, passes `-nodeReuse:false` (a reused MSBuild node would hold the pipes open), stops the build after 5 minutes, and puts the last 4,000 characters of each stream in the error (MSBuild reports errors on stdout, which was never read). Tests: a failing command writing far more than a pipe holds ends with its output tail, a command past its timeout is stopped and reported.
 
 **Also from the M3 check, smaller.** A tool denied by the MCP settings reaches the agent as a C# compile error ("the name … does not exist"), indistinguishable from a typo; a message naming the policy would be clearer. And agents repeatedly guess the argument shapes of the kernel's helpers (`skill("name", "tdd")`, `search_code("pattern", …)`, MCP tools' `request` object), costing calls in most runs: their descriptions should show a call.
 
