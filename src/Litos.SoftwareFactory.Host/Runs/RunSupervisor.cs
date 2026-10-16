@@ -14,7 +14,8 @@ namespace Litos.SoftwareFactory.Host.Runs;
 /// be gone before the claim can start it again (docs/software-factory/m2-architecture.md §3.2).
 /// </summary>
 public sealed class RunSupervisor(
-    RunRegistry registry, RunExecutor executor, ChatExecutor chat, SpecExecutor spec, FactorySignals signals, ILogger<RunSupervisor> logger)
+    RunRegistry registry, RunExecutor executor, ChatExecutor chat, SpecExecutor spec, ReflectionExecutor reflection, FactorySignals signals,
+    ILogger<RunSupervisor> logger)
     : IRunControl
 {
     private readonly ConcurrentDictionary<ActiveRun, Task> _running = new();
@@ -47,6 +48,8 @@ public sealed class RunSupervisor(
                 await chat.ExecuteAsync(claimed, active, hostStopping);
             else if (claimed.Run.Kind == RunKind.Spec)
                 await spec.ExecuteAsync(claimed, active, hostStopping);
+            else if (claimed.Run.Kind == RunKind.Reflection)
+                await reflection.ExecuteAsync(claimed, active, hostStopping);
             else
                 await executor.ExecuteAsync(claimed, active, hostStopping);
         }

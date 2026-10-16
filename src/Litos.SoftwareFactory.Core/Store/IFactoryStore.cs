@@ -116,6 +116,12 @@ public sealed record ThreadDetails(
     /// <summary>The latest run's lesson snapshot (m4-architecture.md §4.4), included and left out.</summary>
     public IReadOnlyList<RunLessonSnapshot> RunLessons { get; init; } = [];
 
+    /// <summary>The latest lesson reflection, once the task was accepted (m4-architecture.md §5).</summary>
+    public ReflectionJob? Reflection { get; init; }
+
+    /// <summary>The lessons the task's reflections proposed, whatever became of them since.</summary>
+    public IReadOnlyList<LessonDetails> ProposedLessons { get; init; } = [];
+
     /// <summary>What the task was delegated to do: its first implement run's request. Not the
     /// first message, which may be a question or a request for a specification.</summary>
     public string? TaskRequest { get; init; }
@@ -168,7 +174,10 @@ public interface IFactoryStore
     /// <summary>Accept, pause, resume, cancel, raise-and-resume, resolve a blocker or recover:
     /// a transition a person asked for. Throws <see cref="StoreConflictException"/> when it is
     /// not legal from the thread's state.</summary>
-    Task<TaskThread> ApplyUserActionAsync(Guid threadId, Guid userId, LifecycleTrigger trigger, DateTimeOffset now, CancellationToken ct);
+    /// <param name="reflectionAllowance">For an Accept: what a lesson reflection may spend; 0 creates none
+    /// (m4-architecture.md §5.1). The reflection is created in the same transaction and can never undo the acceptance.</param>
+    Task<TaskThread> ApplyUserActionAsync(
+        Guid threadId, Guid userId, LifecycleTrigger trigger, DateTimeOffset now, CancellationToken ct, long reflectionAllowance = 0);
 
     /// <summary>
     /// Takes back a change request: the thread's unfinished rework run is ended as Withdrawn and
@@ -269,6 +278,23 @@ public interface IFactoryStore
     /// <summary>The approved lessons a person picked for the task's next runs. Each must be an approved,
     /// enabled lesson of the task's project. Audited, and the thread is told. No change, nothing recorded.</summary>
     Task<TaskThread> SetThreadLessonsAsync(Guid threadId, IReadOnlyList<Guid> lessonIds, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    // ---- Lesson reflection (m4-architecture.md §5) ----
+
+    /// <summary>Stores a reflection's valid proposals as suggestions and completes it, in one transaction;
+    /// completing it again returns what the first completion stored.</summary>
+    Task<ReflectionOutcome> CompleteReflectionAsync(Guid runId, IReadOnlyList<LessonProposal> proposals, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>The reflection failed; the task stays accepted and the thread offers Retry and Skip.</summary>
+    Task FailReflectionAsync(Guid runId, string error, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Runs a deferred or failed reflection again, when the task has the allowance left.</summary>
+    Task<ReflectionJob> RetryReflectionAsync(Guid threadId, long allowance, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    Task<ReflectionJob> SkipReflectionAsync(Guid threadId, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Every reflection, or those in one state: for the counters.</summary>
+    Task<IReadOnlyList<ReflectionJob>> ListReflectionsAsync(ReflectionStatus? status, CancellationToken ct);
 
     /// <summary>Disables an approved lesson and links the approved lesson of the same project that replaces it.</summary>
     Task<LessonDetails> SupersedeLessonAsync(Guid lessonId, int expectedRevision, Guid replacementId, Guid userId, DateTimeOffset now, CancellationToken ct);

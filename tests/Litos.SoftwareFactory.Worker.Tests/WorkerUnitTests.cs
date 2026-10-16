@@ -651,6 +651,50 @@ public class CompletionToolTests
         Assert.Empty(handler.Requests);
     }
 
+    // ---- submit_lessons, a reflection's proposals (m4-architecture.md §5.2) ----
+
+    [Fact]
+    public async Task SubmitLessons_PostsTheProposals()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitLessonsTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""
+            {"lessons":[{"rule":"Quote every CSV value.","topics":["csv"],"source":"Decision","sourceRef":"d-1","reason":"The tester asked."}]}
+            """), default);
+
+        Assert.False(result.IsError, result.Text);
+        Assert.StartsWith("Recorded. Stop now", result.Text);
+        var lesson = Assert.Single(Assert.IsType<LessonsSubmission>(Posted(handler).Submission).Lessons);
+        Assert.Equal(("Quote every CSV value.", "Decision", "d-1", 0), (lesson.Rule, lesson.Source, lesson.SourceRef, lesson.Paths.Count));
+    }
+
+    [Fact]
+    public async Task SubmitLessons_AnEmptyList_IsAnAnswer()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitLessonsTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""{"lessons":[]}"""), default);
+
+        Assert.False(result.IsError, result.Text);
+        Assert.Empty(Assert.IsType<LessonsSubmission>(Posted(handler).Submission).Lessons);
+    }
+
+    [Theory]
+    [InlineData("""{"lessons":"none"}""", "'lessons' must be an array")]
+    [InlineData("""{"lessons":[{"rule":"a","topics":["x"],"source":"Decision","sourceRef":"1","reason":"r"},{"rule":"b","topics":["x"],"source":"Decision","sourceRef":"1","reason":"r"},{"rule":"c","topics":["x"],"source":"Decision","sourceRef":"1","reason":"r"},{"rule":"d","topics":["x"],"source":"Decision","sourceRef":"1","reason":"r"}]}""", "at most 3 lessons")]
+    [InlineData("""{"lessons":[{"rule":"a","topics":["x"],"reason":"r"}]}""", "needs 'rule', 'topics', 'source', 'sourceRef'")]
+    [InlineData("""{"lessons":[{"rule":"a","topics":[],"source":"Decision","sourceRef":"1","reason":"r"}]}""", "at least one topic")]
+    public async Task SubmitLessons_BadArguments_AreRejected(string json, string expected)
+    {
+        var (tool, handler) = Create((h, s) => new SubmitLessonsTool(h, s));
+
+        var result = await tool.InvokeAsync(Args(json), default);
+
+        Assert.True(result.IsError);
+        Assert.Contains(expected, result.Text);
+        Assert.Empty(handler.Requests);
+    }
+
     // ---- The host's answer ----
 
     [Fact]
@@ -753,6 +797,8 @@ public class FactoryToolSetPolicyTests
     public void ReviewTurn_IsReadOnly_AndFinishesWithSubmitReview()
     {
         Assert.Equal(["read_file", "list_directory", "search_code", "submit_review"], Names(Policy().Create("s", "Review")));
+        // A reflection reads only its brief: its one tool records the proposals.
+        Assert.Equal(["submit_lessons"], Names(Policy().Create("s", "Reflection")));
     }
 
     [Fact]

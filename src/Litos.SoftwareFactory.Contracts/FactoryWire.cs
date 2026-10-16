@@ -20,6 +20,10 @@ public enum TurnKind
     /// <summary>The decision scan before implementation: read-only, finds the choices the request
     /// leaves open, and finishes with submit_plan.</summary>
     Scan,
+
+    /// <summary>After acceptance: proposes zero to three lessons from the task's corrections and
+    /// decisions, and finishes with submit_lessons (m4-architecture.md §5). No other tool.</summary>
+    Reflection,
 }
 
 /// <summary>Names both sides must agree on: the secret header, the worker's environment

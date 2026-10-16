@@ -32,6 +32,11 @@ public sealed record BudgetSettings
     /// <summary>The output reserved for, and imposed on, every model call (BudgetPolicy.OutputAllowanceTokens).</summary>
     public int OutputAllowanceTokens { get; init; } = 32_768;
 
+    /// <summary>What one lesson reflection may spend, from the accepted task's budget (m4-architecture.md §5.1); 0 turns reflection off.</summary>
+    public long ReflectionAllowanceTokens { get; init; } = 30_000;
+
+    public const long MaxReflectionAllowance = 500_000;
+
     public const int MaxSlotCap = 16;
     public const int MaxRepairCycles = 10;
 
@@ -53,6 +58,8 @@ public sealed record BudgetSettings
             errors.Add("With a maximum task budget, the default cannot be \"no cap\".");
         if (MaximumTaskBudget is { } maximum and > 0 && DefaultTaskBudget is { } byDefault && byDefault > maximum)
             errors.Add("The default task budget cannot be above the maximum.");
+        if (ReflectionAllowanceTokens is < 0 or > MaxReflectionAllowance)
+            errors.Add($"The reflection allowance must be from 0 (off) to {MaxReflectionAllowance:N0} tokens.");
         if (DailyUserQuota is <= 0 || MonthlyUserQuota is <= 0)
             errors.Add("A quota must be positive, or empty for none.");
         if (DailyUserQuota is { } daily && MonthlyUserQuota is { } monthly && daily > monthly)

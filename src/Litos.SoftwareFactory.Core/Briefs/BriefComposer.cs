@@ -69,6 +69,14 @@ public sealed record ChatLine(string Speaker, string Text);
 /// <param name="Branch">Where the reading copy is, as the brief says it, for example "the task branch
 /// `factory/abc` as last handed off".</param>
 /// <param name="Request">The task's first request, if it has one.</param>
+/// <summary>What a lesson reflection reads (m4-architecture.md §5.2): the accepted task, each thing a person
+/// corrected, decided or found with the id to cite it by, and the project's approved lessons.</summary>
+public sealed record ReflectionContext(
+    string Project, string Title, string? Request, IReadOnlyList<ReflectionSource> Sources, IReadOnlyList<string> ExistingLessons);
+
+/// <param name="Kind">HumanCorrection, Decision, ReviewFinding or Evidence.</param>
+public sealed record ReflectionSource(string Kind, Guid Id, string Text);
+
 public sealed record ChatContext(
     string Project, string Branch, string Title, string? Request, IReadOnlyList<ChatLine> Conversation, string Question);
 
@@ -87,8 +95,9 @@ public static partial class BriefComposer
     /// m2.2: chat, a read-only answer to a plain message;
     /// m2.3: the spec brief, and an approved specification's criteria reported on in their own words;
     /// m2.4: work submitted with no change is sent back once to check its edits were written;
-    /// m2.5: project lessons leave the run brief for every session's system prompt).</summary>
-    public const string Revision = "m2.5";
+    /// m2.5: project lessons leave the run brief for every session's system prompt;
+    /// m2.6: the lesson reflection brief).</summary>
+    public const string Revision = "m2.6";
 
     private const int CharsPerToken = 4;
 
@@ -174,6 +183,24 @@ public static partial class BriefComposer
 
     /// <summary>A chat turn (m2-architecture.md §5): a fresh session each time, so the thread so
     /// far is carried in the brief.</summary>
+    public static string Reflection(ReflectionContext context) => Render("reflection", new()
+    {
+        ["project"] = context.Project,
+        ["title"] = context.Title.Trim(),
+        ["request"] = OrNone(context.Request),
+        ["sources"] = context.Sources.Count == 0
+            ? "Nothing: no correction, decision or finding was recorded."
+            : string.Join("\n", context.Sources.Select(s => $"- **{s.Kind}** `{s.Id}`: {OneLine(s.Text)}")),
+        ["existing"] = context.ExistingLessons.Count == 0 ? "None yet." : string.Join("\n", context.ExistingLessons.Select(l => "- " + OneLine(l))),
+    });
+
+    /// <summary>A source as one bullet: its first 600 characters, on one line.</summary>
+    private static string OneLine(string text)
+    {
+        var line = string.Join(' ', text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
+        return line.Length > 600 ? line[..600] + "…" : line;
+    }
+
     public static string Chat(ChatContext context)
     {
         var conversation = Conversation(context.Conversation);

@@ -470,3 +470,71 @@ public sealed class SubmitPlanTool(FactoryHostClient host, string sessionId) : C
         return ChoiceCategories.All.FirstOrDefault(c => c == normalised);
     }
 }
+
+/// <summary>
+/// submit_lessons: a reflection's proposals (m4-architecture.md §5.2). Zero to three; each names the
+/// correction, decision, finding or handoff it rests on, by the id the brief gave it. The host checks
+/// every one again and stores those that pass as suggestions for a person to approve.
+/// </summary>
+public sealed class SubmitLessonsTool(FactoryHostClient host, string sessionId) : CompletionTool(host, sessionId)
+{
+    public const string ToolName = "submit_lessons";
+    public const int MaxLessons = 3;
+
+    public override string Name => ToolName;
+
+    public override string Description =>
+        "Propose zero to three lessons for later tasks on this project, each resting on something in this task. "
+        + "An empty list is a good answer when nothing here would help a later task. This is the only way to finish.";
+
+    public override JsonElement ParameterSchema { get; } = Schema(new
+    {
+        type = "object",
+        properties = new
+        {
+            lessons = new
+            {
+                type = "array",
+                description = "Zero to three lessons.",
+                items = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        rule = new { type = "string", description = "One instruction for later tasks, at most 600 characters." },
+                        topics = StringArray("One to eight words a later task would mention for this to apply."),
+                        paths = StringArray("Optional path globs it applies to, such as src/Billing/**."),
+                        source = new { type = "string", description = "HumanCorrection, Decision, ReviewFinding or Evidence." },
+                        sourceRef = new { type = "string", description = "The id the brief listed that source under." },
+                        reason = new { type = "string", description = "Why a later task needs it, in one sentence." },
+                    },
+                    required = new[] { "rule", "topics", "source", "sourceRef", "reason" },
+                },
+            },
+        },
+        required = new[] { "lessons" },
+    });
+
+    protected override string Recorded => "Recorded. Stop now; a person will review the proposals.";
+
+    protected override (Submission?, string?) Read(JsonElement arguments)
+    {
+        if (!arguments.TryGetProperty("lessons", out var lessons) || lessons.ValueKind != JsonValueKind.Array)
+            return (null, "'lessons' must be an array, empty when there is nothing to propose.");
+        if (lessons.GetArrayLength() > MaxLessons)
+            return (null, $"Propose at most {MaxLessons} lessons; keep the ones a later task would most need.");
+
+        var proposals = new List<LessonProposal>();
+        foreach (var lesson in lessons.EnumerateArray())
+        {
+            if (lesson.ValueKind != JsonValueKind.Object || Text(lesson, "rule") is not { } rule || Text(lesson, "source") is not { } source
+                || Text(lesson, "sourceRef") is not { } sourceRef)
+                return (null, "Each lesson needs 'rule', 'topics', 'source', 'sourceRef' and 'reason'.");
+            if (Strings(lesson, "topics") is not { Count: > 0 } topics)
+                return (null, "Each lesson needs at least one topic.");
+            proposals.Add(new LessonProposal(rule, topics, Strings(lesson, "paths") ?? [], source, sourceRef, Text(lesson, "reason") ?? ""));
+        }
+
+        return (new LessonsSubmission(proposals), null);
+    }
+}

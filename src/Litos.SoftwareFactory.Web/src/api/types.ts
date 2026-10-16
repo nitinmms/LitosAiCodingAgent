@@ -342,6 +342,10 @@ export interface ThreadDetails {
   earlierFindings?: Finding[];
   /** The latest run's lesson snapshot: what it was given, and left out. */
   runLessons?: RunLesson[];
+  /** The lesson reflection after acceptance; null before. */
+  reflection?: Reflection | null;
+  /** The lessons the task's reflections proposed, whatever became of them since. */
+  proposedLessons?: Lesson[];
   handoff: Handoff | null;
   /** A plain message is being answered; another waits until the reply arrives. */
   chatPending: boolean;
@@ -491,6 +495,8 @@ export interface BudgetSettings {
   /** A change request adds this share of the task's first cap: 0.5 is half. */
   reworkTopUpShare: number;
   outputAllowanceTokens: number;
+  /** What one lesson reflection may spend from an accepted task's budget; 0 turns reflection off. */
+  reflectionAllowanceTokens: number;
 }
 
 /** Whether a secret is set, and when: never its value. */
@@ -718,6 +724,15 @@ export interface LessonInput {
 }
 
 export type LessonCommand = 'approve' | 'dismiss' | 'disable' | 'enable';
+
+/** Where a task's lesson reflection stands (m4-architecture.md §5). */
+export interface Reflection {
+  status: 'Pending' | 'Running' | 'DeferredBudget' | 'Completed' | 'Failed' | 'Skipped';
+  attempts: number;
+  lastError: string | null;
+  outcome: { lessons: number[]; refused: { rule: string; why: string }[] } | null;
+  updatedAt: string;
+}
 
 /** What a person judged an included lesson to have done for a run. */
 export type LessonVerdict = 'Helped' | 'DidNotMatter' | 'Misled';

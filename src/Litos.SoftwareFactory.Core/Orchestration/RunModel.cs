@@ -132,6 +132,13 @@ public enum RunKind
     /// takes no repository lease: it reads the project's reading copy.
     /// </summary>
     Spec,
+
+    /// <summary>
+    /// After acceptance, one turn that proposes lessons (m4-architecture.md §5): charged to the
+    /// accepted task's budget within the reflection allowance, on the reading copy, with no lease
+    /// and no change to the task's state. Like a chat run, it is never the task's own run.
+    /// </summary>
+    Reflection,
 }
 
 /// <summary>Which template a turn's prompt is composed from.</summary>

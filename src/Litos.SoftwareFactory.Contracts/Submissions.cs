@@ -13,7 +13,16 @@ namespace Litos.SoftwareFactory.Contracts;
 [JsonDerivedType(typeof(ReviewSubmission), "review")]
 [JsonDerivedType(typeof(SpecSubmission), "spec")]
 [JsonDerivedType(typeof(PlanSubmission), "plan")]
+[JsonDerivedType(typeof(LessonsSubmission), "lessons")]
 public abstract record Submission;
+
+/// <summary>submit_lessons: a reflection's zero to three proposed lessons. None is a good answer.</summary>
+public sealed record LessonsSubmission(IReadOnlyList<LessonProposal> Lessons) : Submission;
+
+/// <param name="Source">HumanCorrection, Decision, ReviewFinding or Evidence.</param>
+/// <param name="SourceRef">The id of the message, decision, finding or handoff the brief listed it under.</param>
+public sealed record LessonProposal(
+    string Rule, IReadOnlyList<string> Topics, IReadOnlyList<string> Paths, string Source, string SourceRef, string Reason);
 
 /// <summary>submit_work: an implement, repair or rework turn is finished and ready to verify.</summary>
 public sealed record WorkSubmission(

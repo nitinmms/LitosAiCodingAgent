@@ -46,6 +46,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<Lesson> Lessons => Set<Lesson>();
     public DbSet<LessonRevision> LessonRevisions => Set<LessonRevision>();
     public DbSet<RunLessonSnapshot> RunLessons => Set<RunLessonSnapshot>();
+    public DbSet<ReflectionJob> ReflectionJobs => Set<ReflectionJob>();
 
     /// <summary>Set by the store once this context's transaction holds the outbox lock.</summary>
     internal bool HoldsOutboxLock { get; set; }
@@ -310,6 +311,18 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.HasOne<Lesson>().WithMany().HasForeignKey(r => r.LessonId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(r => new { r.LessonId, r.Revision }).IsUnique();
             e.HasIndex(r => r.NormalizedHash);
+        });
+
+        // One reflection per accepted handoff (m4-architecture.md §5.1).
+        model.Entity<ReflectionJob>(e =>
+        {
+            e.ToTable("reflection_jobs");
+            e.Property(j => j.LastError).HasMaxLength(2000);
+            Json(e.Property(j => j.OutcomeJson));
+            e.HasOne<TaskThread>().WithMany().HasForeignKey(j => j.ThreadId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(j => new { j.ThreadId, j.HandoffId }).IsUnique();
+            e.HasIndex(j => j.RunId);
+            e.HasIndex(j => j.Status);
         });
 
         // What each run was given (m4-architecture.md §4.4): copied text, never updated but for a verdict.

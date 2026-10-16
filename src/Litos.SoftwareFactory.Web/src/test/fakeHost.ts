@@ -225,6 +225,7 @@ export class FakeHost {
       slotCap: 2,
       reworkTopUpShare: 0.5,
       outputAllowanceTokens: 32_768,
+      reflectionAllowanceTokens: 30_000,
     },
   };
   /** The Tools tab as stored; /api/settings shows people its PTC default. */
@@ -1197,6 +1198,20 @@ export class FakeHost {
       return [404];
     }
 
+    const reflection = /^\/api\/threads\/([^/]+)\/reflection\/(retry|skip)$/.exec(path);
+    if (reflection && method === 'POST') {
+      const details = this.threads.get(reflection[1]!);
+      if (!details?.reflection) return [404, { error: 'This task has no lesson reflection.' }];
+      if (details.reflection.status !== 'DeferredBudget' && details.reflection.status !== 'Failed')
+        return [409, { error: `A reflection that is ${details.reflection.status} cannot be ${reflection[2] === 'retry' ? 'retried' : 'skipped'}.` }];
+      details.reflection = {
+        ...details.reflection,
+        status: reflection[2] === 'retry' ? 'Pending' : 'Skipped',
+        attempts: details.reflection.attempts + (reflection[2] === 'retry' ? 1 : 0),
+      };
+      return [200, { status: details.reflection.status, attempts: details.reflection.attempts }];
+    }
+
     const picks = /^\/api\/threads\/([^/]+)\/lessons$/.exec(path);
     if (picks && method === 'POST') {
       const ids = (data.lessonIds as string[] | undefined) ?? [];
@@ -1214,6 +1229,9 @@ export class FakeHost {
     const save = (patch: Partial<Lesson>): [number, unknown] => {
       const saved = { ...lesson, ...patch, updatedAt: NOW };
       this.lessons = this.lessons.map((l) => (l.id === lesson.id ? saved : l));
+      for (const details of this.threads.values())
+        if (details.proposedLessons?.some((l) => l.id === lesson.id))
+          details.proposedLessons = details.proposedLessons.map((l) => (l.id === lesson.id ? saved : l));
       return [200, saved];
     };
     const command = one[2]!;

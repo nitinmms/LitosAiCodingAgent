@@ -770,6 +770,24 @@ public class BriefComposerTests
     }
 
     [Fact]
+    public void Reflection_CarriesEachSourceWithTheIdToCite_TheProjectsLessons_AndThatZeroIsAGoodAnswer()
+    {
+        var decision = Guid.NewGuid();
+        var brief = BriefComposer.Reflection(new ReflectionContext("salesapp", "Add CSV export", "Export orders as CSV.",
+            [new ReflectionSource("Decision", decision, "Quote every value?\n— answered: Yes.")], ["Dates are UTC."]));
+
+        Assert.Contains($"- **Decision** `{decision}`: Quote every value? — answered: Yes.", brief);
+        Assert.Contains("- Dates are UTC.", brief);
+        Assert.Contains("Zero lessons is a good answer", brief);
+        Assert.Contains("Call `submit_lessons` once", brief);
+        Assert.DoesNotContain("{{", brief);
+
+        var empty = BriefComposer.Reflection(new ReflectionContext("salesapp", "T", null, [], []));
+        Assert.Contains("Nothing: no correction, decision or finding was recorded.", empty);
+        Assert.Contains("None yet.", empty);
+    }
+
+    [Fact]
     public void Resume_SaysWhyTheRunStopped_AndWhichToolFinishesIt()
     {
         var state = State() with
@@ -877,7 +895,8 @@ public class BriefComposerTests
         // m2.3: the spec brief; approved criteria reported on in their own words.
         // m2.4: work submitted with no change is sent back once to check its edits were written.
         // m2.5: project lessons leave the run brief for every session's system prompt.
-        Assert.Equal("m2.5", BriefComposer.Revision);
+        // m2.6: the lesson reflection brief.
+        Assert.Equal("m2.6", BriefComposer.Revision);
     }
 
     [Theory]

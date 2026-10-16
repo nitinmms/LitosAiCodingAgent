@@ -21,6 +21,7 @@ import {
 } from '../domain/task';
 import { ErrorNote, Rail, Rich, SafeLink, TurnPill } from './bits';
 import { DecisionCard, HandoffCard, SpecCard, StopPanel } from './cards';
+import { ReflectionPanel } from './ReflectionPanel';
 import { EditTaskSkills } from './TaskSkillsPicker';
 
 /** How often GitHub is asked where the task's pull request stands; the host caches the answer too. */
@@ -387,6 +388,25 @@ export function ThreadMain({
             })
           }
         />
+        {details.reflection ? (
+          <ReflectionPanel
+            reflection={details.reflection}
+            proposed={details.proposedLessons ?? []}
+            isAdmin={user.roles.includes('Admin')}
+            onRetry={async () => {
+              await api.retryReflection(thread.id);
+              await reload();
+            }}
+            onSkip={async () => {
+              await api.skipReflection(thread.id);
+              await reload();
+            }}
+            onCommand={async (lesson, command) => {
+              await api.lessonCommand(lesson.id, command, lesson.currentRevision);
+              await reload();
+            }}
+          />
+        ) : null}
         <div ref={end} />
       </div>
 

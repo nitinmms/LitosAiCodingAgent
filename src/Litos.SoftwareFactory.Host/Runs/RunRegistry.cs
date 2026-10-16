@@ -250,6 +250,7 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
                 ReviewSubmission => workKind == Contracts.TurnKind.Review,
                 SpecSubmission => workKind == Contracts.TurnKind.Spec,
                 PlanSubmission => workKind == Contracts.TurnKind.Scan,
+                LessonsSubmission => workKind == Contracts.TurnKind.Reflection,
                 _ => false,
             };
             if (!allowed)
@@ -276,6 +277,7 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
         ReviewSubmission => "submit_review",
         SpecSubmission => "submit_spec",
         PlanSubmission => "submit_plan",
+        LessonsSubmission => "submit_lessons",
         _ => "This submission",
     };
 

@@ -129,7 +129,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         var project = await db.Projects.AsNoTracking().FirstAsync(p => p.Id == thread.ProjectId, ct);
         var messages = await db.Messages.AsNoTracking().Where(m => m.ThreadId == threadId).OrderBy(m => m.Sequence).ToListAsync(ct);
         var decisions = await db.Decisions.AsNoTracking().Where(d => d.ThreadId == threadId).OrderBy(d => d.CreatedAt).ToListAsync(ct);
-        var latestRun = await db.Runs.AsNoTracking().Where(r => r.ThreadId == threadId && r.Kind != RunKind.Chat)
+        var latestRun = await db.Runs.AsNoTracking().Where(r => r.ThreadId == threadId && r.Kind != RunKind.Chat && r.Kind != RunKind.Reflection)
             .OrderByDescending(r => r.CreatedAt).FirstOrDefaultAsync(ct);
         var chatRun = await db.Runs.AsNoTracking()
             .FirstOrDefaultAsync(r => r.ThreadId == threadId && r.Kind == RunKind.Chat && r.Status != RunStatus.Finished, ct);
@@ -145,8 +145,9 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             findings = await db.ReviewFindings.AsNoTracking().Where(f => f.RunId == latestRun.Id).ToListAsync(ct);
         }
 
+        var reflection = await ReflectionOfAsync(db, threadId, ct);
         var earlierRuns = await db.Runs.AsNoTracking()
-            .Where(r => r.ThreadId == threadId && r.Kind != RunKind.Chat && r.Id != (latestRun == null ? Guid.Empty : latestRun.Id))
+            .Where(r => r.ThreadId == threadId && r.Kind != RunKind.Chat && r.Kind != RunKind.Reflection && r.Id != (latestRun == null ? Guid.Empty : latestRun.Id))
             .OrderBy(r => r.CreatedAt).Select(r => r.Id).ToListAsync(ct);
         var earlierFindings = earlierRuns.Count == 0
             ? []
@@ -180,6 +181,8 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             ChatProgress = chatProgress,
             LatestSpec = latestSpec,
             EarlierFindings = earlierFindings,
+            Reflection = reflection.Job,
+            ProposedLessons = reflection.Proposed,
             RunLessons = latestRun is null
                 ? []
                 : await db.RunLessons.AsNoTracking().Where(s => s.RunId == latestRun.Id).OrderBy(s => s.Position).ToListAsync(ct),
@@ -326,9 +329,9 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
     private static async Task<Guid?> ActiveRunIdAsync(FactoryDbContext db, Guid threadId, CancellationToken ct) =>
         (await ActiveRunAsync(db, threadId, ct))?.Id;
 
-    /// <summary>The task's own run that is not finished. A chat run is never it.</summary>
+    /// <summary>The task's own run that is not finished. A chat or reflection run is never it.</summary>
     private static Task<TaskRun?> ActiveRunAsync(FactoryDbContext db, Guid threadId, CancellationToken ct) =>
-        db.Runs.FirstOrDefaultAsync(r => r.ThreadId == threadId && r.Status != RunStatus.Finished && r.Kind != RunKind.Chat, ct);
+        db.Runs.FirstOrDefaultAsync(r => r.ThreadId == threadId && r.Status != RunStatus.Finished && r.Kind != RunKind.Chat && r.Kind != RunKind.Reflection, ct);
 
     private static string SpecAwaitsApproval(int revision) =>
         $"Specification revision {revision} is waiting for approval. Approve it, or ask for changes with @factory spec, before delegating the work.";
@@ -550,7 +553,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
     }
 
     public async Task<TaskThread> ApplyUserActionAsync(
-        Guid threadId, Guid userId, LifecycleTrigger trigger, DateTimeOffset now, CancellationToken ct)
+        Guid threadId, Guid userId, LifecycleTrigger trigger, DateTimeOffset now, CancellationToken ct, long reflectionAllowance = 0)
     {
         if (trigger is not (LifecycleTrigger.Accept or LifecycleTrigger.Cancel or LifecycleTrigger.Pause or LifecycleTrigger.Resume
             or LifecycleTrigger.RaiseBudgetAndResume or LifecycleTrigger.ResolveBlocker or LifecycleTrigger.Recover))
@@ -575,6 +578,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             case LifecycleTrigger.Accept:
                 thread.Stage = Stage.Done;
                 note = "Accepted. Acceptance records approval; merging is done in GitHub.";
+                await QueueReflectionAsync(db, thread, userId, reflectionAllowance, now, ct);
                 break;
 
             case LifecycleTrigger.Cancel:
@@ -805,7 +809,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
                 continue;
 
             var thread = await LockThreadAsync(db, run.ThreadId, ct);
-            if (run.Kind == RunKind.Chat)
+            if (run.Kind is RunKind.Chat or RunKind.Reflection)
             {
                 // Read-only, on a copy of its own: it waits only for a slot, and leaves the task's
                 // state and its repository alone.
@@ -1338,40 +1342,50 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
     }
 
     /// <summary>
-    /// Whose budget a model call is admitted against and charged to: the task's, or for a chat
-    /// run the run's own (§5: chat is not charged to the task budget).
+    /// Whose budget a model call is admitted against and charged to: the task's; for a chat run the
+    /// run's own (§5: chat is not charged to the task budget); for a reflection run both, the task's
+    /// and the run's allowance, whichever has less room (m4-architecture.md §5.1).
     /// </summary>
-    private static async Task<Ledger> LedgerAsync(FactoryDbContext db, TaskThread thread, Guid? runId, CancellationToken ct) =>
-        new(thread, runId is { } id ? await db.Runs.FirstOrDefaultAsync(r => r.Id == id && r.Kind == RunKind.Chat, ct) : null);
-
-    private sealed class Ledger(TaskThread thread, TaskRun? chat)
+    private static async Task<Ledger> LedgerAsync(FactoryDbContext db, TaskThread thread, Guid? runId, CancellationToken ct)
     {
-        public bool IsChat => chat is not null;
+        var own = runId is { } id ? await db.Runs.FirstOrDefaultAsync(r => r.Id == id && (r.Kind == RunKind.Chat || r.Kind == RunKind.Reflection), ct) : null;
+        return new Ledger(thread, own, chargesTask: own is null || own.Kind == RunKind.Reflection);
+    }
 
-        public BudgetSnapshot Snapshot => chat is null
-            ? new BudgetSnapshot(thread.BudgetCap, thread.TokensUsed, thread.TokensReserved)
-            : new BudgetSnapshot(chat.ChatBudgetCap, chat.ChatTokensUsed, chat.ChatTokensReserved);
+    private sealed class Ledger(TaskThread thread, TaskRun? own, bool chargesTask)
+    {
+        public bool IsChat => own is { Kind: RunKind.Chat };
+
+        private BudgetSnapshot Task => new(thread.BudgetCap, thread.TokensUsed, thread.TokensReserved);
+
+        private BudgetSnapshot Own => new(own!.ChatBudgetCap, own.ChatTokensUsed, own.ChatTokensReserved);
+
+        public BudgetSnapshot Snapshot => own is null ? Task : !chargesTask ? Own : Room(Own) < Room(Task) ? Own : Task;
+
+        private static long Room(BudgetSnapshot s) => s.TaskCap is { } cap ? cap - s.TaskUsed - s.TaskReserved : long.MaxValue;
 
         public void Reserve(long tokens)
         {
-            if (chat is null)
+            if (chargesTask)
                 thread.TokensReserved += tokens;
-            else
-                chat.ChatTokensReserved += tokens;
+            if (own is not null)
+                own.ChatTokensReserved += tokens;
         }
 
         public void Settle(long reserved, long charge)
         {
-            var after = BudgetLedger.Settle(Snapshot, reserved, charge);
-            if (chat is null)
+            if (chargesTask)
             {
-                thread.TokensUsed = after.TaskUsed;
-                thread.TokensReserved = after.TaskReserved;
+                var task = BudgetLedger.Settle(Task, reserved, charge);
+                thread.TokensUsed = task.TaskUsed;
+                thread.TokensReserved = task.TaskReserved;
             }
-            else
+
+            if (own is not null)
             {
-                chat.ChatTokensUsed = after.TaskUsed;
-                chat.ChatTokensReserved = after.TaskReserved;
+                var mine = BudgetLedger.Settle(Own, reserved, charge);
+                own.ChatTokensUsed = mine.TaskUsed;
+                own.ChatTokensReserved = mine.TaskReserved;
             }
         }
     }

@@ -80,6 +80,7 @@ describe('the settings area', () => {
         slotCap: 3,
         reworkTopUpShare: 0.25,
         outputAllowanceTokens: 32_768,
+        reflectionAllowanceTokens: 30_000,
       },
     });
     // The form now stands at the saved revision, with nothing left to save.
@@ -173,6 +174,7 @@ describe('the budgets form', () => {
     slotCap: 2,
     reworkTopUpShare: 0.125,
     outputAllowanceTokens: 32_768,
+    reflectionAllowanceTokens: 30_000,
   });
 
   it('reads back what it was given', () => {
@@ -186,6 +188,7 @@ describe('the budgets form', () => {
         slotCap: 2,
         reworkTopUpShare: 0.125,
         outputAllowanceTokens: 32_768,
+        reflectionAllowanceTokens: 30_000,
       },
     });
   });

@@ -336,7 +336,9 @@ public static class FactoryApi
 
             // Who wrote each person's message: with more than one person on a thread, the viewer's
             // own name is not everyone's.
-            var authors = details.Messages.Select(m => m.AuthorUserId).OfType<Guid>().ToHashSet();
+            var authors = details.Messages.Select(m => m.AuthorUserId)
+                .Concat(details.ProposedLessons.SelectMany(l => new[] { l.Current.AuthorId, l.Current.ApprovedBy, l.Approved?.ApprovedBy }))
+                .OfType<Guid>().ToHashSet();
             var names = users.Users.Where(u => authors.Contains(u.Id)).ToList()
                 .ToDictionary(u => u.Id, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.UserName : u.DisplayName);
             return Results.Ok(DetailsView(details, cursor, names));
@@ -479,8 +481,15 @@ public static class FactoryApi
                 : ActAsync(signals, () => store.SetThreadSkillsAsync(id, skills, user.UserId(), clock.UtcNow, ct));
         });
 
-        threadRoutes.MapPost("/accept", (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
-            ActAsync(signals, () => store.ApplyUserActionAsync(id, user.UserId(), LifecycleTrigger.Accept, clock.UtcNow, ct)));
+        // Accepting also queues a lesson reflection within the allowance, or defers it (m4-architecture.md §5.1).
+        threadRoutes.MapPost("/accept", async (
+            Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        {
+            var result = await ActAsync(signals, () =>
+                store.ApplyUserActionAsync(id, user.UserId(), LifecycleTrigger.Accept, clock.UtcNow, ct, settings.Budgets.ReflectionAllowanceTokens));
+            signals.WorkQueued();
+            return result;
+        });
 
         threadRoutes.MapPost("/pause", (Guid id, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals, IClock clock, CancellationToken ct) =>
             StopAsync(id, user, store, runs, signals, clock, StopRequest.Pause, LifecycleTrigger.Pause, ct));
@@ -883,6 +892,18 @@ public static class FactoryApi
         EarlierFindings = details.EarlierFindings.Select(FindingView),
         // The latest run's lesson snapshot (m4-architecture.md §4.4).
         RunLessons = details.RunLessons.Select(LessonsApi.RunLessonView),
+        // The lesson reflection after acceptance, and the lessons it proposed (m4-architecture.md §5).
+        Reflection = details.Reflection is { } job
+            ? new
+            {
+                Status = job.Status.ToString(),
+                job.Attempts,
+                job.LastError,
+                Outcome = job.OutcomeJson is { } outcome ? JsonSerializer.Deserialize<Core.Lessons.ReflectionOutcome>(outcome, FactoryWire.Json) : null,
+                job.UpdatedAt,
+            }
+            : null,
+        ProposedLessons = details.ProposedLessons.Select(l => LessonsApi.View(l, authorNames.Where(n => n.Value is not null).ToDictionary(n => n.Key, n => n.Value!))),
         Handoff = details.LatestHandoff is null ? null : new
         {
             details.LatestHandoff.Branch,

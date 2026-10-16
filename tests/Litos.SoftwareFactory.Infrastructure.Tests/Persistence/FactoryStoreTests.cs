@@ -262,9 +262,9 @@ public abstract class FactoryStoreContract : IAsyncLifetime
 
     // ---- A change request's budget top-up (decided 2026-10-03) ----
 
-    private async Task<ClaimedRun> HandedOffAsync(long? cap)
+    private async Task<ClaimedRun> HandedOffAsync(long? cap, string repository = "salesapp")
     {
-        var running = await RunningAsync(cap: cap);
+        var running = await RunningAsync(repository, cap: cap);
         await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
         return running;
     }
@@ -2735,6 +2735,147 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Single(await RowsAsync(AuditActions.ThreadLessons));
         Assert.Equal("Lessons picked for this task: L-1. Its next run is given them first, as they fit.",
             (await Store.GetThreadAsync(thread.Id, default))!.Messages[^1].Text);
+    }
+
+    // ---- Lesson reflection (m4-architecture.md §5) ----
+
+    private async Task<(ClaimedRun Accepted, ClaimedRun Reflection)> AcceptedAndReflectingAsync(long? cap = 600_000, long allowance = 30_000)
+    {
+        var handedOff = await HandedOffAsync(cap);
+        await Store.ApplyUserActionAsync(handedOff.Thread.Id, Admin, LifecycleTrigger.Accept, T0, default, reflectionAllowance: allowance);
+        var reflection = (await Store.ClaimNextRunAsync(slotCap: 5, T0, default))!;
+        return (handedOff, reflection);
+    }
+
+    private static LessonProposal Proposed(string rule, string source, Guid sourceRef) =>
+        new(rule, ["csv"], [], source, sourceRef.ToString(), "The tester corrected it.");
+
+    [SkippableFact]
+    public async Task AcceptingQueuesOneReflection_WithItsAllowanceAsItsOwnCap_ThatIsNeverTheTasksOwnRun()
+    {
+        var (accepted, reflection) = await AcceptedAndReflectingAsync();
+
+        Assert.Equal((RunKind.Reflection, (long?)30_000), (reflection.Run.Kind, reflection.Run.ChatBudgetCap));
+        var details = (await Store.GetThreadAsync(accepted.Thread.Id, default))!;
+        Assert.Equal(LifecycleState.Accepted, details.Thread.State);
+        Assert.Equal((ReflectionStatus.Pending, 1, (Guid?)reflection.Run.Id), (details.Reflection!.Status, details.Reflection.Attempts, details.Reflection.RunId));
+        Assert.Equal(accepted.Run.Id, details.LatestRun!.Id); // the task's own run, not the reflection
+    }
+
+    [SkippableFact]
+    public async Task WithTooLittleLeft_OrReflectionOff_AcceptingDefersOrQueuesNone_AndStillAccepts()
+    {
+        var shortOfBudget = await HandedOffAsync(cap: 20_000);
+        await Store.ApplyUserActionAsync(shortOfBudget.Thread.Id, Admin, LifecycleTrigger.Accept, T0, default, reflectionAllowance: 30_000);
+        var off = await HandedOffAsync(cap: 600_000, "billing");
+        await Store.ApplyUserActionAsync(off.Thread.Id, Admin, LifecycleTrigger.Accept, T0, default, reflectionAllowance: 0);
+
+        var deferred = (await Store.GetThreadAsync(shortOfBudget.Thread.Id, default))!;
+        Assert.Equal((LifecycleState.Accepted, ReflectionStatus.DeferredBudget, (Guid?)null), (deferred.Thread.State, deferred.Reflection!.Status, deferred.Reflection.RunId));
+        Assert.Contains("Task accepted. Lesson reflection is deferred; increase the allowance, add a lesson manually, or skip.", deferred.Messages.Select(m => m.Text));
+        Assert.Null((await Store.GetThreadAsync(off.Thread.Id, default))!.Reflection);
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 5, T0, default));
+    }
+
+    [SkippableFact]
+    public async Task AReflectionsCalls_AreChargedToTheTask_AndRefusedPastTheAllowance_EvenWithTheTaskUnderItsCap()
+    {
+        var (accepted, reflection) = await AcceptedAndReflectingAsync();
+        var usedBefore = (await ThreadAsync(accepted.Thread.Id)).TokensReserved;
+
+        var first = await Store.ReserveAsync(Reserve(reflection, "r-1"), Policy, T0, default);
+        var second = await Store.ReserveAsync(Reserve(reflection, "r-2"), Policy, T0, default);
+
+        Assert.IsType<Admitted>(first.Decision);
+        Assert.IsType<Refused>(second.Decision);
+        Assert.True((await ThreadAsync(accepted.Thread.Id)).TokensReserved > usedBefore);
+        await Store.SettleAsync("r-1", new UsageInfo(10_000, 1_000), 11_000, T0, default);
+        Assert.Equal(11_000, (await ThreadAsync(accepted.Thread.Id)).TokensUsed);
+    }
+
+    [SkippableFact]
+    public async Task CompletingAReflection_StoresItsValidProposalsAsSuggestions_RefusesTheRest_AndIsSafeToRepeat()
+    {
+        var (accepted, reflection) = await AcceptedAndReflectingAsync();
+        var decision = await Store.OpenDecisionAsync(accepted.Run.Id, new DecisionSubmission("Quote every value?", "w", ["Yes", "No"]), T0, default);
+        var elsewhere = await RunningAsync("billing");
+        var outside = await Store.OpenDecisionAsync(elsewhere.Run.Id, new DecisionSubmission("Other?", "w", ["a"]), T0, default);
+        await Store.AddLessonAsync(accepted.Project.Id, Lesson("Dates are UTC."), Admin, approve: true, null, T0, default);
+        LessonProposal[] proposals =
+        [
+            Proposed("Quote every CSV value.", "Decision", decision.Id),
+            Proposed("Quote every CSV value!", "Decision", decision.Id),
+            Proposed("Use semicolons.", "Decision", outside.Id),
+            Proposed("Dates are UTC", "Decision", decision.Id),
+            Proposed("Guess.", "Hunch", decision.Id),
+        ];
+
+        var outcome = await Store.CompleteReflectionAsync(reflection.Run.Id, proposals, T0, default);
+
+        Assert.Equal([2L], outcome.Lessons); // L-1 is the approved lesson written above; three proposals are checked, the rest ignored
+        Assert.Equal(["it repeats another proposal", "What the lesson rests on is not in this project"], outcome.Refused.Select(r => r.Why));
+        var details = (await Store.GetThreadAsync(accepted.Thread.Id, default))!;
+        Assert.Equal(ReflectionStatus.Completed, details.Reflection!.Status);
+        var proposed = Assert.Single(details.ProposedLessons);
+        Assert.Equal((LessonStatus.Suggested, (Guid?)null, (Guid?)accepted.Thread.Id), (proposed.Lesson.Status, proposed.Current.AuthorId, proposed.Current.SourceThreadId));
+        Assert.Contains("Lesson reflection proposed a lesson, L-2.", details.Messages[^1].Text);
+        Assert.Contains("2 proposals were refused", details.Messages[^1].Text);
+        Assert.Equal(RunStatus.Finished, (await Contexts.CreateDbContext().Runs.FirstAsync(r => r.Id == reflection.Run.Id)).Status);
+
+        var again = await Store.CompleteReflectionAsync(reflection.Run.Id, proposals, T0, default);
+        Assert.Equal(outcome.Lessons, again.Lessons);
+        Assert.Single((await Store.GetThreadAsync(accepted.Thread.Id, default))!.ProposedLessons);
+    }
+
+    [SkippableFact]
+    public async Task ZeroProposals_IsAGoodAnswer()
+    {
+        var (accepted, reflection) = await AcceptedAndReflectingAsync();
+
+        var outcome = await Store.CompleteReflectionAsync(reflection.Run.Id, [], T0, default);
+
+        Assert.Empty(outcome.Lessons);
+        Assert.Equal("Lesson reflection found nothing a later task needs, so it proposed no lessons.",
+            (await Store.GetThreadAsync(accepted.Thread.Id, default))!.Messages[^1].Text);
+    }
+
+    [SkippableFact]
+    public async Task AFailedReflection_KeepsTheTaskAccepted_AndCanBeRetriedOrSkipped()
+    {
+        var (accepted, reflection) = await AcceptedAndReflectingAsync();
+
+        await Store.FailReflectionAsync(reflection.Run.Id, "the model finished without calling submit_lessons", T0, default);
+        var failed = (await Store.GetThreadAsync(accepted.Thread.Id, default))!;
+        Assert.Equal((LifecycleState.Accepted, ReflectionStatus.Failed), (failed.Thread.State, failed.Reflection!.Status));
+        Assert.StartsWith("Lesson reflection failed: the model finished without calling submit_lessons.", failed.Messages[^1].Text);
+
+        var retried = await Store.RetryReflectionAsync(accepted.Thread.Id, 30_000, Ben, T0, default);
+        Assert.Equal((ReflectionStatus.Pending, 2), (retried.Status, retried.Attempts));
+        Assert.NotEqual(reflection.Run.Id, retried.RunId);
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.RetryReflectionAsync(accepted.Thread.Id, 30_000, Ben, T0, default));
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.SkipReflectionAsync(accepted.Thread.Id, Ben, T0, default));
+
+        await Store.FailReflectionAsync(retried.RunId!.Value, "it was stopped", T0, default);
+        Assert.Equal(ReflectionStatus.Skipped, (await Store.SkipReflectionAsync(accepted.Thread.Id, Ben, T0, default)).Status);
+        Assert.Single(await RowsAsync(AuditActions.ReflectionRetry));
+        Assert.Single(await RowsAsync(AuditActions.ReflectionSkip));
+    }
+
+    [SkippableFact]
+    public async Task ADeferredReflection_IsRetriedOnlyOnceTheTaskHasTheAllowanceLeft()
+    {
+        var handedOff = await HandedOffAsync(cap: 20_000);
+        await Store.ApplyUserActionAsync(handedOff.Thread.Id, Admin, LifecycleTrigger.Accept, T0, default, reflectionAllowance: 30_000);
+
+        var stillShort = await Assert.ThrowsAsync<StoreConflictException>(() => Store.RetryReflectionAsync(handedOff.Thread.Id, 30_000, Ben, T0, default));
+        Assert.Contains("Raise its cap first", stillShort.Message);
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.RetryReflectionAsync(handedOff.Thread.Id, 0, Ben, T0, default));
+
+        await Store.SetBudgetCapAsync(handedOff.Thread.Id, 100_000, Admin, T0, default);
+        var queued = await Store.RetryReflectionAsync(handedOff.Thread.Id, 30_000, Ben, T0, default);
+
+        Assert.Equal((ReflectionStatus.Pending, 1), (queued.Status, queued.Attempts));
+        Assert.Equal(RunKind.Reflection, (await Store.ClaimNextRunAsync(slotCap: 5, T0, default))!.Run.Kind);
     }
 
     [SkippableFact]

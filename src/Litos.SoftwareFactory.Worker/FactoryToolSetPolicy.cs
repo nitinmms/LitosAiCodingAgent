@@ -115,6 +115,8 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
         TurnKind.Spec => new ToolRegistry([.. ReadOnly(sessionId), new SubmitSpecTool(_host, sessionId)]),
         TurnKind.Scan => new ToolRegistry([.. ReadOnly(sessionId), new SubmitPlanTool(_host, sessionId)]),
         TurnKind.Chat => new ToolRegistry(ReadOnly(sessionId)),
+        // A reflection reads only what its brief carries: the one tool it has records its proposals.
+        TurnKind.Reflection => new ToolRegistry([new SubmitLessonsTool(_host, sessionId)]),
         _ => throw new InvalidOperationException($"No tool set is defined for a {kind} turn."),
     };
 

@@ -108,6 +108,9 @@ export interface FactoryApi {
   setRunLessonVerdict(runId: string, lessonId: string, verdict: LessonVerdict | null): Promise<unknown>;
   /** The approved lessons picked for a task's next runs. */
   setThreadLessons(threadId: string, lessonIds: string[]): Promise<Thread>;
+  /** A deferred or failed lesson reflection, run again or skipped. */
+  retryReflection(threadId: string): Promise<unknown>;
+  skipReflection(threadId: string): Promise<unknown>;
   accept(id: string): Promise<Thread>;
   /** `stopping`: the task is running, and stops at its next safe point; the new state arrives as an event. */
   pause(id: string): Promise<StopResult>;
@@ -251,6 +254,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     setRunLessonVerdict: (runId, lessonId, verdict) =>
       send<unknown>('POST', `/api/runs/${encodeURIComponent(runId)}/lessons/${encodeURIComponent(lessonId)}/verdict`, { verdict }),
     setThreadLessons: (threadId, lessonIds) => send<Thread>('POST', `${thread(threadId)}/lessons`, { lessonIds }),
+    retryReflection: (threadId) => send<unknown>('POST', `${thread(threadId)}/reflection/retry`),
+    skipReflection: (threadId) => send<unknown>('POST', `${thread(threadId)}/reflection/skip`),
     accept: (id) => send<Thread>('POST', `${thread(id)}/accept`),
     // Pausing or cancelling a running task answers 202 with { stopping: true } before the task
     // has stopped; the new state arrives on the event stream, so neither returns a thread to trust.

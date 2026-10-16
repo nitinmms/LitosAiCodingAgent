@@ -176,6 +176,7 @@ interface BudgetForm {
   dailyUserQuota: string;
   monthlyUserQuota: string;
   outputAllowanceTokens: string;
+  reflectionAllowanceTokens: string;
   slotCap: string;
   repairCyclesPerRun: string;
   /** Percent of the first cap, as people think of it: 50, not 0.5. */
@@ -190,6 +191,7 @@ export const toForm = (b: BudgetSettings): BudgetForm => ({
   dailyUserQuota: text(b.dailyUserQuota),
   monthlyUserQuota: text(b.monthlyUserQuota),
   outputAllowanceTokens: text(b.outputAllowanceTokens),
+  reflectionAllowanceTokens: text(b.reflectionAllowanceTokens ?? 30_000),
   slotCap: text(b.slotCap),
   repairCyclesPerRun: text(b.repairCyclesPerRun),
   reworkTopUpPercent: text(Math.round(b.reworkTopUpShare * 1000) / 10),
@@ -225,6 +227,7 @@ export function fromForm(form: BudgetForm): { settings: BudgetSettings } | { err
     dailyUserQuota: whole(form.dailyUserQuota, 'The daily quota', true),
     monthlyUserQuota: whole(form.monthlyUserQuota, 'The monthly quota', true),
     outputAllowanceTokens: whole(form.outputAllowanceTokens, 'The output allowance', false) ?? 0,
+    reflectionAllowanceTokens: whole(form.reflectionAllowanceTokens, 'The reflection allowance', false) ?? 0,
     slotCap: whole(form.slotCap, 'Concurrent runs', false) ?? 0,
     repairCyclesPerRun: whole(form.repairCyclesPerRun, 'Repair cycles per run', false) ?? 0,
     reworkTopUpShare: percent / 100,
@@ -328,6 +331,7 @@ function BudgetsTab({
           {field('slotCap', 'Concurrent runs', 'Runs this host executes at once, from 1 to 16. Raising it may start a waiting task straight away.', 'runs')}
           {field('repairCyclesPerRun', 'Repair cycles per run', 'Times failing tests or a blocking finding go back to the agent before the run hands off or blocks, from 0 to 10.', 'cycles')}
           {field('outputAllowanceTokens', 'Output allowance per call', "What each model reply may use, a reasoning model's thinking included; it is reserved before the call is sent. From 4,096 to 200,000.")}
+          {field('reflectionAllowanceTokens', 'Lesson reflection allowance', "What the reflection after an accepted task may spend, from that task's budget, proposing lessons. 0 turns reflection off.")}
         </div>
       </section>
 

@@ -76,6 +76,15 @@ public static class LessonsApi
             }
         });
 
+        // A deferred or failed reflection, run again or skipped (§5.3). Anyone on the project.
+        threadRoutes.MapPost("/reflection/retry", async (
+            Guid id, ClaimsPrincipal user, IFactoryStore store, Settings.FactorySettings settings, FactorySignals signals, IClock clock, CancellationToken ct) =>
+            await ReflectionAsync(signals, () => store.RetryReflectionAsync(id, settings.Budgets.ReflectionAllowanceTokens, user.UserId(), clock.UtcNow, ct)));
+
+        threadRoutes.MapPost("/reflection/skip", async (
+            Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+            await ReflectionAsync(signals, () => store.SkipReflectionAsync(id, user.UserId(), clock.UtcNow, ct)));
+
         // Lessons a person picks for the task's next runs (§4.1). Anyone on the project, as with its skills.
         threadRoutes.MapPost("/lessons", async (
             Guid id, SetThreadLessonsRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
@@ -169,6 +178,25 @@ public static class LessonsApi
         draft = LessonRules.Clean(new LessonDraft(rule ?? "", topics ?? [], paths ?? [], kind, sourceRef, reason ?? ""));
         var errors = LessonRules.Validate(draft);
         return errors.Count == 0 ? null : string.Join(" ", errors);
+    }
+
+    private static async Task<IResult> ReflectionAsync(FactorySignals signals, Func<Task<ReflectionJob>> action)
+    {
+        try
+        {
+            var job = await action();
+            signals.EventsWritten();
+            signals.WorkQueued();
+            return Results.Ok(new { Status = job.Status.ToString(), job.Attempts });
+        }
+        catch (StoreNotFoundException ex)
+        {
+            return Results.NotFound(new { error = ex.Message });
+        }
+        catch (StoreConflictException ex)
+        {
+            return Results.Conflict(new { error = ex.Message });
+        }
     }
 
     private static Task<IResult> AdminOnly(ClaimsPrincipal user, Func<Task<IResult>> action) =>

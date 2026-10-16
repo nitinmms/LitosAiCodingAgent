@@ -92,6 +92,7 @@ public static class FactoryHostApp
         // A project's first baseline, measured on registration and on a new profile (m3-architecture.md §8).
         services.AddSingleton<ProjectBaselines>();
         services.AddSingleton<ChatExecutor>();
+        services.AddSingleton<ReflectionExecutor>();
         services.AddSingleton<SpecExecutor>();
         // The factory-wide token is a setting (m3-architecture.md §2): read when it is used.
         services.AddSingleton<IGitHub, GitHubFromSettings>();
@@ -134,6 +135,7 @@ public static class FactoryHostApp
             var hostUrl = $"http://127.0.0.1:{address.Port}";
             app.Services.GetRequiredService<RunExecutor>().HostUrl = hostUrl;
             app.Services.GetRequiredService<ChatExecutor>().HostUrl = hostUrl;
+            app.Services.GetRequiredService<ReflectionExecutor>().HostUrl = hostUrl;
             app.Services.GetRequiredService<SpecExecutor>().HostUrl = hostUrl;
         });
         return app;

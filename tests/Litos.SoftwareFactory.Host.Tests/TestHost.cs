@@ -745,6 +745,10 @@ public sealed class TestHost : IAsyncDisposable
             case TurnKind.Spec:
                 await call.Worker.SubmitAsync(call.SessionId, DefaultSpec);
                 break;
+            case TurnKind.Reflection:
+                // Most tasks teach nothing a later one needs.
+                await call.Worker.SubmitAsync(call.SessionId, new LessonsSubmission([]));
+                break;
             default:
                 Workers.WorkspaceOf(call.Worker).Write("src/Orders.cs", $"edit {Interlocked.Increment(ref _edits)}\n");
                 await call.Worker.SubmitAsync(call.SessionId, FakeWorkerLauncher.Work());

@@ -293,10 +293,10 @@ public class WireContractTests
     }
 
     [Fact]
-    public void TurnKind_HasTheEightKinds_AndTravelsAsAName()
+    public void TurnKind_HasTheNineKinds_AndTravelsAsAName()
     {
         Assert.Equal(
-            [TurnKind.Chat, TurnKind.Spec, TurnKind.Implement, TurnKind.Repair, TurnKind.Review, TurnKind.Rework, TurnKind.Nudge, TurnKind.Scan],
+            [TurnKind.Chat, TurnKind.Spec, TurnKind.Implement, TurnKind.Repair, TurnKind.Review, TurnKind.Rework, TurnKind.Nudge, TurnKind.Scan, TurnKind.Reflection],
             Enum.GetValues<TurnKind>());
         Assert.Equal("\"Review\"", Json(TurnKind.Review));
     }

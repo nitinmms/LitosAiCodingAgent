@@ -188,6 +188,50 @@ describe('the Lessons page', () => {
     expect(await within(await screen.findByRole('region', { name: 'Lessons' })).findByText('This run was given no project lessons.')).toBeInTheDocument();
   });
 
+  it("shows an accepted task's reflection with its proposals, which an Admin remembers or dismisses", async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Accepted', stage: 'Done' });
+    const proposal = host.addLesson(project.id, { createdBy: null, proposedByJobId: 'job-1' }, { rule: 'Export files are UTF-8 with a BOM.', author: null, reason: 'Excel needs it.' });
+    const other = host.addLesson(project.id, { createdBy: null, proposedByJobId: 'job-1' }, { rule: 'Dates are UTC.', author: null });
+    const details = host.details(thread.id);
+    details.reflection = { status: 'Completed', attempts: 1, lastError: null, outcome: { lessons: [1, 2], refused: [] }, updatedAt: '2026-10-16T09:00:00Z' };
+    details.proposedLessons = [proposal, other];
+    const user = start(host, '#/threads');
+    const panel = within(await screen.findByRole('generic', { name: 'Lesson reflection' }));
+
+    expect(panel.getByText('Lesson reflection is done.')).toBeInTheDocument();
+    const first = within(panel.getByRole('region', { name: `Proposed L-${proposal.number}` }));
+    expect(first.getByText(/Why: Excel needs it\./)).toBeInTheDocument();
+    await user.click(first.getByRole('button', { name: 'Remember for project' }));
+    expect(host.sent('POST', `/api/lessons/${proposal.id}/approve`)[0]!.body).toEqual({ expectedRevision: 1 });
+    expect(await first.findByText('remembered')).toBeInTheDocument();
+
+    await user.click(within(panel.getByRole('region', { name: `Proposed L-${other.number}` })).getByRole('button', { name: 'Dismiss' }));
+    expect(host.sent('POST', `/api/lessons/${other.id}/dismiss`)).toHaveLength(1);
+  });
+
+  it('offers Retry and Skip for a deferred reflection, and a Member sees no approval buttons', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Accepted', stage: 'Done' });
+    const proposal = host.addLesson(project.id, { proposedByJobId: 'job-1' });
+    const details = host.details(thread.id);
+    details.reflection = { status: 'DeferredBudget', attempts: 0, lastError: null, outcome: null, updatedAt: '2026-10-16T09:00:00Z' };
+    details.proposedLessons = [proposal];
+    host.signInAs(host.addPerson({ projectIds: [project.id] }));
+    const user = start(host, '#/threads');
+    const panel = within(await screen.findByRole('generic', { name: 'Lesson reflection' }));
+
+    expect(panel.getByText(/deferred: the task has less than the reflection allowance left/)).toBeInTheDocument();
+    expect(panel.queryByRole('button', { name: 'Remember for project' })).toBeNull();
+    expect(panel.getByText('An Admin approves a lesson before any run is given it.')).toBeInTheDocument();
+    await user.click(panel.getByRole('button', { name: 'Retry the reflection' }));
+
+    expect(host.sent('POST', `/api/threads/${thread.id}/reflection/retry`)).toHaveLength(1);
+    expect(await panel.findByText('Lesson reflection is queued.')).toBeInTheDocument();
+  });
+
   it('links a lesson to the thread it rests on', async () => {
     const host = new FakeHost();
     const project = host.addProject();

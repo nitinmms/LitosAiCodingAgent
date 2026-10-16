@@ -674,6 +674,10 @@ public static class AuditActions
 
     /// <summary>The lessons a person picked for a task changed.</summary>
     public const string ThreadLessons = "thread.lessons";
+
+    /// <summary>A deferred or failed lesson reflection, run again or skipped (m4-architecture.md §5.3).</summary>
+    public const string ReflectionRetry = "thread.reflection_retry";
+    public const string ReflectionSkip = "thread.reflection_skip";
     public const string DecisionAnswer = "decision.answer";
     public const string FindingVerdict = "finding.verdict";
     public const string SettingsUpdate = "settings.update";

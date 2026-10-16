@@ -96,6 +96,23 @@ public sealed class RunLiveness(
             }
         }
 
+        // A reflection never stops the task either: it fails, and the thread offers Retry and Skip.
+        if (run.Kind == RunKind.Reflection)
+        {
+            try
+            {
+                await store.FailReflectionAsync(run.Id, "the factory host stopped while it ran", clock.UtcNow, ct);
+            }
+            catch (StoreNotFoundException ex)
+            {
+                logger.LogWarning(ex, "Reflection run {RunId} could not be recorded as failed.", run.Id);
+                return false;
+            }
+
+            await store.ReconcileUsageAsync(run.Id, clock.UtcNow, ct, includeInFlight: true);
+            return true;
+        }
+
         // A chat run has no task state to stop: it ends with a note that there is no answer.
         if (run.Kind == RunKind.Chat)
         {

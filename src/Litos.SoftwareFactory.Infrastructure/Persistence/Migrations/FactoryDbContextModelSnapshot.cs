@@ -141,6 +141,54 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.ToTable("lesson_revisions", (string)null);
                 });
 
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Lessons.ReflectionJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("HandoffId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("OutcomeJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid?>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("ThreadId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("ThreadId", "HandoffId")
+                        .IsUnique();
+
+                    b.ToTable("reflection_jobs", (string)null);
+                });
+
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Lessons.RunLessonSnapshot", b =>
                 {
                     b.Property<Guid>("RunId")
@@ -1432,6 +1480,15 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.HasOne("Litos.SoftwareFactory.Core.Lessons.Lesson", null)
                         .WithMany()
                         .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Lessons.ReflectionJob", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.TaskThread", null)
+                        .WithMany()
+                        .HasForeignKey("ThreadId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
