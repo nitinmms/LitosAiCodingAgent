@@ -211,8 +211,14 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
     }
 
     /// <summary>A placeholder for the value's JSON type, so the template shows shape as well as name.</summary>
-    private static string TypeMarker(JsonElement declared)
+    /// <remarks>An object with declared properties is shown as the anonymous object to pass, one level
+    /// deep: `new { sql = &lt;string&gt;[, limit = &lt;int&gt;] }`. A bare `&lt;object&gt;` left agents guessing an
+    /// MCP tool's request shape, a call or two each time (m3-architecture.md §12).</remarks>
+    private static string TypeMarker(JsonElement declared, bool nested = false)
     {
+        if (!nested && ObjectShape(declared) is { } shape)
+            return shape;
+
         var type = declared.ValueKind == JsonValueKind.Object
             && declared.TryGetProperty("type", out var typeElement)
             && typeElement.ValueKind == JsonValueKind.String
@@ -229,5 +235,43 @@ public sealed class KernelCodeTool(IReadOnlyList<ToolSchema> bridgedToolSchemas)
             "object" => "<object>",
             _ => "<value>",
         };
+    }
+
+    /// <summary>`new { a = &lt;string&gt;[, b = &lt;int&gt;] }` for an object schema with properties; null otherwise.
+    /// Walks the schema in document order, as <see cref="Signature"/> does, so the text is byte-stable.</summary>
+    private static string? ObjectShape(JsonElement declared)
+    {
+        if (declared.ValueKind != JsonValueKind.Object
+            || !declared.TryGetProperty("properties", out var properties)
+            || properties.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var required = new List<string>();
+        if (declared.TryGetProperty("required", out var requiredElement) && requiredElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in requiredElement.EnumerateArray())
+                if (entry.ValueKind == JsonValueKind.String && entry.GetString() is { Length: > 0 } name)
+                    required.Add(name);
+        }
+
+        var sb = new StringBuilder("new { ");
+        var wroteAny = false;
+        foreach (var name in required)
+        {
+            if (!properties.TryGetProperty(name, out var property))
+                continue;
+            sb.Append(wroteAny ? ", " : "").Append(name).Append(" = ").Append(TypeMarker(property, nested: true));
+            wroteAny = true;
+        }
+
+        foreach (var property in properties.EnumerateObject())
+        {
+            if (required.Contains(property.Name))
+                continue;
+            sb.Append(wroteAny ? "[, " : "[").Append(property.Name).Append(" = ").Append(TypeMarker(property.Value, nested: true)).Append(']');
+            wroteAny = true;
+        }
+
+        return wroteAny ? sb.Append(" }").ToString() : null;
     }
 }

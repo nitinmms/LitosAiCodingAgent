@@ -37,6 +37,11 @@ public sealed class WorkerMcp
     /// <summary>The tools the run may call: those of connected servers whose permission is Full.</summary>
     public IEnumerable<ITool> PermittedTools() => _provider.Tools.Where(tool => IsPermitted(tool.Name));
 
+    /// <summary>Stand-ins for the connected servers' denied tools, so kernel code calling one gets a
+    /// refusal naming the policy instead of a compile error.</summary>
+    public IEnumerable<ITool> DeniedTools() =>
+        _provider.Tools.Where(tool => !IsPermitted(tool.Name)).Select(tool => new DeniedMcpTool(tool.Name, tool.Description, tool.ParameterSchema));
+
     public IReadOnlyList<McpServerReport> Reports() =>
     [
         .. _provider.Connections.Select(c => new McpServerReport(

@@ -33,6 +33,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     private readonly FactoryHostClient _host;
     private readonly WorkerWebSearch _webSearch;
     private readonly Func<IEnumerable<ITool>> _mcpTools;
+    private readonly Func<IEnumerable<ITool>> _deniedMcpTools;
     private readonly bool _skills;
     private readonly ConcurrentDictionary<string, TurnKind> _lastKind = new();
 
@@ -45,13 +46,17 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     /// <param name="webSearch">Which turns may search the web, through the host.</param>
     /// <param name="mcpTools">The run's MCP tools it may call, read on every turn; none by default.</param>
     /// <param name="skills">Whether the run has skills, so every turn gets the engine's skill tool.</param>
+    /// <param name="deniedMcpTools">Stand-ins for the MCP tools the run is denied, offered to kernel
+    /// code only, where calling one returns a refusal naming the policy; none by default.</param>
     public FactoryToolSetPolicy(
         IEnumerable<ITool> registeredTools, FactoryHostClient host, string? workingCopy = null, string? testOutputDirectory = null,
-        WorkerWebSearch webSearch = WorkerWebSearch.Off, Func<IEnumerable<ITool>>? mcpTools = null, bool skills = false)
+        WorkerWebSearch webSearch = WorkerWebSearch.Off, Func<IEnumerable<ITool>>? mcpTools = null, bool skills = false,
+        Func<IEnumerable<ITool>>? deniedMcpTools = null)
     {
         _host = host;
         _webSearch = webSearch;
         _mcpTools = mcpTools ?? (() => []);
+        _deniedMcpTools = deniedMcpTools ?? (() => []);
         _skills = skills;
         _builtIn = registeredTools.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
 
@@ -97,12 +102,14 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     /// the earlier turn's tools. A session that has had no turn yet can only read.
     /// </summary>
     public ToolRegistry CreateForBridge(string sessionId) =>
-        _lastKind.TryGetValue(sessionId, out var kind) ? ToolsFor(kind, sessionId) : new ToolRegistry(BuiltIn(ReadOnlyTools));
+        _lastKind.TryGetValue(sessionId, out var kind) ? ToolsFor(kind, sessionId, forKernel: true) : new ToolRegistry(BuiltIn(ReadOnlyTools));
 
-    private ToolRegistry ToolsFor(TurnKind kind, string sessionId) => kind switch
+    /// <param name="forKernel">For kernel code, which also gets the denied MCP tools' stand-ins.</param>
+    private ToolRegistry ToolsFor(TurnKind kind, string sessionId, bool forKernel = false) => kind switch
     {
         TurnKind.Implement or TurnKind.Repair or TurnKind.Rework => new ToolRegistry(
             [.. BuiltIn(WorkTools), .. Skill(), .. WebSearch(sessionId, readOnly: false), .. _mcpTools(),
+             .. forKernel ? _deniedMcpTools() : [],
              new SubmitWorkTool(_host, sessionId), new RequestDecisionTool(_host, sessionId)]),
         TurnKind.Review => new ToolRegistry([.. ReadOnly(sessionId), new SubmitReviewTool(_host, sessionId)]),
         TurnKind.Spec => new ToolRegistry([.. ReadOnly(sessionId), new SubmitSpecTool(_host, sessionId)]),

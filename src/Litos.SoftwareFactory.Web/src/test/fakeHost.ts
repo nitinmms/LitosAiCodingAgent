@@ -1313,9 +1313,12 @@ export class FakeHost {
 
   private judge(findingId: string, verdict: string | null): [number, unknown?] {
     if (verdict !== null && !['Real', 'NotWorthFixing', 'Wrong'].includes(verdict)) return [400, { error: 'verdict must be Real, NotWorthFixing or Wrong.' }];
+    const judged = (list: Finding[]) => list.map((f) => (f.id === findingId ? { ...f, verdict: verdict as Finding['verdict'] } : f));
     for (const details of this.threads.values()) {
-      if (!details.findings.some((f) => f.id === findingId)) continue;
-      details.findings = details.findings.map((f) => (f.id === findingId ? { ...f, verdict: verdict as Finding['verdict'] } : f));
+      const earlier = details.earlierFindings ?? [];
+      if (!details.findings.some((f) => f.id === findingId) && !earlier.some((f) => f.id === findingId)) continue;
+      details.findings = judged(details.findings);
+      details.earlierFindings = judged(earlier);
       return [200, this.change(details.thread.id, {})];
     }
     return [404];

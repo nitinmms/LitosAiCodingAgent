@@ -6,6 +6,7 @@ using Litos.SoftwareFactory.Contracts;
 using Litos.Tools.Mcp;
 using Litos.Tools.Shell;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -149,6 +150,34 @@ public sealed class WorkerMcpTests : IAsyncLifetime
         var result = calls[1].ChatRequest.Messages.SelectMany(m => m.Content).OfType<ToolResultBlock>().Single();
         Assert.Equal("echo: from the agent", result.Text);
         Assert.DoesNotContain(calls[2].ChatRequest.Tools, t => t.Name.StartsWith("mcp__", StringComparison.Ordinal));
+    }
+
+    /// <summary>m3-architecture.md §12: a denied tool called from kernel code was a compile error,
+    /// "the name … does not exist", the same message as a typo. Kernel code now gets a stand-in that
+    /// compiles and refuses, naming the policy; the model's own tool list still leaves it out.</summary>
+    [Fact]
+    public async Task ADeniedTool_IsAStandInForKernelCode_ThatRefusesNamingThePolicy_AndNotOneOfTheModelsTools()
+    {
+        var options = TestOptions.Create(_data.Path, _host.Url) with
+        {
+            McpConfigPath = WriteConfig(TestServer(overrides: new() { ["mcp__test__delete_everything"] = ToolPermission.Deny })),
+        };
+        _worker = WorkerApp.Build(options, []);
+        await WorkerApp.StartAsync(_worker);
+        var policy = _worker.Services.GetRequiredService<FactoryToolSetPolicy>();
+
+        var modelTools = policy.Create("work", "Implement").Schemas.Select(s => s.Name).ToList();
+        var kernelTools = policy.CreateForBridge("work");
+
+        Assert.DoesNotContain("mcp__test__delete_everything", modelTools);
+        var standIn = Assert.Single(kernelTools.Schemas, s => s.Name == "mcp__test__delete_everything");
+        Assert.StartsWith("Denied for this run by the factory's MCP settings.", standIn.Description);
+        var refusal = await kernelTools.Resolve("mcp__test__delete_everything").InvokeAsync(JsonDocument.Parse("{}").RootElement, default);
+        Assert.True(refusal.IsError);
+        Assert.StartsWith("mcp__test__delete_everything is denied for this run by the factory's MCP settings, so it was not called.", refusal.Text);
+        // A read-only turn's kernel code gets no MCP tool at all, permitted or denied.
+        policy.Create("look", "Review");
+        Assert.DoesNotContain(policy.CreateForBridge("look").Schemas, s => s.Name.StartsWith("mcp__", StringComparison.Ordinal));
     }
 
     [Fact]

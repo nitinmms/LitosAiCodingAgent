@@ -145,6 +145,14 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             findings = await db.ReviewFindings.AsNoTracking().Where(f => f.RunId == latestRun.Id).ToListAsync(ct);
         }
 
+        var earlierRuns = await db.Runs.AsNoTracking()
+            .Where(r => r.ThreadId == threadId && r.Kind != RunKind.Chat && r.Id != (latestRun == null ? Guid.Empty : latestRun.Id))
+            .OrderBy(r => r.CreatedAt).Select(r => r.Id).ToListAsync(ct);
+        var earlierFindings = earlierRuns.Count == 0
+            ? []
+            : (await db.ReviewFindings.AsNoTracking().Where(f => earlierRuns.Contains(f.RunId)).ToListAsync(ct))
+                .OrderBy(f => earlierRuns.IndexOf(f.RunId)).ToList();
+
         ChatProgress? chatProgress = null;
         if (chatRun is not null)
         {
@@ -166,6 +174,7 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
             ChatRun = chatRun,
             ChatProgress = chatProgress,
             LatestSpec = latestSpec,
+            EarlierFindings = earlierFindings,
             TaskRequest = taskRequest,
         };
     }

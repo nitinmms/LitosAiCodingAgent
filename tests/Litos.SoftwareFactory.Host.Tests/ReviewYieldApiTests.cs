@@ -57,6 +57,27 @@ public sealed class ReviewYieldApiTests : IAsyncLifetime
         Assert.Equal(System.Text.Json.JsonValueKind.Null, yield.GetProperty("realPer100KReviewTokens").ValueKind);
     }
 
+    /// <summary>On J3 a change request made the rework the latest run, and the first review's
+    /// findings disappeared from the thread before anyone had judged them.</summary>
+    [Fact]
+    public async Task AfterARework_TheFirstReviewsFindings_AreStillListed_AndCanBeJudged()
+    {
+        var threadId = await HandedOffWithTwoFindingsAsync();
+        await _host.DelegateAsync(threadId, "@factory Keep the user's choice when regenerating.");
+        await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        var details = await _host.GetAsync($"api/threads/{threadId}");
+        Assert.Empty(details.GetProperty("findings").EnumerateArray()); // the rework's clean review
+        var earlier = details.GetProperty("earlierFindings").EnumerateArray().ToList();
+        Assert.Equal(["Regenerating resets the user's choice.", "A name could be clearer."], earlier.Select(f => f.GetProperty("text").GetString()));
+
+        await _host.PostAsync($"api/findings/{earlier[0].GetProperty("id").GetGuid()}/verdict", new { verdict = "Real" }, HttpStatusCode.OK);
+
+        var judged = (await _host.GetAsync($"api/threads/{threadId}")).GetProperty("earlierFindings")[0].GetProperty("verdict").GetString();
+        Assert.Equal("Real", judged);
+        Assert.Equal(1, (await _host.GetAsync($"api/threads/{threadId}/review-yield")).GetProperty("real").GetInt32());
+    }
+
     [Fact]
     public async Task TheReviewYieldOfEveryTask_HasARowEach_AndATotal()
     {

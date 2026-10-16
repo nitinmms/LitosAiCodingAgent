@@ -323,7 +323,7 @@ Raised by the user on 2026-10-14, during the M3 check, and folded for later. Not
 
 ## 12. Follow-up: starting a run's kernel without building
 
-Found on 2026-10-14 during the M3 check (§9.1). **Both defects fixed on 2026-10-16** (see "Built" below); the two smaller items at the end are still open.
+Found on 2026-10-14 during the M3 check (§9.1). **Both defects fixed on 2026-10-16** (see "Built" below); the two smaller items at the end were done in M4's step 1 (m4-architecture.md §10.1).
 
 **What happens.** A factory worker started from a build directory, not a published layout, finds no published `Litos.Kernel.Host` beside it, so `KernelHostLocator.Resolve()` (in `Litos.Kernel`) runs `dotnet build src/Litos.Kernel.Host -c Release` synchronously, then launches the result with `dotnet exec`. It does this whenever a kernel starts: once at worker start-up (the PTC probe in `Litos.Hosting`) and again for every session's kernel.
 

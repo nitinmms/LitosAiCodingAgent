@@ -67,6 +67,7 @@ public static class WorkerApp
             testOutputDirectory: options.TestOutputDirectory,
             webSearch: options.WebSearch,
             mcpTools: sp.GetService<WorkerMcp>() is { } mcp ? mcp.PermittedTools : null,
+            deniedMcpTools: sp.GetService<WorkerMcp>() is { } denying ? denying.DeniedTools : null,
             skills: skills is FactorySkillDiscovery { Skills.HasLoadableSkills: true }));
         builder.Services.AddSingleton<IToolSetPolicy>(sp => sp.GetRequiredService<FactoryToolSetPolicy>());
         builder.Services.AddSingleton<IWorkingDirectoryResolver, ProcessWorkingDirectoryResolver>();

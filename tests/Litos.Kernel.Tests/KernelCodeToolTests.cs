@@ -115,6 +115,29 @@ public sealed class KernelCodeToolTests
     }
 
     /// <summary>
+    /// An MCP tool whose one argument is an object showed as "request", &lt;object&gt;, and agents
+    /// guessed what went inside it (m3-architecture.md §12). Its fields are now shown, one level
+    /// deep, as the anonymous object to pass.
+    /// </summary>
+    [Fact]
+    public void Description_AnObjectArgument_ShowsItsFields_AsTheAnonymousObjectToPass()
+    {
+        var tool = new KernelCodeTool([
+            SchemaWith("mcp__erp__run_select_query", "Runs a query.", """
+                {"type":"object",
+                 "properties":{"request":{"type":"object",
+                   "properties":{"sql":{"type":"string"},"limit":{"type":"integer"},"options":{"type":"object","properties":{"x":{"type":"string"}}}},
+                   "required":["sql"]}},
+                 "required":["request"]}
+                """),
+        ]);
+
+        Assert.Contains(
+            """- mcp__erp__run_select_query("request", new { sql = <string>[, limit = <int>][, options = <object>] }) -> Task<string>""",
+            tool.Description);
+    }
+
+    /// <summary>
     /// A schema with nothing to name has no template to offer, so the abstract form remains the
     /// honest fallback rather than rendering an empty argument list.
     /// </summary>

@@ -334,7 +334,10 @@ export interface ThreadDetails {
   decisions: Decision[];
   run: Run | null;
   verification: Verification | null;
+  /** The latest run's review findings. */
   findings: Finding[];
+  /** The earlier runs' findings, oldest first, still open to a verdict; absent from an older host. */
+  earlierFindings?: Finding[];
   handoff: Handoff | null;
   /** A plain message is being answered; another waits until the reply arrives. */
   chatPending: boolean;

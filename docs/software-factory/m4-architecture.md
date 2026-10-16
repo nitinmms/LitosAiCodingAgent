@@ -219,6 +219,14 @@ The step's tests cover the manifest, the hash check and the restored host's chec
 
 Each step lands with its tests and an update to this document, as in M3.
 
+### 10.1 Built
+
+**Step 1, carried fixes (2026-10-16).**
+
+- **The J3 verdicts were not lost; their findings were hidden.** Verdicts save (the audit trail shows them working since 2026-10-09), but thread details carried only the latest run's findings, so a change request made the rework the latest run and the first review's findings left the panel before anyone judged them. `ThreadDetails.EarlierFindings` now carries the earlier runs' findings, oldest run first, and the panel lists them under "From earlier rounds", with their verdict buttons. Review yield already counted every run's findings.
+- **A denied MCP tool, called from kernel code, refuses by name.** The worker offers kernel code a stand-in for each tool the run's MCP settings deny (`DeniedMcpTool`, from `WorkerMcp.DeniedTools`, in `FactoryToolSetPolicy.CreateForBridge` for work turns only). The call compiles, is never sent to the server, and returns "… is denied for this run by the factory's MCP settings, so it was not called." The model's own tool list still leaves denied tools out.
+- **Helper signatures show an object argument's fields**, one level deep, as the anonymous object to pass: `run_select_query("request", new { sql = <string>[, limit = <int>] })`, where `<object>` was shown before. Byte-stable, as the rest of the description must be for the prompt cache.
+
 ## 11. Open, not blocking
 
 - **Over-asking.** The decision scan asked all three planned questions on J3 although the person's second answer said to use the agent's recommendation for the rest; the re-check does not treat that as settling anything (m3-architecture.md §13). Not in M4's list; a candidate for step 1 if the user wants it.

@@ -102,6 +102,11 @@ public sealed record ThreadDetails(
     /// <summary>The newest specification revision, approved or not; null when none was proposed.</summary>
     public Specification? LatestSpec { get; init; }
 
+    /// <summary>The findings of the task's earlier runs, oldest run first. <see cref="Findings"/>
+    /// are the latest run's; these stay listed so a person can still judge them after a rework
+    /// (on J3 a change request hid the first review's findings before they were judged).</summary>
+    public IReadOnlyList<ReviewFindingRecord> EarlierFindings { get; init; } = [];
+
     /// <summary>What the task was delegated to do: its first implement run's request. Not the
     /// first message, which may be a question or a request for a specification.</summary>
     public string? TaskRequest { get; init; }

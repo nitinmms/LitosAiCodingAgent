@@ -102,6 +102,8 @@ export function Details({
   const human = humanTesting(thread.state);
   // Fixed findings stay listed: a finding that was fixed is the clearest case of a real one.
   const shownFindings = findings.filter((f) => f.status !== 'Dismissed');
+  // An earlier round's findings stay open to a verdict after a rework has replaced its review.
+  const earlierFindings = (details.earlierFindings ?? []).filter((f) => f.status !== 'Dismissed');
 
   const rows: [string, string, string][] = [
     ['Build', words(build), toneOf(build)],
@@ -192,6 +194,16 @@ export function Details({
               <FindingItem key={f.id ?? i} finding={f} onVerdict={onVerdict} />
             ))}
           </ul>
+        ) : null}
+        {earlierFindings.length ? (
+          <>
+            <p className="small muted">From earlier rounds</p>
+            <ul className="small findings" aria-label="Review findings from earlier rounds">
+              {earlierFindings.map((f, i) => (
+                <FindingItem key={f.id ?? i} finding={f} onVerdict={onVerdict} />
+              ))}
+            </ul>
+          </>
         ) : null}
       </section>
 

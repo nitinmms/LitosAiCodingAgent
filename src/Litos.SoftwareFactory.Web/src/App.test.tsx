@@ -726,6 +726,21 @@ describe('a handoff', () => {
     await waitFor(() => expect(first.getByRole('button', { name: 'Real defect' })).toHaveAttribute('aria-pressed', 'false'));
   });
 
+  it("keeps an earlier round's findings open to a verdict after a rework replaced its review", async () => {
+    const context = await withThread({ state: 'Running', stage: 'Review', branch: 'factory/add-csv-export-1a2b' });
+    context.host.details(context.thread.id).earlierFindings = [
+      { id: 'f-9', severity: 'Minor', file: 'src/Csv.cs', line: 35, text: 'Problems are only reported at validate().', status: 'Open', verdict: null },
+    ];
+    act(() => void context.host.handOff(context.thread.id));
+    const list = within(await screen.findByRole('list', { name: 'Review findings from earlier rounds' }));
+    expect(screen.getByText('From earlier rounds')).toBeInTheDocument();
+
+    await userEvent.click(list.getByRole('button', { name: 'Wrong' }));
+
+    expect(context.host.sent('POST', '/api/findings/f-9/verdict')[0]!.body).toEqual({ verdict: 'Wrong' });
+    await waitFor(() => expect(list.getByRole('button', { name: 'Wrong' })).toHaveAttribute('aria-pressed', 'true'));
+  });
+
   it('says a review that was started but cut off did not finish, rather than that it never ran', async () => {
     const { card } = await handedOff({ review: 'DidNotFinish', findings: [] });
 

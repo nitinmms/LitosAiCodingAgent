@@ -801,6 +801,11 @@ public static class FactoryApi
 
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    private static object FindingView(ReviewFindingRecord f) => new
+    {
+        f.Id, Severity = f.Severity.ToString(), f.File, f.Line, f.Text, Status = f.Status.ToString(), Verdict = f.Verdict?.ToString(),
+    };
+
     private static object SpecView(Specification spec) => new
     {
         spec.Revision,
@@ -871,7 +876,9 @@ public static class FactoryApi
             details.LatestVerification.SkippedCount,
             details.LatestVerification.ChangedLineCoveragePercent,
         },
-        Findings = details.Findings.Select(f => new { f.Id, Severity = f.Severity.ToString(), f.File, f.Line, f.Text, Status = f.Status.ToString(), Verdict = f.Verdict?.ToString() }),
+        Findings = details.Findings.Select(FindingView),
+        // The earlier runs' findings, so a person can still judge them after a rework.
+        EarlierFindings = details.EarlierFindings.Select(FindingView),
         Handoff = details.LatestHandoff is null ? null : new
         {
             details.LatestHandoff.Branch,
