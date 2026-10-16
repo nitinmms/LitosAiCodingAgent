@@ -299,6 +299,14 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
     {
         switch (turn.Submission)
         {
+            // Work submitted with no change behind it is sent back once, before it costs a
+            // verification and a review: on J3 a rework's edit silently matched nothing (an LF
+            // anchor in a CRLF file), the agent submitted the test as written, and a full review
+            // of an empty diff was what found it. Submitted again with still nothing changed, it
+            // is taken as meant, and verified; the review planner then has nothing to review.
+            case WorkSubmission when turn.NothingSubmitted && !state.NudgeUsed:
+                return Enter(state, new StartTurnStep(TurnKind.Nudge, BriefKind.EmptySubmission));
+
             case WorkSubmission work:
                 return Enter(state with { LastSubmission = work }, new VerifyStep());
 

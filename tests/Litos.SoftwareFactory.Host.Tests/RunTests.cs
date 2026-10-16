@@ -216,6 +216,48 @@ public sealed class RunTests : IAsyncLifetime
         Assert.Equal(FindingStatus.Open, details.Findings.Single(f => f.Severity == FindingSeverity.Minor).Status);
     }
 
+    // ---- Work submitted with nothing changed (J3) ----
+
+    /// <summary>On J3 a rework's edit silently matched nothing, the agent submitted anyway, and the
+    /// factory verified and fully reviewed an empty diff. Now the submission is sent back first.</summary>
+    [Fact]
+    public async Task WorkSubmittedWithNothingChanged_IsSentBack_BeforeItIsVerifiedOrReviewed()
+    {
+        _host.Workers.Script.Enqueue(async call =>
+        {
+            await call.Worker.SubmitAsync(call.SessionId, FakeWorkerLauncher.Work()); // the edit never landed
+            return FakeWorkerLauncher.Done();
+        });
+        var (_, threadId) = await DelegatedAsync();
+
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Equal([TurnKind.Implement, TurnKind.Nudge, TurnKind.Review], TurnKinds);
+        Assert.Contains("this run has changed no files", _host.Workers.Turns.ElementAt(1).Brief);
+        Assert.Single(Texts(details, MessageKind.Status), t => t.StartsWith("Verification:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task WorkSubmittedTwiceWithNothingChanged_IsVerified_AndNotReviewed_TheDiffBeingEmpty()
+    {
+        for (var i = 0; i < 2; i++)
+        {
+            _host.Workers.Script.Enqueue(async call =>
+            {
+                await call.Worker.SubmitAsync(call.SessionId, FakeWorkerLauncher.Work());
+                return FakeWorkerLauncher.Done();
+            });
+        }
+
+        var (_, threadId) = await DelegatedAsync();
+
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Equal([TurnKind.Implement, TurnKind.Nudge], TurnKinds);
+        Assert.Single(Texts(details, MessageKind.Status), t => t.StartsWith("Verification:", StringComparison.Ordinal));
+        Assert.Contains("Review: none needed (risk score 0). There is no change to review: the diff is empty.", Texts(details, MessageKind.Status));
+    }
+
     // ---- Decisions ----
 
     /// <summary>Acceptance scenario 5: a decision pauses execution, and a linked answer resumes

@@ -88,8 +88,9 @@ public static partial class BriefComposer
     /// m1.14: the scan re-checks the questions not yet asked against each answer;
     /// m2.1: a resumed run is told how the working copy changed since its last checkpoint;
     /// m2.2: chat, a read-only answer to a plain message;
-    /// m2.3: the spec brief, and an approved specification's criteria reported on in their own words).</summary>
-    public const string Revision = "m2.3";
+    /// m2.3: the spec brief, and an approved specification's criteria reported on in their own words;
+    /// m2.4: work submitted with no change is sent back once to check its edits were written).</summary>
+    public const string Revision = "m2.4";
 
     private const int CharsPerToken = 4;
 
@@ -102,6 +103,7 @@ public static partial class BriefComposer
         BriefKind.Nudge => Nudge(state),
         BriefKind.DecisionAnswer => DecisionAnswer(state),
         BriefKind.ProceedOnRecommendation => Render("proceed", new() { ["maxDecisions"] = limits.MaxDecisions.ToString() }),
+        BriefKind.EmptySubmission => Render("empty-submission", []),
         BriefKind.Resume => Resume(context, state),
         BriefKind.Continue => Render("continue", new() { ["completionTool"] = CompletionTool(state) }),
         BriefKind.Scan => Scan(context, state),

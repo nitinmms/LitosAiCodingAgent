@@ -254,10 +254,26 @@ public class ReviewPlannerTests
         Assert.Contains("the agent mapped no acceptance criterion to a test", Plan(Small() with { Submission = new WorkSubmission("Did it.", [], [], [], []) }).Reasons);
     }
 
+    /// <summary>J3: a full review of an empty diff, reported as one that "could not be read", cost
+    /// 41,018 tokens and had nothing to look at.</summary>
     [Fact]
-    public void AnEmptyDiff_MakesItFull()
+    public void AnEmptyDiff_NeedsNoReview_AndSaysWhy()
     {
-        Assert.Contains("the diff could not be read", Plan(Small() with { Files = [], Patch = "" }).Reasons);
+        var plan = Plan(Small() with { Files = [], Patch = "" });
+
+        Assert.Equal(ReviewDepth.None, plan.Depth);
+        Assert.Equal("Review: none needed (risk score 0). There is no change to review: the diff is empty.", plan.Describe());
+        // Even where a review is always required: there is nothing to review.
+        Assert.Equal(ReviewDepth.None, ReviewPlanner.Plan(Small() with { Files = [], Patch = Environment.NewLine }, new RunLimits { AllowNoReview = false }).Depth);
+    }
+
+    [Fact]
+    public void ADiffWithTextButNoFilesFound_CouldNotBeRead_AndMakesItFull()
+    {
+        var plan = Plan(Small() with { Files = [], Patch = "Binary files differ" });
+
+        Assert.Equal(ReviewDepth.Full, plan.Depth);
+        Assert.Contains("the diff could not be read", plan.Reasons);
     }
 
     [Fact]

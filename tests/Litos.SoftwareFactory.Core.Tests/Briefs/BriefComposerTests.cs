@@ -759,6 +759,17 @@ public class BriefComposerTests
     }
 
     [Fact]
+    public void EmptySubmission_SaysNothingChanged_AsksForTheEditsToBeReadBack_AndAllowsANoChangeAnswer()
+    {
+        var brief = Compose(BriefKind.EmptySubmission, State(), kind: TurnKind.Nudge);
+
+        Assert.Contains("this run has changed no files", brief);
+        Assert.Contains("Read back each file you meant to change", brief);
+        Assert.Contains("line endings", brief);
+        Assert.Contains("If the request truly needs no change, call `submit_work` again and say why", brief);
+    }
+
+    [Fact]
     public void Resume_SaysWhyTheRunStopped_AndWhichToolFinishesIt()
     {
         var state = State() with
@@ -864,7 +875,8 @@ public class BriefComposerTests
         // m2.1: the resume brief states how the working copy changed since the last checkpoint.
         // m2.2: the chat brief, for a read-only answer to a plain message.
         // m2.3: the spec brief; approved criteria reported on in their own words.
-        Assert.Equal("m2.3", BriefComposer.Revision);
+        // m2.4: work submitted with no change is sent back once to check its edits were written.
+        Assert.Equal("m2.4", BriefComposer.Revision);
     }
 
     [Theory]

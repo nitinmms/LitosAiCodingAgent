@@ -492,7 +492,29 @@ public sealed class RunExecutor(
             signals.EventsWritten();
         }
 
-        return new TurnEnded(TurnEndReason.Completed, submission, filesChanged, AnsweredFollowUp: answeredFollowUp);
+        return new TurnEnded(
+            TurnEndReason.Completed, submission, filesChanged, AnsweredFollowUp: answeredFollowUp,
+            NothingSubmitted: submission is WorkSubmission && !await RunHasChangesAsync(data, hostStopping));
+    }
+
+    /// <summary>
+    /// Whether anything differs from where the run started: the task's base commit, or for a
+    /// rework the commit its task was last handed off at. A diff that cannot be taken counts as a
+    /// change, so verification, not this check, reports the problem.
+    /// </summary>
+    private async Task<bool> RunHasChangesAsync(RunData data, CancellationToken ct)
+    {
+        try
+        {
+            var since = data.Run.Kind == RunKind.Rework && (await store.GetThreadAsync(data.Thread.Id, ct))?.LatestHandoff?.CommitSha is { Length: > 0 } handedOff
+                ? handedOff
+                : data.BaseCommit;
+            return (await data.Workspace.DiffAsync(since, ct)).Files.Count > 0;
+        }
+        catch (WorkspaceException)
+        {
+            return true;
+        }
     }
 
     /// <summary>The run's decision-scan session: fresh, and the same for a nudge or a resume of the

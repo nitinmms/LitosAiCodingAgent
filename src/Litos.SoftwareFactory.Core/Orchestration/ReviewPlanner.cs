@@ -69,6 +69,11 @@ public static partial class ReviewPlanner
         var productionLines = production.Sum(f => f.AddedLineCount);
         var removedPublic = RemovedPublicMembers(inputs.Patch);
 
+        // Nothing changed: there is nothing for a reviewer to look at, and a full review of an
+        // empty diff, once reported as one that "could not be read", cost 41,018 tokens on J3.
+        if (inputs.Files.Count == 0 && string.IsNullOrWhiteSpace(inputs.Patch))
+            return new ReviewPlan(ReviewDepth.None, ["There is no change to review: the diff is empty."]);
+
         if (inputs.Files.Count == 0)
             signals.Add(("the diff could not be read", Severe));
         if (productionLines > limits.LightReviewMaxChangedLines)

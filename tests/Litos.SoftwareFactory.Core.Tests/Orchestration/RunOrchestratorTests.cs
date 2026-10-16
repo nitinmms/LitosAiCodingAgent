@@ -626,6 +626,54 @@ public class RunOrchestratorTests
         Assert.DoesNotContain(run.Steps, s => s is StartTurnStep { Kind: TurnKind.Nudge });
     }
 
+    // ---- Work submitted with nothing changed (J3: an edit that silently matched nothing) ----
+
+    [Fact]
+    public void WorkSubmittedWithNothingChanged_IsSentBackOnce_BeforeAnyVerification()
+    {
+        var run = new Run().Started();
+
+        var step = run.Report(new TurnEnded(TurnEndReason.Completed, Work(), FilesChanged: false, NothingSubmitted: true));
+
+        AssertTurn(step, TurnKind.Nudge, BriefKind.EmptySubmission);
+        Assert.Equal(TurnKind.Implement, run.State.WorkTurn);
+        Assert.Null(run.State.LastSubmission);
+        Assert.DoesNotContain(run.Steps, s => s is VerifyStep);
+    }
+
+    [Fact]
+    public void WorkSubmittedAgainWithStillNothingChanged_IsTakenAsMeant_AndVerified()
+    {
+        var run = new Run().Started();
+        run.Report(new TurnEnded(TurnEndReason.Completed, Work(), NothingSubmitted: true));
+
+        var step = run.Report(new TurnEnded(TurnEndReason.Completed, Work("No change is needed: it already works."), NothingSubmitted: true));
+
+        Assert.IsType<VerifyStep>(step);
+        Assert.Equal("No change is needed: it already works.", run.State.LastSubmission!.Summary);
+        Assert.Single(run.Steps.OfType<StartTurnStep>(), s => s.Brief == BriefKind.EmptySubmission);
+    }
+
+    [Fact]
+    public void WorkSubmittedAfterTheEditsAreMade_IsVerified()
+    {
+        var run = new Run().Started();
+        run.Report(new TurnEnded(TurnEndReason.Completed, Work(), NothingSubmitted: true));
+
+        Assert.IsType<VerifyStep>(run.Submit());
+    }
+
+    [Fact]
+    public void ARepairTurnSubmittingNothing_IsSentBackToo()
+    {
+        var run = new Run().Started();
+        run.Submit();
+        run.Verify(Failing("T.A"));
+
+        AssertTurn(run.Report(new TurnEnded(TurnEndReason.Completed, Work(), NothingSubmitted: true)), TurnKind.Nudge, BriefKind.EmptySubmission);
+        Assert.Equal(TurnKind.Repair, run.State.WorkTurn);
+    }
+
     // ---- A person's follow-up during a turn (m2-architecture.md §10.1, check 5) ----
 
     /// <summary>Found on the M2 check: "what are you working on now?" was answered and ended the

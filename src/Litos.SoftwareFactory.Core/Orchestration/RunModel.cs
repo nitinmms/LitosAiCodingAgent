@@ -155,6 +155,10 @@ public enum BriefKind
 
     /// <summary>The turn stopped to answer a person's follow-up; the work carries on.</summary>
     Continue,
+
+    /// <summary>The agent called submit_work, but the run has changed no files: it is asked once to
+    /// check its edits were written before anything is verified or reviewed.</summary>
+    EmptySubmission,
 }
 
 // ---- Steps: what the host should do next ----
@@ -274,9 +278,11 @@ public enum TurnEndReason
 /// run again, because a resumed review runs as a full one.</param>
 /// <param name="AnsweredFollowUp">A person sent a follow-up during the turn, and the turn ended
 /// without a submission: the agent stopped to answer, and the host has posted its answer.</param>
+/// <param name="NothingSubmitted">Work was submitted, but the run has no change to show for it:
+/// nothing differs from where the run started (the task's base commit, or a rework's handoff).</param>
 public sealed record TurnEnded(
     TurnEndReason Reason, Submission? Submission = null, bool FilesChanged = false, string? Detail = null, bool LightReview = false,
-    bool AnsweredFollowUp = false) : StepOutcome;
+    bool AnsweredFollowUp = false, bool NothingSubmitted = false) : StepOutcome;
 
 public sealed record DecisionAnswered(string Answer) : StepOutcome;
 
