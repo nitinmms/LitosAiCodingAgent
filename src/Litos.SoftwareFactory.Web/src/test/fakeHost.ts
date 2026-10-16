@@ -1,6 +1,7 @@
 import { CSRF_HEADER, type Fetch } from '../api/client';
 import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
+  FlowMetrics,
   Lesson,
   LessonRevision,
   RunLesson,
@@ -760,6 +761,8 @@ export class FakeHost {
       ];
     }
 
+    if (path.split('?')[0] === '/api/metrics' && method === 'GET') return [200, this.metrics];
+
     const lessons = this.handleLessons(method, path, data);
     if (lessons) return lessons;
 
@@ -1116,6 +1119,32 @@ export class FakeHost {
     }
     return [404];
   }
+
+  /** What GET /api/metrics answers; the query it was asked with is in sent(). */
+  metrics: FlowMetrics = {
+    projectId: null,
+    days: 30,
+    tasks: 4,
+    accepted: 3,
+    cancelled: 0,
+    open: 1,
+    firstHandoffAcceptance: 2 / 3,
+    reworkRounds: [
+      { rounds: 0, tasks: 2 },
+      { rounds: 1, tasks: 1 },
+    ],
+    timeInState: [{ name: 'AwaitingHumanTesting', count: 3, totalHours: 30, medianHours: 8, p90Hours: 14 }],
+    timeInStage: [{ name: 'Implement', count: 4, totalHours: 2, medianHours: 0.5, p90Hours: 0.75 }],
+    tokensPerTask: { count: 4, median: 120_000, p90: 400_000 },
+    tokensTotal: 700_000,
+    tokensByPhase: [{ name: 'Implement', tokens: 500_000, share: 0.71 }],
+    tokensByModel: [{ name: 'deepseek/deepseek-v4.1-flash', tokens: 700_000, share: 1 }],
+    openDecisions: 1,
+    oldestOpenDecision: { threadId: 't-9', title: 'Export orders', question: 'All rows or the page?', ageHours: 26 },
+    queueForRepository: { count: 2, median: 12, p90: 30 },
+    queueForSlot: { count: 0, median: 0, p90: 0 },
+    lessons: { included: 5, leftOut: 1, helped: 2, didNotMatter: 1, misled: 0, unjudged: 2 },
+  };
 
   /** Lessons, as Api/LessonsApi.cs answers: Members write and edit suggestions; an Admin does the rest. */
   lessons: Lesson[] = [];

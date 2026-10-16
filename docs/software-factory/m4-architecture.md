@@ -152,10 +152,10 @@ Computed on read from existing records; no new tables. `GET /api/metrics?project
 | Rework rounds per task | Count of `Rework` runs per accepted task; the distribution |
 | First-handoff acceptance rate | Accepted tasks with no `Rework` run, over all accepted tasks |
 | Open decisions, and the oldest waiting | `decisions` with no answer; the oldest's age and thread |
-| Queue wait for locks and slots | `StartedAt − QueuedAt` per run, split by the waiting reason recorded on the thread while it was queued (`StateReason`, as the Board's waiting labels) |
+| Queue wait for locks and slots | Each stretch a task spent Queued, from its state events, split by the waiting reason those events recorded ("… held by …" for the repository, "Waiting for a free slot" for a slot); a task claimed at once counts for neither. Built this way, not as `StartedAt − QueuedAt`, because a resumed run is queued again while its `StartedAt` keeps the first start |
 | Lessons | Lessons included per run, and the helped verdicts (§4.5) |
 
-The **Metrics tab** shows a project picker (or all), the period, tiles for the rates and counts, and small charts for time in state and tokens by phase, drawn with the existing app's styles. Indexes are checked against the queries in the step; `outbox_events (ThreadId, Sequence)` and `usage_entries (ThreadId)` are expected to suffice.
+The **Metrics tab** shows a project picker (or all), the period, a summary of the rates and counts, and tables for time in state and stage, and tokens by phase and model (built as tables, not charts: the figures are few and read best as numbers). Indexes are checked against the queries in the step; `outbox_events (ThreadId, Sequence)` and `usage_entries (ThreadId)` are expected to suffice.
 
 ## 7. Operational counters (build step 6)
 
@@ -236,7 +236,9 @@ Each step lands with its tests and an update to this document, as in M3.
 
 
 **Step 4, reflection jobs (2026-10-16).** As §5. `reflection_jobs` (migration `M4Reflection`), unique per accepted handoff. `ApplyUserActionAsync` takes the allowance (`BudgetSettings.ReflectionAllowanceTokens`, 30,000, 0 off, on the Budgets tab) and, in the Accept transaction, queues a `RunKind.Reflection` run whose own cap is the allowance, or defers the job with §23's words. The ledger charges a reflection run to the task and its cap. `ReflectionExecutor` runs one `TurnKind.Reflection` turn whose brief (`reflection.md`, prompt revision m2.6) lists people's messages, answered decisions, every run's review findings with their verdicts and the last handoff, each with the id to cite, plus the project's approved lessons. `CompleteReflectionAsync` checks each proposal (at most three) as a person's lesson is checked, and also that its source is in this task's own thread, stores the valid ones as Suggested with `ProposedByJobId`, records the refused ones with why, finishes the run and tells the thread, in one transaction; a repeat returns the first outcome. A failure, or the host stopping (liveness), fails the job with Retry and Skip; the task stays accepted (scenario 18). The thread shows a "Lessons from this task" panel with the proposals as cards. Tests: store (both databases) queueing, deferral, off, the ledger, completion and refusals, repeats, failure, retry and skip; brief; `submit_lessons`; Host `ReflectionTests` end to end; web.
-## 11. Open, not blocking
+#
+**Step 5, flow metrics and the Metrics tab (2026-10-16).** As §6. `FlowMetrics.Compute` (Core) is a pure function over rows `GetFlowDataAsync` loads: the tasks created in the period in the caller's projects, their state events (the outbox payload's state, stage and reason), usage, runs and lesson snapshots, and every open decision on a visible task with its task's title. `GET /api/metrics?projectId=&days=` (7, 30 or 90): everyone, over their own projects; another project is not found. A Metrics tab between Lessons and People. No migration. Tests: Core `FlowMetricsTests` (time in state and stage, queue waits by reason, rework and first-handoff acceptance, tokens, decisions, lessons, percentiles); store (both databases); Host `MetricsApiTests`; web `Metrics.test.tsx`.
+# 11. Open, not blocking
 
 - **Over-asking.** The decision scan asked all three planned questions on J3 although the person's second answer said to use the agent's recommendation for the rest; the re-check does not treat that as settling anything (m3-architecture.md §13). Not in M4's list; a candidate for step 1 if the user wants it.
 - **The skills A/B run** (m3-architecture.md §13, "Not done") can run alongside any step.

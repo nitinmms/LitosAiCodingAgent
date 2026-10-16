@@ -13,6 +13,8 @@ export type Route =
   | { view: 'projects' }
   /** A project's lessons (m4-architecture.md §3.4); the first project when none is named. */
   | { view: 'lessons'; projectId: string | null }
+  /** The flow metrics (m4-architecture.md §6). */
+  | { view: 'metrics' }
   /** The Admin's people screen: accounts, invitations and project membership. */
   | { view: 'people' }
   /** The Admin's factory settings, one tab per section. */
@@ -31,6 +33,7 @@ export function parseRoute(hash: string): Route {
   if (parts.length === 0 || parts[0] === 'board') return { view: 'board' };
   if (parts[0] === 'projects') return { view: 'projects' };
   if (parts[0] === 'lessons') return { view: 'lessons', projectId: parts[1] ? decodeURIComponent(parts[1]) : null };
+  if (parts[0] === 'metrics') return { view: 'metrics' };
   if (parts[0] === 'people') return { view: 'people' };
   if (parts[0] === 'settings')
     return { view: 'settings', tab: SETTINGS_TABS.find((t) => t === parts[1]) ?? SETTINGS_TABS[0] };
@@ -46,6 +49,8 @@ export const routeHash = (route: Route): string => {
       return '#/projects';
     case 'lessons':
       return route.projectId ? `#/lessons/${encodeURIComponent(route.projectId)}` : '#/lessons';
+    case 'metrics':
+      return '#/metrics';
     case 'people':
       return '#/people';
     case 'settings':

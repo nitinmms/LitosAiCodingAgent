@@ -279,6 +279,10 @@ public interface IFactoryStore
     /// enabled lesson of the task's project. Audited, and the thread is told. No change, nothing recorded.</summary>
     Task<TaskThread> SetThreadLessonsAsync(Guid threadId, IReadOnlyList<Guid> lessonIds, Guid userId, DateTimeOffset now, CancellationToken ct);
 
+    /// <summary>The rows the flow metrics are computed from (m4-architecture.md §6): the tasks created since
+    /// <paramref name="since"/> in these projects (every project when null), and every open decision on their tasks.</summary>
+    Task<Metrics.FlowData> GetFlowDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct);
+
     // ---- Lesson reflection (m4-architecture.md §5) ----
 
     /// <summary>Stores a reflection's valid proposals as suggestions and completes it, in one transaction;

@@ -2737,6 +2737,40 @@ public abstract class FactoryStoreContract : IAsyncLifetime
             (await Store.GetThreadAsync(thread.Id, default))!.Messages[^1].Text);
     }
 
+    // ---- Flow metrics (m4-architecture.md §6) ----
+
+    [SkippableFact]
+    public async Task FlowData_IsTheProjectsTasksSinceTheDate_WithTheirStateEventsUsageRunsAndLessons_AndEveryOpenDecision()
+    {
+        var running = await RunningAsync();
+        var elsewhere = await RunningAsync("billing");
+        var old = await AddThreadAsync(running.Project, "Old task");
+        await using (var db = Contexts.CreateDbContext())
+        {
+            var row = await db.Threads.FirstAsync(t => t.Id == old.Id);
+            row.CreatedAt = T0.AddDays(-60);
+            await db.SaveChangesAsync();
+        }
+
+        var oldRun = (await Store.DispatchAsync(old.Id, Admin, "m-old", "Old.", T0, default)).RunId!.Value;
+        await Store.OpenDecisionAsync(oldRun, new DecisionSubmission("Still open?", "w", ["a"]), T0, default);
+        await Store.ReserveAsync(Reserve(running, "k-flow"), Policy, T0, default);
+        await Store.SettleAsync("k-flow", new UsageInfo(1_000, 100), 1_100, T0, default);
+
+        var data = await Store.GetFlowDataAsync([running.Project.Id], T0.AddDays(-1), default);
+
+        Assert.Equal([running.Thread.Id], data.Threads.Select(t => t.Id));
+        Assert.All(data.Events, e => Assert.Equal(running.Thread.Id, e.ThreadId));
+        Assert.Contains(data.Events, e => e.State == "Running");
+        Assert.Contains(data.Events, e => e.State == "Queued");
+        Assert.Equal(1_100, Assert.Single(data.Usage).Charged);
+        Assert.Equal(RunKind.Implement, Assert.Single(data.Runs).Kind);
+        var decision = Assert.Single(data.Decisions);
+        Assert.Equal(("Old task", "Still open?"), (decision.Title, decision.Question));
+        Assert.DoesNotContain(data.Threads, t => t.Id == elsewhere.Thread.Id);
+        Assert.Equal(2, (await Store.GetFlowDataAsync(null, T0.AddDays(-1), default)).Threads.Count);
+    }
+
     // ---- Lesson reflection (m4-architecture.md §5) ----
 
     private async Task<(ClaimedRun Accepted, ClaimedRun Reflection)> AcceptedAndReflectingAsync(long? cap = 600_000, long allowance = 30_000)

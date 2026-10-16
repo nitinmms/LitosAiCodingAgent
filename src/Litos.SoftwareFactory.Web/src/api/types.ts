@@ -750,3 +750,43 @@ export interface RunLesson {
   verdict: LessonVerdict | null;
   verdictAt: string | null;
 }
+
+/** The count, median and 90th percentile of some values. */
+export interface Spread {
+  count: number;
+  median: number;
+  p90: number;
+}
+
+export interface TimeIn {
+  name: string;
+  count: number;
+  totalHours: number;
+  medianHours: number;
+  p90Hours: number;
+}
+
+/** The flow metrics (Api/MetricsApi.cs, m4-architecture.md §6). */
+export interface FlowMetrics {
+  projectId: string | null;
+  days: number;
+  tasks: number;
+  accepted: number;
+  cancelled: number;
+  open: number;
+  /** Accepted tasks with no change request, over all accepted; null with none accepted. */
+  firstHandoffAcceptance: number | null;
+  reworkRounds: { rounds: number; tasks: number }[];
+  timeInState: TimeIn[];
+  timeInStage: TimeIn[];
+  tokensPerTask: Spread;
+  tokensTotal: number;
+  tokensByPhase: { name: string; tokens: number; share: number }[];
+  tokensByModel: { name: string; tokens: number; share: number }[];
+  openDecisions: number;
+  oldestOpenDecision: { threadId: string; title: string; question: string; ageHours: number } | null;
+  /** Minutes queued waiting for the repository's lock, and for a free slot. */
+  queueForRepository: Spread;
+  queueForSlot: Spread;
+  lessons: { included: number; leftOut: number; helped: number; didNotMatter: number; misled: number; unjudged: number };
+}

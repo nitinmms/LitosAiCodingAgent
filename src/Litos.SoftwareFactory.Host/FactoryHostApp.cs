@@ -125,6 +125,7 @@ public static class FactoryHostApp
         app.MapFactoryApi();
         app.MapFactorySettings();
         app.MapFactoryLessons();
+        app.MapFactoryMetrics();
         app.MapFactoryEvents();
         app.MapWorkerCallbacks();
 

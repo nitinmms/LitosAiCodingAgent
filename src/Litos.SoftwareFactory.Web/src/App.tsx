@@ -7,6 +7,7 @@ import { InvitePage } from './components/InvitePage';
 import { Login } from './components/Login';
 import { PeoplePage } from './components/PeoplePage';
 import { LessonsPage } from './components/LessonsPage';
+import { MetricsPage } from './components/MetricsPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { SettingsPage } from './components/SettingsPage';
 import { ThreadsPage } from './components/ThreadsPage';
@@ -284,6 +285,8 @@ export function App({ createClient, openEvents }: AppProps) {
         ) : (
           <p className="note">Only an admin can change the factory's settings.</p>
         )
+      ) : route.view === 'metrics' ? (
+        <MetricsPage api={api} projects={projects} />
       ) : route.view === 'lessons' ? (
         <LessonsPage
           api={api}

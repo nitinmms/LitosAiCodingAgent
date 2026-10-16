@@ -343,6 +343,41 @@ public class AnthropicChatProviderTests
     }
 
     [Fact]
+    public async Task StreamAsync_MarksOnlyTheFinalMessageBlockWithCacheControl()
+    {
+        // Without a breakpoint after the history, every round of a tool-heavy turn re-paid full
+        // input price for the whole transcript; only tools+system were cached. The marker goes on
+        // the final block so the cached prefix covers the entire conversation so far.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalTextSse));
+        var toolArgs = JsonDocument.Parse("""{"path":"foo.cs"}""").RootElement;
+        var messages = new[]
+        {
+            ChatMessage.User("read foo.cs"),
+            ChatMessage.Assistant([new TextBlock("reading"), new ToolUseBlock("call_1", "read_file", toolArgs)]),
+            ChatMessage.ToolResult("call_1", ToolResult.Ok("file contents")),
+        };
+        var request = new ChatRequest(messages, [], "model", SystemPrompt: "be concise");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        using var json = JsonDocument.Parse(handler.CapturedRequests[0].Body!);
+        var marked = new List<(int Message, int Block)>();
+        var sent = json.RootElement.GetProperty("messages");
+        for (var m = 0; m < sent.GetArrayLength(); m++)
+        {
+            var content = sent[m].GetProperty("content");
+            for (var b = 0; b < content.GetArrayLength(); b++)
+                if (content[b].TryGetProperty("cache_control", out var cc) && cc.ValueKind != JsonValueKind.Null)
+                    marked.Add((m, b));
+        }
+        Assert.Equal([(2, 0)], marked);
+        Assert.Equal("ephemeral", sent[2].GetProperty("content")[0].GetProperty("cache_control").GetProperty("type").GetString());
+        // System prompt keeps its own breakpoint alongside the conversation one.
+        Assert.Equal("ephemeral", json.RootElement.GetProperty("system")[0].GetProperty("cache_control").GetProperty("type").GetString());
+    }
+
+    [Fact]
     public async Task StreamAsync_ReportsCacheTokensSeparatelyFromInputTokens()
     {
         // input_tokens, cache_creation_input_tokens and cache_read_input_tokens are mutually
