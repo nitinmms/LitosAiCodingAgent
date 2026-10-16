@@ -93,6 +93,7 @@ public static class FactoryHostApp
         services.AddSingleton<ProjectBaselines>();
         services.AddSingleton<ChatExecutor>();
         services.AddSingleton<ReflectionExecutor>();
+        services.AddSingleton<Api.EventStreams>();
         services.AddSingleton<SpecExecutor>();
         // The factory-wide token is a setting (m3-architecture.md §2): read when it is used.
         services.AddSingleton<IGitHub, GitHubFromSettings>();
@@ -126,6 +127,7 @@ public static class FactoryHostApp
         app.MapFactorySettings();
         app.MapFactoryLessons();
         app.MapFactoryMetrics();
+        app.MapFactoryCounters();
         app.MapFactoryEvents();
         app.MapWorkerCallbacks();
 

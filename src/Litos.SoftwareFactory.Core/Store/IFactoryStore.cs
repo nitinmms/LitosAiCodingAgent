@@ -283,6 +283,9 @@ public interface IFactoryStore
     /// <paramref name="since"/> in these projects (every project when null), and every open decision on their tasks.</summary>
     Task<Metrics.FlowData> GetFlowDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct);
 
+    /// <summary>What the operational counters are read from (m4-architecture.md §7); handoff failures since <paramref name="failuresSince"/>.</summary>
+    Task<Metrics.OperationsData> GetOperationsDataAsync(DateTimeOffset failuresSince, DateTimeOffset now, CancellationToken ct);
+
     // ---- Lesson reflection (m4-architecture.md §5) ----
 
     /// <summary>Stores a reflection's valid proposals as suggestions and completes it, in one transaction;

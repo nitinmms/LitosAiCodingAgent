@@ -3,6 +3,7 @@ import { ApiError, type FactoryApi } from '../api/client';
 import type { FlowMetrics, Project } from '../api/types';
 import { fmt } from '../domain/format';
 import { ErrorNote } from './bits';
+import { Operations } from './Operations';
 
 export const PERIODS = [7, 30, 90] as const;
 
@@ -19,7 +20,7 @@ const label = (name: string) => name.replace(/([a-z])([A-Z])/g, '$1 $2');
  * The flow metrics (ReadMe_LitosSoftwareFactory_V1.md §12.1, m4-architecture.md §6), over the projects
  * the person belongs to: one project or all, for the last 7, 30 or 90 days of tasks.
  */
-export function MetricsPage({ api, projects }: { api: FactoryApi; projects: Project[] }) {
+export function MetricsPage({ api, projects, isAdmin = false }: { api: FactoryApi; projects: Project[]; isAdmin?: boolean }) {
   const [projectId, setProjectId] = useState<string>('');
   const [days, setDays] = useState<(typeof PERIODS)[number]>(30);
   const [metrics, setMetrics] = useState<FlowMetrics | null>(null);
@@ -64,6 +65,7 @@ export function MetricsPage({ api, projects }: { api: FactoryApi; projects: Proj
       <ErrorNote message={error} />
       {metrics === null && !error ? <p className="small muted">Loading…</p> : null}
       {metrics ? <Report metrics={metrics} /> : null}
+      {isAdmin ? <Operations api={api} /> : null}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { CSRF_HEADER, type Fetch } from '../api/client';
 import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
+  Counters,
   FlowMetrics,
   Lesson,
   LessonRevision,
@@ -762,6 +763,8 @@ export class FakeHost {
     }
 
     if (path.split('?')[0] === '/api/metrics' && method === 'GET') return [200, this.metrics];
+    if (path === '/api/admin/counters' && method === 'GET')
+      return this.user.roles.includes('Admin') ? [200, this.counters] : [403, { error: 'Forbidden.' }];
 
     const lessons = this.handleLessons(method, path, data);
     if (lessons) return lessons;
@@ -1144,6 +1147,23 @@ export class FakeHost {
     queueForRepository: { count: 2, median: 12, p90: 30 },
     queueForSlot: { count: 0, median: 0, p90: 0 },
     lessons: { included: 5, leftOut: 1, helped: 2, didNotMatter: 1, misled: 0, unjudged: 2 },
+  };
+
+  /** What GET /api/admin/counters answers an Admin. */
+  counters: Counters = {
+    tasks: { queued: 1, running: 1, stopped: [{ state: 'PausedBudget', count: 2 }] },
+    openDecisions: 1,
+    oldestDecision: { threadId: 't-9', title: 'Export orders', question: 'All rows?', ageHours: 3 },
+    runs: [
+      { runId: 'r-1', threadId: 't-1', title: 'Add CSV export', kind: 'Implement', minutesRunning: 12, minutesSinceCheckpoint: 2, executed: true, workerAlive: true, needsAttention: false },
+      { runId: 'r-2', threadId: 't-2', title: 'Orphaned task', kind: 'Rework', minutesRunning: 300, minutesSinceCheckpoint: 290, executed: false, workerAlive: false, needsAttention: true },
+    ],
+    unsettled: { count: 2, tokens: 40_000, oldest: '2026-10-15T09:00:00Z' },
+    eventStreams: { open: 3, slowestSecondsBehind: 14 },
+    pushFailures: { days: 7, count: 1, latest: [{ threadId: 't-5', title: 'Push refused', at: '2026-10-16T08:00:00Z' }] },
+    reflections: { failed: 1, deferred: 0, pending: 0, completed: 4 },
+    quotas: { daily: 1_000_000, monthly: null },
+    users: [{ userId: 'u-1', name: 'admin', day: 250_000, month: 2_000_000, dayShare: 0.25, monthShare: null }],
   };
 
   /** Lessons, as Api/LessonsApi.cs answers: Members write and edit suggestions; an Admin does the rest. */

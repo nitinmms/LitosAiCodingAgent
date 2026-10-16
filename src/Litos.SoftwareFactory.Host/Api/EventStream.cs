@@ -20,7 +20,7 @@ public static class EventStream
         var idle = keepAlive ?? TimeSpan.FromSeconds(15);
 
         app.MapGet("/api/threads/{id:guid}/events", async (
-            Guid id, long? after, HttpContext context, IFactoryStore store, FactorySignals signals, CancellationToken ct) =>
+            Guid id, long? after, HttpContext context, IFactoryStore store, FactorySignals signals, EventStreams streams, CancellationToken ct) =>
         {
             if (await store.GetThreadAsync(id, ct) is null)
             {
@@ -31,6 +31,7 @@ public static class EventStream
             var cursor = StartCursor(after, context.Request.Headers["Last-Event-ID"]);
             StartStream(context);
             await context.Response.Body.FlushAsync(ct);
+            using var open = streams.Open();
 
             try
             {
@@ -53,6 +54,8 @@ public static class EventStream
                             continue; // more are waiting
                     }
 
+                    open.CaughtUp();
+
                     if (await Task.WhenAny(woken, Task.Delay(idle, ct)) != woken)
                     {
                         // A comment line: keeps the connection open through proxies, ignored by clients.
@@ -71,11 +74,13 @@ public static class EventStream
         // user can see, as the thread's whole current view, so a board never has to re-fetch.
         // Who can see what is asked again on every pass, so a membership change takes effect.
         app.MapGet("/api/events", async (
-            long? after, HttpContext context, IFactoryStore store, ProjectAccess access, FactorySignals signals, CancellationToken ct) =>
+            long? after, HttpContext context, IFactoryStore store, ProjectAccess access, FactorySignals signals, EventStreams streams,
+            CancellationToken ct) =>
         {
             var cursor = StartCursor(after, context.Request.Headers["Last-Event-ID"]);
             StartStream(context);
             await context.Response.Body.FlushAsync(ct);
+            using var open = streams.Open();
 
             try
             {
@@ -101,6 +106,8 @@ public static class EventStream
                         if (events.Count == PageSize)
                             continue;
                     }
+
+                    open.CaughtUp();
 
                     if (await Task.WhenAny(woken, Task.Delay(idle, ct)) != woken)
                     {

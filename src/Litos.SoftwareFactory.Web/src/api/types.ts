@@ -790,3 +790,28 @@ export interface FlowMetrics {
   queueForSlot: Spread;
   lessons: { included: number; leftOut: number; helped: number; didNotMatter: number; misled: number; unjudged: number };
 }
+
+/** The operational counters, for Admins (Api/CountersApi.cs, m4-architecture.md §7). */
+export interface Counters {
+  tasks: { queued: number; running: number; stopped: { state: string; count: number }[] };
+  openDecisions: number;
+  oldestDecision: { threadId: string; title: string; question: string; ageHours: number } | null;
+  runs: {
+    runId: string;
+    threadId: string;
+    title: string;
+    kind: string;
+    minutesRunning: number | null;
+    minutesSinceCheckpoint: number | null;
+    executed: boolean;
+    workerAlive: boolean;
+    /** Marked running, but this host holds no executor for it. */
+    needsAttention: boolean;
+  }[];
+  unsettled: { count: number; tokens: number; oldest: string | null };
+  eventStreams: { open: number; slowestSecondsBehind: number };
+  pushFailures: { days: number; count: number; latest: { threadId: string; title: string; at: string }[] };
+  reflections: { failed: number; deferred: number; pending: number; completed: number };
+  quotas: { daily: number | null; monthly: number | null };
+  users: { userId: string; name: string; day: number; month: number; dayShare: number | null; monthShare: number | null }[];
+}

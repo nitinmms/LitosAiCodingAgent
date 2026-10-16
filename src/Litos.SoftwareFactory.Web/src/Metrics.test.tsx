@@ -59,4 +59,31 @@ describe('the Metrics tab', () => {
 
     await waitFor(() => expect(host.sent('GET', `/api/metrics?days=7&projectId=${project.id}`)).toHaveLength(1));
   });
+
+  it('shows an Admin the operations counters, with what needs attention marked', async () => {
+    const host = new FakeHost();
+    host.addProject();
+    start(host, '#/metrics');
+
+    const ops = within(await screen.findByRole('region', { name: 'Operations' }));
+    expect(await ops.findByText('1 queued, 1 running; stopped: 2 paused budget')).toBeInTheDocument();
+    expect(ops.getByText('1: marked running, but this host is not executing them')).toHaveClass('error');
+    expect(ops.getByText('2 calls holding 40,000 tokens after their run stopped')).toBeInTheDocument();
+    expect(ops.getByText('3 open; the slowest caught up 14 s ago')).toBeInTheDocument();
+    expect(ops.getByRole('link', { name: 'Push refused' })).toHaveAttribute('href', '#/threads/t-5');
+    const runs = within(ops.getByRole('table', { name: 'Running runs' }));
+    expect(runs.getByRole('link', { name: 'Orphaned task' }).closest('tr')).toHaveClass('error');
+    expect(within(ops.getByRole('table', { name: 'Use against the quotas' })).getByText('250,000 (25%)')).toBeInTheDocument();
+  });
+
+  it('shows a Member no operations counters', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.signInAs(host.addPerson({ projectIds: [project.id] }));
+    start(host, '#/metrics');
+
+    await screen.findByRole('region', { name: 'Summary' });
+    expect(screen.queryByRole('region', { name: 'Operations' })).toBeNull();
+    expect(host.sent('GET', '/api/admin/counters')).toHaveLength(0);
+  });
 });

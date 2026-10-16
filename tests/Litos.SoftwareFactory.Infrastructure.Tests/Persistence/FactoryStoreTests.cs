@@ -2771,6 +2771,38 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(2, (await Store.GetFlowDataAsync(null, T0.AddDays(-1), default)).Threads.Count);
     }
 
+    // ---- Operational counters (m4-architecture.md §7) ----
+
+    [SkippableFact]
+    public async Task OperationsData_CountsTasksRunsUnsettledReservationsHandoffFailuresDecisionsReflectionsAndEachPersonsUse()
+    {
+        var running = await RunningAsync();
+        await Store.ReserveAsync(Reserve(running, "settled"), Policy, T0, default);
+        await Store.SettleAsync("settled", new UsageInfo(1_000, 100), 1_100, T0, default);
+        await Store.OpenDecisionAsync(running.Run.Id, new DecisionSubmission("Which columns?", "w", ["a"]), T0, default);
+
+        var failed = await RunningAsync("billing");
+        await Store.ReserveAsync(Reserve(failed, "left-reserved"), Policy, T0, default);
+        await Store.StopRunAsync(Stop(failed.Run.Id, LifecycleTrigger.Block, StopReason.HandoffFailed, "The push was refused."), T0, default);
+
+        var data = await Store.GetOperationsDataAsync(T0.AddDays(-7), T0, default);
+
+        Assert.Equal(1, data.TasksByState[LifecycleState.Running]);
+        Assert.Equal(1, data.TasksByState[LifecycleState.Blocked]);
+        var run = Assert.Single(data.Running);
+        Assert.Equal((running.Run.Id, "Add CSV export", RunKind.Implement), (run.RunId, run.Title, run.Kind));
+        Assert.Equal(1, data.Unsettled.Count); // the blocked run's reservation; the running run's settled
+        Assert.True(data.Unsettled.Tokens > 0);
+        Assert.Equal(failed.Thread.Id, Assert.Single(data.HandoffFailures).ThreadId);
+        Assert.Empty((await Store.GetOperationsDataAsync(T0.AddDays(1), T0, default)).HandoffFailures);
+        Assert.Equal((1, "Which columns?"), (data.OpenDecisions, data.OldestDecision!.Question));
+        Assert.Empty(data.Reflections);
+        var use = Assert.Single(data.Users);
+        Assert.Equal((Admin, 1_100L), (use.UserId, use.MonthUsed));
+        Assert.True(use.MonthReserved > 0);
+        Assert.Equal(use.MonthUsed, use.DayUsed);
+    }
+
     // ---- Lesson reflection (m4-architecture.md §5) ----
 
     private async Task<(ClaimedRun Accepted, ClaimedRun Reflection)> AcceptedAndReflectingAsync(long? cap = 600_000, long allowance = 30_000)

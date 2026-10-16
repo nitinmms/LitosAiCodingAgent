@@ -286,7 +286,7 @@ export function App({ createClient, openEvents }: AppProps) {
           <p className="note">Only an admin can change the factory's settings.</p>
         )
       ) : route.view === 'metrics' ? (
-        <MetricsPage api={api} projects={projects} />
+        <MetricsPage api={api} projects={projects} isAdmin={user.roles.includes('Admin')} />
       ) : route.view === 'lessons' ? (
         <LessonsPage
           api={api}
