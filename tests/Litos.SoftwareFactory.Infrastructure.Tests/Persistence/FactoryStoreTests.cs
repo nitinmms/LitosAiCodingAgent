@@ -3117,8 +3117,6 @@ public sealed class PostgresFactoryStoreTests : FactoryStoreContract
 {
     public const string Variable = "FACTORY_TEST_DB";
 
-    private string? _database;
-
     private static string Admin(string database) =>
         new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable(Variable)) { Database = database }.ConnectionString;
 
@@ -3128,16 +3126,82 @@ public sealed class PostgresFactoryStoreTests : FactoryStoreContract
             string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(Variable)),
             $"Set {Variable} to an admin connection string for a PostgreSQL server to run the store tests against PostgreSQL.");
 
-        _database = $"litos_factory_test_{Guid.NewGuid():n}";
-        await using (var connection = new NpgsqlConnection(Admin("postgres")))
-        {
-            await connection.OpenAsync();
-            await using var create = new NpgsqlCommand($"CREATE DATABASE \"{_database}\"", connection);
-            await create.ExecuteNonQueryAsync();
-        }
+        // One database, migrated once for the whole run and emptied before each test: creating and
+        // migrating a database per test took most of this suite's time, and even copying one from a
+        // migrated template took half a second a test. The migrations seed no rows, so an emptied
+        // database is the same as a freshly migrated one.
+        var database = await SharedDatabaseAsync();
+        await ExecuteAsync(_truncate!, database);
+        return new TestContextFactory(new DbContextOptionsBuilder<FactoryDbContext>().UseNpgsql(Admin(database)).Options);
+    }
 
-        await FactoryDatabase.MigrateAsync(Admin(_database), default);
-        return new TestContextFactory(new DbContextOptionsBuilder<FactoryDbContext>().UseNpgsql(Admin(_database)).Options);
+    private static readonly SemaphoreSlim SharedLock = new(1, 1);
+    private static string? _shared;
+    private static string? _truncate;
+
+    /// <summary>
+    /// The database the tests share, created and migrated by the first test that needs it and
+    /// dropped when the test process exits; with the statement that empties every table but the
+    /// migrations history. Tests in one class run one at a time, so no two use it at once.
+    /// </summary>
+    private static async Task<string> SharedDatabaseAsync()
+    {
+        await SharedLock.WaitAsync();
+        try
+        {
+            if (_shared is not null)
+                return _shared;
+
+            var database = $"litos_factory_test_{Guid.NewGuid():n}";
+            await ExecuteAsync($"CREATE DATABASE \"{database}\"");
+            // A commit need not wait for the disk in a database dropped after the run; on Docker for
+            // Windows that wait was most of each test's time. Nothing the tests check depends on it.
+            await ExecuteAsync($"ALTER DATABASE \"{database}\" SET synchronous_commit = off");
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => DropShared(database);
+            await FactoryDatabase.MigrateAsync(Admin(database), default);
+
+            var tables = new List<string>();
+            await using (var connection = new NpgsqlConnection(Admin(database)))
+            {
+                await connection.OpenAsync();
+                await using var list = new NpgsqlCommand(
+                    "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> '__EFMigrationsHistory'", connection);
+                await using var reader = await list.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    tables.Add($"\"{reader.GetString(0)}\"");
+            }
+
+            _truncate = $"TRUNCATE {string.Join(", ", tables)} RESTART IDENTITY CASCADE";
+            return _shared = database;
+        }
+        finally
+        {
+            SharedLock.Release();
+        }
+    }
+
+    private static void DropShared(string database)
+    {
+        try
+        {
+            NpgsqlConnection.ClearAllPools();
+            using var connection = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(Admin("postgres")) { Pooling = false }.ConnectionString);
+            connection.Open();
+            using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)", connection);
+            drop.ExecuteNonQuery();
+        }
+        catch (NpgsqlException)
+        {
+            // The server has gone; the database goes with it, or is dropped by hand.
+        }
+    }
+
+    private static async Task ExecuteAsync(string sql, string database = "postgres")
+    {
+        await using var connection = new NpgsqlConnection(Admin(database));
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync();
     }
 
     /// <summary>An event written around the store's write scope skips the outbox lock, so it
@@ -3157,15 +3221,6 @@ public sealed class PostgresFactoryStoreTests : FactoryStoreContract
         await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
     }
 
-    protected override async Task DropDatabaseAsync()
-    {
-        if (_database is null)
-            return;
-
-        NpgsqlConnection.ClearAllPools();
-        await using var connection = new NpgsqlConnection(Admin("postgres"));
-        await connection.OpenAsync();
-        await using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{_database}\" WITH (FORCE)", connection);
-        await drop.ExecuteNonQueryAsync();
-    }
+    /// <summary>The shared database is emptied before the next test, and dropped when the run ends.</summary>
+    protected override Task DropDatabaseAsync() => Task.CompletedTask;
 }
