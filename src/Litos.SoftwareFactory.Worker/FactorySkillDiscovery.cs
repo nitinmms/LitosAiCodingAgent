@@ -10,7 +10,8 @@ namespace Litos.SoftwareFactory.Worker;
 /// each folder still has the hash it was allowed at. A skill the agent writes or changes during
 /// the run is therefore never offered. Nothing above the working copy and nothing under the user
 /// profile is read, so a run never depends on whichever account started the host. A repository
-/// skill replaces a library skill of the same name.
+/// skill replaces a library skill of the same name. The skills chosen for the task are not offered
+/// at all, under either name: their whole text is already in the system prompt (m3-architecture.md §13).
 /// </summary>
 public sealed class FactorySkillDiscovery(RunSkills skills, string workingCopy) : ISkillDiscovery
 {
@@ -54,7 +55,9 @@ public sealed class FactorySkillDiscovery(RunSkills skills, string workingCopy) 
             }
         }
 
-        return Task.FromResult<IReadOnlyList<SkillMetadata>>([.. byName.Values.OrderBy(s => s.Name, StringComparer.Ordinal)]);
+        var chosen = skills.TaskSkills.Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return Task.FromResult<IReadOnlyList<SkillMetadata>>(
+            [.. byName.Values.Where(s => !chosen.Contains(s.Name)).OrderBy(s => s.Name, StringComparer.Ordinal)]);
     }
 
     /// <summary>A folder that cannot be read just now — being written, say — matches no allowed hash.</summary>

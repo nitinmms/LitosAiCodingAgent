@@ -26,14 +26,19 @@ public sealed class FactorySkills(FactorySettings settings, IFactoryStore store,
         return (revision, [.. skills.Enabled.Select(s => new RunLibrarySkill(s.Name, s.Description))], skills.RepositoryPolicy);
     }
 
+    /// <summary>The skills chosen for the task, with their text as the library has it now.</summary>
+    public TaskSkillSelection.Resolved ForTask(TaskThread thread) =>
+        TaskSkillSelection.Resolve(TaskSkillSelection.Parse(thread.SkillsJson), settings.Skills);
+
     /// <summary>
     /// Finds the working copy's skills, records them, decides which the worker may use and writes
     /// them where it reads them. Never fails a run: a repository that cannot be read has no skills.
     /// </summary>
     /// <param name="libraryRevision">The library revision the run was given; its folder is written if it is not there yet.</param>
+    /// <param name="taskSkills">The skills chosen for the task, whole, for every session's system prompt (m3-architecture.md §13).</param>
     public async Task<PreparedSkills> PrepareAsync(
         Guid runId, Guid projectId, string workingCopy, long libraryRevision, IReadOnlyList<RunLibrarySkill> library,
-        RepositorySkillPolicy policy, CancellationToken ct)
+        RepositorySkillPolicy policy, IReadOnlyList<TaskSkill> taskSkills, CancellationToken ct)
     {
         var libraryRoot = library.Count == 0 ? null : LibraryRoot(libraryRevision);
 
@@ -56,7 +61,10 @@ public sealed class FactorySkills(FactorySettings settings, IFactoryStore store,
             uses = SkillSelection.Decide(policy, found.Select(f => new FoundSkill(f.Name, f.Description, f.Hash)), approved, library.Select(s => s.Name));
         }
 
-        var skills = new RunSkills(libraryRoot, [.. uses.Where(u => u.Used).Select(u => new AllowedRepositorySkill(u.Name, u.Hash))]);
+        var skills = new RunSkills(libraryRoot, [.. uses.Where(u => u.Used).Select(u => new AllowedRepositorySkill(u.Name, u.Hash))])
+        {
+            TaskSkills = taskSkills,
+        };
         if (skills.IsEmpty)
             return new PreparedSkills(null, uses);
 

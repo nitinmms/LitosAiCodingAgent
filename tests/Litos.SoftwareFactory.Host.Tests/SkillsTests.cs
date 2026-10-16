@@ -339,6 +339,144 @@ public sealed class SkillsTests : IAsyncLifetime
         Assert.Equal(1, (await CapabilitiesAsync(threadId)).SkillLibraryRevision);
     }
 
+    // ---- Skills chosen for the task (m3-architecture.md §13) ----
+
+    private static LibrarySkill Tdd(params string[] defaultFor) =>
+        new() { Name = "tdd", Description = "Test first.", Body = "Write a failing test before the code.", DefaultFor = defaultFor };
+
+    private static LibrarySkill Prove(params string[] defaultFor) =>
+        new() { Name = "prove-it-works", Description = "Show it working.", Body = "Run it and show the output.", DefaultFor = defaultFor };
+
+    private async Task<JsonElement> NewThreadAsync(Guid projectId, object? skills = null, string typeLabel = "feature", HttpStatusCode expected = HttpStatusCode.Created) =>
+        await _host.PostAsync("api/threads", new { projectId, title = "Add CSV export", typeLabel, skills }, expected);
+
+    private static string[] SkillNames(JsonElement thread) => [.. thread.GetProperty("skills").EnumerateArray().Select(s => s.GetString()!)];
+
+    [Fact]
+    public async Task NewThread_ListsTheSkillsATaskCanTake_WithEachTypesDefaults()
+    {
+        await SaveSkillsAsync(new SkillSettings { Library = [Tdd("bug", "feature"), Prove() with { Enabled = false }] });
+
+        var settings = await _host.GetAsync("api/settings");
+
+        var skill = Assert.Single(settings.GetProperty("skills").EnumerateArray());
+        Assert.Equal(("tdd", "Test first.", "Write a failing test before the code.".Length), (skill.GetProperty("name").GetString(),
+            skill.GetProperty("description").GetString(), skill.GetProperty("chars").GetInt32()));
+        Assert.Equal(["bug", "feature"], skill.GetProperty("defaultFor").EnumerateArray().Select(t => t.GetString()));
+        Assert.Equal(12_000, settings.GetProperty("maxTaskSkillChars").GetInt32());
+    }
+
+    [Fact]
+    public async Task ANewThread_TakesItsTypesDefaults_UnlessItsCreatorChoseOtherwise()
+    {
+        await SaveSkillsAsync(new SkillSettings { Library = [Tdd("feature"), Prove("bug")] });
+        var projectId = await _host.RegisterProjectAsync();
+
+        Assert.Equal(["tdd"], SkillNames(await NewThreadAsync(projectId)));
+        Assert.Equal(["prove-it-works"], SkillNames(await NewThreadAsync(projectId, typeLabel: "bug")));
+        Assert.Empty(SkillNames(await NewThreadAsync(projectId, skills: Array.Empty<string>())));
+        Assert.Equal(["tdd", "prove-it-works"], SkillNames(await NewThreadAsync(projectId, skills: new[] { "prove-it-works", "TDD" })));
+    }
+
+    [Fact]
+    public async Task ANewThread_WithSkillsThatCannotBeGiven_IsRefused()
+    {
+        await SaveSkillsAsync(new SkillSettings { Library = [Tdd(), Prove() with { Body = new string('x', 12_000) }] });
+        var projectId = await _host.RegisterProjectAsync();
+
+        var unknown = await NewThreadAsync(projectId, skills: new[] { "deploy" }, expected: HttpStatusCode.BadRequest);
+        var tooBig = await NewThreadAsync(projectId, skills: new[] { "tdd", "prove-it-works" }, expected: HttpStatusCode.BadRequest);
+
+        Assert.Contains("Not a skill in the factory's library, or turned off: deploy.", unknown.GetProperty("error").GetString());
+        Assert.Contains("a task can take at most 12,000", tooBig.GetProperty("error").GetString());
+        Assert.Empty(await _host.Store.ListThreadsAsync(projectId, default));
+    }
+
+    [Fact]
+    public async Task ARun_IsGivenItsTasksSkillsWhole_AndRecordsThem_AndSaysWhichCouldNotBeApplied()
+    {
+        await RestartWithCoordinatorAsync();
+        await SaveSkillsAsync(new SkillSettings { Library = [Tdd(), Prove()] });
+        var threadId = (await NewThreadAsync(await _host.RegisterProjectAsync(), skills: new[] { "tdd", "prove-it-works" })).GetProperty("id").GetGuid();
+        // An Admin turns one off after the task was created: the run goes on without it.
+        await SaveSkillsAsync(new SkillSettings { Library = [Tdd(), Prove() with { Enabled = false }] });
+
+        await _host.DelegateAsync(threadId);
+        await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Equal([new TaskSkill("tdd", "Write a failing test before the code.")], SkillsOf(await WaitForWorkerAsync()).TaskSkills);
+        Assert.Equal(["tdd"], (await CapabilitiesAsync(threadId)).TaskSkills.Select(s => s.Name));
+        Assert.Contains(
+            "Skills chosen for this task that are no longer in the factory's library, or are turned off, are not applied: prove-it-works.",
+            await NotesAsync(threadId));
+    }
+
+    [Fact]
+    public async Task SkillsChangedWhileTheTaskWorks_WaitForAPauseAndResume_AndTheThreadSaysSo()
+    {
+        await RestartWithCoordinatorAsync();
+        await SaveSkillsAsync(new SkillSettings { Library = [Tdd(), Prove()] });
+        var threadId = (await NewThreadAsync(await _host.RegisterProjectAsync(), skills: new[] { "tdd" })).GetProperty("id").GetGuid();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _host.Workers.Script.Enqueue(async call =>
+        {
+            started.SetResult();
+            await Task.Delay(Timeout.Infinite, call.Token);
+            return FakeWorkerLauncher.Done();
+        });
+        await _host.DelegateAsync(threadId);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(20));
+
+        var changed = await _host.PostAsync($"api/threads/{threadId}/skills", new { skills = new[] { "tdd", "prove-it-works" } }, HttpStatusCode.OK);
+
+        Assert.Equal(["tdd", "prove-it-works"], SkillNames(changed));
+        Assert.Contains("The skills for this task changed to: tdd, prove-it-works. They will be applied after the task is paused and resumed.", await NotesAsync(threadId));
+        Assert.Equal(["tdd"], (await CapabilitiesAsync(threadId)).TaskSkills.Select(s => s.Name)); // the working run keeps its own
+
+        await _host.PostAsync($"api/threads/{threadId}/pause", null, HttpStatusCode.Accepted);
+        await _host.WaitForStateAsync(threadId, LifecycleState.PausedUser);
+        await _host.PostAsync($"api/threads/{threadId}/resume", null, HttpStatusCode.OK);
+        var resumed = await WaitForWorkerAsync(2);
+        await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Equal(["tdd", "prove-it-works"], SkillsOf(resumed).TaskSkills.Select(s => s.Name));
+        Assert.Equal(["tdd", "prove-it-works"], (await CapabilitiesAsync(threadId)).TaskSkills.Select(s => s.Name));
+        Assert.Contains("The task's skills changed while it was stopped; it now continues with: tdd, prove-it-works.", await NotesAsync(threadId));
+    }
+
+    [Fact]
+    public async Task AMember_ChangesATasksSkills_TheChangeIsAudited_AndAnUnchangedChoiceSaysNothing()
+    {
+        await SaveSkillsAsync(new SkillSettings { Library = [Tdd(), Prove()] });
+        var projectId = await _host.RegisterProjectAsync();
+        var threadId = (await NewThreadAsync(projectId, skills: new[] { "tdd" })).GetProperty("id").GetGuid();
+        await _host.CreateMemberAsync("maria", projectId);
+        var maria = await _host.SignedInAsync("maria");
+
+        using (var changed = await maria.PostAsJsonAsync($"api/threads/{threadId}/skills", new { skills = new[] { "prove-it-works" } }))
+            Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+        await _host.PostAsync($"api/threads/{threadId}/skills", new { skills = new[] { "prove-it-works" } }, HttpStatusCode.OK);
+        var refused = await _host.PostAsync($"api/threads/{threadId}/skills", new { skills = new[] { "deploy" } }, HttpStatusCode.BadRequest);
+
+        Assert.Contains("deploy", refused.GetProperty("error").GetString());
+        Assert.Equal(["The skills for this task changed to: prove-it-works. They apply from the task's next run."], await NotesAsync(threadId));
+        var audit = Assert.Single(await _host.Store.ListAuditAsync(projectId, 100, default), a => a.Action == AuditActions.ThreadSkills);
+        Assert.Contains("\"from\":[\"tdd\"]", audit.DetailsJson);
+        Assert.Contains("\"to\":[\"prove-it-works\"]", audit.DetailsJson);
+    }
+
+    [Fact]
+    public async Task AChat_IsGivenItsTasksSkills()
+    {
+        await RestartWithCoordinatorAsync();
+        await SaveSkillsAsync(new SkillSettings { Library = [Tdd()] });
+        var threadId = (await NewThreadAsync(await _host.RegisterProjectAsync(), skills: new[] { "tdd" })).GetProperty("id").GetGuid();
+
+        await _host.DelegateAsync(threadId, "Where are orders exported?");
+
+        Assert.Equal(["tdd"], SkillsOf(await WaitForWorkerAsync()).TaskSkills.Select(s => s.Name));
+    }
+
     [Fact]
     public async Task AChat_IsGivenTheLibraryAndItsReadingCopysApprovedSkills_AndRecordsWhatItFound_WithoutANote()
     {

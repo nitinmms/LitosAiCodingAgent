@@ -7,7 +7,8 @@ namespace Litos.SoftwareFactory.Core.Settings;
 /// MCP servers it was given, never their secrets, and how each server connected, and its skills:
 /// the library's revision and what became of each repository skill. Kept with the
 /// run, so a settings change affects only runs that start afterwards, a resumed run carries on
-/// with what it had, and a rework reuses its task's last snapshot.
+/// with what it had, and a rework reuses its task's last snapshot. The task's chosen skills are the
+/// exception: every run takes them from the thread when it starts or resumes.
 /// </summary>
 public sealed record RunCapabilities
 {
@@ -31,6 +32,10 @@ public sealed record RunCapabilities
 
     /// <summary>What became of each skill its working copy had, found when its worker started; null until then.</summary>
     public IReadOnlyList<RepositorySkillUse>? RepositorySkills { get; init; }
+
+    /// <summary>The skills chosen for the task, with their text, as every session's system prompt
+    /// carries them (m3-architecture.md §13). Unlike the rest, taken afresh when the run resumes.</summary>
+    public IReadOnlyList<TaskSkill> TaskSkills { get; init; } = [];
 
     /// <summary>A snapshot of the settings as they are now.</summary>
     public static RunCapabilities From(

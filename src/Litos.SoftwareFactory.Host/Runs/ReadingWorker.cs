@@ -22,15 +22,16 @@ public sealed class ReadingWorker : IAsyncDisposable
 
     public IWorkerClient Client { get; }
 
-    /// <remarks>Its skills are the library and the reading copy's repository skills as they are
-    /// now; a read-only run records no capability snapshot and posts no note about them.</remarks>
+    /// <remarks>Its skills are the library, the reading copy's repository skills and the task's chosen
+    /// skills as they are now; a read-only run records no capability snapshot and posts no note about them.</remarks>
     public static async Task<ReadingWorker> StartAsync(
         IWorkerLauncher launcher, IWorkerClientFactory clients, IFactoryStore store, FactoryOptions options, Settings.FactorySettings settings,
         Settings.FactorySkills skills, string hostUrl, ClaimedRun claimed, ActiveRun active, string workingCopy, CancellationToken ct)
     {
         var (run, thread, project) = claimed;
         var (revision, library, policy) = skills.Current();
-        var prepared = await skills.PrepareAsync(run.Id, project.Id, workingCopy, revision, library, policy, ct);
+        var chosen = skills.ForTask(thread);
+        var prepared = await skills.PrepareAsync(run.Id, project.Id, workingCopy, revision, library, policy, chosen.Applied, ct);
         var handle = await launcher.LaunchAsync(
             new WorkerLaunch(
                 run.Id.ToString("N"), workingCopy, thread.Provider, thread.Model,

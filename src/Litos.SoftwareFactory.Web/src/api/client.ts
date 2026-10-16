@@ -91,6 +91,8 @@ export interface FactoryApi {
   /** Approves the specification revision the person read; a newer one makes this a 409. */
   approveSpec(id: string, revision: number): Promise<SpecStatus>;
   setBudget(id: string, cap: number | null): Promise<Thread>;
+  /** The task's chosen skills; a working task takes them once it is paused and resumed. */
+  setThreadSkills(id: string, skills: string[]): Promise<Thread>;
   accept(id: string): Promise<Thread>;
   /** `stopping`: the task is running, and stops at its next safe point; the new state arrives as an event. */
   pause(id: string): Promise<StopResult>;
@@ -222,6 +224,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     postMessage: (id, messageId, text) => send<DispatchResult>('POST', `${thread(id)}/messages`, { messageId, text }),
     approveSpec: (id, revision) => send<SpecStatus>('POST', `${thread(id)}/spec/${revision}/approve`),
     setBudget: (id, cap) => send<Thread>('POST', `${thread(id)}/budget`, { cap }),
+    setThreadSkills: (id, skills) => send<Thread>('POST', `${thread(id)}/skills`, { skills }),
     accept: (id) => send<Thread>('POST', `${thread(id)}/accept`),
     // Pausing or cancelling a running task answers 202 with { stopping: true } before the task
     // has stopped; the new state arrives on the event stream, so neither returns a thread to trust.

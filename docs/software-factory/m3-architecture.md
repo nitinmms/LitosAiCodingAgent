@@ -345,23 +345,32 @@ Found on 2026-10-14 during the M3 check (§9.1). **Both defects fixed on 2026-10
 
 **Also from the M3 check, smaller.** A tool denied by the MCP settings reaches the agent as a C# compile error ("the name … does not exist"), indistinguishable from a typo; a message naming the policy would be clearer. And agents repeatedly guess the argument shapes of the kernel's helpers (`skill("name", "tdd")`, `search_code("pattern", …)`, MCP tools' `request` object), costing calls in most runs: their descriptions should show a call.
 
-## 13. Follow-up: applying skills by phase, set by the factory
+## 13. Follow-up: skills chosen for the task, kept in the system prompt
 
-Found by the M3 check (§9.1): skills in the library are used only when a task's brief names them, and agents ignore them otherwise. Chosen on 2026-10-14 to address: the factory, not the person writing the brief, says when a skill applies. Not built in M3.
+Found by the M3 check (§9.1): skills in the library are used only when a task's brief names them, and agents ignore them otherwise. On 2026-10-14 the first answer was a phase per skill, set by the factory, with the skill's text put in each turn's brief. **Replaced on 2026-10-16, before it was built**, by the user's design below, which is built.
 
 **Why not name skills in the run brief.** A brief that names a skill breaks quietly once the skill is gone: the agent's `skill("tdd")` returns "not found" and it carries on without it, and with an empty library there is no `skill` tool at all, so the call fails as a C# compile error, the same message as a denied MCP tool. Skills are configuration an Admin may change or delete at any time; nothing that runs should depend on one being there.
 
-**Proposed.**
+**Why the system prompt, not the brief.** A brief is a user message. Compaction runs inside a turn (`AgentLoop`), so on a long implement turn, the kind skills matter most for, it summarises the brief and the skill's text with it. The system prompt is rebuilt for every turn by `ISystemPromptProvider` and is never part of the transcript, so compaction cannot touch it. It is also the same text on every call of a run, so the provider caches it and the task is charged mostly for cache reads.
 
-- **A phase per skill**, set on the Skills tab: before implementing, on a repair turn, before submitting, or never (the default, so today's library behaves as now until an Admin chooses). Stored in the `skills` section beside each skill.
-- **Built at run start from what exists.** When a run starts, the factory reads the library revision it snapshots (§7.4) and attaches only skills that are present, enabled and given a phase. A deleted or disabled skill is simply not attached, so no turn can point at a missing one.
-- **The skill's text in the turn's instructions**, not a request to call `skill(...)`: the implement brief carries the "before implementing" skills, a repair brief the "repair" skills, and the submit reminder the "before submitting" skills. This removes the call-shape trap (§12) and the question of whether the agent bothered to load it. It costs the text on each turn it applies to, acceptable for short skills; a size limit per attached skill (or for all of them) keeps it bounded, with an over-long skill refused on save. The `skill` tool stays for skills without a phase.
-- **Visible.** The run's details list the skills applied, by phase; the Skills tab shows each skill's phase, and deleting one with a phase says which phase it leaves empty.
-- **Repository skills** follow the same rule once approved (§7.3); an unapproved one is never attached.
+**Decisions (2026-10-16, the user's):**
 
-**Also.** Widen `tdd`, whose text covers bug fixes only, to new behaviour. Measure the effect with an A/B run: the same task twice on one model, once with the phases set and once without, comparing tests written first, the fix's scope and tokens.
+- Skills are chosen for a task when it is created, from the factory library. New thread starts with the task type's defaults ticked; the person can untick them or tick others.
+- An Admin sets those defaults per task type on the Skills tab ("New tasks start with it chosen").
+- Every session of the task gets them: chat, spec, implement, repair and review.
+- They can be changed later. A change made while the task works is applied after it is paused and resumed, and the thread says so.
+- A task's skills together are at most 12,000 characters of instructions.
 
-**Open when it is picked up:** whether a thread may turn applied skills off for itself (as PTC can be, §6), and whether "before submitting" runs as part of the submit turn or as a separate check.
+**Built (2026-10-16).**
+
+- **Choosing.** `TaskThread.SkillsJson` holds the chosen names (migration `M3TaskSkills`, `[]` for older threads). `POST /api/threads` takes `skills`; left out, it takes the type's defaults (`TaskSkillSelection.DefaultsFor`). `TaskSkillSelection.Choose` refuses a name that is not an enabled library skill, a name given twice, or a total over 12,000 characters (the trimmed body, what the prompt carries). `GET /api/settings` lists the skills a task can take, with each one's size and defaults, for New thread. `LibrarySkill.DefaultFor` is validated on save: known task types only, and each type's defaults must fit in a task together.
+- **Changing.** `POST /api/threads/{id}/skills` can be used by anyone on the project, as with the budget. The store records `thread.skills` in the audit trail and posts a status note naming when the change applies (`TaskSkillSelection.ChangeNote`): running, "after the task is paused and resumed"; stopped (paused, waiting on a decision, blocked, interrupted), "when the task resumes"; queued, "when the task starts"; otherwise "from the task's next run". An unchanged choice records nothing.
+- **What a run is given.** `RunCapabilities.TaskSkills` holds each chosen skill's name and text, resolved from the library when the run starts (`TaskSkillSelection.Resolve`). It is the one part of the snapshot a resumed run takes afresh: if the thread's skills (or their text) differ from what the run held, the snapshot is updated and the thread is told "it now continues with: …". A rework takes them from the thread too. A skill deleted or turned off since it was chosen is left out and named in a note, as is one that no longer fits after a skill grew; nothing fails. Chat and spec workers get the thread's skills as they are now.
+- **In the worker.** `RunSkills.TaskSkills` carries them in the run's skills file. `FactorySystemPromptProvider` wraps the engine's provider and puts "Skills for this task", with each skill's full text, at the head of the skills section of every turn's system prompt, so the context breakdown counts them as skills. Chosen skills are left out of the loadable catalog under either name, including a repository skill of the same name. The `skill` tool is offered only when there are other skills to load.
+- **In the app.** New thread has the picker with a running total against 12,000 characters. The thread header shows the task's skills, with Change; while the task works, the editor says the change waits for a pause and resume. Run details list the task skills (each one's text on hover). The Skills tab has the per-type defaults.
+- **Tests.** Core: `TaskSkillSelectionTests` (defaults, choosing, limit, resolving, notes). Store (SQLite and PostgreSQL): the change is audited and noted, and an unchanged one is not. Host: New thread defaults and refusals, a run given its skills whole, a change while running applied only after pause and resume, a member's change audited, chat given the skills. Worker: the section in every session's prompt, the catalog without chosen skills, no skill tool with only chosen skills. Web: `TaskSkills.test.tsx`.
+
+**Not done.** Widen `tdd`, whose text covers bug fixes only, to new behaviour. Measure the effect with an A/B run: the same task twice on one model, once with skills chosen and once without, comparing tests written first, the fix's scope and tokens.
 
 ## 14. Proposed: files and images as task input
 

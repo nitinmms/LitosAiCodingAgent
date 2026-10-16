@@ -316,6 +316,22 @@ function CapabilityRows({ capabilities }: { capabilities: RunCapabilities }) {
               </span>
             ))}
       </dd>
+      {capabilities.taskSkills?.length ? (
+        <>
+          <dt>Task skills</dt>
+          <dd>
+            {capabilities.taskSkills.map((skill, i) => (
+              <span key={skill.name}>
+                {i ? ', ' : ''}
+                <span className="mono" title={skill.text}>
+                  {skill.name}
+                </span>
+              </span>
+            ))}{' '}
+            <span className="muted">(in every step's instructions)</span>
+          </dd>
+        </>
+      ) : null}
     </>
   );
 }

@@ -12,11 +12,22 @@ namespace Litos.SoftwareFactory.Contracts;
 /// <param name="LibraryRoot">The materialized library; null when it has no enabled skill.</param>
 public sealed record RunSkills(string? LibraryRoot, IReadOnlyList<AllowedRepositorySkill> Repository)
 {
-    /// <summary>Whether the run has any skill at all; with none, the skill tool is not offered.</summary>
-    public bool IsEmpty => LibraryRoot is null && Repository.Count == 0;
+    /// <summary>The skills chosen for the task (m3-architecture.md §13): their whole text goes in
+    /// every session's system prompt, which compaction never summarises, and they are not offered
+    /// to load.</summary>
+    public IReadOnlyList<TaskSkill> TaskSkills { get; init; } = [];
+
+    /// <summary>Whether the run has any skill at all.</summary>
+    public bool IsEmpty => !HasLoadableSkills && TaskSkills.Count == 0;
+
+    /// <summary>Whether there are skills to load by name; without any, the skill tool is not offered.</summary>
+    public bool HasLoadableSkills => LibraryRoot is not null || Repository.Count > 0;
 }
 
 public sealed record AllowedRepositorySkill(string Name, string Hash);
+
+/// <summary>A skill chosen for a task, with the instructions the agent is given.</summary>
+public sealed record TaskSkill(string Name, string Text);
 
 /// <summary>Where a repository keeps its skills, relative to its root (blueprint §8.2).</summary>
 public static class RepositorySkillFolder

@@ -28,9 +28,12 @@ public sealed record UpdateProfileRequest(string? Preset = null, string? Profile
 /// <param name="Provider">Null for the factory's default provider.</param>
 /// <param name="Model">Null for the provider's default model.</param>
 /// <param name="PtcEnabled">Null for the factory's default (m3-architecture.md §6).</param>
+/// <param name="Skills">The library skills chosen for the task (m3-architecture.md §13); null takes its type's defaults.</param>
 public sealed record CreateThreadRequest(
     Guid ProjectId, string Title, string TypeLabel = "feature", long? BudgetCap = null, string? Provider = null, string? Model = null,
-    bool? PtcEnabled = null);
+    bool? PtcEnabled = null, IReadOnlyList<string>? Skills = null);
+
+public sealed record SetThreadSkillsRequest(IReadOnlyList<string>? Skills);
 
 /// <summary>MessageId is the client's own id for the message: the dispatch idempotency key.</summary>
 public sealed record PostMessageRequest(string MessageId, string Text);
@@ -164,6 +167,9 @@ public static class FactoryApi
                 // The presets a project can be registered with, in the Admin's order (m3-architecture.md §8).
                 Presets = settings.Presets.Presets.Select(p => new { p.Name, p.DisplayName }),
                 TaskTypes = TaskTypes.All,
+                // The skills a task can be given, with the defaults each task type starts with (m3-architecture.md §13).
+                Skills = settings.Skills.Enabled.Select(s => new { s.Name, s.Description, Chars = TaskSkillSelection.Size([s]), s.DefaultFor }),
+                MaxTaskSkillChars = TaskSkillSelection.MaxChars,
                 PromptRevision = Core.Briefs.BriefComposer.Revision,
             });
         });
@@ -286,6 +292,11 @@ public static class FactoryApi
                 return Problem(notOffered!);
             if (settings.Tools.ChoosePtc(request.PtcEnabled, ProjectAccess.IsAdmin(user), out var ptcRefused) is not { } ptc)
                 return Problem(ptcRefused!);
+            var skillSettings = settings.Skills;
+            var skills = TaskSkillSelection.Choose(
+                request.Skills ?? TaskSkillSelection.DefaultsFor(skillSettings, request.TypeLabel), skillSettings, out var skillsRefused);
+            if (skillsRefused is not null)
+                return Problem(skillsRefused);
 
             try
             {
@@ -302,6 +313,7 @@ public static class FactoryApi
                     Model = model.Id,
                     ContextLength = model.ContextLength,
                     PtcEnabled = ptc,
+                    SkillsJson = TaskSkillSelection.Serialize(skills),
                     CreatedAt = now,
                     UpdatedAt = now,
                 }, ct);
@@ -454,6 +466,18 @@ public static class FactoryApi
                 : settings.Budgets.RefuseCap(request.Cap) is { } refused
                     ? Task.FromResult(Problem(refused))
                     : ActAsync(signals, () => store.SetBudgetCapAsync(id, request.Cap, user.UserId(), clock.UtcNow, ct)));
+
+        // The task's chosen skills (m3-architecture.md §13): anyone on the project, as with its budget.
+        // A run already working keeps its own until it is paused and resumed; the thread is told so.
+        threadRoutes.MapPost("/skills", (
+            Guid id, SetThreadSkillsRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, FactorySignals signals,
+            IClock clock, CancellationToken ct) =>
+        {
+            var skills = TaskSkillSelection.Choose(request.Skills ?? [], settings.Skills, out var refused);
+            return refused is not null
+                ? Task.FromResult(Problem(refused))
+                : ActAsync(signals, () => store.SetThreadSkillsAsync(id, skills, user.UserId(), clock.UtcNow, ct));
+        });
 
         threadRoutes.MapPost("/accept", (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
             ActAsync(signals, () => store.ApplyUserActionAsync(id, user.UserId(), LifecycleTrigger.Accept, clock.UtcNow, ct)));
@@ -765,6 +789,8 @@ public static class FactoryApi
         BudgetPrecision = Precision(thread.Provider),
         // Whether its runs use PTC; null for a thread created before M3, which follows the host's option.
         thread.PtcEnabled,
+        // The skills chosen for the task (m3-architecture.md §13).
+        Skills = TaskSkillSelection.Parse(thread.SkillsJson),
         thread.Revision,
         thread.CreatedAt,
         thread.UpdatedAt,

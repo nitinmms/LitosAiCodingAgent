@@ -841,21 +841,40 @@ public sealed class RunExecutor(
     /// <summary>
     /// What the run works with (m3-architecture.md §7.4), fixed at its start: a resumed run keeps
     /// what it started with, a rework reuses its task's last snapshot (blueprint §8.2), and any other
-    /// run takes the settings as they are now.
+    /// run takes the settings as they are now. The task's chosen skills (§13) are taken from the
+    /// thread every time, so a change made while the task worked applies once it is resumed.
     /// </summary>
     private async Task<RunCapabilities> CapabilitiesAsync(ClaimedRun claimed)
     {
         var (run, thread, _) = claimed;
-        if (run.CapabilitiesJson is { Length: > 0 } held)
-            return JsonSerializer.Deserialize<RunCapabilities>(held, FactoryWire.Json)!;
-
         var (skillSettings, skillRevision) = settings.ReadWithRevision<SkillSettings>(SettingsSections.Skills);
+        var chosen = TaskSkillSelection.Resolve(TaskSkillSelection.Parse(thread.SkillsJson), skillSettings);
+
+        if (run.CapabilitiesJson is { Length: > 0 } held)
+        {
+            var resumed = JsonSerializer.Deserialize<RunCapabilities>(held, FactoryWire.Json)!;
+            if (resumed.TaskSkills.SequenceEqual(chosen.Applied))
+                return resumed;
+
+            resumed = resumed with { TaskSkills = chosen.Applied };
+            await store.SetRunCapabilitiesAsync(run.Id, JsonSerializer.Serialize(resumed, FactoryWire.Json), CancellationToken.None);
+            await NoteAsync(thread.Id, string.Join("\n", new[] { TaskSkillsAppliedNote(chosen.Applied), TaskSkillSelection.Describe(chosen) }.OfType<string>()));
+            return resumed;
+        }
+
         var capabilities = run.Kind == RunKind.Rework && await store.LatestCapabilitiesAsync(thread.Id, run.Id, CancellationToken.None) is { } last
             ? JsonSerializer.Deserialize<RunCapabilities>(last, FactoryWire.Json)!.ForRework()
             : RunCapabilities.From(settings.Tools, settings.WebSearch, settings.Mcp, options.PtcOf(thread), skillSettings, skillRevision);
+        capabilities = capabilities with { TaskSkills = chosen.Applied };
         await store.SetRunCapabilitiesAsync(run.Id, JsonSerializer.Serialize(capabilities, FactoryWire.Json), CancellationToken.None);
+        if (TaskSkillSelection.Describe(chosen) is { } notApplied)
+            await NoteAsync(thread.Id, notApplied);
         return capabilities;
     }
+
+    private static string TaskSkillsAppliedNote(IReadOnlyList<TaskSkill> applied) => applied.Count == 0
+        ? "The task's skills changed while it was stopped; it now continues without chosen skills."
+        : $"The task's skills changed while it was stopped; it now continues with: {string.Join(", ", applied.Select(s => s.Name))}.";
 
     private async Task<(IWorkerHandle Handle, IWorkerClient Client)> StartWorkerAsync(WorkerSession session, CancellationToken ct)
     {
@@ -866,7 +885,7 @@ public sealed class RunExecutor(
         // thread hears what was skipped once per run, not again when a worker is restarted.
         var prepared = await skills.PrepareAsync(
             claimed.Run.Id, claimed.Project.Id, workingCopy, capabilities.SkillLibraryRevision, capabilities.LibrarySkills,
-            capabilities.RepositorySkillPolicy, ct);
+            capabilities.RepositorySkillPolicy, capabilities.TaskSkills, ct);
         var firstLook = capabilities.RepositorySkills is null;
         capabilities = session.Capabilities = capabilities with { RepositorySkills = prepared.Repository };
         await store.SetRunCapabilitiesAsync(claimed.Run.Id, JsonSerializer.Serialize(capabilities, FactoryWire.Json), CancellationToken.None);

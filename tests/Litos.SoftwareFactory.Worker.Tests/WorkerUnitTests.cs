@@ -1256,6 +1256,88 @@ public class WorkerSkillsTests
         Assert.Contains("skill", tools.Schemas.Select(s => s.Name));
     }
 
+    // ---- Skills chosen for the task (m3-architecture.md §13) ----
+
+    private static Microsoft.AspNetCore.Builder.WebApplication WorkerWith(TempDirectory data, RunSkills skills)
+    {
+        var path = Path.Combine(data.Path, "skills.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(skills, FactoryWire.Json));
+        return WorkerApp.Build(TestOptions.Create(data.Path) with { SkillsPath = path }, []);
+    }
+
+    private static async Task<Litos.Agent.Session.SystemPromptSections> SystemPromptAsync(Microsoft.AspNetCore.Builder.WebApplication worker, string turnKind = "Implement") =>
+        (await worker.Services.GetRequiredService<Litos.Agent.Session.ISystemPromptProvider>()
+            .BuildAsync(worker.Services.GetRequiredService<FactoryToolSetPolicy>().Create("s", turnKind), null, default))!;
+
+    [Fact]
+    public async Task ATasksChosenSkills_AreWholeInTheSystemPrompt_OfEverySession_AndNotOfferedToLoad()
+    {
+        using var data = new TempDirectory();
+        var library = Path.Combine(data.Path, "skills", "3");
+        WriteSkill(library, "001", "tdd", "Test first.");
+        WriteSkill(library, "002", "release-notes", "Write release notes.");
+        await using var worker = WorkerWith(data, new RunSkills(library, [])
+        {
+            TaskSkills = [new TaskSkill("tdd", "Write a failing test before the code."), new TaskSkill("prove-it-works", "Show it working.")],
+        });
+
+        foreach (var turnKind in new[] { "Chat", "Spec", "Implement", "Repair", "Review" })
+        {
+            var prompt = await SystemPromptAsync(worker, turnKind);
+            Assert.StartsWith("Skills for this task.", prompt.SkillsCatalog);
+            Assert.Contains("### Skill: tdd\nWrite a failing test before the code.\n\n### Skill: prove-it-works\nShow it working.", prompt.Render());
+        }
+
+        // The rest of the library is still offered to load; the chosen one is not, being in the prompt already.
+        var discovery = worker.Services.GetRequiredService<Litos.Tools.Skills.ISkillDiscovery>();
+        Assert.Equal(["release-notes"], (await discovery.DiscoverAsync(default)).Select(s => s.Name));
+        Assert.Contains("- release-notes: Write release notes.", (await SystemPromptAsync(worker)).SkillsCatalog);
+        Assert.Contains("skill", worker.Services.GetRequiredService<FactoryToolSetPolicy>().Create("s", "Implement").Schemas.Select(s => s.Name));
+    }
+
+    [Fact]
+    public async Task AWorkerWithOnlyChosenSkills_HasNoSkillTool_AndNoCatalog()
+    {
+        using var data = new TempDirectory();
+        await using var worker = WorkerWith(data, new RunSkills(null, []) { TaskSkills = [new TaskSkill("tdd", "Test first.")] });
+
+        var prompt = await SystemPromptAsync(worker);
+
+        Assert.DoesNotContain("skill", worker.Services.GetRequiredService<FactoryToolSetPolicy>().Create("s", "Implement").Schemas.Select(s => s.Name));
+        Assert.DoesNotContain("Available skills", prompt.Render());
+        Assert.Contains("### Skill: tdd\nTest first.", prompt.SkillsCatalog);
+    }
+
+    [Fact]
+    public async Task AWorkerWithoutChosenSkills_KeepsTheEnginesSystemPrompt()
+    {
+        using var data = new TempDirectory();
+        await using var worker = WorkerApp.Build(TestOptions.Create(data.Path), []);
+
+        Assert.IsNotType<FactorySystemPromptProvider>(worker.Services.GetRequiredService<Litos.Agent.Session.ISystemPromptProvider>());
+        Assert.Null((await SystemPromptAsync(worker)).SkillsCatalog);
+    }
+
+    [Fact]
+    public async Task AChosenSkill_IsNotOfferedToLoad_UnderEitherName_EvenFromTheRepository()
+    {
+        using var data = new TempDirectory();
+        using var workingCopy = new TempDirectory();
+        var library = Path.Combine(data.Path, "library");
+        WriteSkill(library, "001", "tdd", "The library's.");
+        var root = RepositorySkills(workingCopy.Path);
+        WriteSkill(root, "tdd", "tdd", "The repository's.");
+        WriteSkill(root, "deploy", "deploy", "Deploy.");
+        var discovery = new FactorySkillDiscovery(
+            new RunSkills(library, [new("tdd", SkillHash.Of(Path.Combine(root, "tdd"))), new("deploy", SkillHash.Of(Path.Combine(root, "deploy")))])
+            {
+                TaskSkills = [new TaskSkill("TDD", "Chosen.")],
+            },
+            workingCopy.Path);
+
+        Assert.Equal(["deploy"], (await discovery.DiscoverAsync(default)).Select(s => s.Name));
+    }
+
     [Fact]
     public void ASkillsFileThatCannotBeRead_StopsTheWorker_WithWhy()
     {

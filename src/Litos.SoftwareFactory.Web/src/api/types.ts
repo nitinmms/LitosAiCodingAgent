@@ -54,7 +54,19 @@ export interface Settings {
   /** The presets a project can be registered with, in the Admin's order. */
   presets: PresetName[];
   taskTypes: string[];
+  /** The library skills a task can be given, with the task types that start with each chosen (m3-architecture.md §13). */
+  skills?: TaskSkillOption[];
+  /** The most instruction text a task's chosen skills may come to together. */
+  maxTaskSkillChars?: number;
   promptRevision: string;
+}
+
+/** A library skill as New thread offers it: its size is the text it adds to every session's system prompt. */
+export interface TaskSkillOption {
+  name: string;
+  description: string;
+  chars: number;
+  defaultFor: string[];
 }
 
 export interface Project {
@@ -128,6 +140,8 @@ export interface Thread {
   budgetPrecision: BudgetPrecision;
   /** Whether its runs use Programmatic Tool Calling; null for a thread created before M3. */
   ptcEnabled: boolean | null;
+  /** The library skills chosen for the task; absent from a host before m3-architecture.md §13. */
+  skills?: string[];
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -143,6 +157,8 @@ export interface CreateThread {
   model?: string;
   /** Left out for the factory's default. */
   ptcEnabled?: boolean;
+  /** Left out for the type's defaults; empty for none. */
+  skills?: string[];
 }
 
 export type MessageAuthor = 'User' | 'Factory';
@@ -199,6 +215,8 @@ export interface RunCapabilities {
   repositorySkillPolicy?: RepositorySkillPolicy;
   /** What became of each skill its working copy had, once its worker started; null until then. */
   repositorySkills?: RepositorySkillUse[] | null;
+  /** The skills chosen for the task, whole in every session's system prompt; absent on a run from before §13. */
+  taskSkills?: { name: string; text: string }[];
 }
 
 /** What became of one repository skill in a run (Core/Settings/SkillSettings.cs). */
@@ -555,6 +573,8 @@ export interface LibrarySkill {
   description: string;
   body: string;
   enabled: boolean;
+  /** The task types whose new tasks start with this skill chosen. */
+  defaultFor: string[];
 }
 
 /** The Skills tab (Core/Settings/SkillSettings.cs). */

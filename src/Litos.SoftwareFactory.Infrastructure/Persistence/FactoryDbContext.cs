@@ -103,6 +103,8 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(t => t.Provider).HasMaxLength(60);
             e.Property(t => t.Model).HasMaxLength(200);
             e.Property(t => t.Branch).HasMaxLength(250);
+            // Threads created before skills could be chosen have none.
+            Json(e.Property(t => t.SkillsJson).HasDefaultValue("[]"));
             e.HasOne<Project>().WithMany().HasForeignKey(t => t.ProjectId).OnDelete(DeleteBehavior.Restrict);
             // Board queries and the coordinator's search for queued work.
             e.HasIndex(t => new { t.ProjectId, t.Stage, t.State });

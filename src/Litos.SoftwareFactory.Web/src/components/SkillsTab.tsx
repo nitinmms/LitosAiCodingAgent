@@ -6,6 +6,9 @@ import { ErrorNote, SaveBar } from './bits';
 /** A usable skill name, as Core/Settings/SkillSettings.cs checks it. */
 export const isSkillName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(name);
 
+/** The task types, in Core/Lifecycle/TurnLabels.cs's order, that a skill can be chosen by default for. */
+export const TASK_TYPES = ['bug', 'feature', 'refactor', 'chore'];
+
 /** One library skill as the form holds it. */
 export interface SkillForm extends LibrarySkill {
   /** The form's own id, stable while the name is edited. */
@@ -23,6 +26,7 @@ export const fromSkillForm = (s: SkillForm): LibrarySkill => ({
   description: s.description.trim(),
   body: s.body,
   enabled: s.enabled,
+  defaultFor: TASK_TYPES.filter((t) => (s.defaultFor ?? []).includes(t)),
 });
 
 const comparable = (policy: RepositorySkillPolicy, library: SkillForm[]) =>
@@ -121,7 +125,7 @@ export function SkillsTab({
             <button
               className="btn"
               type="button"
-              onClick={() => setLibrary((all) => [...all, { key: newKey(), name: '', description: '', body: '', enabled: true }])}
+              onClick={() => setLibrary((all) => [...all, { key: newKey(), name: '', description: '', body: '', enabled: true, defaultFor: [] }])}
             >
               Add a skill
             </button>
@@ -235,6 +239,29 @@ function SkillCard({
         <textarea id={id('body')} className="mono" rows={8} value={skill.body} onChange={(e) => onChange({ body: e.target.value })} />
         <span className="hint">Markdown, as a SKILL.md's body.</span>
       </div>
+      <fieldset className="checks">
+        <legend className="small">New tasks start with it chosen</legend>
+        <div className="btn-row">
+          {TASK_TYPES.map((type) => (
+            <label key={type} className="check">
+              <input
+                type="checkbox"
+                checked={(skill.defaultFor ?? []).includes(type)}
+                onChange={(e) =>
+                  onChange({
+                    defaultFor: e.target.checked ? [...(skill.defaultFor ?? []), type] : (skill.defaultFor ?? []).filter((t) => t !== type),
+                  })
+                }
+              />
+              <span>{type.charAt(0).toUpperCase() + type.slice(1)}</span>
+            </label>
+          ))}
+        </div>
+        <span className="hint">
+          A skill chosen for a task is given whole to every step of its runs, and kept through compaction. The person creating the
+          task can untick it. A type's skills together can be at most 12,000 characters.
+        </span>
+      </fieldset>
     </section>
   );
 }

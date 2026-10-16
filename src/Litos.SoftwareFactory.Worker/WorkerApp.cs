@@ -44,6 +44,10 @@ public static class WorkerApp
             ? FactorySkillDiscovery.Load(skillsPath, Directory.GetCurrentDirectory())
             : new NoSkills();
         builder.Services.AddSingleton(skills);
+        // The task's chosen skills, whole, in every session's system prompt (m3-architecture.md §13).
+        if (skills is FactorySkillDiscovery { Skills.TaskSkills: { Count: > 0 } taskSkills })
+            builder.Services.AddSingleton<ISystemPromptProvider>(sp =>
+                new FactorySystemPromptProvider(ActivatorUtilities.CreateInstance<LitosSystemPromptProvider>(sp), taskSkills));
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(_ => new FactoryHostClient(hostHttp ?? new HttpClient(), options));
@@ -63,7 +67,7 @@ public static class WorkerApp
             testOutputDirectory: options.TestOutputDirectory,
             webSearch: options.WebSearch,
             mcpTools: sp.GetService<WorkerMcp>() is { } mcp ? mcp.PermittedTools : null,
-            skills: skills is FactorySkillDiscovery { Skills.IsEmpty: false }));
+            skills: skills is FactorySkillDiscovery { Skills.HasLoadableSkills: true }));
         builder.Services.AddSingleton<IToolSetPolicy>(sp => sp.GetRequiredService<FactoryToolSetPolicy>());
         builder.Services.AddSingleton<IWorkingDirectoryResolver, ProcessWorkingDirectoryResolver>();
 

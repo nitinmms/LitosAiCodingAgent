@@ -25,6 +25,7 @@ const releaseNotes: LibrarySkill = {
   description: 'Use when writing release notes for a change.',
   body: '# Release notes\n\nList what changed for users.',
   enabled: true,
+  defaultFor: [],
 };
 
 const found = (patch: Partial<FoundRepositorySkill> = {}): FoundRepositorySkill => ({

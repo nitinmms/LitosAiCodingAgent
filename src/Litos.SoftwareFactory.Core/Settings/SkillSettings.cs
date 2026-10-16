@@ -28,6 +28,10 @@ public sealed record LibrarySkill
     /// <summary>Given to runs. A skill that is off is kept, but no run sees it.</summary>
     public bool Enabled { get; init; } = true;
 
+    /// <summary>The task types (<see cref="Lifecycle.TaskTypes"/>) whose new tasks start with this
+    /// skill chosen (m3-architecture.md §13). The person creating a task can still untick it.</summary>
+    public IReadOnlyList<string> DefaultFor { get; init; } = [];
+
     /// <summary>The SKILL.md the worker reads.</summary>
     public string Markdown() => $"---\nname: {Name}\ndescription: {Description}\n---\n\n{Body.Replace("\r\n", "\n")}\n";
 }
@@ -82,6 +86,19 @@ public sealed partial record SkillSettings
                 errors.Add($"{skill.Name}: write its instructions.");
             else if (skill.Body.Length > MaxBodyChars)
                 errors.Add($"{skill.Name}: its instructions can be at most {MaxBodyChars.ToString("N0", CultureInfo.InvariantCulture)} characters.");
+
+            foreach (var type in (skill.DefaultFor ?? []).Where(t => !Lifecycle.TaskTypes.IsKnown(t)).Distinct())
+                errors.Add($"{skill.Name}: \"{type}\" is not a task type; choose from {string.Join(", ", Lifecycle.TaskTypes.All)}.");
+        }
+
+        // A new task starts with its type's defaults chosen, so they must fit in a task together.
+        foreach (var type in Lifecycle.TaskTypes.All)
+        {
+            var defaults = Library.Where(s => s.Enabled && (s.DefaultFor ?? []).Contains(type)).ToList();
+            var chars = TaskSkillSelection.Size(defaults);
+            if (chars > TaskSkillSelection.MaxChars)
+                errors.Add($"The skills chosen by default for a {type} task come to {chars.ToString("N0", CultureInfo.InvariantCulture)} characters; " +
+                    $"a task can take at most {TaskSkillSelection.MaxChars.ToString("N0", CultureInfo.InvariantCulture)}.");
         }
 
         return errors;

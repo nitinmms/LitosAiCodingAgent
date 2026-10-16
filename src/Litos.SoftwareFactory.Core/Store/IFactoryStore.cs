@@ -208,6 +208,13 @@ public interface IFactoryStore
     /// <summary>Ends a chat run: posts its reply, or says why there is none.</summary>
     Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct);
 
+    /// <summary>
+    /// Changes the skills chosen for the task (m3-architecture.md §13), already checked against the
+    /// library, and tells the thread when the change takes effect. A run already working keeps what
+    /// it started with until it is paused and resumed. No change, no record and no message.
+    /// </summary>
+    Task<TaskThread> SetThreadSkillsAsync(Guid threadId, IReadOnlyList<string> skills, Guid userId, DateTimeOffset now, CancellationToken ct);
+
     /// <summary>Renames a thread or changes its task type; null leaves that one as it is.</summary>
     Task<TaskThread> EditThreadAsync(Guid threadId, string? title, string? typeLabel, Guid userId, DateTimeOffset now, CancellationToken ct);
 

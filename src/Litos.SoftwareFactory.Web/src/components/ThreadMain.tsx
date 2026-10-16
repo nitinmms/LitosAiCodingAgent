@@ -21,6 +21,7 @@ import {
 } from '../domain/task';
 import { ErrorNote, Rail, Rich, SafeLink, TurnPill } from './bits';
 import { DecisionCard, HandoffCard, SpecCard, StopPanel } from './cards';
+import { EditTaskSkills } from './TaskSkillsPicker';
 
 /** How often GitHub is asked where the task's pull request stands; the host caches the answer too. */
 const PULL_REQUEST_REFRESH_MS = 60_000;
@@ -57,6 +58,7 @@ export function ThreadMain({
   // Asked to stop while running (a 202): shown until the task leaves Running.
   const [stopping, setStopping] = useState<'pause' | 'cancel' | null>(null);
   const [editing, setEditing] = useState(false);
+  const [editingSkills, setEditingSkills] = useState(false);
   // Renaming or re-filing a thread is its owner's, or an admin's.
   const canEdit = thread.ownerId === user.id || user.roles.includes('Admin');
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -327,7 +329,31 @@ export function ThreadMain({
             </span>
           ) : null}
           <span>{stateName(thread.state)}</span>
+          {thread.skills?.length || settings?.skills?.length ? (
+            <span>
+              Skills: {thread.skills?.length ? <span className="mono">{thread.skills.join(', ')}</span> : 'none'}{' '}
+              {settings?.skills?.length && !editingSkills ? (
+                <button className="btn ghost small" onClick={() => setEditingSkills(true)}>
+                  Change
+                </button>
+              ) : null}
+            </span>
+          ) : null}
         </div>
+        {editingSkills && settings?.skills ? (
+          <EditTaskSkills
+            options={settings.skills}
+            max={settings.maxTaskSkillChars ?? 12_000}
+            current={thread.skills ?? []}
+            working={thread.state === 'Running'}
+            onSave={async (chosen) => {
+              await api.setThreadSkills(thread.id, chosen);
+              setEditingSkills(false);
+              await reload();
+            }}
+            onCancel={() => setEditingSkills(false)}
+          />
+        ) : null}
         <Rail stage={thread.stage} state={thread.state} turn={thread.turn} />
       </section>
 

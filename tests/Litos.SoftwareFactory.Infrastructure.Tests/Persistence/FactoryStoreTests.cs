@@ -4,6 +4,7 @@ using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Budget;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Infrastructure.Persistence;
@@ -2483,6 +2484,32 @@ public abstract class FactoryStoreContract : IAsyncLifetime
     private static T Details<T>(AuditEvent row, string property) =>
         JsonDocument.Parse(row.DetailsJson!).RootElement.EnumerateObject()
             .First(p => string.Equals(p.Name, property, StringComparison.OrdinalIgnoreCase)).Value.Deserialize<T>()!;
+
+    /// <summary>m3-architecture.md §13: a change to a task's skills is recorded, and the thread is
+    /// told when it applies — a working task only after it is paused and resumed.</summary>
+    [SkippableFact]
+    public async Task ChangingATasksSkills_IsRecorded_AndTheThreadIsToldWhenItApplies()
+    {
+        var running = await RunningAsync();
+        Assert.Equal("[]", running.Thread.SkillsJson); // a thread starts with none chosen
+
+        var thread = await Store.SetThreadSkillsAsync(running.Thread.Id, ["tdd", "prove-it-works"], Ben, T0, default);
+
+        Assert.Equal(["tdd", "prove-it-works"], TaskSkillSelection.Parse((await ThreadAsync(thread.Id)).SkillsJson));
+        var row = Assert.Single(await RowsAsync(AuditActions.ThreadSkills));
+        Assert.Equal((Ben, (Guid?)thread.Id), (row.ActorId, row.TargetId));
+        Assert.Equal(["tdd", "prove-it-works"], Details<string[]>(row, "to"));
+        Assert.Empty(Details<string[]>(row, "from"));
+        var note = (await Store.GetThreadAsync(thread.Id, default))!.Messages[^1];
+        Assert.Equal((MessageAuthor.Factory, MessageKind.Status), (note.Author, note.Kind));
+        Assert.Equal("The skills for this task changed to: tdd, prove-it-works. They will be applied after the task is paused and resumed.", note.Text);
+
+        // The same choice again changes nothing, records nothing and says nothing.
+        var revision = (await ThreadAsync(thread.Id)).Revision;
+        await Store.SetThreadSkillsAsync(thread.Id, ["tdd", "prove-it-works"], Ben, T0, default);
+        Assert.Single(await RowsAsync(AuditActions.ThreadSkills));
+        Assert.Equal(revision, (await ThreadAsync(thread.Id)).Revision);
+    }
 
     [SkippableFact]
     public async Task RegisteringAProject_AndCreatingAThread_AreRecorded_ByWhoDidThem()

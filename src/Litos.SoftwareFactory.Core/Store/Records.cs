@@ -77,6 +77,10 @@ public sealed class TaskThread
     /// (m3-architecture.md §6), so every rework keeps it; null for a thread created before M3.</summary>
     public bool? PtcEnabled { get; set; }
 
+    /// <summary>The library skills chosen for the task, as a JSON array of names
+    /// (m3-architecture.md §13; read with <see cref="Settings.TaskSkillSelection.Parse"/>).</summary>
+    public string SkillsJson { get; set; } = "[]";
+
     /// <summary>The next message's sequence number within this thread.</summary>
     public long NextMessageSequence { get; set; } = 1;
 
@@ -647,6 +651,9 @@ public static class AuditActions
     public const string ThreadResume = "thread.resume";
     public const string ThreadWithdraw = "thread.withdraw";
     public const string ThreadBudget = "thread.budget";
+
+    /// <summary>The skills chosen for a task changed (m3-architecture.md §13).</summary>
+    public const string ThreadSkills = "thread.skills";
     public const string DecisionAnswer = "decision.answer";
     public const string FindingVerdict = "finding.verdict";
     public const string SettingsUpdate = "settings.update";

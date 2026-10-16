@@ -749,6 +749,9 @@ export class FakeHost {
           model,
           budgetPrecision: provider.budgetPrecision,
           ptcEnabled: (data.ptcEnabled as boolean | undefined) ?? this.settings.ptcEnabled,
+          skills:
+            (data.skills as string[] | undefined) ??
+            (this.settings.skills ?? []).filter((o) => o.defaultFor.includes(String(data.typeLabel))).map((o) => o.name),
         }),
       ];
     }
@@ -793,6 +796,27 @@ export class FakeHost {
         return [200, this.usage.get(id) ?? []];
       case 'POST messages':
         return this.dispatch(id, String(data.messageId ?? ''), String(data.text ?? ''));
+      case 'POST skills': {
+        // As FactoryApi.cs and TaskSkillSelection.ChangeNote: library skills only, and a note saying when it applies.
+        const options = this.settings.skills ?? [];
+        const asked = (data.skills as string[] | undefined) ?? [];
+        const unknown = asked.filter((n) => !options.some((o) => o.name === n));
+        if (unknown.length) return [400, { error: `Not a skill in the factory's library, or turned off: ${unknown.join(', ')}.` }];
+        const names = options.filter((o) => asked.includes(o.name)).map((o) => o.name);
+        if (names.join() === (details.thread.skills ?? []).join()) return [200, details.thread];
+        const when =
+          state === 'Running'
+            ? 'They will be applied after the task is paused and resumed.'
+            : ['AwaitingDecision', 'PausedUser', 'PausedBudget', 'Blocked', 'Interrupted'].includes(state)
+              ? 'They will be applied when the task resumes.'
+              : state === 'Queued'
+                ? 'They apply when the task starts.'
+                : "They apply from the task's next run.";
+        this.say(id, {
+          text: `${names.length ? `The skills for this task changed to: ${names.join(', ')}.` : 'The skills for this task were cleared.'} ${when}`,
+        });
+        return [200, this.change(id, { skills: names })];
+      }
       case 'POST budget':
         if (typeof data.cap === 'number' && data.cap <= 0) return [400, { error: 'cap must be positive, or null for no cap.' }];
         return [200, this.change(id, { budgetCap: data.cap as number | null }, 'usage')];

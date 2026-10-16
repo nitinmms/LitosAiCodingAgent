@@ -5,6 +5,7 @@ using Litos.SoftwareFactory.Core.Briefs;
 using Litos.SoftwareFactory.Core.Budget;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -670,6 +671,22 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         Audit(write.Db, userId, AuditActions.ThreadBudget, AuditTargets.Thread, threadId, thread.ProjectId, new { From = thread.BudgetCap, To = cap }, now);
         thread.BudgetCap = cap;
         Touch(write.Db, thread, now, EventTypes.UsageChanged);
+        await write.CommitAsync(ct);
+        return thread;
+    }
+
+    public async Task<TaskThread> SetThreadSkillsAsync(Guid threadId, IReadOnlyList<string> skills, Guid userId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var thread = await LockThreadAsync(write.Db, threadId, ct);
+        var from = TaskSkillSelection.Parse(thread.SkillsJson);
+        if (from.SequenceEqual(skills, StringComparer.Ordinal))
+            return thread;
+
+        Audit(write.Db, userId, AuditActions.ThreadSkills, AuditTargets.Thread, threadId, thread.ProjectId, new { From = from, To = skills }, now);
+        thread.SkillsJson = TaskSkillSelection.Serialize(skills);
+        AddMessage(write.Db, thread, MessageAuthor.Factory, null, MessageKind.Status, TaskSkillSelection.ChangeNote(skills, thread.State), now);
+        Touch(write.Db, thread, now);
         await write.CommitAsync(ct);
         return thread;
     }

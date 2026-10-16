@@ -9,6 +9,7 @@ import { useThread } from '../useThread';
 import { ErrorNote, FinishedPill, TurnPill } from './bits';
 import { Details } from './Details';
 import { ModelChooser } from './ModelChooser';
+import { chosenSize, defaultsFor, TaskSkillsPicker } from './TaskSkillsPicker';
 import { ThreadMain } from './ThreadMain';
 
 export function ThreadsPage({
@@ -239,6 +240,15 @@ function NewThread({
   });
   const provider = offered.find((p) => p.name === choice?.provider) ?? null;
   const [ptc, setPtc] = useState(settings?.ptcEnabled ?? true);
+  const skillOptions = settings?.skills ?? [];
+  const maxSkillChars = settings?.maxTaskSkillChars ?? 12_000;
+  const [skills, setSkills] = useState(() => defaultsFor(skillOptions, typeLabel));
+  // Until the creator ticks or unticks one, the chosen skills follow the type's defaults.
+  const [skillsTouched, setSkillsTouched] = useState(false);
+  const chooseType = (type: string) => {
+    setTypeLabel(type);
+    if (!skillsTouched) setSkills(defaultsFor(skillOptions, type));
+  };
   const pinned = pinnedChoices(offered, { provider: settings?.provider ?? null, model: settings?.model ?? null }, settings?.recentModels ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -261,6 +271,10 @@ function NewThread({
       setError(`A task's budget can be at most ${fmt(maximum)} tokens.`);
       return;
     }
+    if (chosenSize(skillOptions, skills) > maxSkillChars) {
+      setError(`A task's skills can come to at most ${fmt(maxSkillChars)} characters. Untick one.`);
+      return;
+    }
 
     setBusy(true);
     setError(null);
@@ -275,6 +289,8 @@ function NewThread({
           model: provider ? choice?.model : undefined,
           // Sent only when it differs from the default, which the host applies itself.
           ptcEnabled: settings && ptc !== settings.ptcEnabled ? ptc : undefined,
+          // Sent whenever the host offers skills, so the dialog's choice is the one kept.
+          skills: settings?.skills ? skills : undefined,
         }),
       );
     } catch (failure) {
@@ -328,7 +344,7 @@ function NewThread({
           </div>
           <div className="field">
             <label htmlFor="nt-type">Type</label>
-            <select id="nt-type" value={typeLabel} onChange={(e) => setTypeLabel(e.target.value)}>
+            <select id="nt-type" value={typeLabel} onChange={(e) => chooseType(e.target.value)}>
               {types.map((t) => (
                 <option key={t} value={t}>
                   {t.charAt(0).toUpperCase() + t.slice(1)}
@@ -366,6 +382,17 @@ function NewThread({
               this choice.
             </span>
           </label>
+        ) : null}
+        {skillOptions.length ? (
+          <TaskSkillsPicker
+            options={skillOptions}
+            max={maxSkillChars}
+            value={skills}
+            onChange={(chosen) => {
+              setSkills(chosen);
+              setSkillsTouched(true);
+            }}
+          />
         ) : null}
         <ErrorNote message={error} />
         <div className="btn-row">
