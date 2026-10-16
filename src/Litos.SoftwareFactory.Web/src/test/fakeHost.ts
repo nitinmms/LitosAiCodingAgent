@@ -1,6 +1,8 @@
 import { CSRF_HEADER, type Fetch } from '../api/client';
 import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
+  Lesson,
+  LessonRevision,
   AccountRole,
   BudgetSettings,
   CatalogModel,
@@ -756,6 +758,9 @@ export class FakeHost {
       ];
     }
 
+    const lessons = this.handleLessons(method, path, data);
+    if (lessons) return lessons;
+
     const people = this.handlePeople(method, path, data);
     if (people) return people;
 
@@ -1108,6 +1113,126 @@ export class FakeHost {
       return [200, this.budgets];
     }
     return [404];
+  }
+
+  /** Lessons, as Api/LessonsApi.cs answers: Members write and edit suggestions; an Admin does the rest. */
+  lessons: Lesson[] = [];
+
+  addLesson(projectId: string, overrides: Partial<Lesson> = {}, revision: Partial<LessonRevision> = {}): Lesson {
+    const number = this.lessons.filter((l) => l.projectId === projectId).length + 1;
+    const lesson: Lesson = {
+      id: this.nextId('lesson'),
+      projectId,
+      number,
+      status: 'Suggested',
+      enabled: true,
+      currentRevision: 1,
+      approvedRevision: null,
+      pendingEdit: false,
+      supersededById: null,
+      proposedByJobId: null,
+      createdBy: 'admin',
+      createdAt: NOW,
+      updatedAt: NOW,
+      current: {
+        revision: 1,
+        rule: 'Money is stored as integer cents.',
+        topics: ['money'],
+        paths: [],
+        source: 'Manual',
+        sourceRef: null,
+        sourceThreadId: null,
+        reason: '',
+        author: 'admin',
+        createdAt: NOW,
+        approvedBy: null,
+        approvedAt: null,
+        ...revision,
+      },
+      approved: null,
+      ...overrides,
+    };
+    this.lessons = [lesson, ...this.lessons];
+    return lesson;
+  }
+
+  private handleLessons(method: string, path: string, data: Record<string, unknown>): [number, unknown?] | null {
+    const admin = this.user.roles.includes('Admin');
+    const author = this.user.displayName || this.user.userName;
+    const list = /^\/api\/projects\/([^/]+)\/lessons$/.exec(path);
+    if (list && method === 'GET') return [200, this.lessons.filter((l) => l.projectId === list[1])];
+    if (list && method === 'POST') {
+      if (data.approve && !admin) return [403, { error: 'Only an Admin approves a lesson. Save it as a suggestion instead.' }];
+      if (!String(data.rule ?? '').trim()) return [400, { error: 'Write the lesson: one instruction for later tasks.' }];
+      if (!(data.topics as string[] | undefined)?.length) return [400, { error: 'Give it at least one topic.' }];
+      const approve = Boolean(data.approve);
+      return [
+        201,
+        this.addLesson(
+          list[1]!,
+          { status: approve ? 'Approved' : 'Suggested', approvedRevision: approve ? 1 : null, createdBy: author },
+          {
+            rule: String(data.rule),
+            topics: data.topics as string[],
+            paths: (data.paths as string[] | undefined) ?? [],
+            reason: String(data.reason ?? ''),
+            author,
+            approvedBy: approve ? author : null,
+          },
+        ),
+      ];
+    }
+
+    const one = /^\/api\/lessons\/([^/]+)\/(revisions|approve|dismiss|disable|enable|supersede)$/.exec(path);
+    if (!one || method !== 'POST') return null;
+    const lesson = this.lessons.find((l) => l.id === one[1]);
+    if (!lesson) return [404];
+    if (data.expectedRevision !== lesson.currentRevision)
+      return [409, { error: `L-${lesson.number} has changed since you read it: it is at revision ${lesson.currentRevision}, not ${String(data.expectedRevision)}.` }];
+    const save = (patch: Partial<Lesson>): [number, unknown] => {
+      const saved = { ...lesson, ...patch, updatedAt: NOW };
+      this.lessons = this.lessons.map((l) => (l.id === lesson.id ? saved : l));
+      return [200, saved];
+    };
+    const command = one[2]!;
+    if (command === 'revisions') {
+      if (!admin && lesson.status !== 'Suggested') return [403, { error: 'Only an Admin edits a lesson that has been approved or dismissed.' }];
+      const approve = Boolean(data.approve);
+      const current: LessonRevision = {
+        ...lesson.current,
+        revision: lesson.currentRevision + 1,
+        rule: String(data.rule),
+        topics: data.topics as string[],
+        paths: (data.paths as string[] | undefined) ?? [],
+        reason: String(data.reason ?? ''),
+        author,
+        approvedBy: approve ? author : null,
+      };
+      const keepsApproved = lesson.status === 'Approved' && !approve;
+      return save({
+        currentRevision: current.revision,
+        current,
+        status: approve ? 'Approved' : lesson.status,
+        approvedRevision: approve ? current.revision : lesson.approvedRevision,
+        approved: keepsApproved ? (lesson.approved ?? lesson.current) : null,
+        pendingEdit: keepsApproved,
+      });
+    }
+
+    if (!admin) return [403, { error: 'Only an Admin can do that to a lesson.' }];
+    switch (command) {
+      case 'approve':
+        return save({ status: 'Approved', approvedRevision: lesson.currentRevision, approved: null, pendingEdit: false, current: { ...lesson.current, approvedBy: author } });
+      case 'dismiss':
+        if (lesson.status === 'Approved') return [409, { error: `L-${lesson.number} is approved; disable it instead.` }];
+        return save({ status: 'Dismissed' });
+      case 'disable':
+        return save({ enabled: false });
+      case 'enable':
+        return save({ enabled: true, supersededById: null });
+      default:
+        return save({ enabled: false, supersededById: String(data.replacementId) });
+    }
   }
 
   private handlePeople(method: string, path: string, data: Record<string, unknown>): [number, unknown?] | null {

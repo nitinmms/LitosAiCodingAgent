@@ -612,6 +612,7 @@ public static class AuditTargets
     public const string Settings = "settings";
     public const string Secret = "secret";
     public const string RepositorySkill = "repository_skill";
+    public const string Lesson = "lesson";
 }
 
 public static class AuditActions
@@ -654,6 +655,15 @@ public static class AuditActions
 
     /// <summary>The skills chosen for a task changed (m3-architecture.md §13).</summary>
     public const string ThreadSkills = "thread.skills";
+
+    // Lessons (m4-architecture.md §3.2).
+    public const string LessonCreate = "lesson.create";
+    public const string LessonRevise = "lesson.revise";
+    public const string LessonApprove = "lesson.approve";
+    public const string LessonDismiss = "lesson.dismiss";
+    public const string LessonDisable = "lesson.disable";
+    public const string LessonEnable = "lesson.enable";
+    public const string LessonSupersede = "lesson.supersede";
     public const string DecisionAnswer = "decision.answer";
     public const string FindingVerdict = "finding.verdict";
     public const string SettingsUpdate = "settings.update";

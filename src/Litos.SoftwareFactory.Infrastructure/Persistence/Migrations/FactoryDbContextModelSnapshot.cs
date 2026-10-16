@@ -22,6 +22,125 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Lessons.Lesson", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("ApprovedRevision")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CurrentRevision")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<long>("Number")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ProposedByJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid?>("SupersededById")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Number")
+                        .IsUnique();
+
+                    b.HasIndex("ProjectId", "Status");
+
+                    b.ToTable("lessons", (string)null);
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Lessons.LessonRevision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ApprovedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AuthorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("LessonId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("NormalizedHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("PathsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(600)
+                        .HasColumnType("character varying(600)");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Rule")
+                        .IsRequired()
+                        .HasMaxLength(600)
+                        .HasColumnType("character varying(600)");
+
+                    b.Property<string>("SourceKind")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid?>("SourceRef")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SourceThreadId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TopicsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NormalizedHash");
+
+                    b.HasIndex("LessonId", "Revision")
+                        .IsUnique();
+
+                    b.ToTable("lesson_revisions", (string)null);
+                });
+
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.AuditEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1238,6 +1357,24 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("AspNetUserTokens", (string)null);
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Lessons.Lesson", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Lessons.LessonRevision", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Lessons.Lesson", null)
+                        .WithMany()
+                        .HasForeignKey("LessonId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.Decision", b =>

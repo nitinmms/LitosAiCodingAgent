@@ -6,6 +6,7 @@ import { BoardPage } from './components/BoardPage';
 import { InvitePage } from './components/InvitePage';
 import { Login } from './components/Login';
 import { PeoplePage } from './components/PeoplePage';
+import { LessonsPage } from './components/LessonsPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { SettingsPage } from './components/SettingsPage';
 import { ThreadsPage } from './components/ThreadsPage';
@@ -232,7 +233,13 @@ export function App({ createClient, openEvents }: AppProps) {
         reconnecting={boardReconnecting}
         onNavigate={(view) =>
           navigate(
-            view === 'threads' ? { view, threadId: null } : view === 'settings' ? { view, tab: SETTINGS_TABS[0] } : ({ view } as Route),
+            view === 'threads'
+              ? { view, threadId: null }
+              : view === 'settings'
+                ? { view, tab: SETTINGS_TABS[0] }
+                : view === 'lessons'
+                  ? { view, projectId: null }
+                  : ({ view } as Route),
           )
         }
         onAwaitingYou={() => waiting[0] && navigate({ view: 'threads', threadId: waiting[0].id })}
@@ -277,6 +284,15 @@ export function App({ createClient, openEvents }: AppProps) {
         ) : (
           <p className="note">Only an admin can change the factory's settings.</p>
         )
+      ) : route.view === 'lessons' ? (
+        <LessonsPage
+          api={api}
+          projects={projects}
+          projectId={route.projectId}
+          isAdmin={user.roles.includes('Admin')}
+          onProject={(projectId) => navigate({ view: 'lessons', projectId })}
+          onNotice={say}
+        />
       ) : route.view === 'projects' ? (
         <ProjectsPage
           api={api}

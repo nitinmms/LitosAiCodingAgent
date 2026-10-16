@@ -123,6 +123,7 @@ public static class FactoryHostApp
         app.MapFactoryUsers();
         app.MapFactoryApi();
         app.MapFactorySettings();
+        app.MapFactoryLessons();
         app.MapFactoryEvents();
         app.MapWorkerCallbacks();
 

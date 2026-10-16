@@ -18,7 +18,7 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence;
 /// a checkpoint never overwrite each other; claiming work takes one advisory lock, because a
 /// unique index alone cannot express "under the slot cap, and nobody else holds this repository".
 /// </summary>
-public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFactory) : IFactoryStore
+public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFactory) : IFactoryStore
 {
     /// <summary>The advisory lock every claim transaction takes; any fixed value works.</summary>
     private const long ClaimLockKey = 0x4C49544F53464143; // "LITOSFAC"
@@ -151,7 +151,12 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
         var earlierFindings = earlierRuns.Count == 0
             ? []
             : (await db.ReviewFindings.AsNoTracking().Where(f => earlierRuns.Contains(f.RunId)).ToListAsync(ct))
-                .OrderBy(f => earlierRuns.IndexOf(f.RunId)).ToList();
+                // Findings carry no order of their own: by run, then blocking first, then by place.
+                .OrderBy(f => earlierRuns.IndexOf(f.RunId))
+                .ThenBy(f => f.Severity == FindingSeverity.Blocking ? 0 : 1)
+                .ThenBy(f => f.File, StringComparer.Ordinal)
+                .ThenBy(f => f.Line ?? 0)
+                .ToList();
 
         ChatProgress? chatProgress = null;
         if (chatRun is not null)
@@ -1513,6 +1518,8 @@ public sealed class EfFactoryStore(IDbContextFactory<FactoryDbContext> contextFa
                 join t in db.Threads on d.ThreadId equals t.Id
                 where d.Id == id
                 select (Guid?)t.ProjectId).FirstOrDefaultAsync(ct),
+            ProjectScoped.Project => await db.Projects.Where(p => p.Id == id).Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct),
+            ProjectScoped.Lesson => await db.Lessons.Where(l => l.Id == id).Select(l => (Guid?)l.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Finding => await (
                 from f in db.ReviewFindings
                 join r in db.Runs on f.RunId equals r.Id

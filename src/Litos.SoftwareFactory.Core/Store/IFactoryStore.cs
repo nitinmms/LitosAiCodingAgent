@@ -1,6 +1,7 @@
 using Litos.Agent.Streaming;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Budget;
+using Litos.SoftwareFactory.Core.Lessons;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
 
@@ -41,6 +42,10 @@ public enum ProjectScoped
     Thread,
     Decision,
     Finding,
+
+    /// <summary>The project itself, for routes such as its lessons.</summary>
+    Project,
+    Lesson,
 }
 
 /// <summary>Everything needed to stop a run, applied in one transaction.</summary>
@@ -219,6 +224,35 @@ public interface IFactoryStore
     /// it started with until it is paused and resumed. No change, no record and no message.
     /// </summary>
     Task<TaskThread> SetThreadSkillsAsync(Guid threadId, IReadOnlyList<string> skills, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    // ---- Lessons (m4-architecture.md §3). Who may call each is the API's concern; every one is
+    // audited, and every command on an existing lesson carries the revision its caller read. ----
+
+    /// <summary>The project's lessons, newest first; of one status when one is given.</summary>
+    Task<IReadOnlyList<LessonDetails>> ListLessonsAsync(Guid projectId, LessonStatus? status, CancellationToken ct);
+
+    Task<LessonDetails?> GetLessonAsync(Guid lessonId, CancellationToken ct);
+
+    /// <summary>A new lesson, Suggested, or Approved at once when <paramref name="approve"/>. Refused as a
+    /// conflict when it duplicates a live lesson of the project, or rests on something outside it.</summary>
+    /// <param name="userId">Its author; null for a reflection's proposal.</param>
+    Task<LessonDetails> AddLessonAsync(
+        Guid projectId, LessonDraft draft, Guid? userId, bool approve, Guid? proposedByJobId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>A new revision. An approved lesson keeps its approved revision until this one is approved.</summary>
+    Task<LessonDetails> ReviseLessonAsync(Guid lessonId, int expectedRevision, LessonDraft draft, Guid userId, bool approve, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Approves exactly <paramref name="expectedRevision"/>, which must be the newest. Approving
+    /// the revision already approved changes nothing, so a retried request is safe.</summary>
+    Task<LessonDetails> ApproveLessonAsync(Guid lessonId, int expectedRevision, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Turns down a lesson never approved; an approved one is disabled instead.</summary>
+    Task<LessonDetails> DismissLessonAsync(Guid lessonId, int expectedRevision, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    Task<LessonDetails> SetLessonEnabledAsync(Guid lessonId, int expectedRevision, bool enabled, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Disables an approved lesson and links the approved lesson of the same project that replaces it.</summary>
+    Task<LessonDetails> SupersedeLessonAsync(Guid lessonId, int expectedRevision, Guid replacementId, Guid userId, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>Renames a thread or changes its task type; null leaves that one as it is.</summary>
     Task<TaskThread> EditThreadAsync(Guid threadId, string? title, string? typeLabel, Guid userId, DateTimeOffset now, CancellationToken ct);

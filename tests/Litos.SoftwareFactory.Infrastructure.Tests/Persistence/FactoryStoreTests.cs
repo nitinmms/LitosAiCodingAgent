@@ -2,6 +2,7 @@ using System.Text.Json;
 using Litos.Agent.Streaming;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Budget;
+using Litos.SoftwareFactory.Core.Lessons;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Settings;
@@ -2484,6 +2485,178 @@ public abstract class FactoryStoreContract : IAsyncLifetime
     private static T Details<T>(AuditEvent row, string property) =>
         JsonDocument.Parse(row.DetailsJson!).RootElement.EnumerateObject()
             .First(p => string.Equals(p.Name, property, StringComparison.OrdinalIgnoreCase)).Value.Deserialize<T>()!;
+
+    // ---- Lessons (m4-architecture.md §3) ----
+
+    private static LessonDraft Lesson(string rule = "Money is stored as integer cents, never as floating point.", LessonSource source = LessonSource.Manual,
+        Guid? sourceRef = null) => new(rule, ["money"], ["src/Money/**"], source, sourceRef, "The tester corrected it.");
+
+    [SkippableFact]
+    public async Task ALesson_IsNumberedPerProject_StartsSuggested_AndItsCreationIsAudited()
+    {
+        var project = await AddProjectAsync();
+        var other = await AddProjectAsync("billing");
+
+        var first = await Store.AddLessonAsync(project.Id, Lesson(), Ben, approve: false, null, T0, default);
+        var second = await Store.AddLessonAsync(project.Id, Lesson("Dates are stored in UTC."), Ben, approve: false, null, T0, default);
+        var elsewhere = await Store.AddLessonAsync(other.Id, Lesson(), Ben, approve: false, null, T0, default);
+
+        Assert.Equal((1L, 2L, 1L), (first.Lesson.Number, second.Lesson.Number, elsewhere.Lesson.Number));
+        Assert.Equal((LessonStatus.Suggested, 1, (int?)null), (first.Lesson.Status, first.Lesson.CurrentRevision, first.Lesson.ApprovedRevision));
+        Assert.Null(first.Approved);
+        Assert.Equal(["money"], JsonSerializer.Deserialize<string[]>(first.Current.TopicsJson)!);
+        var listed = await Store.ListLessonsAsync(project.Id, null, default);
+        Assert.Equal([2L, 1L], listed.Select(l => l.Lesson.Number)); // newest first
+        Assert.Equal(3, (await RowsAsync(AuditActions.LessonCreate)).Length);
+    }
+
+    [SkippableFact]
+    public async Task SaveAndApprove_ApprovesTheFirstRevision_AndRecordsWho()
+    {
+        var project = await AddProjectAsync();
+
+        var lesson = await Store.AddLessonAsync(project.Id, Lesson(), Admin, approve: true, null, T0, default);
+
+        Assert.Equal((LessonStatus.Approved, (int?)1), (lesson.Lesson.Status, lesson.Lesson.ApprovedRevision));
+        Assert.Equal((Admin, (DateTimeOffset?)T0), (lesson.Approved!.ApprovedBy!.Value, lesson.Approved.ApprovedAt));
+        Assert.Equal(LessonStatus.Approved, Assert.Single(await Store.ListLessonsAsync(project.Id, LessonStatus.Approved, default)).Lesson.Status);
+        Assert.Empty(await Store.ListLessonsAsync(project.Id, LessonStatus.Suggested, default));
+    }
+
+    [SkippableFact]
+    public async Task AReflectionsProposal_HasNoAuthor_AndIsNotAPersonsAuditedAction()
+    {
+        var project = await AddProjectAsync();
+        var job = Guid.NewGuid();
+
+        var lesson = await Store.AddLessonAsync(project.Id, Lesson(), null, approve: false, job, T0, default);
+
+        Assert.Equal((job, (Guid?)null, (Guid?)null), (lesson.Lesson.ProposedByJobId!.Value, lesson.Lesson.CreatedBy, lesson.Current.AuthorId));
+        Assert.Empty(await RowsAsync(AuditActions.LessonCreate));
+        await Assert.ThrowsAsync<ArgumentException>(() => Store.AddLessonAsync(project.Id, Lesson("Other."), null, approve: true, job, T0, default));
+    }
+
+    [SkippableFact]
+    public async Task AnExactDuplicate_IsRefused_ButNotOnceDismissed_NorInAnotherProject()
+    {
+        var project = await AddProjectAsync();
+        var first = await Store.AddLessonAsync(project.Id, Lesson(), Ben, approve: false, null, T0, default);
+
+        var duplicate = await Assert.ThrowsAsync<StoreConflictException>(
+            () => Store.AddLessonAsync(project.Id, Lesson("  money is stored as INTEGER cents; never as floating point!"), Ben, approve: false, null, T0, default));
+        Assert.Contains("repeats L-1", duplicate.Message);
+
+        await Store.AddLessonAsync((await AddProjectAsync("billing")).Id, Lesson(), Ben, approve: false, null, T0, default);
+        await Store.DismissLessonAsync(first.Lesson.Id, 1, Admin, T0, default);
+        var again = await Store.AddLessonAsync(project.Id, Lesson(), Ben, approve: false, null, T0, default);
+        Assert.Equal(2, again.Lesson.Number);
+    }
+
+    /// <summary>Acceptance scenario 17's ground: editing a lesson never changes an earlier revision.</summary>
+    [SkippableFact]
+    public async Task EditingAnApprovedLesson_KeepsItsApprovedRevision_UntilTheEditIsApproved_AndOldRevisionsNeverChange()
+    {
+        var project = await AddProjectAsync();
+        var lesson = await Store.AddLessonAsync(project.Id, Lesson(), Admin, approve: true, null, T0, default);
+
+        var edited = await Store.ReviseLessonAsync(lesson.Lesson.Id, 1, Lesson("Money is stored as integer cents, in a long."), Ben, approve: false, T0, default);
+
+        Assert.Equal((2, (int?)1, true), (edited.Lesson.CurrentRevision, edited.Lesson.ApprovedRevision, edited.Lesson.HasPendingRevision));
+        Assert.Equal("Money is stored as integer cents, never as floating point.", edited.Approved!.Rule);
+        Assert.Equal("Money is stored as integer cents, in a long.", edited.Current.Rule);
+
+        // Approving the revision already approved changes nothing; approving the edit activates it.
+        Assert.Equal((int?)1, (await Store.ApproveLessonAsync(lesson.Lesson.Id, 1, Admin, T0, default)).Lesson.ApprovedRevision);
+        var approved = await Store.ApproveLessonAsync(lesson.Lesson.Id, 2, Admin, T0, default);
+
+        Assert.Equal(((int?)2, false), (approved.Lesson.ApprovedRevision, approved.Lesson.HasPendingRevision));
+        await using var db = Contexts.CreateDbContext();
+        var history = await db.LessonRevisions.Where(r => r.LessonId == lesson.Lesson.Id).OrderBy(r => r.Revision).ToListAsync();
+        Assert.Equal(["Money is stored as integer cents, never as floating point.", "Money is stored as integer cents, in a long."], history.Select(r => r.Rule));
+    }
+
+    [SkippableFact]
+    public async Task ACommandOnAStaleRevision_IsAConflict_AndApprovingTwice_IsSafe()
+    {
+        var project = await AddProjectAsync();
+        var lesson = await Store.AddLessonAsync(project.Id, Lesson(), Ben, approve: false, null, T0, default);
+        await Store.ReviseLessonAsync(lesson.Lesson.Id, 1, Lesson("Money is stored in cents."), Ben, approve: false, T0, default);
+
+        var stale = await Assert.ThrowsAsync<StoreConflictException>(() => Store.ApproveLessonAsync(lesson.Lesson.Id, 1, Admin, T0, default));
+        Assert.Contains("revision 2, not 1", stale.Message);
+
+        await Store.ApproveLessonAsync(lesson.Lesson.Id, 2, Admin, T0, default);
+        var again = await Store.ApproveLessonAsync(lesson.Lesson.Id, 2, Admin, T0, default);
+
+        Assert.Equal((int?)2, again.Lesson.ApprovedRevision);
+        Assert.Single(await RowsAsync(AuditActions.LessonApprove));
+    }
+
+    [SkippableFact]
+    public async Task OnlyASuggestion_IsDismissed_AndADismissedLesson_CannotBeEditedOrApproved()
+    {
+        var project = await AddProjectAsync();
+        var approved = await Store.AddLessonAsync(project.Id, Lesson(), Admin, approve: true, null, T0, default);
+        var suggested = await Store.AddLessonAsync(project.Id, Lesson("Dates are stored in UTC."), Ben, approve: false, null, T0, default);
+
+        Assert.Contains("disable it instead", (await Assert.ThrowsAsync<StoreConflictException>(
+            () => Store.DismissLessonAsync(approved.Lesson.Id, 1, Admin, T0, default))).Message);
+        var dismissed = await Store.DismissLessonAsync(suggested.Lesson.Id, 1, Admin, T0, default);
+
+        Assert.Equal(LessonStatus.Dismissed, dismissed.Lesson.Status);
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.ApproveLessonAsync(suggested.Lesson.Id, 1, Admin, T0, default));
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.ReviseLessonAsync(suggested.Lesson.Id, 1, Lesson("Dates in UTC."), Ben, false, T0, default));
+    }
+
+    [SkippableFact]
+    public async Task Superseding_DisablesTheOldLesson_AndLinksItsApprovedReplacement_InTheSameProjectOnly()
+    {
+        var project = await AddProjectAsync();
+        var old = await Store.AddLessonAsync(project.Id, Lesson(), Admin, approve: true, null, T0, default);
+        var replacement = await Store.AddLessonAsync(project.Id, Lesson("Money is a decimal with two places."), Admin, approve: true, null, T0, default);
+        var suggestion = await Store.AddLessonAsync(project.Id, Lesson("Money is a string."), Ben, approve: false, null, T0, default);
+        var elsewhere = await Store.AddLessonAsync((await AddProjectAsync("billing")).Id, Lesson("Money is an int."), Admin, approve: true, null, T0, default);
+
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.SupersedeLessonAsync(old.Lesson.Id, 1, suggestion.Lesson.Id, Admin, T0, default));
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.SupersedeLessonAsync(old.Lesson.Id, 1, elsewhere.Lesson.Id, Admin, T0, default));
+        var superseded = await Store.SupersedeLessonAsync(old.Lesson.Id, 1, replacement.Lesson.Id, Admin, T0, default);
+
+        Assert.Equal((false, (Guid?)replacement.Lesson.Id), (superseded.Lesson.Enabled, superseded.Lesson.SupersededById));
+        var back = await Store.SetLessonEnabledAsync(old.Lesson.Id, 1, true, Admin, T0, default);
+        Assert.Equal((true, (Guid?)null), (back.Lesson.Enabled, back.Lesson.SupersededById));
+        await Assert.ThrowsAsync<StoreConflictException>(() => Store.SetLessonEnabledAsync(suggestion.Lesson.Id, 1, false, Admin, T0, default));
+        Assert.Single(await RowsAsync(AuditActions.LessonSupersede));
+        Assert.Single(await RowsAsync(AuditActions.LessonEnable));
+    }
+
+    [SkippableFact]
+    public async Task WhatALessonRestsOn_MustBeInTheSameProject_AndItsThreadIsRecorded()
+    {
+        var running = await RunningAsync();
+        var decision = await Store.OpenDecisionAsync(running.Run.Id, new DecisionSubmission("Cents or decimals?", "w", ["Cents", "Decimals"]), T0, default);
+        var other = await AddProjectAsync("billing");
+
+        var lesson = await Store.AddLessonAsync(running.Project.Id, Lesson(source: LessonSource.Decision, sourceRef: decision.Id), Ben, false, null, T0, default);
+
+        Assert.Equal(((Guid?)decision.Id, (Guid?)running.Thread.Id), (lesson.Current.SourceRef, lesson.Current.SourceThreadId));
+        var outside = await Assert.ThrowsAsync<StoreConflictException>(
+            () => Store.AddLessonAsync(other.Id, Lesson(source: LessonSource.Decision, sourceRef: decision.Id), Ben, false, null, T0, default));
+        Assert.Contains("not in this project", outside.Message);
+        await Assert.ThrowsAsync<StoreConflictException>(
+            () => Store.AddLessonAsync(running.Project.Id, Lesson("Other.", LessonSource.ReviewFinding, Guid.NewGuid()), Ben, false, null, T0, default));
+    }
+
+    [SkippableFact]
+    public async Task ALessonOrProjectThatDoesNotExist_IsNotFound_AndALessonsProjectIsFound()
+    {
+        Assert.Null(await Store.GetLessonAsync(Guid.NewGuid(), default));
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.AddLessonAsync(Guid.NewGuid(), Lesson(), Ben, false, null, T0, default));
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.ApproveLessonAsync(Guid.NewGuid(), 1, Admin, T0, default));
+        var lesson = await Store.AddLessonAsync((await AddProjectAsync()).Id, Lesson(), Ben, false, null, T0, default);
+        Assert.Equal(lesson.Lesson.ProjectId, await Store.FindProjectIdAsync(ProjectScoped.Lesson, lesson.Lesson.Id, default));
+        Assert.Equal(lesson.Lesson.ProjectId, await Store.FindProjectIdAsync(ProjectScoped.Project, lesson.Lesson.ProjectId, default));
+        Assert.Null(await Store.FindProjectIdAsync(ProjectScoped.Project, Guid.NewGuid(), default));
+    }
 
     /// <summary>m3-architecture.md §13: a change to a task's skills is recorded, and the thread is
     /// told when it applies — a working task only after it is paused and resumed.</summary>

@@ -11,6 +11,9 @@ import type {
   FindingVerdict,
   Invitation,
   InvitationPreview,
+  Lesson,
+  LessonCommand,
+  LessonInput,
   McpServerSettings,
   McpSettings,
   McpTestResult,
@@ -93,6 +96,13 @@ export interface FactoryApi {
   setBudget(id: string, cap: number | null): Promise<Thread>;
   /** The task's chosen skills; a working task takes them once it is paused and resumed. */
   setThreadSkills(id: string, skills: string[]): Promise<Thread>;
+  /** A project's lessons, newest first (m4-architecture.md §3.3). */
+  lessons(projectId: string): Promise<Lesson[]>;
+  createLesson(projectId: string, lesson: LessonInput): Promise<Lesson>;
+  /** A new revision of a lesson; expectedRevision is the one the person read. */
+  reviseLesson(id: string, expectedRevision: number, lesson: LessonInput): Promise<Lesson>;
+  lessonCommand(id: string, command: LessonCommand, expectedRevision: number): Promise<Lesson>;
+  supersedeLesson(id: string, expectedRevision: number, replacementId: string): Promise<Lesson>;
   accept(id: string): Promise<Thread>;
   /** `stopping`: the task is running, and stops at its next safe point; the new state arrives as an event. */
   pause(id: string): Promise<StopResult>;
@@ -225,6 +235,14 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     approveSpec: (id, revision) => send<SpecStatus>('POST', `${thread(id)}/spec/${revision}/approve`),
     setBudget: (id, cap) => send<Thread>('POST', `${thread(id)}/budget`, { cap }),
     setThreadSkills: (id, skills) => send<Thread>('POST', `${thread(id)}/skills`, { skills }),
+    lessons: (projectId) => send<Lesson[]>('GET', `/api/projects/${encodeURIComponent(projectId)}/lessons`),
+    createLesson: (projectId, lesson) => send<Lesson>('POST', `/api/projects/${encodeURIComponent(projectId)}/lessons`, lesson),
+    reviseLesson: (id, expectedRevision, lesson) =>
+      send<Lesson>('POST', `/api/lessons/${encodeURIComponent(id)}/revisions`, { expectedRevision, ...lesson }),
+    lessonCommand: (id, command, expectedRevision) =>
+      send<Lesson>('POST', `/api/lessons/${encodeURIComponent(id)}/${command}`, { expectedRevision }),
+    supersedeLesson: (id, expectedRevision, replacementId) =>
+      send<Lesson>('POST', `/api/lessons/${encodeURIComponent(id)}/supersede`, { expectedRevision, replacementId }),
     accept: (id) => send<Thread>('POST', `${thread(id)}/accept`),
     // Pausing or cancelling a running task answers 202 with { stopping: true } before the task
     // has stopped; the new state arrives on the event stream, so neither returns a thread to trust.

@@ -1,3 +1,4 @@
+using Litos.SoftwareFactory.Core.Lessons;
 using Litos.SoftwareFactory.Core.Store;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -42,6 +43,8 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<ModelCatalogEntry> ModelCatalog => Set<ModelCatalogEntry>();
     public DbSet<ModelCatalogFetch> ModelCatalogFetches => Set<ModelCatalogFetch>();
     public DbSet<RepositorySkill> RepositorySkills => Set<RepositorySkill>();
+    public DbSet<Lesson> Lessons => Set<Lesson>();
+    public DbSet<LessonRevision> LessonRevisions => Set<LessonRevision>();
 
     /// <summary>Set by the store once this context's transaction holds the outbox lock.</summary>
     internal bool HoldsOutboxLock { get; set; }
@@ -282,6 +285,29 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(s => s.Folder).HasMaxLength(500);
             Json(e.Property(s => s.OtherFilesJson));
             e.HasOne<Project>().WithMany().HasForeignKey(s => s.ProjectId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Lessons (m4-architecture.md §3.1): a revision is never changed once written.
+        model.Entity<Lesson>(e =>
+        {
+            e.ToTable("lessons");
+            e.Ignore(l => l.HasPendingRevision);
+            e.HasOne<Project>().WithMany().HasForeignKey(l => l.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(l => new { l.ProjectId, l.Number }).IsUnique();
+            e.HasIndex(l => new { l.ProjectId, l.Status });
+        });
+
+        model.Entity<LessonRevision>(e =>
+        {
+            e.ToTable("lesson_revisions");
+            e.Property(r => r.Rule).HasMaxLength(LessonRules.MaxRuleChars);
+            e.Property(r => r.Reason).HasMaxLength(LessonRules.MaxReasonChars);
+            e.Property(r => r.NormalizedHash).HasMaxLength(64);
+            Json(e.Property(r => r.TopicsJson));
+            Json(e.Property(r => r.PathsJson));
+            e.HasOne<Lesson>().WithMany().HasForeignKey(r => r.LessonId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(r => new { r.LessonId, r.Revision }).IsUnique();
+            e.HasIndex(r => r.NormalizedHash);
         });
 
         model.Entity<AuditEvent>(e =>

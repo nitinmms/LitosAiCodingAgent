@@ -33,17 +33,18 @@ Chosen without asking, and open to change: Members may write lessons but not app
 ### 3.1 Records
 
 ```text
-lessons            Id, ProjectId, Status (Suggested | Approved | Dismissed), Enabled,
-                   CurrentRevision, SupersededById?, ProposedByJobId?, CreatedBy?, CreatedAt, UpdatedAt
-lesson_revisions   LessonId, Revision, Rule, TopicsJson, PathsJson, SourceKind, SourceRef?,
+lessons            Id, ProjectId, Number, Status (Suggested | Approved | Dismissed), Enabled,
+                   CurrentRevision, ApprovedRevision?, SupersededById?, ProposedByJobId?, CreatedBy?, CreatedAt, UpdatedAt
+lesson_revisions   Id, LessonId, Revision, Rule, TopicsJson, PathsJson, SourceKind, SourceRef?, SourceThreadId?,
                    Reason, NormalizedHash, AuthorId?, CreatedAt, ApprovedBy?, ApprovedAt?
 ```
 
-- **A revision is immutable.** Editing makes a new revision; approval activates exactly the reviewed revision (`expectedRevision` on every command), so a lesson edited after someone read it cannot be approved by mistake. Past run snapshots (§4.4) keep the text they copied, so editing a lesson never changes what an earlier run was told (scenario 17).
+- **A revision is immutable.** Editing makes a new revision; approval activates exactly the reviewed revision (`expectedRevision` on every command), so a lesson edited after someone read it cannot be approved by mistake. The lesson keeps its newest revision and its approved revision apart: retrieval uses only `ApprovedRevision`, so an Admin's edit of an approved lesson leaves its guidance in place until the edit is approved.
+- **Numbers** ("L-3") count per project, under a lock on the project row, which also makes the duplicate check safe against two lessons written at once. `SourceThreadId` records the thread the source belongs to, found when the revision is written, for the app to link to. Past run snapshots (§4.4) keep the text they copied, so editing a lesson never changes what an earlier run was told (scenario 17).
 - **Rule** is one instruction, at most 600 characters. **Topics** are lower-case words or short phrases, one to eight. **Paths** are optional globs the lesson applies to (`src/Orders/**`).
 - **Source** is one of `HumanCorrection` (a change request), `Decision` (an answered decision), `ReviewFinding` (a finding a person marked Real), `Evidence` (a verification or handoff), or `Manual`. `SourceRef` names the message, decision, finding or handoff, which must belong to a thread of the same project.
 - **Duplicates.** `NormalizedHash` is the rule lower-cased, with punctuation removed and whitespace collapsed. A proposal or a new lesson whose hash matches a live (not dismissed) lesson of the project is refused as a duplicate. Lessons that are only similar are shown together on the Lessons page for a person to resolve; nothing is merged.
-- **What a lesson may not be.** The host refuses a rule that looks like a secret (the patterns `SecretScrubber` already uses for logs), a stack trace, or more than 600 characters. A lesson cannot change policy: whatever it says, the run's tools, budget and verification profile come from host policy (§22's "authority").
+- **What a lesson may not be.** The host refuses a rule that looks like a secret (common key and token formats, a private key block, a long value given to a secret-sounding name: `LessonRules`), a stack trace, or more than 600 characters. A lesson cannot change policy: whatever it says, the run's tools, budget and verification profile come from host policy (§22's "authority").
 
 ### 3.2 Who may do what
 
@@ -64,12 +65,14 @@ As §23, under `RequireProjectAccess`:
 - `GET /api/projects/{projectId}/lessons?status=` — the project's lessons with their current revision.
 - `POST /api/projects/{projectId}/lessons` — a human lesson; `approve: true` for an Admin's Save and approve.
 - `POST /api/lessons/{id}/revisions` — `{ expectedRevision, rule, topics, paths, approve? }`.
-- `POST /api/lessons/{id}/approve | /dismiss | /disable | /enable` — `{ expectedRevision, idempotencyKey }`; a repeat with the same key returns the first result (scenario 19).
+- `POST /api/lessons/{id}/approve | /dismiss | /disable | /enable` — `{ expectedRevision, idempotencyKey? }`. A repeat is safe without the key: approving the approved revision, dismissing what is dismissed and so on change nothing and record nothing (scenario 19). The key is accepted for §23's contract.
+- `GET /api/lessons/{id}` — one lesson.
 - `POST /api/lessons/{id}/supersede` — `{ expectedRevision, replacementId }`; the old one is disabled and linked.
 
 ### 3.4 App
 
 - **Lessons page**, per project: tabs for Suggested, Approved, Disabled and Dismissed; each lesson shows its rule, topics, paths, source (a link to the thread message, decision or finding), reason, author and approver; Edit, and the Admin's commands. "New lesson" for anyone on the project.
+- **Lessons in the top bar**, between Projects and People, at `#/lessons/<project>`.
 - **Proposal cards on the thread**, after a reflection (§5): rule, scope, topics, source and reason, with **Remember for project** (Admin), **Edit** and **Dismiss** (Admin), as §21.3. A Member sees the card without Remember and Dismiss, with a line saying an Admin approves.
 
 ## 4. Retrieval and run snapshots (build step 3)
@@ -226,6 +229,8 @@ Each step lands with its tests and an update to this document, as in M3.
 - **The J3 verdicts were not lost; their findings were hidden.** Verdicts save (the audit trail shows them working since 2026-10-09), but thread details carried only the latest run's findings, so a change request made the rework the latest run and the first review's findings left the panel before anyone judged them. `ThreadDetails.EarlierFindings` now carries the earlier runs' findings, oldest run first, and the panel lists them under "From earlier rounds", with their verdict buttons. Review yield already counted every run's findings.
 - **A denied MCP tool, called from kernel code, refuses by name.** The worker offers kernel code a stand-in for each tool the run's MCP settings deny (`DeniedMcpTool`, from `WorkerMcp.DeniedTools`, in `FactoryToolSetPolicy.CreateForBridge` for work turns only). The call compiles, is never sent to the server, and returns "… is denied for this run by the factory's MCP settings, so it was not called." The model's own tool list still leaves denied tools out.
 - **Helper signatures show an object argument's fields**, one level deep, as the anonymous object to pass: `run_select_query("request", new { sql = <string>[, limit = <int>] })`, where `<object>` was shown before. Byte-stable, as the rest of the description must be for the prompt cache.
+
+**Step 2, lesson store, API and Lessons page (2026-10-16).** As §3, with the approved-revision model above. Migration `M4Lessons`. `LessonRules` cleans and checks a draft (length, topics, paths, a source when the kind needs one, no secret, no stack trace) and normalizes the rule for duplicates; the store re-checks it. `ProjectScoped.Project` and `ProjectScoped.Lesson` put the project's lesson routes and every lesson route behind membership, and the route guard test now covers them. A reflection's proposal (no author) is stored but not audited: its job is the record (step 4). Tests: Core `LessonRulesTests`; store (SQLite and PostgreSQL) numbering, approval, the pending edit, stale revisions, duplicates, dismissal, supersession, source checks, and that earlier revisions never change; Host `LessonsApiTests` for who may do what and 404 outside the project; web `Lessons.test.tsx`.
 
 ## 11. Open, not blocking
 

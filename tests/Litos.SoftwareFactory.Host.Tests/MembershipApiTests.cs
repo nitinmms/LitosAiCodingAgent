@@ -188,11 +188,13 @@ public sealed class MembershipApiTests : IAsyncLifetime
     {
         var routes = _host.App.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>()
             .Where(e => e.RoutePattern.RawText is { } raw
-                && (raw.Contains("threads/{id", StringComparison.Ordinal) || raw.Contains("decisions/{id", StringComparison.Ordinal) || raw.Contains("findings/{id", StringComparison.Ordinal)))
+                && (raw.Contains("threads/{id", StringComparison.Ordinal) || raw.Contains("decisions/{id", StringComparison.Ordinal) || raw.Contains("findings/{id", StringComparison.Ordinal)
+                    || raw.Contains("lessons", StringComparison.Ordinal)))
             .ToList();
 
-        // 12 thread routes (the events stream among them), a decision's answer and a finding's verdict.
-        Assert.True(routes.Count >= 14, $"Expected the thread, decision and finding routes, found {routes.Count}.");
+        // 12 thread routes (the events stream among them), a decision's answer, a finding's verdict, and
+        // the lesson routes: a project's list and new lesson, and eight on a lesson.
+        Assert.True(routes.Count >= 24, $"Expected the thread, decision, finding and lesson routes, found {routes.Count}.");
         Assert.All(routes, e => Assert.True(e.Metadata.GetMetadata<ProjectAccessMetadata>() is not null, $"{e.RoutePattern.RawText} does not check membership."));
     }
 

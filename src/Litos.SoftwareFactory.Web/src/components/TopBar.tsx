@@ -27,6 +27,7 @@ export function TopBar({
     ['board', 'Board'],
     ['threads', 'Threads'],
     ['projects', 'Projects'],
+    ['lessons', 'Lessons'],
     // People, invitations, project membership and the factory's settings are an admin's to manage.
     ...(user.roles.includes('Admin')
       ? ([

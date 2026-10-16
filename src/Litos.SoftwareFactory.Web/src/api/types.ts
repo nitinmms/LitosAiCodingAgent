@@ -656,3 +656,61 @@ export interface ProviderCatalog {
   /** Allowed models (as saved) that the provider no longer lists. */
   retired: string[];
 }
+
+
+/** Where a lesson stands (Core/Lessons/Lessons.cs, m4-architecture.md §3). */
+export type LessonStatus = 'Suggested' | 'Approved' | 'Dismissed';
+
+/** What a lesson rests on. */
+export type LessonSource = 'Manual' | 'HumanCorrection' | 'Decision' | 'ReviewFinding' | 'Evidence';
+
+/** One immutable revision of a lesson. */
+export interface LessonRevision {
+  revision: number;
+  rule: string;
+  topics: string[];
+  paths: string[];
+  source: LessonSource;
+  sourceRef: string | null;
+  /** The thread the source belongs to, to link to; null for a manual lesson. */
+  sourceThreadId: string | null;
+  reason: string;
+  /** Null for a reflection's proposal: an agent wrote it. */
+  author: string | null;
+  createdAt: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+}
+
+/** A project's lesson (Api/LessonsApi.cs). */
+export interface Lesson {
+  id: string;
+  projectId: string;
+  number: number;
+  status: LessonStatus;
+  enabled: boolean;
+  currentRevision: number;
+  approvedRevision: number | null;
+  /** An edit waits for an Admin; runs keep using the approved revision meanwhile. */
+  pendingEdit: boolean;
+  supersededById: string | null;
+  proposedByJobId: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  current: LessonRevision;
+  /** The approved revision, when it is older than the current one. */
+  approved: LessonRevision | null;
+}
+
+/** What a person writes as a lesson. */
+export interface LessonInput {
+  rule: string;
+  topics: string[];
+  paths: string[];
+  reason: string;
+  /** An Admin's Save and approve. */
+  approve?: boolean;
+}
+
+export type LessonCommand = 'approve' | 'dismiss' | 'disable' | 'enable';
