@@ -3,6 +3,15 @@
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
+# docker.exe itself: a stray file named "docker" earlier on the PATH would otherwise be "run" as a document.
+function Resolve-Docker {
+    $app = Get-Command docker -CommandType Application -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -like '*.exe' } | Select-Object -First 1
+    if ($app) { return $app.Source }
+    $desktop = Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin\docker.exe'
+    if (Test-Path $desktop) { return $desktop }
+    throw 'docker was not found. Start Docker Desktop, or name local PostgreSQL client tools with -PgBin.'
+}
+
 # KEY=value lines, as the host reads them (blank lines and # comments skipped).
 function Read-EnvFile([string]$Path) {
     if (-not (Test-Path $Path)) { throw "Settings file '$Path' was not found." }
@@ -64,17 +73,19 @@ function New-PgAccess([hashtable]$Env, [string]$EnvFile, [string]$ComposeFile, [
         return $access
     }
     if (-not $Container) {
-        $Container = (& docker compose -f $ComposeFile --env-file $EnvFile ps -q $Service | Select-Object -First 1)
+        # All of its output, then the first line: Select-Object -First would stop docker early and fail it.
+        $Container = @(& (Resolve-Docker) compose -f $ComposeFile --env-file $EnvFile ps -q $Service)[0]
         if ($LASTEXITCODE -ne 0 -or -not $Container) { throw "The '$Service' container of $ComposeFile is not running. Start it, or name local tools with -PgBin." }
     }
     $access.Container = $Container.Trim()
+    $access.Docker = Resolve-Docker
     return $access
 }
 
 # Runs a PostgreSQL client tool (pg_dump, pg_restore, psql) as factory_admin; throws when it fails.
 function Invoke-Pg([hashtable]$Access, [string]$Tool, [string[]]$Arguments) {
     if ($Access.Container) {
-        & docker exec $Access.Container $Tool -U $Access.User @Arguments
+        & $Access.Docker exec $Access.Container $Tool -U $Access.User @Arguments
     } else {
         $previous = $env:PGPASSWORD
         $env:PGPASSWORD = $Access.Password

@@ -79,10 +79,10 @@ try {
     Invoke-Pg $pg 'pg_dump' @('--format=custom', "--dbname=$($pg.Database)", "--file=$pgDump")
     if ($pg.Container) {
         try {
-            & docker cp "$($pg.Container):$pgDump" $dump | Out-Null
+            & $pg.Docker cp "$($pg.Container):$pgDump" $dump | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Copying the dump out of the container failed (exit code $LASTEXITCODE)." }
         } finally {
-            & docker exec $pg.Container rm -f $pgDump | Out-Null
+            & $pg.Docker exec $pg.Container rm -f $pgDump | Out-Null
         }
     }
 

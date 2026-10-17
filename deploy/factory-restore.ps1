@@ -58,7 +58,7 @@ if ("$exists".Trim() -eq '1') { throw "The database $Database already exists. Na
 $dump = Join-Path $Source 'litos_factory.dump'
 $pgDump = Get-PgPath $pg $dump
 if ($pg.Container) {
-    & docker cp $dump "$($pg.Container):$pgDump" | Out-Null
+    & $pg.Docker cp $dump "$($pg.Container):$pgDump" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Copying the dump into the container failed (exit code $LASTEXITCODE)." }
 }
 try {
@@ -66,7 +66,7 @@ try {
     Invoke-Pg $pg 'psql' @('--dbname=postgres', '-c', "CREATE DATABASE $Database")
     Invoke-Pg $pg 'pg_restore' @("--dbname=$Database", '--exit-on-error', $pgDump)
 } finally {
-    if ($pg.Container) { & docker exec $pg.Container rm -f $pgDump | Out-Null }
+    if ($pg.Container) { & $pg.Docker exec $pg.Container rm -f $pgDump | Out-Null }
 }
 
 # 3. The files, and the manifest the copy's host checks them against.

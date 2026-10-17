@@ -31,9 +31,10 @@ public static class FactoryHostApp
         var builder = WebApplication.CreateBuilder(args);
 
         // Loopback by default (§13.3). Exposing the host on a network is a deliberate choice,
-        // made by setting ASPNETCORE_URLS behind HTTPS.
+        // made by setting ASPNETCORE_URLS behind HTTPS. Set in the settings file it reaches only the
+        // options, so it is applied here; the environment variable or --urls still win.
         if (string.IsNullOrEmpty(builder.Configuration["urls"]) && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
-            builder.WebHost.UseUrls(DefaultUrl);
+            builder.WebHost.UseUrls(options.Urls ?? DefaultUrl);
 
         // EF Core logs every SQL statement at Information; that is noise in a host's log.
         builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);

@@ -659,6 +659,22 @@ public class FactoryOptionsTests
             .AddInMemoryCollection(settings.ToDictionary(s => s.Key, s => (string?)s.Value))
             .Build());
 
+    /// <summary>A second host on a restored copy is given its own port in its settings file (m4-architecture.md §8.3).</summary>
+    [SkippableFact]
+    public async Task Urls_FromTheSettingsFile_AreWhereTheHostListens_AndTheDefaultIsLoopback()
+    {
+        Assert.Null(From().Urls);
+        Assert.Equal("http://127.0.0.1:5181", From(("ASPNETCORE_URLS", "http://127.0.0.1:5181")).Urls);
+        // The environment variable would win; this test is about the file.
+        Skip.If(!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")), "ASPNETCORE_URLS is set in this environment.");
+
+        await using var named = FactoryHostApp.Build([], new FactoryOptions { DataDirectory = Path.GetTempPath(), Urls = "http://127.0.0.1:5181" });
+        await using var unnamed = FactoryHostApp.Build([], new FactoryOptions { DataDirectory = Path.GetTempPath() });
+
+        Assert.Equal("http://127.0.0.1:5181", named.Configuration["urls"]);
+        Assert.Equal(FactoryHostApp.DefaultUrl, unnamed.Configuration["urls"]);
+    }
+
     [Fact]
     public void From_NothingSet_KeepsTheDefaultBudgetAndOutputAllowance()
     {

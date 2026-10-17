@@ -74,6 +74,13 @@ public sealed class FactoryOptions
     /// <summary>The worker executable; null finds it beside the host.</summary>
     public string? WorkerPath { get; set; }
 
+    /// <summary>
+    /// Where the host listens, from ASPNETCORE_URLS in the settings file (a second host on a restored
+    /// copy needs its own port); null is <see cref="FactoryHostApp.DefaultUrl"/>. The variable set in
+    /// the environment still wins, as it does over every value in the file.
+    /// </summary>
+    public string? Urls { get; set; }
+
     public string CommitName { get; set; } = "Litos Software Factory";
 
     public string CommitEmail { get; set; } = "factory@litos.invalid";
@@ -131,6 +138,7 @@ public sealed class FactoryOptions
             AdminUser = configuration["FACTORY_ADMIN_USER"] ?? "admin",
             AdminPassword = NullIfEmpty(configuration["FACTORY_ADMIN_PASSWORD"]),
             WorkerPath = NullIfEmpty(configuration["FACTORY_WORKER_PATH"]),
+            Urls = NullIfEmpty(configuration["ASPNETCORE_URLS"]),
         };
 
         if (NullIfEmpty(configuration["FACTORY_MODEL"]) is { } model)
