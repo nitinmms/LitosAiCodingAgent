@@ -12,7 +12,7 @@ const share = (value: number | null) => (value === null ? '' : ` (${Math.round(v
  * The operational counters (ReadMe_LitosSoftwareFactory_V1.md §24, m4-architecture.md §7), for Admins:
  * read when shown, with Refresh. A run the host is not executing is what to look at first.
  */
-export function Operations({ api }: { api: FactoryApi }) {
+export function Operations({ api, onDispatchChanged }: { api: FactoryApi; onDispatchChanged?: () => void }) {
   const [counters, setCounters] = useState<Counters | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,8 +36,91 @@ export function Operations({ api }: { api: FactoryApi }) {
         </button>
       </div>
       <ErrorNote message={error} />
-      {counters ? <CountersView c={counters} /> : !error ? <p className="small muted">Loading…</p> : null}
+      {counters ? (
+        <>
+          <Dispatch
+            dispatch={counters.dispatch}
+            onChange={(paused, reason) =>
+              api.setDispatch(paused, reason).then(
+                () => (onDispatchChanged?.(), load()),
+                (failure: unknown) => setError(failure instanceof ApiError ? failure.message : 'Dispatch could not be changed.'),
+              )
+            }
+          />
+          {counters.restore ? <Restored r={counters.restore} /> : null}
+          <CountersView c={counters} />
+        </>
+      ) : !error ? (
+        <p className="small muted">Loading…</p>
+      ) : null}
     </section>
+  );
+}
+
+/** Pausing dispatch (m4-architecture.md §8.1): nothing new starts; what is working carries on to its next stop. */
+function Dispatch({
+  dispatch,
+  onChange,
+}: {
+  dispatch: Counters['dispatch'];
+  onChange: (paused: boolean, reason: string | null) => Promise<unknown>;
+}) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const act = (paused: boolean) => {
+    setBusy(true);
+    void onChange(paused, paused ? reason.trim() || null : null).finally(() => setBusy(false));
+  };
+
+  return dispatch.paused ? (
+    <div className="stack" aria-label="Dispatch">
+      <p className="small">
+        <strong>Dispatch is paused</strong>
+        {dispatch.reason ? `: ${dispatch.reason}` : '.'}
+        {dispatch.changedBy ? ` By ${dispatch.changedBy}` : ''}
+        {dispatch.changedAt ? ` at ${new Date(dispatch.changedAt).toLocaleString()}.` : ''}
+      </p>
+      <div className="btn-row">
+        <button className="btn primary small" type="button" disabled={busy} onClick={() => act(false)}>
+          Resume dispatch
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="stack" aria-label="Dispatch">
+      <p className="small">Dispatch is running. Pausing it starts nothing new, of any kind, until it is resumed, as for a backup.</p>
+      <div className="btn-row">
+        <input aria-label="Why dispatch is paused" placeholder="Why (shown to everyone)" maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
+        <button className="btn small" type="button" disabled={busy} onClick={() => act(true)}>
+          Pause dispatch
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A host started on data restored from a backup says what it found (m4-architecture.md §8.3). */
+function Restored({ r }: { r: NonNullable<Counters['restore']> }) {
+  const clean = r.problems.length === 0 && r.unreadableSecrets.length === 0;
+  return (
+    <div className="stack" aria-label="Restored from backup">
+      <p className={`small ${clean ? '' : 'error'}`}>
+        Restored from the backup taken {new Date(r.backupTakenAt).toLocaleString()} ({r.backupHostVersion}):{' '}
+        {clean
+          ? `its ${fmt(r.filesChecked)} files are all here unchanged, and every stored secret can be read.`
+          : `${fmt(r.problems.length)} of its ${fmt(r.filesChecked)} files missing or changed, ${fmt(r.unreadableSecrets.length)} secrets unreadable.`}
+      </p>
+      {clean ? null : (
+        <ul className="small">
+          {r.problems.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+          {r.unreadableSecrets.map((s) => (
+            <li key={s}>The secret {s} cannot be read with this key ring; set it again.</li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

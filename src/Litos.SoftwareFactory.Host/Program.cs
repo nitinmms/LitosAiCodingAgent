@@ -6,16 +6,17 @@ using Litos.SoftwareFactory.Infrastructure.Persistence;
 //
 //   Litos.SoftwareFactory.Host --env-file .env.factory --migrate    apply schema migrations, then exit
 //   Litos.SoftwareFactory.Host --env-file .env.factory              run the host
+//   Litos.SoftwareFactory.Host --env-file .env.factory --backup-data <folder>
+//                                                                  copy the data beside a dump and write the manifest
+//   Litos.SoftwareFactory.Host --verify-backup <folder>             check a backup against its manifest
+// The backup commands are run by deploy/factory-backup.ps1 and deploy/factory-restore.ps1.
 var hostArgs = new List<string>(args);
 var migrate = hostArgs.Remove("--migrate");
+var backupFolder = TakeValue(hostArgs, BackupCommands.BackupDataVerb);
+if (TakeValue(hostArgs, BackupCommands.VerifyBackupVerb) is { } verifyFolder)
+    return await BackupCommands.VerifyBackupAsync(verifyFolder, Console.Out, Console.Error, CancellationToken.None);
 
-string? envFile = null;
-var envFileIndex = hostArgs.IndexOf("--env-file");
-if (envFileIndex >= 0 && envFileIndex + 1 < hostArgs.Count)
-{
-    envFile = hostArgs[envFileIndex + 1];
-    hostArgs.RemoveRange(envFileIndex, 2);
-}
+var envFile = TakeValue(hostArgs, "--env-file");
 
 var configuration = new ConfigurationBuilder();
 if (envFile is not null)
@@ -46,6 +47,9 @@ if (migrate)
     return 0;
 }
 
+if (backupFolder is not null)
+    return await BackupCommands.BackupDataAsync(backupFolder, options, Console.Out, Console.Error, CancellationToken.None);
+
 var problems = options.Validate();
 if (problems.Count > 0)
 {
@@ -64,3 +68,14 @@ if (await FactoryHostApp.PrepareAsync(app, options, CancellationToken.None) is {
 
 await app.RunAsync();
 return 0;
+
+// An option and the value after it, taken out of the arguments; null when the option is absent.
+static string? TakeValue(List<string> arguments, string option)
+{
+    var index = arguments.IndexOf(option);
+    if (index < 0 || index + 1 >= arguments.Count)
+        return null;
+    var value = arguments[index + 1];
+    arguments.RemoveRange(index, 2);
+    return value;
+}

@@ -228,6 +228,7 @@ a{color:var(--petrol)}
 .tag.bad{color:var(--bad);border-color:var(--bad)}
 .btn.danger{background:var(--bad);border-color:var(--bad);color:var(--surface)}
 .banner{background:var(--bad-soft);color:var(--bad);padding:8px 16px;font-weight:600;border-bottom:1px solid var(--line)}
+.banner.paused{background:var(--amber-soft);color:var(--ink);font-weight:500}
 .login-pitch{display:grid;gap:18px}
 .bubble{white-space:pre-wrap}
 /* A status note can be a list, one item per line (the resume check's, for one). */

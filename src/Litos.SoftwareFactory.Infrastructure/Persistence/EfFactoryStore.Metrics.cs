@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Metrics;
 using Litos.SoftwareFactory.Core.Store;
 using Microsoft.EntityFrameworkCore;
@@ -38,8 +39,8 @@ public sealed partial class EfFactoryStore
             .Select(s => new { s.RunId, s.Inclusion, s.Verdict })
             .ToListAsync(ct);
 
-        // Open decisions are what waits now, on any visible task, not only those created in the period.
-        var visibleIds = visible.Select(t => t.Id).ToList();
+        // Open decisions are what waits now, on any visible unfinished task, not only those created in the period.
+        var visibleIds = visible.Where(t => !TaskLifecycle.IsTerminal(t.State)).Select(t => t.Id).ToList();
         var decisions = await db.Decisions.AsNoTracking()
             .Where(d => visibleIds.Contains(d.ThreadId) && d.Status == DecisionStatus.Open)
             .Select(d => new { d.ThreadId, d.Question, d.CreatedAt })

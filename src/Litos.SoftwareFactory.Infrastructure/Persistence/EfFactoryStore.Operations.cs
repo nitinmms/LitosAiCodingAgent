@@ -42,8 +42,10 @@ public sealed partial class EfFactoryStore
             .ToList();
 
         var reflections = await db.ReflectionJobs.AsNoTracking().GroupBy(j => j.Status).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(ct);
+        // A finished task's question waits for nobody, even one left open before cancelling closed them.
+        var unfinished = db.Threads.Where(t => t.State != LifecycleState.Accepted && t.State != LifecycleState.Cancelled).Select(t => t.Id);
         var decisions = (await db.Decisions.AsNoTracking()
-            .Where(d => d.Status == DecisionStatus.Open)
+            .Where(d => d.Status == DecisionStatus.Open && unfinished.Contains(d.ThreadId))
             .Select(d => new { d.ThreadId, d.Question, d.CreatedAt })
             .ToListAsync(ct)).OrderBy(d => d.CreatedAt).ToList();
 

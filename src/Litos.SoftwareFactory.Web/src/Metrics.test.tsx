@@ -86,4 +86,52 @@ describe('the Metrics tab', () => {
     expect(screen.queryByRole('region', { name: 'Operations' })).toBeNull();
     expect(host.sent('GET', '/api/admin/counters')).toHaveLength(0);
   });
+
+  it('lets an Admin pause dispatch with a reason, shows everyone the banner, and resumes it', async () => {
+    const host = new FakeHost();
+    host.addProject();
+    const user = start(host, '#/metrics');
+
+    const ops = within(await screen.findByRole('region', { name: 'Operations' }));
+    await user.type(await ops.findByLabelText('Why dispatch is paused'), 'Taking a backup.');
+    await user.click(ops.getByRole('button', { name: 'Pause dispatch' }));
+
+    expect(host.sent('POST', '/api/admin/dispatch')[0]!.body).toEqual({ paused: true, reason: 'Taking a backup.' });
+    expect(await screen.findByText(/Dispatch is paused: Taking a backup\. Nothing new starts/)).toHaveClass('banner');
+    expect(await ops.findByText(/By Priya Raman/)).toBeInTheDocument();
+
+    await user.click(ops.getByRole('button', { name: 'Resume dispatch' }));
+    expect(host.sent('POST', '/api/admin/dispatch')[1]!.body).toEqual({ paused: false, reason: null });
+    await waitFor(() => expect(screen.queryByText(/Nothing new starts/)).toBeNull());
+  });
+
+  it('shows a Member the paused banner, without the control', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.dispatchState = { paused: true, reason: null, changedAt: '2026-10-17T09:00:00Z', changedBy: 'Priya Raman' };
+    host.signInAs(host.addPerson({ projectIds: [project.id] }));
+    start(host, '#/board');
+
+    expect(await screen.findByText(/^Dispatch is paused\. Nothing new starts/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Resume dispatch' })).toBeNull();
+  });
+
+  it('shows what a host on restored data found', async () => {
+    const host = new FakeHost();
+    host.addProject();
+    host.counters.restore = {
+      backupTakenAt: '2026-10-17T08:00:00Z',
+      backupHostVersion: '1.0.0+abc',
+      filesChecked: 40,
+      problems: ['runs/r1/worker.log is missing'],
+      unreadableSecrets: ['github'],
+      checkedAt: '2026-10-17T09:00:00Z',
+    };
+    start(host, '#/metrics');
+
+    const restored = within(await screen.findByRole('region', { name: 'Operations' })).getByLabelText('Restored from backup');
+    expect(within(restored).getByText(/1 of its 40 files missing or changed, 1 secrets unreadable/)).toHaveClass('error');
+    expect(within(restored).getByText('runs/r1/worker.log is missing')).toBeInTheDocument();
+    expect(within(restored).getByText(/The secret github cannot be read/)).toBeInTheDocument();
+  });
 });

@@ -791,8 +791,28 @@ export interface FlowMetrics {
   lessons: { included: number; leftOut: number; helped: number; didNotMatter: number; misled: number; unjudged: number };
 }
 
+/** Whether dispatch is paused, as everyone sees it (Api/DispatchApi.cs, m4-architecture.md §8.1). */
+export interface DispatchStatus {
+  paused: boolean;
+  reason: string | null;
+  since: string | null;
+}
+
 /** The operational counters, for Admins (Api/CountersApi.cs, m4-architecture.md §7). */
 export interface Counters {
+  /** Paused: nothing new starts, of any kind, until an Admin resumes it. */
+  dispatch: { paused: boolean; reason: string | null; changedAt: string | null; changedBy: string | null };
+  /** Only on a host started on data restored from a backup (m4-architecture.md §8.3). */
+  restore: {
+    backupTakenAt: string;
+    backupHostVersion: string;
+    filesChecked: number;
+    /** Files the backup held that are missing or changed here. */
+    problems: string[];
+    /** Stored secrets the restored key ring cannot read. */
+    unreadableSecrets: string[];
+    checkedAt: string;
+  } | null;
   tasks: { queued: number; running: number; stopped: { state: string; count: number }[] };
   openDecisions: number;
   oldestDecision: { threadId: string; title: string; question: string; ageHours: number } | null;

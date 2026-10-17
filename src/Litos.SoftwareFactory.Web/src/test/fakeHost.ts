@@ -764,7 +764,20 @@ export class FakeHost {
 
     if (path.split('?')[0] === '/api/metrics' && method === 'GET') return [200, this.metrics];
     if (path === '/api/admin/counters' && method === 'GET')
-      return this.user.roles.includes('Admin') ? [200, this.counters] : [403, { error: 'Forbidden.' }];
+      return this.user.roles.includes('Admin') ? [200, { ...this.counters, dispatch: this.dispatchState }] : [403, { error: 'Forbidden.' }];
+    if (path === '/api/dispatch' && method === 'GET')
+      return [200, { paused: this.dispatchState.paused, reason: this.dispatchState.reason, since: this.dispatchState.changedAt }];
+    if (path === '/api/admin/dispatch' && method === 'POST') {
+      if (!this.user.roles.includes('Admin')) return [403, { error: 'Forbidden.' }];
+      const paused = Boolean(data.paused);
+      this.dispatchState = {
+        paused,
+        reason: paused ? ((data.reason as string | null) ?? null) : null,
+        changedAt: '2026-10-17T09:00:00Z',
+        changedBy: this.user.displayName || this.user.userName,
+      };
+      return [200, { ...this.dispatchState, wasPaused: !paused, active: [] }];
+    }
 
     const lessons = this.handleLessons(method, path, data);
     if (lessons) return lessons;
@@ -1149,8 +1162,13 @@ export class FakeHost {
     lessons: { included: 5, leftOut: 1, helped: 2, didNotMatter: 1, misled: 0, unjudged: 2 },
   };
 
-  /** What GET /api/admin/counters answers an Admin. */
+  /** Whether dispatch is paused: GET /api/dispatch, and the counters' dispatch. */
+  dispatchState: Counters['dispatch'] = { paused: false, reason: null, changedAt: null, changedBy: null };
+
+  /** What GET /api/admin/counters answers an Admin; its dispatch is the one above. */
   counters: Counters = {
+    dispatch: { paused: false, reason: null, changedAt: null, changedBy: null },
+    restore: null,
     tasks: { queued: 1, running: 1, stopped: [{ state: 'PausedBudget', count: 2 }] },
     openDecisions: 1,
     oldestDecision: { threadId: 't-9', title: 'Export orders', question: 'All rows?', ageHours: 3 },

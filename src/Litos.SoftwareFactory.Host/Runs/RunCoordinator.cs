@@ -43,8 +43,9 @@ public sealed class RunCoordinator(
                     }
 
                     // Asked even with every slot busy, so each queued thread says what it waits for.
-                    // Read on every claim, so a changed cap applies to the next run without a restart.
-                    if (await store.ClaimNextRunAsync(settings.Budgets.SlotCap, clock.UtcNow, hostStopping.Token, registry.RunIds) is { } claimed)
+                    // Read on every claim, so a changed cap, or a pause, applies to the next run without a restart.
+                    if (await store.ClaimNextRunAsync(
+                            settings.Budgets.SlotCap, clock.UtcNow, hostStopping.Token, registry.RunIds, settings.Dispatch.WaitingReason) is { } claimed)
                     {
                         signals.EventsWritten();
                         _ = supervisor.Start(claimed, hostStopping.Token);

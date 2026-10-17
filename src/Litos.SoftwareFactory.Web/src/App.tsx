@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, createApi, type FactoryApi } from './api/client';
 import { resubscribeDelay, subscribeToBoard, type EventSourceFactory } from './api/events';
-import type { CurrentUser, Project, Settings, Thread } from './api/types';
+import type { CurrentUser, DispatchStatus, Project, Settings, Thread } from './api/types';
 import { BoardPage } from './components/BoardPage';
 import { InvitePage } from './components/InvitePage';
 import { Login } from './components/Login';
@@ -16,6 +16,8 @@ import { navigate, SETTINGS_TABS, useRoute, type Route } from './domain/route';
 import { awaitsYou, newer } from './domain/task';
 
 const NOTICE_MS = 6_000;
+/** How often everyone's app asks whether dispatch is paused, for the banner. */
+export const DISPATCH_POLL_MS = 60_000;
 
 export interface AppProps {
   /** Builds the API client; tests pass one backed by a fake host. */
@@ -43,6 +45,7 @@ export function App({ createClient, openEvents }: AppProps) {
   const boardAttempt = useRef(0);
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [dispatch, setDispatch] = useState<DispatchStatus | null>(null);
   const route = useRoute();
 
   const api = useMemo(() => {
@@ -170,6 +173,20 @@ export function App({ createClient, openEvents }: AppProps) {
     };
   }, [api, signedIn, boardSnapshot]);
 
+  // Whether dispatch is paused (m4-architecture.md §8.1): asked now and then, and again when an Admin changes it here.
+  const refreshDispatch = useCallback(() => {
+    api.dispatch().then(setDispatch, () => {});
+  }, [api]);
+  useEffect(() => {
+    if (!signedIn) {
+      setDispatch(null);
+      return;
+    }
+    refreshDispatch();
+    const timer = setInterval(refreshDispatch, DISPATCH_POLL_MS);
+    return () => clearInterval(timer);
+  }, [signedIn, refreshDispatch]);
+
   // A thread from someone not seen before (a new thread, a newly joined project) needs their name.
   const unknownOwner = threads.some((t) => !(t.ownerId in names));
   useEffect(() => {
@@ -256,6 +273,12 @@ export function App({ createClient, openEvents }: AppProps) {
           {problem}
         </p>
       ) : null}
+      {dispatch?.paused ? (
+        <p className="banner paused" role="status">
+          Dispatch is paused{dispatch.reason ? `: ${dispatch.reason}` : '.'} Nothing new starts until an Admin resumes it; work already
+          running carries on to its next stop.
+        </p>
+      ) : null}
       {!loaded ? (
         <p className="note">Loading…</p>
       ) : route.view === 'board' ? (
@@ -286,7 +309,7 @@ export function App({ createClient, openEvents }: AppProps) {
           <p className="note">Only an admin can change the factory's settings.</p>
         )
       ) : route.view === 'metrics' ? (
-        <MetricsPage api={api} projects={projects} isAdmin={user.roles.includes('Admin')} />
+        <MetricsPage api={api} projects={projects} isAdmin={user.roles.includes('Admin')} onDispatchChanged={refreshDispatch} />
       ) : route.view === 'lessons' ? (
         <LessonsPage
           api={api}

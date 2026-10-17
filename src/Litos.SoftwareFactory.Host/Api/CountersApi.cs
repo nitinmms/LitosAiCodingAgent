@@ -28,8 +28,8 @@ public static class CountersApi
     public static IEndpointRouteBuilder MapFactoryCounters(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/admin/counters", async (
-            IFactoryStore store, RunRegistry registry, EventStreams streams, FactorySettings settings, UserManager<FactoryUser> users, IClock clock,
-            CancellationToken ct) =>
+            IFactoryStore store, RunRegistry registry, EventStreams streams, FactorySettings settings, RestoreCheck restore,
+            UserManager<FactoryUser> users, IClock clock, CancellationToken ct) =>
         {
             var now = clock.UtcNow;
             var data = await store.GetOperationsDataAsync(now - FailureWindow, now, ct);
@@ -37,12 +37,34 @@ public static class CountersApi
             var held = registry.RunIds;
             var (open, behind) = streams.Snapshot();
             var budgets = settings.Budgets;
+            var dispatch = settings.Dispatch;
             var ids = data.Users.Select(u => u.UserId).ToHashSet();
+            if (dispatch.ChangedBy is { } changedBy)
+                ids.Add(changedBy);
             var names = users.Users.Where(u => ids.Contains(u.Id)).ToList()
                 .ToDictionary(u => u.Id, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.UserName! : u.DisplayName);
 
             return Results.Ok(new
             {
+                Dispatch = new
+                {
+                    dispatch.Paused,
+                    dispatch.Reason,
+                    dispatch.ChangedAt,
+                    ChangedBy = dispatch.ChangedBy is { } by ? names.GetValueOrDefault(by, "(unknown)") : null,
+                },
+                // Only on a host started on data restored from a backup.
+                Restore = restore.Report is { } report
+                    ? new
+                    {
+                        report.BackupTakenAt,
+                        report.BackupHostVersion,
+                        report.FilesChecked,
+                        Problems = report.Problems.Select(p => $"{p.Path} {p.Problem}"),
+                        report.UnreadableSecrets,
+                        report.CheckedAt,
+                    }
+                    : null,
                 Tasks = new
                 {
                     Queued = Count(LifecycleState.Queued),

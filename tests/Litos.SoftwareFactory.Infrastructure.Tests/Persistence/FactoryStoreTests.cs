@@ -2803,6 +2803,105 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(use.MonthUsed, use.DayUsed);
     }
 
+    [SkippableFact]
+    public async Task OperationsAndFlowData_LeaveOutAnOpenDecisionOnAFinishedTask()
+    {
+        var running = await RunningAsync();
+        await Store.OpenDecisionAsync(running.Run.Id, new DecisionSubmission("Left open?", "w", ["a"]), T0, default);
+        // As a task cancelled before cancelling closed its questions was left: finished, its question still open.
+        await using (var db = Contexts.CreateDbContext())
+        {
+            var row = await db.Threads.FirstAsync(t => t.Id == running.Thread.Id);
+            row.State = LifecycleState.Cancelled;
+            await db.SaveChangesAsync();
+        }
+
+        var data = await Store.GetOperationsDataAsync(T0.AddDays(-7), T0, default);
+        Assert.Equal(0, data.OpenDecisions);
+        Assert.Null(data.OldestDecision);
+        Assert.Empty((await Store.GetFlowDataAsync(null, T0.AddDays(-1), default)).Decisions);
+    }
+
+    // ---- Cancelling closes the task's questions ----
+
+    [SkippableFact]
+    public async Task Cancel_WhileAwaitingADecision_ClosesTheQuestion()
+    {
+        var running = await RunningAsync();
+        var decision = await Store.OpenDecisionAsync(running.Run.Id, new DecisionSubmission("Which columns?", "w", ["a", "b"]), T0, default);
+        await Store.StopRunAsync(
+            Stop(running.Run.Id, LifecycleTrigger.RequestDecision, StopReason.DecisionNeeded) with { DecisionId = decision.Id, MessageKind = MessageKind.Decision },
+            T0, default);
+
+        await Store.ApplyUserActionAsync(running.Thread.Id, Admin, LifecycleTrigger.Cancel, T0.AddMinutes(1), default);
+
+        var closed = Assert.Single((await Store.GetThreadAsync(running.Thread.Id, default))!.Decisions);
+        Assert.Equal((DecisionStatus.Answered, "Not answered: the task was cancelled.", (Guid?)Admin), (closed.Status, closed.Answer, closed.AnsweredBy));
+        Assert.Equal(T0.AddMinutes(1), closed.AnsweredAt);
+        Assert.Equal(0, (await Store.GetOperationsDataAsync(T0.AddDays(-7), T0, default)).OpenDecisions);
+    }
+
+    [SkippableFact]
+    public async Task Cancel_OfARunningTask_ClosesTheQuestionItsRunOpened()
+    {
+        var running = await RunningAsync();
+        await Store.OpenDecisionAsync(running.Run.Id, new DecisionSubmission("Which columns?", "w", ["a", "b"]), T0, default);
+
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Cancel, StopReason.Cancelled, "Cancelled."), T0.AddMinutes(1), default);
+
+        var closed = Assert.Single((await Store.GetThreadAsync(running.Thread.Id, default))!.Decisions);
+        Assert.Equal((DecisionStatus.Answered, "Not answered: the task was cancelled.", (Guid?)null), (closed.Status, closed.Answer, closed.AnsweredBy));
+    }
+
+    [SkippableFact]
+    public async Task Pause_LeavesTheQuestionOpen()
+    {
+        var running = await RunningAsync();
+        await Store.OpenDecisionAsync(running.Run.Id, new DecisionSubmission("Which columns?", "w", ["a", "b"]), T0, default);
+
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Pause, StopReason.PausedByUser), T0, default);
+
+        Assert.Equal(DecisionStatus.Open, Assert.Single((await Store.GetThreadAsync(running.Thread.Id, default))!.Decisions).Status);
+    }
+
+    // ---- Pausing dispatch (m4-architecture.md §8.1) ----
+
+    [SkippableFact]
+    public async Task Claim_WhileDispatchIsPaused_StartsNothing_AndTheQueuedTaskSaysWhy()
+    {
+        var (_, thread, runId) = await QueuedAsync();
+        var chatThread = await AddThreadAsync(await AddProjectAsync("billing"), "Ask");
+        await Store.ChatAsync(chatThread.Id, Admin, Guid.NewGuid().ToString(), "Is there an export already?", 100_000, T0, default);
+        const string paused = "Dispatch is paused by an Admin: A backup is being taken.";
+
+        Assert.Null(await Store.ClaimNextRunAsync(5, T0, default, pausedReason: paused));
+        Assert.Null(await Store.ClaimNextRunAsync(5, T0, default, pausedReason: paused));
+
+        var waiting = await ThreadAsync(thread.Id);
+        Assert.Equal((LifecycleState.Queued, paused), (waiting.State, waiting.StateReason));
+        Assert.Equal(RunStatus.Queued, (await Store.GetRunAsync(runId, default))!.Status);
+        Assert.Null((await ThreadAsync(chatThread.Id)).StateReason);
+
+        // Resumed: both start, and the reason goes.
+        var first = await Store.ClaimNextRunAsync(5, T0, default);
+        var second = await Store.ClaimNextRunAsync(5, T0, default);
+        Assert.Equivalent(new[] { runId, (await Store.GetThreadAsync(chatThread.Id, default))!.ChatRun!.Id }.Order(), new[] { first!.Run.Id, second!.Run.Id }.Order());
+        Assert.Null((await ThreadAsync(thread.Id)).StateReason);
+    }
+
+    [SkippableFact]
+    public async Task DispatchSettings_AreAuditedAsAPauseOrAResume_WithTheReason()
+    {
+        var paused = new DispatchSettings { Paused = true, Reason = "Backup.", ChangedBy = Admin, ChangedAt = T0 };
+        await Store.SaveSettingsAsync(SettingsSections.Dispatch, JsonSerializer.Serialize(paused, FactoryWire.Json), 0, Admin, T0, default);
+        await Store.SaveSettingsAsync(SettingsSections.Dispatch, JsonSerializer.Serialize(new DispatchSettings(), FactoryWire.Json), 1, Admin, T0, default);
+
+        var audit = await Store.ListAuditAsync(null, 10, default);
+        Assert.Contains(audit, a => a.Action == AuditActions.DispatchPause && a.DetailsJson!.Contains("Backup."));
+        Assert.Contains(audit, a => a.Action == AuditActions.DispatchResume);
+        Assert.DoesNotContain(audit, a => a.Action == AuditActions.SettingsUpdate);
+    }
+
     // ---- Lesson reflection (m4-architecture.md §5) ----
 
     private async Task<(ClaimedRun Accepted, ClaimedRun Reflection)> AcceptedAndReflectingAsync(long? cap = 600_000, long allowance = 30_000)

@@ -602,7 +602,10 @@ public static class SettingsSections
     public const string Skills = "skills";
     public const string Presets = "presets";
 
-    public static readonly IReadOnlyList<string> All = [Budgets, Providers, Tools, Mcp, Skills, Presets];
+    /// <summary>Whether dispatch is paused: changed through /api/admin/dispatch, not the Settings page.</summary>
+    public const string Dispatch = "dispatch";
+
+    public static readonly IReadOnlyList<string> All = [Budgets, Providers, Tools, Mcp, Skills, Presets, Dispatch];
 }
 
 public static class AuditTargets
@@ -681,6 +684,8 @@ public static class AuditActions
     public const string DecisionAnswer = "decision.answer";
     public const string FindingVerdict = "finding.verdict";
     public const string SettingsUpdate = "settings.update";
+    public const string DispatchPause = "dispatch.pause";
+    public const string DispatchResume = "dispatch.resume";
     public const string SecretSet = "secret.set";
     public const string SecretClear = "secret.clear";
     public const string RepositorySkillApprove = "repository_skill.approve";

@@ -11,6 +11,7 @@ import type {
   FindingVerdict,
   FlowMetrics,
   Counters,
+  DispatchStatus,
   Invitation,
   InvitationPreview,
   Lesson,
@@ -117,6 +118,10 @@ export interface FactoryApi {
   metrics(projectId: string | null, days: number): Promise<FlowMetrics>;
   /** The operational counters; Admins only. */
   counters(): Promise<Counters>;
+  /** Whether dispatch is paused, for the banner everyone sees. */
+  dispatch(): Promise<DispatchStatus>;
+  /** Pauses or resumes dispatch; Admins only. */
+  setDispatch(paused: boolean, reason: string | null): Promise<unknown>;
   accept(id: string): Promise<Thread>;
   /** `stopping`: the task is running, and stops at its next safe point; the new state arrives as an event. */
   pause(id: string): Promise<StopResult>;
@@ -263,6 +268,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     retryReflection: (threadId) => send<unknown>('POST', `${thread(threadId)}/reflection/retry`),
     skipReflection: (threadId) => send<unknown>('POST', `${thread(threadId)}/reflection/skip`),
     counters: () => send<Counters>('GET', '/api/admin/counters'),
+    dispatch: () => send<DispatchStatus>('GET', '/api/dispatch'),
+    setDispatch: (paused, reason) => send<unknown>('POST', '/api/admin/dispatch', { paused, reason }),
     metrics: (projectId, days) =>
       send<FlowMetrics>('GET', `/api/metrics?days=${days}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`),
     accept: (id) => send<Thread>('POST', `${thread(id)}/accept`),

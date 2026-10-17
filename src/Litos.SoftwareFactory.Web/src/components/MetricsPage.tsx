@@ -20,7 +20,18 @@ const label = (name: string) => name.replace(/([a-z])([A-Z])/g, '$1 $2');
  * The flow metrics (ReadMe_LitosSoftwareFactory_V1.md §12.1, m4-architecture.md §6), over the projects
  * the person belongs to: one project or all, for the last 7, 30 or 90 days of tasks.
  */
-export function MetricsPage({ api, projects, isAdmin = false }: { api: FactoryApi; projects: Project[]; isAdmin?: boolean }) {
+export function MetricsPage({
+  api,
+  projects,
+  isAdmin = false,
+  onDispatchChanged,
+}: {
+  api: FactoryApi;
+  projects: Project[];
+  isAdmin?: boolean;
+  /** An Admin paused or resumed dispatch here: the banner asks again. */
+  onDispatchChanged?: () => void;
+}) {
   const [projectId, setProjectId] = useState<string>('');
   const [days, setDays] = useState<(typeof PERIODS)[number]>(30);
   const [metrics, setMetrics] = useState<FlowMetrics | null>(null);
@@ -65,7 +76,7 @@ export function MetricsPage({ api, projects, isAdmin = false }: { api: FactoryAp
       <ErrorNote message={error} />
       {metrics === null && !error ? <p className="small muted">Loading…</p> : null}
       {metrics ? <Report metrics={metrics} /> : null}
-      {isAdmin ? <Operations api={api} /> : null}
+      {isAdmin ? <Operations api={api} onDispatchChanged={onDispatchChanged} /> : null}
     </div>
   );
 }

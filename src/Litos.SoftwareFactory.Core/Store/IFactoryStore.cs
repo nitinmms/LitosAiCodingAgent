@@ -326,7 +326,10 @@ public interface IFactoryStore
     /// <param name="heldRuns">The runs the host still has an executor for. They fill the slots,
     /// and one that has been queued again is not claimed until its executor has finished. Null
     /// counts the runs marked Running instead.</param>
-    Task<ClaimedRun?> ClaimNextRunAsync(int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null);
+    /// <param name="pausedReason">Set while dispatch is paused (m4-architecture.md §8.1): nothing is
+    /// claimed, and each queued task is given this as its waiting reason.</param>
+    Task<ClaimedRun?> ClaimNextRunAsync(
+        int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null, string? pausedReason = null);
 
     /// <summary>Saves the orchestrator's state after a step, with the stage the task is now in,
     /// and the working copy as it is now (null keeps the last one).</summary>

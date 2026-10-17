@@ -50,6 +50,7 @@ public static class FactoryHostApp
         // Before auth: the sign-in cookies use the same key ring.
         services.AddFactorySecretProtection(options.DataDirectory);
         services.AddSingleton<FactorySettings>();
+        services.AddSingleton<RestoreCheck>();
         services.AddFactoryAuth();
         // A session is checked against its account this often: disabling an account rotates its
         // security stamp, so its open sessions end at the next check.
@@ -128,6 +129,7 @@ public static class FactoryHostApp
         app.MapFactoryLessons();
         app.MapFactoryMetrics();
         app.MapFactoryCounters();
+        app.MapFactoryDispatch();
         app.MapFactoryEvents();
         app.MapWorkerCallbacks();
 
@@ -153,12 +155,8 @@ public static class FactoryHostApp
         var contexts = app.Services.GetRequiredService<IDbContextFactory<FactoryDbContext>>();
         await using (var db = await contexts.CreateDbContextAsync(ct))
         {
-            if (db.Database.IsNpgsql())
-            {
-                var pending = await FactoryDatabase.PendingMigrationsAsync(contexts, ct);
-                if (pending.Count > 0)
-                    return $"The database schema is behind this build ({pending.Count} pending migration(s): {string.Join(", ", pending)}). Run the host once with --migrate.";
-            }
+            if (db.Database.IsNpgsql() && (await FactoryDatabase.CheckSchemaAsync(contexts, ct)).Problem is { } problem)
+                return problem;
         }
 
         // Before anything reads the runs: startup recovery would interrupt another host's tasks.
@@ -176,6 +174,8 @@ public static class FactoryHostApp
                 "Factory settings were written to the database from this host's environment. From now on they are changed in the app, and these variables are no longer read: {Variables}.",
                 string.Join(", ", SettingsSeeding.Replaced));
         await app.Services.GetRequiredService<ModelCatalogService>().LoadAsync(ct);
+        // Data restored from a backup is checked against it before anything uses it (m4-architecture.md §8.3).
+        await app.Services.GetRequiredService<RestoreCheck>().RunAsync(ct);
 
         return await FactoryAuth.SeedAdminAsync(app.Services, options);
     }

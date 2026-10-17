@@ -121,4 +121,53 @@ public sealed class MigrationTests : IAsyncLifetime
         // Only the column M2Spec added: today's model has run columns this schema does not.
         Assert.Null(await db.Runs.Select(r => r.SpecificationRevision).FirstOrDefaultAsync());
     }
+
+    // ---- The schema check (m4-architecture.md §8.4) ----
+
+    [SkippableFact]
+    public async Task SchemaCheck_OnAnEmptyDatabase_ListsEveryMigrationAsPending()
+    {
+        Skip.If(_database is null, $"Set {PostgresFactoryStoreTests.Variable} to run the migration tests against PostgreSQL.");
+
+        var status = await FactoryDatabase.CheckSchemaAsync(ConnectionTo(_database!), default);
+
+        await using var db = Context();
+        Assert.Equal(db.Database.GetMigrations(), status.Pending);
+        Assert.Empty(status.Unknown);
+        Assert.Null(status.LastApplied);
+        Assert.StartsWith("The database schema is behind this build", status.Problem);
+    }
+
+    [SkippableFact]
+    public async Task SchemaCheck_OnAMigratedDatabase_FindsNothing_AndNamesTheLastMigration()
+    {
+        Skip.If(_database is null, $"Set {PostgresFactoryStoreTests.Variable} to run the migration tests against PostgreSQL.");
+        await using (var db = Context())
+            await db.Database.MigrateAsync();
+
+        var status = await FactoryDatabase.CheckSchemaAsync(ConnectionTo(_database!), default);
+
+        await using var check = Context();
+        Assert.Equal((0, 0), (status.Pending.Count, status.Unknown.Count));
+        Assert.Equal(check.Database.GetMigrations().Last(), status.LastApplied);
+        Assert.Null(status.Problem);
+    }
+
+    /// <summary>A database a newer build migrated is refused, not partly used.</summary>
+    [SkippableFact]
+    public async Task SchemaCheck_OnADatabaseMigratedByANewerBuild_NamesTheMigrationsItDoesNotKnow()
+    {
+        Skip.If(_database is null, $"Set {PostgresFactoryStoreTests.Variable} to run the migration tests against PostgreSQL.");
+        await using (var db = Context())
+            await db.Database.MigrateAsync();
+        await ExecuteAsync("""INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES ('29991231000000_FromTheFuture', '10.0.0');""");
+
+        var status = await FactoryDatabase.CheckSchemaAsync(ConnectionTo(_database!), default);
+
+        Assert.Empty(status.Pending);
+        Assert.Equal(["29991231000000_FromTheFuture"], status.Unknown);
+        Assert.Equal("29991231000000_FromTheFuture", status.LastApplied);
+        Assert.Contains("migrated by a newer build", status.Problem);
+        Assert.Contains("29991231000000_FromTheFuture", status.Problem);
+    }
 }

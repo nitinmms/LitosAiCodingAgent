@@ -590,6 +590,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
                 }
 
                 await ReleaseLeaseAsync(db, threadId, ct);
+                await CloseOpenDecisionsAsync(db, d => d.ThreadId == threadId, CancelledAnswer, userId, now, ct);
                 // A draft has no work to keep; a chat being answered is left to finish.
                 note = thread.State == LifecycleState.Draft
                     ? "Cancelled before it was delegated."
@@ -653,13 +654,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         run.WorkerStartTime = null;
 
         // A question the withdrawn run was waiting on no longer needs an answer.
-        foreach (var decision in await db.Decisions.Where(d => d.RunId == run.Id && d.Status == DecisionStatus.Open).ToListAsync(ct))
-        {
-            decision.Status = DecisionStatus.Answered;
-            decision.Answer = "Not answered: the change request was withdrawn.";
-            decision.AnsweredBy = userId;
-            decision.AnsweredAt = now;
-        }
+        await CloseOpenDecisionsAsync(db, d => d.RunId == run.Id, "Not answered: the change request was withdrawn.", userId, now, ct);
 
         thread.State = next;
         thread.Stage = Stage.Handoff;
@@ -789,7 +784,8 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
 
     // ---- The coordinator ----
 
-    public async Task<ClaimedRun?> ClaimNextRunAsync(int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null)
+    public async Task<ClaimedRun?> ClaimNextRunAsync(
+        int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null, string? pausedReason = null)
     {
         await using var write = await BeginWriteAsync(ct, claim: true);
         var db = write.Db;
@@ -809,6 +805,19 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
                 continue;
 
             var thread = await LockThreadAsync(db, run.ThreadId, ct);
+            if (pausedReason is not null)
+            {
+                // Nothing of any kind starts; a waiting task says why. A chat or a reflection
+                // leaves the task's state alone, so it only waits.
+                if (run.Kind is not (RunKind.Chat or RunKind.Reflection) && thread.State == LifecycleState.Queued && thread.StateReason != pausedReason)
+                {
+                    thread.StateReason = pausedReason;
+                    Touch(db, thread, now);
+                }
+
+                continue;
+            }
+
             if (run.Kind is RunKind.Chat or RunKind.Reflection)
             {
                 // Read-only, on a copy of its own: it waits only for a slot, and leaves the task's
@@ -1029,12 +1038,29 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
 
         if (command.ReleaseLease || finished)
             await ReleaseLeaseAsync(db, thread.Id, ct);
+        if (command.Trigger == LifecycleTrigger.Cancel)
+            await CloseOpenDecisionsAsync(db, d => d.ThreadId == thread.Id, CancelledAnswer, null, now, ct);
 
         AddMessage(
             db, thread, MessageAuthor.Factory, null, command.MessageKind, command.Message, now,
             decisionId: command.DecisionId, payloadJson: command.MessagePayloadJson);
         Touch(db, thread, now);
         await write.CommitAsync(ct);
+    }
+
+    private const string CancelledAnswer = "Not answered: the task was cancelled.";
+
+    /// <summary>Questions nobody needs to answer any more are closed, so nothing counts them as waiting.</summary>
+    private static async Task CloseOpenDecisionsAsync(
+        FactoryDbContext db, System.Linq.Expressions.Expression<Func<Decision, bool>> which, string answer, Guid? userId, DateTimeOffset now, CancellationToken ct)
+    {
+        foreach (var decision in await db.Decisions.Where(d => d.Status == DecisionStatus.Open).Where(which).ToListAsync(ct))
+        {
+            decision.Status = DecisionStatus.Answered;
+            decision.Answer = answer;
+            decision.AnsweredBy = userId;
+            decision.AnsweredAt = now;
+        }
     }
 
     private static async Task ReleaseLeaseAsync(FactoryDbContext db, Guid threadId, CancellationToken ct)
@@ -1733,7 +1759,14 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         current.UpdatedAt = now;
         current.UpdatedBy = actorId;
         if (actorId is { } actor)
-            Audit(db, actor, AuditActions.SettingsUpdate, AuditTargets.Settings, null, null, new { Section = section, current.Revision }, now);
+        {
+            // A pause is worth its own entry, with why: the section keeps only its latest state.
+            if (section == SettingsSections.Dispatch && JsonSerializer.Deserialize<DispatchSettings>(json, FactoryWire.Json) is { } dispatch)
+                Audit(db, actor, dispatch.Paused ? AuditActions.DispatchPause : AuditActions.DispatchResume, AuditTargets.Settings, null, null,
+                    new { Section = section, current.Revision, dispatch.Reason }, now);
+            else
+                Audit(db, actor, AuditActions.SettingsUpdate, AuditTargets.Settings, null, null, new { Section = section, current.Revision }, now);
+        }
 
         try
         {
