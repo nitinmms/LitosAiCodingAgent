@@ -52,6 +52,7 @@ public sealed class AnthropicChatProvider(AnthropicClient client, OpenRouterMode
             // rather than erroring, which is harmless: usage then simply reports no cache activity.
             PromptCaching = PromptCacheType.AutomaticToolsAndSystem,
         };
+        MarkConversationCacheBreakpoint(parameters.Messages);
 
         var textBuilder = new StringBuilder();
         var toolCallNames = new Dictionary<string, string>();
@@ -111,6 +112,21 @@ public sealed class AnthropicChatProvider(AnthropicClient client, OpenRouterMode
             lastUsage?.CacheCreationInputTokens ?? 0,
             lastUsage?.CacheReadInputTokens ?? 0);
         yield return new MessageCompleted(LM.ChatMessage.Assistant(contentBlocks), usage);
+    }
+
+    // AutomaticToolsAndSystem only marks the tools and system prompt, so on its own the message
+    // history — which on a tool-heavy turn soon outgrows that prefix, and is re-sent in full every
+    // round — was billed as uncached input every round (observed live: ~60% of factory input
+    // uncached). A third breakpoint on the final block caches the whole conversation so far; the
+    // next round's request extends it by one exchange, and the API's breakpoint lookback finds
+    // this round's entry and serves everything up to it as a cache read. Compaction rewrites the
+    // messages and so costs one fresh write, which is unavoidable. The SDK leaves a manually-set
+    // block CacheControl alone in this mode, and three breakpoints stay under the API's limit of 4.
+    private static void MarkConversationCacheBreakpoint(List<Message> messages)
+    {
+        if (messages.Count == 0 || messages[^1].Content is not { Count: > 0 } content)
+            return;
+        content[^1].CacheControl = new CacheControl { Type = CacheControlType.ephemeral };
     }
 
     private static JsonElement ParseToolArguments(StringBuilder json)
