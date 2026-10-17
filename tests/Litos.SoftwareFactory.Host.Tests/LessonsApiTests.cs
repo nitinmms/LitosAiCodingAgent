@@ -42,6 +42,8 @@ public sealed class LessonsApiTests : IAsyncLifetime
         Assert.Equal(["money", "cents"], lesson.GetProperty("current").GetProperty("topics").EnumerateArray().Select(t => t.GetString()));
         Assert.Equal("maria", lesson.GetProperty("current").GetProperty("author").GetString());
         Assert.Equal("Manual", lesson.GetProperty("current").GetProperty("source").GetString());
+        // Acceptance scenario 18: saving a lesson by hand calls no model.
+        Assert.Empty(_host.Provider.Requests);
 
         var listed = await _host.GetAsync($"api/projects/{projectId}/lessons");
         Assert.Equal(lesson.GetProperty("id").GetGuid(), Assert.Single(listed.EnumerateArray()).GetProperty("id").GetGuid());

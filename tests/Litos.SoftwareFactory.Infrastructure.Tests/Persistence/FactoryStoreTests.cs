@@ -2655,7 +2655,9 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         var approved = await Store.AddLessonAsync(project.Id, Lesson(), Admin, approve: true, null, T0, default);
         await Store.ReviseLessonAsync(approved.Lesson.Id, 1, Lesson("Money is integer cents in a long."), Ben, approve: false, T0, default);
         await Store.AddLessonAsync(project.Id, Lesson("Suggestion."), Ben, approve: false, null, T0, default);
-        var disabled = await Store.AddLessonAsync(project.Id, Lesson("Disabled."), Admin, approve: true, null, T0, default);
+        var dismissed = await Store.AddLessonAsync(project.Id, Lesson("Dismissed."), Ben, approve: false, null, T0, default);
+        await Store.DismissLessonAsync(dismissed.Lesson.Id, 1, Admin, T0, default);
+        var disabled =await Store.AddLessonAsync(project.Id, Lesson("Disabled."), Admin, approve: true, null, T0, default);
         await Store.SetLessonEnabledAsync(disabled.Lesson.Id, 1, false, Admin, T0, default);
         await Store.AddLessonAsync((await AddProjectAsync("billing")).Id, Lesson("Elsewhere."), Admin, approve: true, null, T0, default);
 
