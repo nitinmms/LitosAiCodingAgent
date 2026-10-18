@@ -237,6 +237,45 @@ Each scenario's proof (step 8, 2026-10-17). Test names are `Class.Method`; `Stor
 
 **Scenario 11, the part no test proves.** The agent's shell is guarded only against stopping processes by name and shutting the machine down. Nothing stops an agent from running `npm start`, an integration test or a migration command against a database it can reach itself; the brief forbids it, and the factory keeps every credential that would let it push, merge or reach the factory's own database out of the worker. The M4 check reads the regression runs' worker logs for such commands. A shell guard that refuses them would be a follow-up, not part of V1 unless the check finds one.
 
+### 9.2 Results (2026-10-18): items 1 to 3 pass, item 4 fails on cost
+
+Run on the live factory at `eed67c1` (Debug), with the user's choices made before any spend: run all three regression tasks; prove lessons on the regression itself (F2's reflection, a lesson approved by an Admin, F8 on the same project, R3 on the other); start from the M3 check's base commits again (`m3-check-base` branches on `07fb8b8` and `324ec0e`, each project's default branch pointed at them for the check, then set back to `main` and the branches deleted, which closed PRs #21, #22 and insta #7 unmerged).
+
+**Item 1, the §19 scenarios: pass.** Every suite green, PostgreSQL included: Core 1,038, Worker 336, Host 677 (one skip, the opt-in `LiveGatewayTests`, which needs `FACTORY_LIVE_TEST=1`), Infrastructure 859, web 436.
+
+**Item 2, lessons end to end: pass.**
+
+- F2's acceptance queued its reflection, which completed on its first attempt for 9,023 tokens and proposed three lessons (L-1 from the blocking review finding, L-2 from the change request, L-3 from the upsert decision), each citing its source in the thread, none refused. R3's and F8's reflections did the same (three each, 9,548 and 12,787 tokens; F8's numbered 4 to 6 on filedb-sharp).
+- A Member of filedb-sharp (an account made for the check, disabled afterwards) was refused approval with 403, "Only an Admin can do that to a lesson.", could list the project's lessons, and got 404 for another project's. The Admin approved L-1 at revision 1.
+- F8's run was given L-1 at revision 1, shown in its run details and written to the run's skills file, from which the system prompt's "Project lessons" section is built. It came in as a **manual pick**: its retrieval score was 0 (below).
+- R3's rework, a new run on insta-story-generator started after L-1 was approved, was given no lesson.
+
+**Item 3, backup and restore: pass.** The backup paused dispatch, waited for nothing to be working, and wrote 1,474 files and the dump (about 59 MB, at `M4Reflection`), its manifest verified; dispatch resumed. Restored into `litos_factory_m4check` and a scratch folder, and a second host started on the copy at :5181 beside the live one: it came up paused ("A backup is being taken."), its restore check found all 1,474 files unchanged and every secret readable, and it served all 45 threads, F8's opened in full (messages, decisions, pull request, lesson snapshot, reflection). The copy was stopped and its database dropped.
+
+**Scenario 11's manual check: pass.** The six work runs' transcripts hold about 115 shell calls, literal and composed. Every one is a build or test (`dotnet build`, `dotnet test`, `npx tsc`, `npx vitest`), a read-only `git` command or a directory listing: no start-up, deployment, migration, database, network or push command.
+
+**Item 4, regression: fails on cost.** All three tasks were accepted after one rework each, meeting every acceptance criterion, with no evidence mismatch and no lock violation; none came within the 20% bound, and R3 was paused for budget during its implementation, which M1 and M3 record as a failure.
+
+| Task | Result | Tokens (work) | M3 check | Over M3 | Reflection |
+| --- | --- | --- | --- | --- | --- |
+| F2 JSON Lines export and import | Accepted after one rework: the first handoff lacked the `Stream` overloads criteria 1 and 2 name, a test after reopening (2), and Unicode keys and nested documents in the round trip (5) | 760,952 (358,771 + rework 402,181) | 430,086 | **+77%** | 9,023 |
+| R3 Cancel a running generation | **Paused for budget at 587,782 of 600,000 during implementation**; cap raised to 900,000 to see it out. Accepted after one rework: the late-response race (4) and a generation after cancelling (5) were untested, and a `POST /api/story/cancel` that cancelled nothing was removed | 995,362 (751,182 + rework 244,180) | 686,741 | **+45%** | 9,548 |
+| F8 Secondary indexes | Accepted after one rework: no test that a lookup leaves non-matching documents unread (4), and none for `Update` or a transaction disposed without committing (3). The review found a real race (a transaction's lookup read a live index after its lock was released), reproduced and fixed | 852,210 (732,034 + rework 120,176) | 533,605 | **+60%** | 12,787 |
+
+Where the extra cost came from, from the per-call usage. Lessons and task skills are not it: no task had a skill, and F8's single lesson is about 120 tokens.
+
+- **Provider cache misses (R3).** Six of R3's implementation calls came back with no cached input, re-sending 33,000 to 43,000 tokens each at full weight: about 155,000 tokens more than the same calls with the usual 90% cache hit. One follows the quota pause (below) and is expected; M3's R3 had none, and neither did F2 or F8 here. OpenRouter routes a model to more than one upstream, and only the one that served the earlier calls holds the cache.
+- **Longer runs on the same requests.** F2's first run took a repair cycle M3's did not (53,000, for a real blocking finding), and its rework made 66 calls against M3's 33. R3's review stopped at its allowance (12 calls, 123,983 tokens).
+- **Reasoning bursts.** F2's light review spent one call's whole output allowance, 32,768 tokens, on reasoning with no reply.
+
+One run of each is not enough to tell this from run-to-run variance on deepseek, or to say it is a factory regression: at the M3 check the same request texts came in under M1 (F2 −25%, R3 −2%, F8 −8%). **V1 is not met as specified** until item 4 passes; what to change before a re-run is in §11.
+
+Found by the check, besides the cost:
+
+- **A quota-shortened call is reported as an output-limit failure.** The admin's monthly quota (20,000,000; the M3 check and the forms tasks used most of it) ran out mid-check. R3 paused correctly ("your quota has 1,060 left"); F2's rework instead got a call admitted with 5,042 output tokens (`BudgetLedger.Admit` cuts the output limit to what the quota or cap has left), which deepseek spent on reasoning, and was Blocked with "The model reached the output limit … resuming tries the step again", which resuming could not fix. The user raised the quota to 25,000,000 and both resumed. The ledger was right; the stop is wrong: a call whose limit was cut by the quota or cap and that produced no reply should pause for budget, naming which.
+- **Reflection's lessons rarely match another task.** Their topics are the finished task's own words (`json lines`, `export`, `stream`, `upsert`), so F8, a secondary-index task on the same project, scored 0 on all three of F2's and would have been given none without the manual pick.
+- **Over-asking, unchanged.** Eight questions across the three tasks, every one settled by the acceptance criteria the scan does not see. Seven recommendations matched the criteria; F8's "optionally unique" indexes would have added scope no criterion asks for, and was answered "non-unique only".
+
 ## 10. Build order
 
 1. **Carried fixes.** Check why the J3 finding verdicts did not save, and fix it if it is a bug. A tool denied by the MCP settings reaches the agent as a message naming the policy, not as a C# compile error, and the kernel helpers' descriptions show a call (m3-architecture.md §12, the smaller items).
@@ -284,7 +323,12 @@ Live check (2026-10-17), ahead of the full one in §9: a real backup of the live
 
 **Step 8, §19 coverage (2026-10-17).** The map is §9.1. Every scenario has automated proof; 2, 11, 16 and 18 also get a manual check in the M4 check. Added: scenario 20's test (`DatabaseLossTests`: a store that fails every call while the database is "lost"; the coordinator keeps trying, starts nothing, and starts the waiting task once it is back, with no restart), a dismissed lesson in scenario 16's store test (it named dismissed lessons but had none), and scenario 18's "no model call" on saving a lesson by hand. Found and recorded, not fixed: scenario 11 rests on the brief and on keeping credentials out of the worker, not on the shell refusing a start-up, deploy or migration command (§9.1, below the table).
 
+**Step 9, the M4 check (2026-10-18).** §9.2: items 1 to 3 pass; item 4, the regression, fails on cost (F2 +77%, R3 +45% and paused for budget, F8 +60% over the M3 check), so V1 is not yet met.
+
 ## 11. Open, not blocking
+
+- **Item 4 of the M4 check, before a re-run (§9.2).** Pin OpenRouter's upstream for a run so the provider cache holds (or record cache misses in the usage view, so they can be told from the factory's own cost); stop a call cut short by the quota or cap as a budget pause naming which; then re-run F2, R3 and F8, more than once if variance is to be separated from a regression.
+- **Lesson topics from reflection** are too narrow to reach a different task (§9.2). Candidates: ask the reflection for the project-level concepts a lesson is about as well as the task's own words, or let an Admin edit topics on approval (already possible, but not prompted).
 
 - **Over-asking.** The decision scan asked all three planned questions on J3 although the person's second answer said to use the agent's recommendation for the rest; the re-check does not treat that as settling anything (m3-architecture.md §13). Not in M4's list; a candidate for step 1 if the user wants it.
 - **A shell guard for scenario 11.** The agent's shell could refuse commands that start the application, deploy, or change a database, as it already refuses stopping processes by name (§9.1). Taken up only if the M4 check's worker logs show such a command.
