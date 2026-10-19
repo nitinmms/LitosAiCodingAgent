@@ -144,3 +144,13 @@ forms-rules, `claude-haiku-5-5`: "@factory Add a maximum length for text fields,
 - **Result: correct.** 35 tests, 100% changed-line coverage; an independent JUnit check (4 tests) confirmed the screenshot's wording for a 214-character value, 200 allowed, code points counted (an emoji is one), and bad settings refused. The message has no closing full stop, as every message of the project; the screenshot's preview added one.
 - **Cost: 82,828** (scan 20,108, implement 52,864, reflection ~9,900), one question, no repair, no rework.
 - **Found:** the handoff's draft-PR call to GitHub timed out (GitHub was unreachable), and the task went to Blocked as a host failure: `GitHubClient` retries only `HttpRequestException`, and an `HttpClient` timeout is a `TaskCanceledException`, which also escapes the handoff's GitHub error handling. Resumed once GitHub answered; PR #5 opened with no extra tokens. Open: treat a GitHub timeout as a failure in transit (retry, then a handoff failure).
+
+### The reviewer fix, exercised (2026-10-19)
+
+forms-api, `claude-haiku-5-5`: "@factory Add GET /forms/{id}/preview, returning the form as a printable HTML page laid out like the attached screenshot", with a Chrome render of a "Site visit report" form as the design. 126 lines outside tests, so a light review ran.
+
+- **The review was given the image and the decisions.** Its session held one image block and the "Decisions made for this task" section: the answer (latest version, optional `?version=`), and three assumptions.
+- **It did not re-raise them.** Of its three minor findings, one compared the page with the screenshot (one blank row where the image shows three for "Between 1 and 20 rows"): the assumption covered only sections without row bounds, so that is a fair observation, not a settled choice. None argued about versions or the generic renderer.
+- **Delegation again settled the rest** after one answer ("… Use your recommendations for the rest."): 2 questions planned, 1 asked.
+- **Result: correct.** 64 tests (8 new), 100% changed-line coverage; an independent check (14 of 14) of the endpoint for the screenshot's form: title, description, "Version 4", fieldsets, inputs by type, the parts table and its caption, `?version=1`, 404, and HTML escaping of hostile labels. Rendered in Chrome, it matches the design but for that one blank row and an unselected drop-down.
+- **Cost: 138,150** (implement 95,836, scan 17,352, light review 15,554, reflection 9,408): one question, no repair, no rework. Accepted; draft PR #5 on forms-api. Lessons: L4 (snapshot endpoints take `?version=`) approved, L5 (fallback for unknown field types; the enum is closed) dismissed.
