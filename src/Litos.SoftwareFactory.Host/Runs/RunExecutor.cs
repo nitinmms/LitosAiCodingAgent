@@ -259,19 +259,22 @@ public sealed class RunExecutor(
     // ---- Attachments ----
 
     /// <summary>
-    /// The thread's files, for the first brief of an implementation or a rework only
-    /// (attachments-architecture.md §4): the session keeps them after that, and review, scan,
-    /// repair and reminder turns judge or continue the work. A rework shows again only what was
-    /// sent since the last handoff, with the change request; the rest is listed by path.
+    /// The thread's files, for the first brief of an implementation or a rework, and for the
+    /// decision scan before it (attachments-architecture.md §4): the sessions keep them after
+    /// that, and review, repair and reminder turns judge or continue the work. The scan is given
+    /// them because they are part of the request: on the attachments check, without them it asked
+    /// what a screenshot's badge said and how a CSV was laid out, both answered by the files. A
+    /// rework shows again only what was sent since the last handoff, with the change request; the
+    /// rest is listed by path. The scan's session is new each run, so it gets everything.
     /// </summary>
     private async Task<TurnAttachments> GiveAttachmentsAsync(RunData data, StartTurnStep step, CancellationToken ct)
     {
-        if (step.Brief is not (BriefKind.Run or BriefKind.Rework))
+        if (step.Brief is not (BriefKind.Run or BriefKind.Rework or BriefKind.Scan))
             return TurnAttachments.None;
 
         var newSince = step.Brief == BriefKind.Rework ? (await store.GetThreadAsync(data.Thread.Id, ct))?.LatestHandoff?.CreatedAt : null;
         var given = await attachments.PrepareAsync(data.Thread, data.Workspace.Path, newSince, ct);
-        if (given.Files.Count > 0)
+        if (given.Files.Count > 0 && step.Brief != BriefKind.Scan)
             await NoteAsync(data, RunAttachments.Describe(given));
         return given;
     }

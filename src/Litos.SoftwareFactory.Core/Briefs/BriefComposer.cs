@@ -97,8 +97,9 @@ public static partial class BriefComposer
     /// m2.4: work submitted with no change is sent back once to check its edits were written;
     /// m2.5: project lessons leave the run brief for every session's system prompt;
     /// m2.6: the lesson reflection brief;
-    /// m2.7: run, rework, spec and chat briefs carry the thread's attachments).</summary>
-    public const string Revision = "m2.7";
+    /// m2.7: run, rework, spec and chat briefs carry the thread's attachments;
+    /// m2.8: so does the decision scan's).</summary>
+    public const string Revision = "m2.8";
 
     private const int CharsPerToken = 4;
 

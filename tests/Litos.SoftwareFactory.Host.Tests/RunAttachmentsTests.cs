@@ -121,6 +121,28 @@ public sealed class RunAttachmentsTests : IAsyncLifetime
         Assert.Contains("-before.png` (image, attached earlier)", rework.Brief);
     }
 
+    /// <summary>
+    /// The decision scan reads the request before the work, so it is given the files too: on the
+    /// attachments check, without them it asked what a screenshot's badge said. One note, not two.
+    /// </summary>
+    [Fact]
+    public async Task TheDecisionScan_IsGivenTheFilesToo()
+    {
+        await _host.DisposeAsync();
+        _host = await TestHost.StartAsync(options => options.Limits = options.Limits with { DecisionScan = true });
+        _threadId = await _host.CreateThreadAsync(await _host.RegisterProjectAsync());
+        await ModelSeesImagesAsync(true);
+        var shot = await UploadAsync("screen.png", Png);
+
+        await SendAsync("@factory Make the top bar match the screenshot.", shot);
+        await _host.WaitForStateAsync(_threadId, LifecycleState.AwaitingHumanTesting);
+
+        var scan = _host.Workers.Turns.First(t => t.Kind == TurnKind.Scan);
+        Assert.EndsWith("-screen.png", Assert.Single(scan.Images).Path);
+        Assert.Contains("## Attachments", scan.Brief);
+        Assert.Single((await _host.ThreadAsync(_threadId)).Messages, m => m.Text.StartsWith("Gave the agent"));
+    }
+
     /// <summary>A plain question about a screenshot: chat answers in a new session, so it is given every file.</summary>
     [Fact]
     public async Task AChatAnswer_IsGivenTheThreadsFiles()

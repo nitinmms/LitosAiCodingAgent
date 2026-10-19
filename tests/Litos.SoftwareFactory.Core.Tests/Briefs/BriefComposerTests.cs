@@ -895,8 +895,8 @@ public class BriefComposerTests
         // m2.3: the spec brief; approved criteria reported on in their own words.
         // m2.4: work submitted with no change is sent back once to check its edits were written.
         // m2.5: project lessons leave the run brief for every session's system prompt.
-        // m2.6: the lesson reflection brief; m2.7: briefs carry the thread's attachments.
-        Assert.Equal("m2.7", BriefComposer.Revision);
+        // m2.6: the lesson reflection brief; m2.7: briefs carry the thread's attachments; m2.8: the scan's too.
+        Assert.Equal("m2.8", BriefComposer.Revision);
     }
 
     [Theory]
