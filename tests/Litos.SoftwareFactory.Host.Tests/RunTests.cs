@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Litos.Agent.Messages;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
@@ -440,6 +441,30 @@ public sealed class RunTests : IAsyncLifetime
         Assert.Equal(0, details.Thread.TokensReserved);
         var entry = Assert.Single(await _host.Store.ListUsageAsync(threadId, default));
         Assert.Equal(details.LatestRun!.Id, entry.RunId);
+    }
+
+    /// <summary>
+    /// An image the worker puts in a call crosses the gateway's HTTP call and reaches the provider
+    /// byte for byte (attachments-architecture.md §8, step 1): the factory's gateway had never
+    /// carried one.
+    /// </summary>
+    [Fact]
+    public async Task AnImageInAModelCall_ReachesTheProvider_Unchanged()
+    {
+        byte[] png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+        _host.Provider.EnqueueReply("I see it", new Litos.Agent.Streaming.UsageInfo(1_500, 10));
+        _host.Workers.Script.Enqueue(async call =>
+        {
+            await call.Worker.CallModelAsync(call.SessionId, new ChatMessage(Role.User, [new TextBlock("what is this?"), new ImageBlock("image/png", png)]));
+            return await _host.DefaultTurnAsync(call);
+        });
+        var (_, threadId) = await DelegatedAsync(cap: 300_000);
+
+        await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        var image = _host.Provider.Requests.First().Messages.SelectMany(m => m.Content).OfType<ImageBlock>().Single();
+        Assert.Equal("image/png", image.MediaType);
+        Assert.Equal(png, image.Data);
     }
 
     // ---- Pause and cancel ----

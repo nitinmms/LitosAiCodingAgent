@@ -58,19 +58,34 @@ public class RequestEstimatorTests
     }
 
     [Fact]
-    public void Messages_AreCountedByCompactionsRules_IncludingToolCallsResultsAndImages()
+    public void Messages_AreCountedByCompactionsRules_IncludingToolCallsAndResults()
     {
         var arguments = JsonDocument.Parse("""{"path":"a.txt"}""").RootElement.Clone(); // 16 chars
         var request = Request(
         [
             ChatMessage.Assistant([new ToolUseBlock("c1", "read_file", arguments)]),      // 9 + 16 = 25
             ChatMessage.ToolResult("c1", ToolResult.Ok(new string('r', 75))),             // 75
-            ChatMessage.User([new ImageBlock("image/png", new byte[10])]),                // fixed 4,800
         ]);
 
         var estimate = RequestEstimator.Estimate(request, baseline: null);
 
-        Assert.Equal((25 + 75 + 4_800) / 4, estimate.RawTokens);
+        Assert.Equal((25 + 75) / 4, estimate.RawTokens);
+    }
+
+    /// <summary>An image is reserved at the factory's own figure, not compaction's 1,200: the
+    /// providers reported one diagram at up to 2,322 (attachments-architecture.md §5).</summary>
+    [Fact]
+    public void Images_AreReservedAtTheFactorysImageFigure_EachBesideTheirMessagesText()
+    {
+        var request = Request(
+        [
+            new ChatMessage(Role.User, [new TextBlock(new string('t', 400)), new ImageBlock("image/png", new byte[10]), new ImageBlock("image/jpeg", new byte[10])]),
+        ]);
+
+        var estimate = RequestEstimator.Estimate(request, baseline: null);
+
+        Assert.Equal(100 + 2 * RequestEstimator.ImageTokens, estimate.RawTokens);
+        Assert.Equal(2_500, RequestEstimator.ImageTokens);
     }
 
     // ---- Output, for a provider that reports none ----

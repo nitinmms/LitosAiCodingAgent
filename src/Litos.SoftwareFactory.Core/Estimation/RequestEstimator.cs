@@ -114,7 +114,23 @@ public static class RequestEstimator
     /// </summary>
     public static long EstimateOutputTokens(ChatMessage reply) => Tokens(MessageChars(reply));
 
-    private static long MessageChars(ChatMessage message) => CompactionPlanner.EstimateChars(message);
+    /// <summary>
+    /// What one image is reserved for, in input tokens. Compaction's figure (about 1,200) is
+    /// right for deciding when to compact but low for a budget: the same 784×1,697 diagram was
+    /// reported at 822 to 2,322 tokens across the factory's providers (attachments-architecture.md
+    /// §5), so the reservation takes about the highest.
+    /// </summary>
+    public const int ImageTokens = 2_500;
+
+    private static long MessageChars(ChatMessage message)
+    {
+        var images = message.Content.Count(block => block is ImageBlock);
+        if (images == 0)
+            return CompactionPlanner.EstimateChars(message);
+
+        var withoutImages = message with { Content = [.. message.Content.Where(block => block is not ImageBlock)] };
+        return CompactionPlanner.EstimateChars(withoutImages) + (long)images * ImageTokens * CharsPerToken;
+    }
 
     private static long ToolSchemaChars(Litos.Agent.Tools.ToolSchema tool) =>
         tool.Name.Length + tool.Description.Length + tool.ParameterSchema.GetRawText().Length;

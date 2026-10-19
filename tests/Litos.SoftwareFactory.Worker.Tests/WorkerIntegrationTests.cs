@@ -185,6 +185,49 @@ public sealed class WorkerIntegrationTests : IAsyncLifetime
         Assert.IsType<ReviewSubmission>(Assert.Single(_host.Submissions).Submission);
     }
 
+    /// <summary>
+    /// A turn's images are read from the working copy and go to the model after the brief, in
+    /// the same message, through the gateway (attachments-architecture.md §4).
+    /// </summary>
+    [Fact]
+    public async Task TurnWithImages_SendsThemAfterTheBrief_ThroughTheGateway()
+    {
+        await StartWorkerAsync();
+        // In process, the worker's working copy is this process's directory.
+        var name = $"turn-image-{Guid.NewGuid():n}.png";
+        File.WriteAllBytes(name, [9, 8, 7]);
+        try
+        {
+            _host.EnqueueGateway(FakeFactoryHost.Reply("A button."));
+            using var response = await _client.PostAsJsonAsync(
+                "sessions/chat-img/turns", new FactoryTurnRequest("What is in the screenshot?", "Chat", [new TurnImage(name, "image/png")]));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            await response.Content.ReadAsStringAsync();
+
+            var user = _host.GatewayRequests.Single().ChatRequest.Messages.Last(m => m.Role == Role.User);
+            Assert.Equal("What is in the screenshot?", Assert.IsType<TextBlock>(user.Content[0]).Text);
+            var image = Assert.IsType<ImageBlock>(user.Content[1]);
+            Assert.Equal("image/png", image.MediaType);
+            Assert.Equal(new byte[] { 9, 8, 7 }, image.Data);
+        }
+        finally
+        {
+            File.Delete(name);
+        }
+    }
+
+    [Fact]
+    public async Task TurnWithAnImageOutsideTheWorkingCopy_IsRefused_AndCallsNoModel()
+    {
+        await StartWorkerAsync();
+
+        using var response = await _client.PostAsJsonAsync(
+            "sessions/chat-img/turns", new FactoryTurnRequest("Look.", "Chat", [new TurnImage("../../secret.png", "image/png")]));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(_host.GatewayRequests);
+    }
+
     /// <summary>A review turn that tries to edit gets "unknown tool", not an edit.</summary>
     [Fact]
     public async Task ReviewTurn_CannotCallAWritingTool_EvenIfTheModelAsksForOne()

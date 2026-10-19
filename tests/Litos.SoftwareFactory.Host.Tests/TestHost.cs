@@ -372,6 +372,9 @@ public sealed record TurnCall(FakeWorker Worker, string SessionId, TurnKind Kind
     /// <summary>What the host listens to for the turn's progress; a script reports through it as the real worker's stream would.</summary>
     public Action<TurnProgress>? OnProgress { get; init; }
 
+    /// <summary>The images the host gave the turn.</summary>
+    public IReadOnlyList<TurnImage> Images { get; init; } = [];
+
     public void Report(TurnProgress progress) => OnProgress?.Invoke(progress);
 }
 
@@ -432,9 +435,12 @@ public sealed class FakeWorker(WorkerLaunch launch, FakeWorkerLauncher owner) : 
     }
 
     /// <summary>Makes one model call through the host's gateway and returns the events it streamed.</summary>
-    public async Task<List<GatewayEvent>> CallModelAsync(string sessionId, string text = "hello")
+    public Task<List<GatewayEvent>> CallModelAsync(string sessionId, string text = "hello") =>
+        CallModelAsync(sessionId, ChatMessage.User(text));
+
+    public async Task<List<GatewayEvent>> CallModelAsync(string sessionId, ChatMessage message)
     {
-        var request = new GatewayRequest(Guid.NewGuid().ToString(), new ChatRequest([ChatMessage.User(text)], [], "ignored", SessionId: sessionId));
+        var request = new GatewayRequest(Guid.NewGuid().ToString(), new ChatRequest([message], [], "ignored", SessionId: sessionId));
         using var response = await _http.PostAsJsonAsync(FactoryWire.GatewayPath(launch.RunId), request, FactoryWire.Json);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync();
@@ -442,9 +448,10 @@ public sealed class FakeWorker(WorkerLaunch launch, FakeWorkerLauncher owner) : 
     }
 
     public async Task<TurnStreamResult> RunTurnAsync(
-        string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null)
+        string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null,
+        IReadOnlyList<TurnImage>? images = null)
     {
-        var call = new TurnCall(this, sessionId, kind, brief, ct) { MaxToolCalls = maxToolCalls, OnProgress = onProgress };
+        var call = new TurnCall(this, sessionId, kind, brief, ct) { MaxToolCalls = maxToolCalls, OnProgress = onProgress, Images = images ?? [] };
         owner.Turns.Enqueue(call);
         var behaviour = owner.Script.TryDequeue(out var scripted) ? scripted : owner.Default;
         return await behaviour(call);

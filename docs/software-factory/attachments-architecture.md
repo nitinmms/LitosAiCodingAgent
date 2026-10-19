@@ -69,3 +69,21 @@ Each step follows the factory rule: unit tests for every new piece and every cha
 ## 9. Not in V1
 
 Viewing an image again after compaction; attachments on a follow-up to a running task; deleting an attachment (threads are never deleted); virus scanning; storage outside the data directory; downscaling.
+
+## 10. Built
+
+### Step 1 (2026-10-19): the path
+
+`FactoryTurnRequest` and `TurnImage` (Contracts) carry a turn's images as working-copy paths; `IWorkerClient.RunTurnAsync` takes them; the worker's turn reader (`WorkerApp.ReadImageAsync`) reads each through `WorkingCopyGuard` and refuses the turn (400) for a path outside the working copy, a type no provider takes, a missing file or one over 20 MB, before anything is changed for the session. `AttachmentTypes` (Contracts) holds the VS Code agent's type rule for both sides. The gateway needed no change: `ImageBlock` crosses its HTTP call as base64 and reaches the provider byte for byte (`RunTests.AnImageInAModelCall_ReachesTheProvider_Unchanged`).
+
+**Live check** (`LiveGatewayTests.AnImage_…`, opt-in): the same question with and without `Litos-Agent-Loop.png` (784×1,697, 115 KB), through the real gateway. Every model read the diagram's title correctly.
+
+| Provider / model | Image cost (input tokens) |
+| --- | --- |
+| gemini / gemini-3.1-flash-lite | 1,078 |
+| openrouter / deepseek/deepseek-v4.1-flash | 822 — it reads images, served by InferenceNet |
+| openai / gpt-6-luna | 1,621 |
+| anthropic / claude-haiku-5-5 | 1,711 |
+| openrouter / google/gemini-2.5-flash | 2,322 |
+
+Compaction's per-image figure (4,800 characters, about 1,200 tokens) is under three of five, so the factory's estimator now reserves `RequestEstimator.ImageTokens` = 2,500 per image; the engine's constant, which the other faces use, is unchanged.

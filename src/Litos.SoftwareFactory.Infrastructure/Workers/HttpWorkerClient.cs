@@ -30,11 +30,12 @@ public sealed class HttpWorkerClient : IWorkerClient
     }
 
     public async Task<TurnStreamResult> RunTurnAsync(
-        string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null)
+        string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null,
+        IReadOnlyList<TurnImage>? images = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, TurnsPath(sessionId))
         {
-            Content = JsonContent.Create(new { input = brief, turnKind = kind.ToString() }),
+            Content = JsonContent.Create(new FactoryTurnRequest(brief, kind.ToString(), images is { Count: > 0 } ? images : null)),
         };
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
 

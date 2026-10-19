@@ -255,8 +255,11 @@ public interface IWorkerClient
 {
     /// <param name="onProgress">Told of each tool call, tool result and model reply as they
     /// stream in, for showing what the turn is doing (chat, m2-architecture.md §5).</param>
+    /// <param name="images">Images in the working copy to show the model after the brief
+    /// (attachments-architecture.md §4); the worker reads them itself.</param>
     Task<TurnStreamResult> RunTurnAsync(
-        string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null);
+        string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null,
+        IReadOnlyList<TurnImage>? images = null);
 
     /// <summary>Sends a steering message to the turn in progress.</summary>
     Task SteerAsync(string sessionId, string message, CancellationToken ct);

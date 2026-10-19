@@ -132,14 +132,42 @@ public static class WorkerApp
     /// </summary>
     private static async ValueTask<TurnInput> ReadTurnRequestAsync(HttpRequest request, CancellationToken ct)
     {
-        var turnRequest = await request.ReadFromJsonAsync<TurnRequest>(ct)
+        var turnRequest = await request.ReadFromJsonAsync<FactoryTurnRequest>(ct)
             ?? throw new BadHttpRequestException("Request body is required.");
+
+        // Read before anything is changed for the session, so a refused image leaves it untouched.
+        List<ContentBlock> content = [new TextBlock(turnRequest.Input)];
+        foreach (var image in turnRequest.Images ?? [])
+            content.Add(await ReadImageAsync(new WorkingCopyGuard(Directory.GetCurrentDirectory()), image, ct));
 
         var services = request.HttpContext.RequestServices;
         if (services.GetRequiredService<WorkerOptions>().PtcEnabled && request.RouteValues["id"] is string sessionId)
             await EnablePtcForNewSessionAsync(services.GetRequiredService<AgentWorker>(), services.GetRequiredService<ITranscriptStore>(), sessionId, ct);
 
-        return new TurnInput([new TextBlock(turnRequest.Input)], turnRequest.TurnKind);
+        return new TurnInput(content, turnRequest.TurnKind);
+    }
+
+    /// <summary>
+    /// One of the turn's images, read from the working copy (attachments-architecture.md §4). A
+    /// path outside it, a type no provider accepts or a file over the cap is the host's mistake,
+    /// and refuses the turn rather than put an image the provider cannot take into a transcript
+    /// that every later call would resend.
+    /// </summary>
+    internal static async Task<ImageBlock> ReadImageAsync(WorkingCopyGuard guard, TurnImage image, CancellationToken ct)
+    {
+        if (guard.PathRefusal(image.Path) is { } refusal)
+            throw new BadHttpRequestException(refusal);
+        if (!AttachmentTypes.IsImageMediaType(image.MediaType))
+            throw new BadHttpRequestException($"{image.MediaType} is not an image type a model accepts.");
+
+        var full = Path.GetFullPath(image.Path, guard.Root);
+        var file = new FileInfo(full);
+        if (!file.Exists)
+            throw new BadHttpRequestException($"The image {image.Path} is not in the working copy.");
+        if (file.Length > AttachmentTypes.MaxFileBytes)
+            throw new BadHttpRequestException($"The image {image.Path} is over {AttachmentTypes.MaxFileBytes / (1024 * 1024)} MB.");
+
+        return new ImageBlock(image.MediaType, await File.ReadAllBytesAsync(full, ct));
     }
 
     internal static async Task EnablePtcForNewSessionAsync(AgentWorker worker, ITranscriptStore store, string sessionId, CancellationToken ct)
