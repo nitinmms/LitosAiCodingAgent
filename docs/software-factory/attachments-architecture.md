@@ -101,3 +101,22 @@ Changed from §6: the flag is not copied to the thread. A run reads it from the 
 ### Step 4 (2026-10-19): the app
 
 The composer (`ThreadMain`, `Attachments.tsx`) has an Attach button, paste and drag-and-drop; each file uploads when added and shows as a chip with its size, or the reason it was refused (over the file limit, past the message's count, or the host's reason), and can be removed. Send waits for uploads and sends the ready files' ids. Attaching is off while answering a decision, while the task is Running, and when an Admin has turned it off (no button); a warning shows when an image is attached to a thread whose model does not read images. A sent message shows image thumbnails (from the download URL) and a chip for anything else, to save. Settings gets an Attachments tab (switch, files per message, total per task in MB). The Providers tab's allowed models get "Reads images" (Usual / Yes / No); a model allowed from the catalog takes the catalog's answer.
+
+### Step 5 (2026-10-19): the check, on the live factory
+
+Anthropic runs on `claude-haiku-5-5`, as the user asked for image testing. Files made for it: a 1280×180 PNG of a top bar ("Story Studio", a "Beta" pill, "Brief, photos, story: in three steps."), a CSV sample of form fields, and a one-page PDF of import rules; the request texts named none of what they held.
+
+| Item | Result |
+| --- | --- |
+| A UI change from a screenshot alone (insta-story-generator) | **Pass.** Accepted at 62,966 tokens (one decision, no rework). The diff has the exact title, badge and tagline, and badge colours within a few points of the image's (#d9ebf1/#1d5468 against #dcebf0/#1d5c73). Checked by running the branch in Chrome: before "Insta Story Generator"; after the screenshot's text; 166 tests passed. |
+| A feature from a CSV sample and a PDF note (forms-api) | **Pass.** Accepted at 198,591 tokens. The PDF reached the brief through MarkItDown (its line breaks ran together, every rule readable). An independent check of each rule of the note against the branch passed 11 of 11, including the note's own example error, `line 3: unknown type 'colour'`. |
+| A model that does not read images (deepseek on OpenRouter, the usual "no") | **Pass.** Told by the brief, it said it could not see the image and had the file only, and answered from the code instead. |
+| Limits | **Pass** (as Admin; the rule is the same for Members): an unknown binary refused with the VS Code agent's reason; a sixth file refused, "A message can carry at most 5 files."; five sent. |
+
+Found by the check:
+
+- **The decision scan asked what the files answer.** Given no attachments, it asked what the badge said; how the CSV was laid out, whether the import was an endpoint, and what happens to an existing id (all three in the note), and on the CSV task it assumed "Neither is in the repository". Fixed in `48b9778` (prompt m2.8): the scan's brief carries the files too. Not yet measured on a run.
+- **The review judged the CSV work without the note** (review turns get no attachments, as decided in §1), raised "The attached note is not in the brief" as blocking, and cost a repair cycle (17,457). Open: whether review should get document and text attachments, not images.
+- **Answers that said "read the attachments" did not settle the scan's remaining questions** ("none is settled yet" twice): the known over-asking re-check (m3 §13), unchanged.
+- Two reading copies left owned by Administrators by an earlier elevated host made git refuse them ("dubious ownership"); moved aside to `reading-aside-2026-10-19`, re-cloned by the factory.
+- Reflections proposed five lessons (insta L4–L5, forms-api L1–L3), left Suggested for an Admin.
