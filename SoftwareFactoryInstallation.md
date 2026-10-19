@@ -1,6 +1,6 @@
 # Litos Software Factory: installing on Windows, macOS and Linux
 
-Status: proposal, 2026-10-19. Nothing here is built yet. This evaluates whether the factory can run on all three platforms and how a simple installer would work on each, and lists the code changes needed first.
+Status: proposal, 2026-10-19, partly built: the host fixes and Windows CI are done (§11.1), and the Windows installer goes first (§14). This evaluates whether the factory can run on all three platforms and how a simple installer would work on each, and lists the code changes needed first.
 
 Decisions this plan follows (agreed 2026-10-19):
 
@@ -433,3 +433,67 @@ Record results the way the M-checks are recorded (pass/fail per item, findings).
 - **Windows on ARM**: not planned. `win-arm64` would be one more RID in the same pipeline if asked for.
 - **Toolchains under a server account** (§8) are the server admin's job. `doctor --server` lists what the service account can find.
 - **Same machine as the dev setup**: an installed factory and a source-tree dev host both default to ports 5180/5433 and the same `%LOCALAPPDATA%\LitosSoftwareFactory`. `setup` should detect an existing dev `.env.factory`/container and either adopt it (offer) or choose other ports and folders. That has to be decided before testing installers on this machine.
+
+---
+
+## 14. Windows MSI first
+
+Agreed 2026-10-19. The Windows installer comes before the other platforms, out of §11's order (which puts Linux first because it is the easiest to test in CI), because the next machine the factory goes on is a Windows one. Its design is §5; this section is what it changes for the person installing it, what it cannot do, and the order to build it in.
+
+### 14.1 Today, without an installer
+
+Setting the factory up on another Windows machine is a developer's setup from source, about 30 to 45 minutes the first time:
+
+1. Install Git, the .NET 10 SDK, Node.js 22, Python 3 (only for `new-env.py`), Docker Desktop with WSL 2, and the toolchains of the projects to be registered; `git config --global core.longpaths true`.
+2. Clone the repository and check out the factory branch.
+3. `python deploy/factory/new-env.py` writes `.env.factory` with generated passwords; the admin password is its `FACTORY_ADMIN_PASSWORD` line.
+4. `docker compose -f compose.factory-state.yml --env-file .env.factory up -d`.
+5. Build in order: the web app (`npm ci`, `npm run build`), then the host, then the worker (`dotnet build -c Release`).
+6. Run the host with `--env-file … --migrate`, then without it.
+7. Sign in, change the password, set the provider keys, the GitHub token and any MCP servers in Settings, register the projects.
+
+To carry this machine's tasks, lessons and settings across, `deploy/factory-backup.ps1` here and `deploy/factory-restore.ps1` there (checked in M4 step 7); the key ring travels in the backup, so the stored secrets stay readable.
+
+Afterwards it stays manual: nothing starts the factory after a reboot, a PATH change needs a host restart (or `FACTORY_TOOLCHAIN_PATH`), and an update is `git pull`, step 5, `--migrate` and a restart.
+
+### 14.2 What the MSI takes over
+
+| Manual step today | With the MSI |
+|---|---|
+| Install the .NET SDK, Node.js and Python | Not needed: host, worker and kernel are self-contained, the web app is prebuilt (§4.8) |
+| Clone and check out the branch | Not needed: one `.msi` download |
+| `new-env.py` | `litos-factory setup` generates `factory.env`, owner-only (§4.3 step 2) |
+| `docker compose up` | `setup`, with the shipped compose file and a fixed project name (G7) |
+| Build in the right order | Not needed: prebuilt |
+| `--migrate`, then start the host | `setup` once; every `run` and upgrade again (§4.3, §4.6) |
+| Find the admin password in a file | Shown once, and must be changed at first sign-in (`FACTORY_ADMIN_PASSWORD_ONE_TIME`, built) |
+| Start it again after a reboot | A per-user Scheduled Task at logon that waits for Docker and restarts the host after a crash (§5.3, §4.5) |
+| A PATH changed after install | Captured at setup into `FACTORY_TOOLCHAIN_PATH` (built); `litos-factory refresh-path` later |
+| Update | Run the new `.msi`: it stops the factory with dispatch paused, replaces the binaries, migrates; data stays (§4.6) |
+| Backup, restore, uninstall | `litos-factory backup`/`restore`; uninstall from Apps & Features keeps the data unless purged (§5.1) |
+
+### 14.3 What stays with the person installing it
+
+1. **Docker Desktop, once.** It needs WSL 2, admin rights, usually a reboot, and its own licence acceptance (a paid subscription in larger companies), so the MSI does not install it silently. Preflight finds it missing and offers `winget install Docker.DockerDesktop`, or Rancher Desktop as the alternative without a licence fee (§5.1).
+2. **The toolchains of their projects** (JDK and Maven, Go, Python, Node, .NET). The factory is stack-agnostic, so it cannot know which; registration already checks a project's commands and says what is missing (§4.7).
+3. **Provider keys and the GitHub token.** They are secrets, entered in Settings and stored encrypted, as today; the installer never asks for them.
+
+So a new machine becomes: install Docker Desktop once, run the MSI, sign in with the password it shows, choose a new one, enter the keys. About five minutes, with no terminal.
+
+### 14.4 Build order (Windows only)
+
+Each step lands with its unit tests, as every factory change does.
+
+1. **Publish script** (`deploy/publish-factory-windows.ps1`): host, worker and kernel self-contained for `win-x64`, single-file, into one folder, with the web app built once into `wwwroot/` beside the host and `db/compose.yml` + `init-roles.sh` (G7). Smoke-test the folder by hand on this machine with other ports, and measure its size (§13).
+2. **`litos-factory`, the Windows parts** (`src/Litos.SoftwareFactory.Setup`, §4.1): `setup` (preflight incl. G10, `factory.env` generator replacing `new-env.py` (G5), PATH from the registry, compose, migrate, Scheduled Task, wait on `/readyz`, open the browser with the one-time password), `run` (waits for Docker, supervises the host, `FACTORY_LOG_DIR` set), `start`/`stop`/`open`/`status`/`doctor`/`refresh-path`/`uninstall`. Backup and restore follow in the same CLI (G4), with the M4 step 7 live restore check before the `.ps1` scripts are retired.
+3. **The MSI, unsigned** (WiX, per-user, no UAC): installs the publish folder, Start menu entries, runs `setup --from-installer`, shows preflight's message and link when Docker is missing, runs `stop` before an upgrade and `uninstall` on removal (§5.1).
+4. **Signing**, once a Windows code-signing certificate (or Azure Trusted Signing) is bought: `signtool` on every `.exe` and the MSI (§5.4). Unsigned, the MSI works but SmartScreen warns "unknown publisher" on first run.
+5. **CI packaging**: a `package-windows` job building the MSI on a `factory-v*` tag (§10), then the winget manifest.
+
+### 14.5 Before testing on this machine
+
+This machine's dev setup already uses ports 5180 and 5433, the compose project `litosaiagent10` and `%LOCALAPPDATA%\LitosSoftwareFactory` (§13, last item). The first MSI tests run on a clean Windows machine or VM. On this machine, `setup` must either adopt the existing `.env.factory`, database and data folder (an offer, never silently) or install beside it on other ports and folders; which one is decided before step 3.
+
+### 14.6 Acceptance
+
+§12's installation check, Windows items only, on a clean Windows 11 machine with only Docker Desktop and Git: install with no terminal commands and the browser on the sign-in page within 2 minutes; a forced password change; a .NET and a Python project registered and one small task accepted with a PDF attached; the factory back on its own after a reboot; an upgrade over it with the data intact; backup, purge, reinstall, restore; a clear one-sentence message without Docker; and uninstall keeping the data.
