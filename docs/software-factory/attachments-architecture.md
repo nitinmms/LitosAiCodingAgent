@@ -134,3 +134,13 @@ User's decisions: review turns get every attachment, images too (changing §1); 
 - **Delegating answers** (`DecisionPolicy.DelegatesTheRest`): an answer such as "use your recommendations for the rest", "your call on the remaining ones" or "do not ask again" settles every question not yet asked with its recommendation, cited as left to the agent, and goes straight to implementing: no re-check turn. The thread says what is assumed. A bare "use your recommendation" still answers only its own question.
 - **The review brief lists the task's decisions** (answers and assumptions) as settled: raise a finding only where the change does not do what they say.
 - **Review turns are given the attachments**, images included, in their new session; a run reviews once, and a rework's review, a new run, gets them again.
+
+### A small task on m2.9 (2026-10-19)
+
+forms-rules, `claude-haiku-5-5`: "@factory Add a maximum length for text fields, as the form builder in the attached screenshot sets it, with the error it shows", with a builder screenshot ("Max length 200", and the preview's "Comments must be at most 200 characters (you entered 214).").
+
+- **Delegation: works.** The scan saw the image (one image block in the scan session and one in the implementation) and asked three real gaps, none the image answered. One answer, "Unicode code points. Use your recommendations for the rest.", settled the other two with no re-check turn; the thread listed the assumptions.
+- **Review: not exercised.** Risk score 0 (18 lines outside tests), so no review ran; the review brief's decisions and attachments are tested in the suites only.
+- **Result: correct.** 35 tests, 100% changed-line coverage; an independent JUnit check (4 tests) confirmed the screenshot's wording for a 214-character value, 200 allowed, code points counted (an emoji is one), and bad settings refused. The message has no closing full stop, as every message of the project; the screenshot's preview added one.
+- **Cost: 82,828** (scan 20,108, implement 52,864, reflection ~9,900), one question, no repair, no rework.
+- **Found:** the handoff's draft-PR call to GitHub timed out (GitHub was unreachable), and the task went to Blocked as a host failure: `GitHubClient` retries only `HttpRequestException`, and an `HttpClient` timeout is a `TaskCanceledException`, which also escapes the handoff's GitHub error handling. Resumed once GitHub answered; PR #5 opened with no extra tokens. Open: treat a GitHub timeout as a failure in transit (retry, then a handoff failure).
