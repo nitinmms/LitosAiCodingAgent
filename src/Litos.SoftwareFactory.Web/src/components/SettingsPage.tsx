@@ -8,9 +8,10 @@ import { ProvidersTab } from './ProvidersTab';
 import { McpTab } from './McpTab';
 import { SkillsTab } from './SkillsTab';
 import { PresetsTab } from './PresetsTab';
+import { AttachmentsTab } from './AttachmentsTab';
 import { ToolsTab } from './ToolsTab';
 
-const TAB_LABELS: Record<SettingsTab, string> = { providers: 'Providers', budgets: 'Budgets and limits', tools: 'Tools', mcp: 'MCP servers', skills: 'Skills', presets: 'Presets' };
+const TAB_LABELS: Record<SettingsTab, string> = { providers: 'Providers', budgets: 'Budgets and limits', tools: 'Tools', attachments: 'Attachments', mcp: 'MCP servers', skills: 'Skills', presets: 'Presets' };
 
 /**
  * The Admin's factory settings (blueprint §8.3, m3-architecture.md §3.4), one tab per section.
@@ -61,7 +62,7 @@ export function SettingsPage({
   };
 
   /** A section was saved: shown here at its new revision, and what members are offered may have changed. */
-  const saved = <K extends 'budgets' | 'providers' | 'tools' | 'mcp' | 'skills' | 'presets'>(key: K, section: AdminSettings[K], text: string) => {
+  const saved = <K extends 'budgets' | 'providers' | 'tools' | 'attachments' | 'mcp' | 'skills' | 'presets'>(key: K, section: AdminSettings[K], text: string) => {
     setSettings((current) => (current ? { ...current, [key]: section } : current));
     onNotice(text);
     onSaved();
@@ -143,6 +144,19 @@ export function SettingsPage({
           onNotice={onNotice}
           onReload={reload}
         />
+      ) : tab === 'attachments' ? (
+        settings.attachments ? (
+          <AttachmentsTab
+            key={`attachments-${settings.attachments.revision}`}
+            api={api}
+            section={settings.attachments}
+            // The composer is told the limits through what members see of the settings.
+            onSaved={(attachments) => saved('attachments', attachments, 'The attachment settings are saved.')}
+            onReload={reload}
+          />
+        ) : (
+          <p className="note">This host does not offer attachments yet.</p>
+        )
       ) : tab === 'tools' ? (
         <ToolsTab
           key={`tools-${settings.tools.revision}`}

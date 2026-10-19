@@ -317,3 +317,14 @@ fieldset.checks legend{padding:0;margin-bottom:4px;font-weight:600}
 .model-option[aria-selected="true"]{background:var(--petrol-soft);color:var(--petrol)}
 .model-option .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mcp-variable{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+
+/* Attachments (attachments-architecture.md §7) */
+.att-chips{list-style:none;margin:0 0 6px;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.att-chip{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:3px 8px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);font-size:.8rem;text-decoration:none;color:inherit;overflow-wrap:anywhere}
+.att-chip.uploading{opacity:.7}
+.att-chip.failed{border-color:var(--bad);background:var(--bad-soft)}
+.att-x{border:0;background:transparent;cursor:pointer;font-size:1rem;line-height:1;padding:0 2px;color:var(--muted)}
+.att-sent{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.att-thumb{display:block;max-width:180px;max-height:120px;border:1px solid var(--line);border-radius:var(--r-md);object-fit:cover}
+.compose-box.dropping{border-color:var(--petrol);border-style:dashed}
+.compose-tools{display:flex;flex-direction:column;gap:4px}

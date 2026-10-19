@@ -59,6 +59,8 @@ export interface Settings {
   /** The most instruction text a task's chosen skills may come to together. */
   maxTaskSkillChars?: number;
   promptRevision: string;
+  /** Absent from an older host: then nothing can be attached. */
+  attachments?: AttachmentLimits;
 }
 
 /** A library skill as New thread offers it: its size is the text it adds to every session's system prompt. */
@@ -177,6 +179,33 @@ export interface Message {
   decisionId: string | null;
   payload: unknown;
   createdAt: string;
+  /** The files sent with it (attachments-architecture.md §3); absent from an older host. */
+  attachments?: Attachment[];
+}
+
+export type AttachmentKind = 'Image' | 'Document' | 'Text';
+
+/** A file uploaded to a thread; it is sent once a message names it. */
+export interface Attachment {
+  id: string;
+  fileName: string;
+  mediaType: string;
+  kind: AttachmentKind;
+  sizeBytes: number;
+  uploadedAt: string;
+  /** Null until a message sends it. */
+  sentAt: string | null;
+  messageKey: string | null;
+  /** Where the file is read: an image as itself, anything else as a download. */
+  url: string;
+}
+
+/** What the composer may attach, from GET /api/settings. */
+export interface AttachmentLimits {
+  enabled: boolean;
+  maxFilesPerMessage: number;
+  maxBytesPerThread: number;
+  maxFileBytes: number;
 }
 
 export interface Decision {
@@ -517,6 +546,17 @@ export interface SecretStatus {
 export interface AllowedModel {
   id: string;
   contextLength: number;
+  /** Whether a thread on it is shown attached images; null or absent: its provider's usual. */
+  acceptsImages?: boolean | null;
+  /** On /api/settings: what that comes to for this model. */
+  seesImages?: boolean;
+}
+
+/** The Attachments tab (Core/Settings/AttachmentSettings.cs). */
+export interface AttachmentSettings {
+  enabled: boolean;
+  maxFilesPerMessage: number;
+  maxBytesPerThread: number;
 }
 
 /** One provider on the Providers tab (Core/Settings/ProviderSettings.cs). Its key is a secret. */
@@ -645,6 +685,8 @@ export interface AdminSettings {
   mcp: SettingsSection<McpSettings>;
   skills: SettingsSection<SkillSettings>;
   presets: SettingsSection<PresetSettings>;
+  /** Absent from an older host. */
+  attachments?: SettingsSection<AttachmentSettings>;
   knownProviders: KnownProvider[];
   secrets: SecretStatus[];
 }
@@ -655,6 +697,8 @@ export interface CatalogModel {
   displayName: string | null;
   contextLength: number | null;
   supportsTools: boolean | null;
+  /** Whether it reads images; only OpenRouter reports it. */
+  supportsImages?: boolean | null;
   /** US dollars per million tokens. */
   inputPricePerMillion: number | null;
   outputPricePerMillion: number | null;

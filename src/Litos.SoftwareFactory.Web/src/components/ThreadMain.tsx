@@ -19,6 +19,7 @@ import {
   stateName,
   withMention,
 } from '../domain/task';
+import { MessageAttachments, PendingFiles, usePendingFiles } from './Attachments';
 import { ErrorNote, Rail, Rich, SafeLink, TurnPill } from './bits';
 import { DecisionCard, HandoffCard, SpecCard, StopPanel } from './cards';
 import { ReflectionPanel } from './ReflectionPanel';
@@ -63,7 +64,10 @@ export function ThreadMain({
   // Renaming or re-filing a thread is its owner's, or an admin's.
   const canEdit = thread.ownerId === user.id || user.roles.includes('Admin');
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
   const end = useRef<HTMLDivElement>(null);
+  const files = usePendingFiles(api, thread.id, settings?.attachments);
+  const [dropping, setDropping] = useState(false);
   // The id sent with the current draft, kept so that sending the same text again after a
   // failure is recognised by the host as the same message.
   const sending = useRef<{ text: string; id: string } | null>(null);
@@ -134,6 +138,13 @@ export function ThreadMain({
   const requestingChanges = !answering && thread.state === 'AwaitingHumanTesting' && request !== null && !asksForSpec;
   // A rework run that has not produced its own handoff yet can be taken back.
   const reworkUnderWay = run?.kind === 'Rework' && run.status !== 'Finished' && handoff !== null;
+  // Files go with a message, not a decision's answer, and not to a task while it works: steering
+  // carries text only (attachments-architecture.md §3).
+  const attachmentsOn = settings?.attachments?.enabled === true;
+  const canAttach = attachmentsOn && !answering && acceptsText && thread.state !== 'Running';
+  // Unknown (the model is no longer offered to this person): no warning either way.
+  const seesImages = settings?.providers.find((p) => p.name === thread.provider)?.models.find((m) => m.id === thread.model)?.seesImages;
+  const filesWaiting = files.pending.length > 0;
 
   /** Runs one action against the host, then shows whatever it changed. */
   const act = async (action: () => Promise<unknown>, done?: string) => {
@@ -163,10 +174,11 @@ export function ThreadMain({
       return;
     }
 
+    if (filesWaiting && (files.uploading || !canAttach)) return;
     if (sending.current?.text !== text) sending.current = { text, id: newMessageId() };
     const { id } = sending.current;
     const sent = await act(async () => {
-      const result = await api.postMessage(thread.id, id, text);
+      const result = await api.postMessage(thread.id, id, text, files.readyIds);
       if (result.outcome === 'FollowUp') onNotice('Sent to the agent. It reads the message at its next safe point.');
       else if (result.outcome === 'Chat') onNotice('Litos is reading the code to answer. Nothing is changed.');
       else if (requestingChanges && result.outcome === 'Queued')
@@ -175,6 +187,7 @@ export function ThreadMain({
     if (sent) {
       sending.current = null;
       setDraft('');
+      files.clear();
     }
   };
 
@@ -281,6 +294,7 @@ export function ThreadMain({
               {/* The host stores a request without its leading mention, and marks a plain message. */}
               {m.kind === 'Text' && !isPlainMessage(m) ? <span className="mention">@factory </span> : null}
               <Rich text={m.text} />
+              <MessageAttachments attachments={m.attachments} />
             </div>
           </div>
         );
@@ -481,10 +495,50 @@ export function ThreadMain({
 
         {closed ? null : (
           <>
-            <div className="compose-box">
-              <button className="btn ghost" title="Delegate to the factory" onClick={startRequest} disabled={answering || !canMessage(thread.state)}>
-                <span className="mention">@factory</span>
-              </button>
+            <PendingFiles files={files.pending} onRemove={files.remove} />
+            <div
+              className={`compose-box${dropping ? ' dropping' : ''}`}
+              onDragOver={(e) => {
+                if (!canAttach || !e.dataTransfer.types.includes('Files')) return;
+                e.preventDefault();
+                setDropping(true);
+              }}
+              onDragLeave={() => setDropping(false)}
+              onDrop={(e) => {
+                setDropping(false);
+                if (!canAttach || e.dataTransfer.files.length === 0) return;
+                e.preventDefault();
+                files.add([...e.dataTransfer.files]);
+              }}
+            >
+              <span className="compose-tools">
+                <button className="btn ghost" title="Delegate to the factory" onClick={startRequest} disabled={answering || !canMessage(thread.state)}>
+                  <span className="mention">@factory</span>
+                </button>
+                {attachmentsOn ? (
+                  <>
+                    <button
+                      className="btn ghost"
+                      title={canAttach ? 'Attach images or files' : 'Files cannot be attached now'}
+                      onClick={() => picker.current?.click()}
+                      disabled={!canAttach || busy}
+                    >
+                      Attach
+                    </button>
+                    <input
+                      ref={picker}
+                      type="file"
+                      multiple
+                      hidden
+                      aria-label="Attach files"
+                      onChange={(e) => {
+                        files.add([...(e.target.files ?? [])]);
+                        e.target.value = '';
+                      }}
+                    />
+                  </>
+                ) : null}
+              </span>
               <textarea
                 id="composer"
                 ref={textarea}
@@ -504,6 +558,12 @@ export function ThreadMain({
                           : 'Resume the task before sending it anything'
                 }
                 onChange={(e) => setDraft(e.target.value)}
+                onPaste={(e) => {
+                  // A pasted screenshot is a file; pasted text stays text.
+                  if (!canAttach || e.clipboardData.files.length === 0) return;
+                  e.preventDefault();
+                  files.add([...e.clipboardData.files]);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -511,7 +571,11 @@ export function ThreadMain({
                   }
                 }}
               />
-              <button className="btn primary" onClick={() => void send()} disabled={!sendable || busy}>
+              <button
+                className="btn primary"
+                onClick={() => void send()}
+                disabled={!sendable || busy || (filesWaiting && (files.uploading || !canAttach))}
+              >
                 {answering ? 'Answer' : asksForSpec ? 'Ask for a spec' : requestingChanges ? 'Send change request' : asking && chatting ? 'Ask' : 'Send'}
               </button>
             </div>
@@ -537,6 +601,13 @@ export function ThreadMain({
                 </span>
               ) : null}
               {waitingForAnswer ? <span className="warn">Litos is still answering your last question. </span> : null}
+              {filesWaiting && thread.state === 'Running' ? (
+                <span className="warn">Files cannot be sent while the task is working. Pause it, or send them after it hands off. </span>
+              ) : null}
+              {filesWaiting && answering ? <span className="warn">Answer the decision first; files go with a message. </span> : null}
+              {files.hasImage && seesImages === false ? (
+                <span className="warn">This task&apos;s model does not read images: Litos gets the file, not what it shows. </span>
+              ) : null}
               {working ? (
                 <>Anything you send now reaches the agent at its next safe point. </>
               ) : thread.state === 'AwaitingHumanTesting' ? (

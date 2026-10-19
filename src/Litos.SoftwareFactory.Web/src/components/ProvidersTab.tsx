@@ -13,10 +13,24 @@ interface EntryForm {
   name: string;
   enabled: boolean;
   baseUrl: string;
-  models: { id: string; contextLength: string }[];
+  models: ModelForm[];
   defaultModel: string | null;
   allowEveryModel: boolean;
 }
+
+/** Whether a model is shown attached images: its provider's usual, or set (attachments-architecture.md §6). */
+type ImageChoice = 'usual' | 'yes' | 'no';
+
+interface ModelForm {
+  id: string;
+  contextLength: string;
+  images: ImageChoice;
+}
+
+const toImageChoice = (accepts: boolean | null | undefined): ImageChoice => (accepts == null ? 'usual' : accepts ? 'yes' : 'no');
+
+/** What a provider's chat models do about images when nobody says: as AllowedModel.Accepts on the host. */
+export const providerReadsImages = (provider: string): boolean => ['anthropic', 'openai', 'gemini'].includes(provider);
 
 interface ProvidersForm {
   entries: EntryForm[];
@@ -33,7 +47,7 @@ export function toProvidersForm(settings: ProviderSettings, known: KnownProvider
         name: k.name,
         enabled: entry?.enabled ?? false,
         baseUrl: entry?.baseUrl ?? '',
-        models: (entry?.models ?? []).map((m) => ({ id: m.id, contextLength: String(m.contextLength) })),
+        models: (entry?.models ?? []).map((m) => ({ id: m.id, contextLength: String(m.contextLength), images: toImageChoice(m.acceptsImages) })),
         defaultModel: entry?.defaultModel ?? null,
         allowEveryModel: entry?.allowEveryModel ?? false,
       };
@@ -58,7 +72,9 @@ export function fromProvidersForm(form: ProvidersForm, known: KnownProvider[]): 
     const models = entry.models.map((m) => {
       const cleaned = m.contextLength.replace(/[\s,_]/g, '');
       if (!/^\d+$/.test(cleaned)) problems.push(`${kind?.displayName ?? entry.name}: ${m.id}'s context length must be a whole number.`);
-      return { id: m.id, contextLength: Number(cleaned) };
+      return m.images === 'usual'
+        ? { id: m.id, contextLength: Number(cleaned) }
+        : { id: m.id, contextLength: Number(cleaned), acceptsImages: m.images === 'yes' };
     });
     providers.push({
       name: entry.name,
@@ -277,7 +293,7 @@ function ProviderCard({
   };
 
   /** Adds models to the allowed list; the first allowed becomes the default until another is chosen. */
-  const allow = (models: { id: string; contextLength: string }[]) =>
+  const allow = (models: ModelForm[]) =>
     onChange((e) => {
       const added = models.filter((m) => !e.models.some((x) => x.id === m.id));
       return { ...e, models: [...e.models, ...added], defaultModel: e.defaultModel ?? added[0]?.id ?? null };
@@ -294,7 +310,7 @@ function ProviderCard({
       setProblem('Give its context length, or look it up.');
       return;
     }
-    allow([{ id: model, contextLength: contextLength.replace(/[\s,_]/g, '') }]);
+    allow([{ id: model, contextLength: contextLength.replace(/[\s,_]/g, ''), images: 'usual' }]);
     setModelId('');
     setContextLength('');
     setProblem(null);
@@ -367,6 +383,7 @@ function ProviderCard({
                 <tr>
                   <th>Model</th>
                   <th>Context length</th>
+                  <th>Reads images</th>
                   <th>Default</th>
                   <th />
                 </tr>
@@ -395,6 +412,23 @@ function ProviderCard({
                           onChange((x) => ({ ...x, models: x.models.map((y) => (y.id === m.id ? { ...y, contextLength: e.target.value } : y)) }))
                         }
                       />
+                    </td>
+                    <td>
+                      <select
+                        className="inline-input"
+                        aria-label={`Whether ${m.id} reads images`}
+                        value={m.images}
+                        onChange={(e) =>
+                          onChange((x) => ({
+                            ...x,
+                            models: x.models.map((y) => (y.id === m.id ? { ...y, images: e.target.value as ImageChoice } : y)),
+                          }))
+                        }
+                      >
+                        <option value="usual">{providerReadsImages(entry.name) ? 'Usual (yes)' : 'Usual (no)'}</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
                     </td>
                     <td>
                       <input
@@ -435,7 +469,8 @@ function ProviderCard({
               providerName={kind.displayName}
               models={catalog.models}
               allowed={entry.models.map((m) => m.id)}
-              onAllow={(models) => allow(models.map((m) => ({ id: m.id, contextLength: String(m.contextLength) })))}
+              // What the catalog says about images is kept; where it says nothing, the provider's usual.
+              onAllow={(models) => allow(models.map((m) => ({ id: m.id, contextLength: String(m.contextLength), images: toImageChoice(m.supportsImages) })))}
               onClose={() => setPicking(false)}
             />
           ) : (

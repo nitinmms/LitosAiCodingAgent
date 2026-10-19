@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 /**
  * The tabs of the settings area, in the blueprint's order (§8.3).
  */
-export const SETTINGS_TABS = ['providers', 'budgets', 'tools', 'mcp', 'skills', 'presets'] as const;
+export const SETTINGS_TABS = ['providers', 'budgets', 'tools', 'attachments', 'mcp', 'skills', 'presets'] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 export type Route =

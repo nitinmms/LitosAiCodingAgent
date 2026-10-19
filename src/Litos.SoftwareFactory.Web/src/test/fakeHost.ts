@@ -1,6 +1,8 @@
 import { CSRF_HEADER, type Fetch } from '../api/client';
 import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
+  Attachment,
+  AttachmentSettings,
   Counters,
   FlowMetrics,
   Lesson,
@@ -214,7 +216,15 @@ export class FakeHost {
     ],
     taskTypes: ['bug', 'feature', 'refactor', 'chore'],
     promptRevision: 'm1.1',
+    attachments: { enabled: true, maxFilesPerMessage: 5, maxBytesPerThread: 50 * 1024 * 1024, maxFileBytes: 20 * 1024 * 1024 },
   };
+  /** The Attachments tab as stored; /api/settings shows people its limits. */
+  attachmentSettings: SettingsSection<AttachmentSettings> = {
+    revision: 0,
+    settings: { enabled: true, maxFilesPerMessage: 5, maxBytesPerThread: 50 * 1024 * 1024 },
+  };
+  /** Every file uploaded, sent or not, by id (Api/AttachmentsApi.cs). */
+  readonly uploads = new Map<string, Attachment>();
   /** The Budgets tab as stored (GET /api/admin/settings); /api/settings shows members its default and maximum. */
   budgets: SettingsSection<BudgetSettings> = {
     revision: 1,
@@ -329,7 +339,8 @@ export class FakeHost {
     const request: RecordedRequest = {
       method: init?.method ?? 'GET',
       path: String(input),
-      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      // An upload is a form, kept as it is; everything else is JSON.
+      body: init?.body instanceof FormData ? init.body : init?.body ? JSON.parse(String(init.body)) : undefined,
       headers: (init?.headers ?? {}) as Record<string, string>,
     };
     this.requests.push(request);
@@ -824,8 +835,47 @@ export class FakeHost {
       }
       case 'GET usage':
         return [200, this.usage.get(id) ?? []];
-      case 'POST messages':
-        return this.dispatch(id, String(data.messageId ?? ''), String(data.text ?? ''));
+      case 'POST messages': {
+        // As FactoryApi.cs: the files are sent before the message, and taken back if it is refused.
+        const ids = Array.isArray(data.attachmentIds) ? (data.attachmentIds as string[]) : [];
+        const messageId = String(data.messageId ?? '');
+        if (ids.length > this.settings.attachments!.maxFilesPerMessage)
+          return [400, { error: `A message can carry at most ${this.settings.attachments!.maxFilesPerMessage} files.` }];
+        if (ids.length && state === 'Running')
+          return [409, { error: 'Files cannot be sent to a task while it is working. Pause it first, or send them once it hands off.' }];
+        const files = ids.map((f) => this.uploads.get(f));
+        if (files.some((f) => !f)) return [409, { error: 'One of the files is not attached to this thread. Attach it again.' }];
+        const before = details.messages.length;
+        const result = this.dispatch(id, messageId, String(data.text ?? ''));
+        if (result[0] < 300 && ids.length) {
+          const sent = files.map((f) => ({ ...f!, sentAt: NOW, messageKey: messageId }));
+          sent.forEach((f) => this.uploads.set(f.id, f));
+          const message = details.messages.slice(before).find((m) => m.author === 'User');
+          if (message) message.attachments = sent;
+        }
+        return result;
+      }
+      case 'POST attachments': {
+        if (!this.settings.attachments?.enabled) return [403, { error: 'An Admin has turned attachments off.' }];
+        const file = (body instanceof FormData ? body.get('file') : null) as File | null;
+        if (!file) return [400, { error: 'Send the file as multipart/form-data, in a field named file.' }];
+        if (file.name.endsWith('.exe')) return [400, { error: `'${file.name}' is a binary file with no known document format — not attachable.` }];
+        const image = /\.(png|jpe?g|gif|webp)$/i.test(file.name);
+        const upload: Attachment = {
+          id: this.nextId('att'),
+          fileName: file.name,
+          mediaType: image ? 'image/png' : 'text/plain',
+          kind: image ? 'Image' : 'Text',
+          sizeBytes: file.size,
+          uploadedAt: NOW,
+          sentAt: null,
+          messageKey: null,
+          url: '',
+        };
+        upload.url = `/api/attachments/${upload.id}`;
+        this.uploads.set(upload.id, upload);
+        return [201, upload];
+      }
       case 'POST skills': {
         // As FactoryApi.cs and TaskSkillSelection.ChangeNote: library skills only, and a note saying when it applies.
         const options = this.settings.skills ?? [];
@@ -989,8 +1039,23 @@ export class FakeHost {
     if (path === '/api/admin/settings' && method === 'GET')
       return [
         200,
-        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, mcp: this.mcp, skills: this.skills, presets: this.presetSettings, knownProviders: this.knownProviders, secrets: this.secrets },
+        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, attachments: this.attachmentSettings, mcp: this.mcp, skills: this.skills, presets: this.presetSettings, knownProviders: this.knownProviders, secrets: this.secrets },
       ];
+    if (path === '/api/admin/settings/attachments' && method === 'PUT') {
+      if (data.revision !== this.attachmentSettings.revision)
+        return [409, { error: 'The attachment settings were changed by someone else. Reload them and make your change again.' }];
+      const attachments = data.settings as AttachmentSettings;
+      // As AttachmentSettings.Validate.
+      const errors: string[] = [];
+      if (attachments.maxFilesPerMessage < 1 || attachments.maxFilesPerMessage > 20) errors.push('Files per message must be between 1 and 20.');
+      if (attachments.maxBytesPerThread < 20 * 1024 * 1024 || attachments.maxBytesPerThread > 1024 * 1024 * 1024)
+        errors.push('The total per thread must be between 20 MB and 1024 MB.');
+      if (errors.length) return [400, { error: errors.join(' '), errors }];
+
+      this.attachmentSettings = { revision: this.attachmentSettings.revision + 1, settings: attachments };
+      this.settings = { ...this.settings, attachments: { ...this.settings.attachments!, ...attachments } };
+      return [200, this.attachmentSettings];
+    }
     if (path === '/api/admin/settings/mcp' && method === 'PUT') {
       if (data.revision !== this.mcp.revision)
         return [409, { error: 'The mcp settings were changed by someone else. Reload them and make your change again.' }];

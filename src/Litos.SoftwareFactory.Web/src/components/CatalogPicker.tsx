@@ -27,7 +27,7 @@ export function CatalogPicker({
   models: CatalogModel[];
   /** Ids already allowed: hidden by default, and never added twice. */
   allowed: string[];
-  onAllow: (models: { id: string; contextLength: number }[]) => void;
+  onAllow: (models: { id: string; contextLength: number; supportsImages?: boolean | null }[]) => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState('');
@@ -147,7 +147,7 @@ export function CatalogPicker({
           type="button"
           disabled={chosen.length === 0}
           onClick={() => {
-            onAllow(chosen.map((m) => ({ id: m.id, contextLength: m.contextLength! })));
+            onAllow(chosen.map((m) => ({ id: m.id, contextLength: m.contextLength!, supportsImages: m.supportsImages })));
             setTicked(new Set());
           }}
         >

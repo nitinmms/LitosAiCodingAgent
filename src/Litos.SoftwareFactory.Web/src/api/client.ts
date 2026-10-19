@@ -1,6 +1,8 @@
 import type {
   AccountRole,
   AdminSettings,
+  Attachment,
+  AttachmentSettings,
   BudgetSettings,
   CreatedInvitation,
   CreateInvitation,
@@ -94,7 +96,10 @@ export interface FactoryApi {
   createThread(request: CreateThread): Promise<Thread>;
   thread(id: string): Promise<ThreadDetails>;
   usage(id: string): Promise<UsageCall[]>;
-  postMessage(id: string, messageId: string, text: string): Promise<DispatchResult>;
+  /** Sends a message; attachmentIds are files already uploaded to the thread, sent with it. */
+  postMessage(id: string, messageId: string, text: string, attachmentIds?: string[]): Promise<DispatchResult>;
+  /** Uploads one file to the thread, unsent until a message names it. */
+  uploadAttachment(threadId: string, file: File): Promise<Attachment>;
   /** Approves the specification revision the person read; a newer one makes this a 409. */
   approveSpec(id: string, revision: number): Promise<SpecStatus>;
   setBudget(id: string, cap: number | null): Promise<Thread>;
@@ -154,6 +159,7 @@ export interface FactoryApi {
   saveBudgets(revision: number, settings: BudgetSettings): Promise<SettingsSection<BudgetSettings>>;
   saveProviders(revision: number, settings: ProviderSettings): Promise<SettingsSection<ProviderSettings>>;
   saveTools(revision: number, settings: ToolSettings): Promise<SettingsSection<ToolSettings>>;
+  saveAttachments(revision: number, settings: AttachmentSettings): Promise<SettingsSection<AttachmentSettings>>;
   saveMcp(revision: number, settings: McpSettings): Promise<SettingsSection<McpSettings>>;
   /** Starts the server as described, with the secrets set for it, and lists its tools. */
   testMcp(server: McpServerSettings): Promise<McpTestResult>;
@@ -189,7 +195,9 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
   async function request<T>(method: string, path: string, body?: unknown, quiet401 = false): Promise<{ json: T; headers?: Headers }> {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (method !== 'GET') headers[CSRF_HEADER] = '1';
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    // A form sets its own multipart content type, with its boundary.
+    const form = typeof FormData !== 'undefined' && body instanceof FormData;
+    if (body !== undefined && !form) headers['Content-Type'] = 'application/json';
 
     let response: Response;
     try {
@@ -197,7 +205,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
         method,
         headers,
         credentials: 'same-origin',
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined ? undefined : form ? (body as FormData) : JSON.stringify(body),
       });
     } catch {
       throw new ApiError(0, 'The factory host could not be reached. Check that it is running.');
@@ -250,7 +258,13 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     createThread: (request) => send<Thread>('POST', '/api/threads', request),
     thread: (id) => send<ThreadDetails>('GET', thread(id)),
     usage: (id) => send<UsageCall[]>('GET', `${thread(id)}/usage`),
-    postMessage: (id, messageId, text) => send<DispatchResult>('POST', `${thread(id)}/messages`, { messageId, text }),
+    postMessage: (id, messageId, text, attachmentIds) =>
+      send<DispatchResult>('POST', `${thread(id)}/messages`, attachmentIds?.length ? { messageId, text, attachmentIds } : { messageId, text }),
+    uploadAttachment: (threadId, file) => {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      return send<Attachment>('POST', `${thread(threadId)}/attachments`, form);
+    },
     approveSpec: (id, revision) => send<SpecStatus>('POST', `${thread(id)}/spec/${revision}/approve`),
     setBudget: (id, cap) => send<Thread>('POST', `${thread(id)}/budget`, { cap }),
     setThreadSkills: (id, skills) => send<Thread>('POST', `${thread(id)}/skills`, { skills }),
@@ -303,6 +317,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
       send<SettingsSection<BudgetSettings>>('PUT', '/api/admin/settings/budgets', { revision, settings }),
     saveProviders: (revision, settings) =>
       send<SettingsSection<ProviderSettings>>('PUT', '/api/admin/settings/providers', { revision, settings }),
+    saveAttachments: (revision, settings) =>
+      send<SettingsSection<AttachmentSettings>>('PUT', '/api/admin/settings/attachments', { revision, settings }),
     saveTools: (revision, settings) =>
       send<SettingsSection<ToolSettings>>('PUT', '/api/admin/settings/tools', { revision, settings }),
     saveMcp: (revision, settings) =>
