@@ -89,6 +89,7 @@ jobs:
 
       # Only what the factory's suites use: the solution also holds the desktop and VS Code apps.
       - name: Build
+        id: build
         shell: pwsh
         run: |
           foreach ($project in 'Core', 'Infrastructure', 'Worker', 'Host') {
@@ -97,23 +98,44 @@ jobs:
           }
 
       - name: Core tests
+        # Every suite runs even when an earlier one failed, so one run shows every failure.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet test tests/Litos.SoftwareFactory.Core.Tests -c Release --no-build --logger "trx;LogFileName=core.trx" --results-directory test-results
 
       - name: Infrastructure tests (with PostgreSQL)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet test tests/Litos.SoftwareFactory.Infrastructure.Tests -c Release --no-build --logger "trx;LogFileName=infrastructure.trx" --results-directory test-results
 
       - name: Worker tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet test tests/Litos.SoftwareFactory.Worker.Tests -c Release --no-build --logger "trx;LogFileName=worker.trx" --results-directory test-results
 
       - name: Host tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet test tests/Litos.SoftwareFactory.Host.Tests -c Release --no-build --logger "trx;LogFileName=host.trx" --results-directory test-results
 
       - name: Web app (typecheck and tests)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         working-directory: src/Litos.SoftwareFactory.Web
         run: |
           npm ci
           npm run typecheck
           npm test
+
+      # Each failed test as an annotation on the run, which anyone can read; the result files
+      # below need a signed-in download.
+      - name: Report failed tests
+        if: failure()
+        shell: pwsh
+        run: |
+          foreach ($file in Get-ChildItem test-results -Filter *.trx -ErrorAction SilentlyContinue) {
+            [xml]$trx = Get-Content $file.FullName
+            foreach ($result in $trx.TestRun.Results.UnitTestResult | Where-Object { $_.outcome -eq 'Failed' }) {
+              $message = ($result.Output.ErrorInfo.Message + ' ' + $result.Output.ErrorInfo.StackTrace) -replace '\s+', ' '
+              if ($message.Length -gt 900) { $message = $message.Substring(0, 900) }
+              Write-Output "::error title=$($file.BaseName): $($result.testName)::$message"
+            }
+          }
 
       - name: Keep the test results
         if: always()
