@@ -37,7 +37,7 @@ public sealed record ScanDecisions(IReadOnlyList<OpenChoice> Ask, IReadOnlyList<
 /// than reminding the working agent to ask. So the scan lists the choices, and this rule, not the
 /// agent, decides which are asked.
 /// </summary>
-public static class DecisionPolicy
+public static partial class DecisionPolicy
 {
     /// <summary>
     /// A choice is asked when it is in an always-ask category, nothing in the request, the code or
@@ -125,6 +125,31 @@ public static class DecisionPolicy
 
         return (still, settled);
     }
+
+    /// <summary>
+    /// Whether an answer hands the questions not yet asked to the agent: "use your recommendation
+    /// for the rest", "your call on the remaining ones", "do not ask again". On three tasks of the
+    /// attachments check such an answer was followed by "none is settled yet" and another
+    /// question, because the re-check looks for an answer that settles each question by its
+    /// content. A bare "use your recommendation" answers only the question it was given to.
+    /// </summary>
+    public static bool DelegatesTheRest(string answer) => !string.IsNullOrWhiteSpace(answer) && DelegationPattern().IsMatch(answer);
+
+    [System.Text.RegularExpressions.GeneratedRegex(
+        @"\b(do not|don'?t|dont)\s+ask\s+(me\s+)?(again|any\s*more|more|further)\b"
+        + @"|\bno\s+(more|further)\s+questions\b"
+        + @"|\b(recommendations?|judge?ments?|call|defaults?)\b.{0,40}?\b(the\s+rest|the\s+remaining|remaining|any\s+(other|remaining|further)|the\s+others|everything\s+else|all\s+(the\s+)?others)\b"
+        + @"|\b(the\s+rest|the\s+remaining|remaining\s+(open\s+)?(ones|choices|questions)|other\s+(open\s+)?(choices|questions)|everything\s+else)\b.{0,40}?\b(your\s+(own\s+)?(recommendations?|judge?ment|call)|you\s+decide|up\s+to\s+you)\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline)]
+    private static partial System.Text.RegularExpressions.Regex DelegationPattern();
+
+    /// <summary>What an assumption settled by a delegating answer cites.</summary>
+    public const string DelegatedBasis = "you left the remaining choices to the agent's recommendation";
+
+    /// <summary>The thread's line when an answer settles the questions not yet asked.</summary>
+    public static string DescribeDelegated(IReadOnlyList<OpenChoice> settled) =>
+        $"You left the remaining {(settled.Count == 1 ? "choice" : $"{settled.Count} choices")} to the agent, so nothing more is asked. Assuming:\n"
+        + string.Join("\n", settled.Select(c => "- " + Assumption(c with { SettledBy = null })));
 
     /// <summary>The line the thread shows after a re-check.</summary>
     public static string DescribeRecheck(int settled, int stillAsk) => (settled, stillAsk) switch

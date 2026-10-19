@@ -353,6 +353,34 @@ public class BriefComposerTests
         Assert.DoesNotContain("{{", brief);
     }
 
+    /// <summary>
+    /// The reviewer is told what the task decided: on the spec task of the attachments check,
+    /// both open findings questioned choices a person had already made.
+    /// </summary>
+    [Theory]
+    [InlineData(ReviewDepth.Light)]
+    [InlineData(ReviewDepth.Full)]
+    public void ReviewBriefs_ListTheTasksDecisionsAndAssumptions_AsSettled(ReviewDepth depth)
+    {
+        var state = State() with
+        {
+            Decisions = [new AnsweredDecision("What happens to an id over 10 characters?", "Cut it to 10 characters.")],
+            Assumptions = ["Round how: half away from zero"],
+        };
+
+        var brief = Compose(BriefKind.Review, state, Context with { Diff = "+x", ChangedLineCount = 1, ReviewDepth = depth }, kind: TurnKind.Review);
+
+        Assert.Contains("## Decisions made for this task", brief);
+        Assert.Contains("Do not raise them as findings", brief);
+        Assert.Contains("- What happens to an id over 10 characters? Answer: Cut it to 10 characters.", brief);
+        Assert.Contains("- Assumed: Round how: half away from zero", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void AReviewWithNothingDecided_HasNoDecisionsSection() =>
+        Assert.DoesNotContain("Decisions made for this task", Compose(BriefKind.Review, State(), Context with { Diff = "+x", ChangedLineCount = 1 }, kind: TurnKind.Review));
+
     [Fact]
     public void ALightReview_UsesItsOwnBrief_ThatForbidsReadingAndRunning()
     {
@@ -895,8 +923,8 @@ public class BriefComposerTests
         // m2.3: the spec brief; approved criteria reported on in their own words.
         // m2.4: work submitted with no change is sent back once to check its edits were written.
         // m2.5: project lessons leave the run brief for every session's system prompt.
-        // m2.6: the lesson reflection brief; m2.7: briefs carry the thread's attachments; m2.8: the scan's too.
-        Assert.Equal("m2.8", BriefComposer.Revision);
+        // m2.6: the lesson reflection brief; m2.7: briefs carry the thread's attachments; m2.8: the scan's too; m2.9: review sees decisions and attachments.
+        Assert.Equal("m2.9", BriefComposer.Revision);
     }
 
     [Theory]

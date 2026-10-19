@@ -20,6 +20,8 @@ If the change cannot be judged from this brief alone, report that as a `blocking
 
 {{specification}}
 
+{{decisions}}
+
 ## Verification result
 
 {{verification}}

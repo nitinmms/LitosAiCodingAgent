@@ -40,6 +40,28 @@ public sealed class DecisionScanRunTests : IAsyncLifetime
         return threadId;
     }
 
+    /// <summary>
+    /// "Use your recommendations for the rest" settles the questions not yet asked: no re-check
+    /// turn, no second question, and the thread says what is assumed.
+    /// </summary>
+    [Fact]
+    public async Task AnAnswerLeavingTheRestToTheAgent_AsksNothingMore_AndSaysWhatItAssumes()
+    {
+        ScanFinds(FormatChoice(), FormatChoice() with { Question = "What happens to version-2 files?" });
+        var threadId = await DelegatedAsync();
+        var waiting = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingDecision);
+
+        await _host.PostAsync($"api/decisions/{Assert.Single(waiting.Decisions).Id}/answer",
+            new { answer = "Keep reading them. Use your recommendations for the rest." }, HttpStatusCode.OK);
+        var done = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.Equal([TurnKind.Scan, TurnKind.Implement, TurnKind.Review], _host.Workers.Turns.Select(t => t.Kind));
+        Assert.Single(done.Decisions);
+        Assert.Contains(done.Messages, m => m.Text ==
+            "You left the remaining choice to the agent, so nothing more is asked. Assuming:\n- What happens to version-2 files: Keep reading them");
+        Assert.Contains("you left the remaining choices to the agent's recommendation", _host.Workers.Turns.Single(t => t.Kind == TurnKind.Implement).Brief);
+    }
+
     [Fact]
     public async Task AScanThatFindsAChoiceForAPerson_AsksIt_ThenImplementsWithTheAnswerAndThePlan()
     {

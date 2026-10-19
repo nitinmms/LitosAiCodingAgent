@@ -98,8 +98,9 @@ public static partial class BriefComposer
     /// m2.5: project lessons leave the run brief for every session's system prompt;
     /// m2.6: the lesson reflection brief;
     /// m2.7: run, rework, spec and chat briefs carry the thread's attachments;
-    /// m2.8: so does the decision scan's).</summary>
-    public const string Revision = "m2.8";
+    /// m2.8: so does the decision scan's;
+    /// m2.9: the review brief lists the task's decisions, and review turns get the attachments).</summary>
+    public const string Revision = "m2.9";
 
     private const int CharsPerToken = 4;
 
@@ -333,6 +334,7 @@ public static partial class BriefComposer
             ["baseBranch"] = context.BaseBranch,
             ["request"] = context.Request.Trim(),
             ["specification"] = Specification(context),
+            ["decisions"] = DecisionsForReview(state),
             ["verification"] = VerificationResult(state),
             ["claims"] = Claims(state.LastSubmission),
             ["change"] = change,
@@ -450,6 +452,30 @@ public static partial class BriefComposer
         {
             text.AppendLine("Choices the request leaves open that this task proceeds on (keep to them; the tester sees them in the handoff):").AppendLine();
             text.AppendLine(Bullets(state.Assumptions));
+        }
+
+        return text.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// What the task decided, for the reviewer: a person's answers and the choices the run
+    /// proceeded on. Without them, on the attachments check, both open findings of a review
+    /// questioned choices a person had already made.
+    /// </summary>
+    private static string DecisionsForReview(RunState state)
+    {
+        if (state.Decisions.Count == 0 && state.Assumptions.Count == 0)
+            return "";
+
+        var text = new StringBuilder("## Decisions made for this task\n\n");
+        text.AppendLine("These were decided by a person, or assumed from the request, before the work. Do not raise them as findings; raise a finding only where the change does not do what they say.").AppendLine();
+        if (state.Decisions.Count > 0)
+            text.AppendLine(Bullets(state.Decisions.Select(d => $"{d.Question.Trim()} Answer: {d.Answer.Trim()}")));
+        if (state.Assumptions.Count > 0)
+        {
+            if (state.Decisions.Count > 0)
+                text.AppendLine();
+            text.AppendLine(Bullets(state.Assumptions.Select(a => $"Assumed: {a}")));
         }
 
         return text.ToString().TrimEnd();

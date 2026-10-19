@@ -126,3 +126,11 @@ Found by the check:
 forms-export, `claude-haiku-5-5`: "@factory spec Add a fixed-width export for the ledger, as the attached layout document describes", with a Word layout document (the rules, in a table) and the exact expected output for its example. The `.docx` reached the spec turn through MarkItDown, and the specification's 12 criteria matched the document point for point, including byte-for-byte equality with the sample (spec 20,128). Approved, then built: accepted at 165,955 (scan 29,250, implement 87,555, light review 18,015, reflection 11,007), draft PR #3. Independently checked: the document's example equals the attached sample byte for byte, and the answered decisions hold (ids cut to 10, half-away-from-zero rounding, too large or negative numbers are errors naming submission and field, repeating forms refused).
 
 First run on m2.8: the scan, now given the files, asked only real gaps in the document (an id over 10 characters, more than two decimals or too large a number), none the files answered. The re-check still did not take "use your recommendations for the rest" as settling the remaining question (asked one more); the review raised two minor findings on choices already made as decisions, so it does not see a thread's decisions either.
+
+### Decision fixes (2026-10-19, prompt m2.9)
+
+User's decisions: review turns get every attachment, images too (changing §1); an answer that leaves the rest to the agent settles the remaining questions; the reviewer sees the task's decisions.
+
+- **Delegating answers** (`DecisionPolicy.DelegatesTheRest`): an answer such as "use your recommendations for the rest", "your call on the remaining ones" or "do not ask again" settles every question not yet asked with its recommendation, cited as left to the agent, and goes straight to implementing: no re-check turn. The thread says what is assumed. A bare "use your recommendation" still answers only its own question.
+- **The review brief lists the task's decisions** (answers and assumptions) as settled: raise a finding only where the change does not do what they say.
+- **Review turns are given the attachments**, images included, in their new session; a run reviews once, and a rework's review, a new run, gets them again.

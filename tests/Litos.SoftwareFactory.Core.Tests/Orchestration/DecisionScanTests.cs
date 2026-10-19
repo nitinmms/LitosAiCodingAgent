@@ -112,6 +112,38 @@ public class DecisionPolicyTests
     }
 }
 
+public class DelegationTests
+{
+    /// <summary>The answers given on the attachments check and the spec task, and the ways people say it.</summary>
+    [Theory]
+    [InlineData("Cut it to 10 characters. For the other open choices, use your recommendations.", true)]
+    [InlineData("Use your own recommendation for any remaining choice; do not ask again.", true)]
+    [InlineData("Round to two decimals. Don't ask again.", true)]
+    [InlineData("Your call on the remaining ones.", true)]
+    [InlineData("Use your judgement for everything else.", true)]
+    [InlineData("The rest is up to you.", true)]
+    [InlineData("No more questions, please.", true)]
+    [InlineData("Use your recommendation.", false)]
+    [InlineData("Use your recommendation: a static label, exactly as the attached screenshot shows it.", false)]
+    [InlineData("HTTP endpoint, as the attached note says. The note and sample answer the rest.", false)]
+    [InlineData("Keep reading them.", false)]
+    [InlineData("", false)]
+    public void DelegatesTheRest_OnlyWhenTheAnswerHandsOverTheRemainingChoices(string answer, bool expected) =>
+        Assert.Equal(expected, DecisionPolicy.DelegatesTheRest(answer));
+
+    [Fact]
+    public void TheThreadIsToldWhatIsAssumed_OneLineEach()
+    {
+        var note = DecisionPolicy.DescribeDelegated(
+        [
+            new OpenChoice("Which status code?", ChoiceCategories.Other, ["409", "422"], "422"),
+            new OpenChoice("Round how?", ChoiceCategories.Other, ["Half up", "Banker's"], "Half up"),
+        ]);
+
+        Assert.Equal("You left the remaining 2 choices to the agent, so nothing more is asked. Assuming:\n- Which status code: 422\n- Round how: Half up", note);
+    }
+}
+
 public class DecisionScanRunTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 10, 5, 9, 0, 0, TimeSpan.Zero);
@@ -224,6 +256,33 @@ public class DecisionScanRunTests
         Assert.False(run.State.Rechecking);
         Assert.Empty(run.State.PendingQuestions);
         Assert.Contains(run.State.Assumptions, a => a.StartsWith("Is a partial response kept: Keep reading them") && a.Contains("nothing partial is shown"));
+    }
+
+    /// <summary>
+    /// An answer that hands the rest to the agent settles every question not yet asked, with its
+    /// recommendation, and needs no re-check: on three tasks of the attachments check the
+    /// re-check found "none settled" after such an answer and asked again.
+    /// </summary>
+    [Fact]
+    public void AnAnswerThatLeavesTheRestToTheAgent_SettlesEveryRemainingQuestion_WithoutARecheck()
+    {
+        var run = new Run();
+        run.Started();
+        run.Scanned(Asked("What does the user see?"), Asked("Is a partial response kept?"), Asked("Which status code?"));
+
+        Assert.IsType<PreflightStep>(run.Report(new DecisionAnswered("A message. Use your recommendations for the rest.")));
+        var next = run.Report(new PreflightCompleted(true));
+
+        Assert.Equal(new StartTurnStep(TurnKind.Implement, BriefKind.Run), next);
+        Assert.Empty(run.State.PendingQuestions);
+        Assert.False(run.State.Rechecking);
+        Assert.Equal(1, run.State.DecisionsAsked);
+        Assert.Equal(
+            [
+                $"Is a partial response kept: Keep reading them ({DecisionPolicy.DelegatedBasis})",
+                $"Which status code: Keep reading them ({DecisionPolicy.DelegatedBasis})",
+            ],
+            run.State.Assumptions);
     }
 
     [Fact]

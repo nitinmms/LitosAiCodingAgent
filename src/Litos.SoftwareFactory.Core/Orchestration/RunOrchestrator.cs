@@ -143,6 +143,15 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         if (state.WorkTurn != TurnKind.Scan)
             return Preflight(answered, new StartTurnStep(state.WorkTurn, BriefKind.DecisionAnswer));
 
+        // A question the scan raised, answered by handing the rest to the agent: nothing more is
+        // asked, and no re-check is needed to find that out.
+        if (answered.PendingQuestions.Count > 0 && DecisionPolicy.DelegatesTheRest(answer.Answer))
+            return Preflight(answered with
+            {
+                PendingQuestions = [],
+                Assumptions = [.. answered.Assumptions, .. answered.PendingQuestions.Select(q => DecisionPolicy.Assumption(q with { SettledBy = DecisionPolicy.DelegatedBasis }))],
+            }, new StartTurnStep(TurnKind.Implement, BriefKind.Run));
+
         // A question the scan raised. While questions remain, the scan session first checks
         // whether the answers so far settle them: on R2, R3 and its re-run a queued question
         // repeated one a person had just answered. Otherwise ask the next, or implement.

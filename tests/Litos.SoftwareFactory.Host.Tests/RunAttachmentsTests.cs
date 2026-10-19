@@ -78,14 +78,30 @@ public sealed class RunAttachmentsTests : IAsyncLifetime
         var workspace = _host.Workers.WorkspaceOf(implement.Worker);
         Assert.Equal(Png, await File.ReadAllBytesAsync(Path.Combine(workspace.Path, image.Path)));
 
-        // Review judges the diff: no files.
-        Assert.All(_host.Workers.Turns.Where(t => t.Kind == TurnKind.Review), review =>
-        {
-            Assert.Empty(review.Images);
-            Assert.DoesNotContain("## Attachments", review.Brief);
-        });
+        // The review judges the work against the files too (user's decision 2026-10-19), images included.
+        var review = _host.Workers.Turns.First(t => t.Kind == TurnKind.Review);
+        Assert.EndsWith("-screen.png", Assert.Single(review.Images).Path);
+        Assert.Contains("<attachment name=\"orders.csv\"", review.Brief);
         var messages = (await _host.ThreadAsync(_threadId)).Messages;
         Assert.Contains(messages, m => m.Text == "Gave the agent 2 attached files: screen.png, orders.csv.");
+    }
+
+    /// <summary>A rework is a new run, reviewed in a new session: its review is given the files again.</summary>
+    [Fact]
+    public async Task AReworksReview_IsGivenTheFilesAgain_InItsNewSession()
+    {
+        await ModelSeesImagesAsync(true);
+        var shot = await UploadAsync("screen.png", Png);
+        await SendAsync("@factory Fix the label in the screenshot.", shot);
+        await _host.WaitForStateAsync(_threadId, LifecycleState.AwaitingHumanTesting);
+
+        await SendAsync("@factory The label is still cut off.");
+        await _host.WaitForStateAsync(_threadId, LifecycleState.AwaitingHumanTesting);
+
+        var reviews = _host.Workers.Turns.Where(t => t.Kind == TurnKind.Review).ToList();
+        Assert.Equal(2, reviews.Count);
+        Assert.NotEqual(reviews[0].SessionId, reviews[1].SessionId);
+        Assert.All(reviews, r => Assert.EndsWith("-screen.png", Assert.Single(r.Images).Path));
     }
 
     [Fact]

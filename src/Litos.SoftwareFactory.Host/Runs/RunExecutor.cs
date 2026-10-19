@@ -77,8 +77,12 @@ public sealed class RunExecutor(
             var context = new RunData(claimed, workspaces.For(project), VerificationProfile.Parse(project.VerificationProfileJson), limits);
             while (true)
             {
+                var pending = state.PendingQuestions;
                 var transition = orchestrator.Next(state, outcome, clock.UtcNow);
                 state = transition.State;
+                if (outcome is DecisionAnswered { Answer: var answer } && pending.Count > 0 && state.PendingQuestions.Count == 0
+                    && !state.Rechecking && DecisionPolicy.DelegatesTheRest(answer))
+                    await NoteAsync(context, DecisionPolicy.DescribeDelegated(pending));
 
                 if (transition.Step is StopStep stop)
                 {
@@ -259,24 +263,26 @@ public sealed class RunExecutor(
     // ---- Attachments ----
 
     /// <summary>
-    /// The thread's files, for the first brief of an implementation or a rework, and for the
-    /// decision scan before it (attachments-architecture.md §4): the sessions keep them after
-    /// that, and review, repair and reminder turns judge or continue the work. The scan is given
-    /// them because they are part of the request: on the attachments check, without them it asked
-    /// what a screenshot's badge said and how a CSV was laid out, both answered by the files. A
-    /// rework shows again only what was sent since the last handoff, with the change request; the
-    /// rest is listed by path. The scan's session is new each run, so it gets everything.
+    /// The thread's files, for the first brief of an implementation or a rework, for the decision
+    /// scan before it, and for the review (attachments-architecture.md §4): the sessions keep them
+    /// after that, and repair and reminder turns continue the work. The scan is given them because
+    /// they are part of the request: on the attachments check, without them it asked what a
+    /// screenshot's badge said and how a CSV was laid out. The review is given them so it judges
+    /// the work against them: without the note it called a correct CSV import incomplete, and a
+    /// repair cycle was spent (user's decision 2026-10-19: every attachment, images too). A
+    /// rework shows again only what was sent since the last handoff; the scan's and the review's
+    /// sessions are new each run, so they get everything (a run reviews once: RunOrchestrator).
     /// </summary>
     private async Task<TurnAttachments> GiveAttachmentsAsync(RunData data, StartTurnStep step, CancellationToken ct)
     {
-        if (step.Brief is not (BriefKind.Run or BriefKind.Rework or BriefKind.Scan))
+        if (step.Brief is not (BriefKind.Run or BriefKind.Rework or BriefKind.Scan or BriefKind.Review))
             return TurnAttachments.None;
 
         var newSince = step.Brief == BriefKind.Rework ? (await store.GetThreadAsync(data.Thread.Id, ct))?.LatestHandoff?.CreatedAt : null;
-        var given = await attachments.PrepareAsync(data.Thread, data.Workspace.Path, newSince, ct);
-        if (given.Files.Count > 0 && step.Brief != BriefKind.Scan)
-            await NoteAsync(data, RunAttachments.Describe(given));
-        return given;
+        var attached = await attachments.PrepareAsync(data.Thread, data.Workspace.Path, newSince, ct);
+        if (attached.Files.Count > 0 && step.Brief is BriefKind.Run or BriefKind.Rework)
+            await NoteAsync(data, RunAttachments.Describe(attached));
+        return attached;
     }
 
     // ---- Preflight ----
