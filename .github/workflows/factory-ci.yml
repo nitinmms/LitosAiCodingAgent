@@ -1,0 +1,124 @@
+name: Software Factory CI
+
+# The software factory's test suites on every push and pull request that touches it
+# (SoftwareFactoryInstallation.md §10, step 1 of §11). Windows first; macOS and Linux jobs
+# follow once the suites pass there. No packaging here: release-factory.yml will do that.
+on:
+  push:
+    branches: [master, litos-software-factory-v1]
+    paths:
+      - "src/Litos.SoftwareFactory.**"
+      - "tests/Litos.SoftwareFactory.**"
+      - "src/Litos.Agent/**"
+      - "src/Litos.Host/**"
+      - "src/Litos.Hosting/**"
+      - "src/Litos.Kernel*/**"
+      - "src/Litos.Persistence/**"
+      - "src/Litos.Providers.*/**"
+      - "src/Litos.Tools*/**"
+      - ".github/workflows/factory-ci.yml"
+  pull_request:
+    paths:
+      - "src/Litos.SoftwareFactory.**"
+      - "tests/Litos.SoftwareFactory.**"
+      - "src/Litos.Agent/**"
+      - "src/Litos.Host/**"
+      - "src/Litos.Hosting/**"
+      - "src/Litos.Kernel*/**"
+      - "src/Litos.Persistence/**"
+      - "src/Litos.Providers.*/**"
+      - "src/Litos.Tools*/**"
+      - ".github/workflows/factory-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+      # The store, migration and lock tests run against the PostgreSQL the runner has installed:
+      # its superuser creates and drops each test database, as factory_admin does locally.
+      FACTORY_TEST_DB: "Host=127.0.0.1;Port=5432;Database=postgres;Username=postgres;Password=root"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/Litos.SoftwareFactory.Web/package-lock.json
+
+      - name: Start PostgreSQL
+        shell: pwsh
+        run: |
+          $service = Get-Service -Name 'postgresql*' | Select-Object -First 1
+          Set-Service -InputObject $service -StartupType Manual
+          Start-Service -InputObject $service
+          & "$env:PGBIN\pg_isready.exe" -h 127.0.0.1 -p 5432 -t 60
+          & "$env:PGBIN\psql.exe" --version
+
+      # The tests run the real git (working copies), and the preset tests the real Python, Java and
+      # Go toolchains, which the image has: they say so here, so a skipped test is explained.
+      - name: Toolchains
+        shell: pwsh
+        run: |
+          git --version
+          python --version
+          java -version
+          mvn --version
+          go version
+
+      # Tests that make commits in a working copy need an identity; the runner has none.
+      - name: Git identity
+        run: |
+          git config --global user.name "Factory CI"
+          git config --global user.email "factory-ci@litos.invalid"
+
+      # Only what the factory's suites use: the solution also holds the desktop and VS Code apps.
+      - name: Build
+        shell: pwsh
+        run: |
+          foreach ($project in 'Core', 'Infrastructure', 'Worker', 'Host') {
+            dotnet build "tests/Litos.SoftwareFactory.$project.Tests" -c Release
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Core tests
+        run: dotnet test tests/Litos.SoftwareFactory.Core.Tests -c Release --no-build --logger "trx;LogFileName=core.trx" --results-directory test-results
+
+      - name: Infrastructure tests (with PostgreSQL)
+        run: dotnet test tests/Litos.SoftwareFactory.Infrastructure.Tests -c Release --no-build --logger "trx;LogFileName=infrastructure.trx" --results-directory test-results
+
+      - name: Worker tests
+        run: dotnet test tests/Litos.SoftwareFactory.Worker.Tests -c Release --no-build --logger "trx;LogFileName=worker.trx" --results-directory test-results
+
+      - name: Host tests
+        run: dotnet test tests/Litos.SoftwareFactory.Host.Tests -c Release --no-build --logger "trx;LogFileName=host.trx" --results-directory test-results
+
+      - name: Web app (typecheck and tests)
+        working-directory: src/Litos.SoftwareFactory.Web
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+
+      - name: Keep the test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-test-results-windows
+          path: test-results/
+          if-no-files-found: ignore
