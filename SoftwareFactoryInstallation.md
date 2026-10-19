@@ -392,6 +392,8 @@ Secrets needed in CI: `APPLE_SIGN_IDENTITY`, `APPLE_INSTALLER_IDENTITY`, `APPLE_
 
 ### 11.1 Built
 
+**Step 1, CI, Windows part (2026-10-19).** `.github/workflows/factory-ci.yml`, job `test-windows` on `windows-latest`: builds the four factory test projects (not the whole solution), runs Core, Infrastructure (against the runner's preinstalled PostgreSQL, superuser `postgres`), Worker and Host, then the web app's typecheck and vitest; every suite runs even after one fails, and each failed test is written as a public annotation. Java 21 is set up (the Java preset's sample compiles for 21). Green on run #4, about 16 minutes. Its first run found that the branch did not build: `.gitignore`'s Visual Studio `Backup*/` rule had kept `Infrastructure/Backup/FactoryBackup.cs` and its tests out of git since M4 step 7 (fixed in `cf47523`). macOS and Linux jobs are still to come.
+
 **Step 2, host fixes (2026-10-19).**
 
 - **G2:** the host's content root is its binary's folder (`FactoryOptions.ContentRoot` overrides it, for tests), and the build copies `wwwroot` there, as publishing does. A started-from-anywhere host serves the app. In the source tree, rebuild the host after `npm run build` so the new app is copied beside it.
