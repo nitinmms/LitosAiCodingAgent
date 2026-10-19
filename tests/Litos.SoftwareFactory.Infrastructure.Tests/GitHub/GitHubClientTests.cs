@@ -145,6 +145,50 @@ public class GitHubClientTests
         Assert.Single(handler.Requests);
     }
 
+    private static (GitHubClient Client, FakeHttpMessageHandler Handler) CreateTimingOut()
+    {
+        var handler = new FakeHttpMessageHandler();
+        var http = GitHubClient.CreateHttpClient("ghp_token", handler);
+        http.Timeout = TimeSpan.FromMilliseconds(100);
+        return (new GitHubClient(http) { RetryDelay = TimeSpan.FromMilliseconds(1) }, handler);
+    }
+
+    /// <summary>
+    /// A request GitHub never answers ends in HttpClient's timeout, which is a
+    /// TaskCanceledException, not an HttpRequestException. While GitHub was unreachable it was
+    /// not retried, and it escaped the handoff, so a finished task went to Blocked.
+    /// </summary>
+    [Fact]
+    public async Task ARequestThatTimesOut_IsTriedAgain_AndSucceeds()
+    {
+        var (client, handler) = CreateTimingOut();
+        handler.EnqueueNoAnswer();
+        handler.Enqueue(HttpStatusCode.OK, """{"number":3,"state":"open","draft":true,"merged":false}""");
+
+        Assert.Equal(PullRequestState.Draft, await client.GetPullRequestStateAsync("acme", "salesapp", 3, default));
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    /// <summary>Every attempt timing out is a failure in transit, which the handoff reports as "could not be opened".</summary>
+    [Fact]
+    public async Task ARequestThatKeepsTimingOut_IsReportedAsAFailureInTransit()
+    {
+        var (client, handler) = CreateTimingOut();
+        handler.EnqueueNoAnswer();
+        handler.EnqueueNoAnswer();
+        handler.EnqueueNoAnswer();
+
+        var failure = await Assert.ThrowsAsync<HttpRequestException>(() => client.CreateOrUpdateDraftPullRequestAsync(Draft, default));
+
+        Assert.Equal("GitHub did not answer within 0 seconds, 3 times.", failure.Message);
+        Assert.IsType<TaskCanceledException>(failure.InnerException);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public void TheClient_WaitsThirtySecondsForGitHub_NotHttpClientsHundred() =>
+        Assert.Equal(TimeSpan.FromSeconds(30), GitHubClient.CreateHttpClient("ghp_token").Timeout);
+
     [Fact]
     public async Task ACancelledRequest_IsNotRetried()
     {

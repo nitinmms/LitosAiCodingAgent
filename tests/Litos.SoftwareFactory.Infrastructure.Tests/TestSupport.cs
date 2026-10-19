@@ -79,6 +79,9 @@ public sealed class FakeHttpMessageHandler : HttpMessageHandler
 
     public void EnqueueFailure() => _responses.Enqueue(() => throw new HttpRequestException("Simulated connection failure."));
 
+    /// <summary>A request that is never answered: the HttpClient's own timeout ends it.</summary>
+    public void EnqueueNoAnswer() => _responses.Enqueue(() => null!);
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
@@ -88,7 +91,10 @@ public sealed class FakeHttpMessageHandler : HttpMessageHandler
 
         if (_responses.Count == 0)
             throw new InvalidOperationException($"No response queued for {request.Method} {request.RequestUri}.");
-        return _responses.Dequeue()();
+        if (_responses.Dequeue()() is { } response)
+            return response;
+        await Task.Delay(Timeout.Infinite, ct);
+        throw new InvalidOperationException("Unreachable: the request is cancelled.");
     }
 }
 

@@ -58,12 +58,18 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         });
         client.BaseAddress = new Uri("https://api.github.com/");
+        // GitHub answers in seconds. At HttpClient's default of 100 s, three attempts held a
+        // handoff for five minutes while GitHub was unreachable.
+        client.Timeout = RequestTimeout;
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
         client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("litos-software-factory", "1.0"));
         return client;
     }
+
+    /// <summary>How long one request to GitHub may take.</summary>
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>How many times a request that failed in transit is tried in all.</summary>
     public int Attempts { get; init; } = 3;
@@ -77,6 +83,12 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
     /// nothing, and create-or-update looks the pull request up first, so a create that did reach
     /// GitHub is found and updated rather than created twice. A refusal from GitHub (a status
     /// code) is an answer, and is never retried.
+    ///
+    /// A request that timed out got no answer either, but HttpClient reports it as a
+    /// TaskCanceledException, not an HttpRequestException: it was not retried, and it escaped
+    /// the handoff's GitHub handling, so a task whose work was done went to Blocked as a host
+    /// failure while GitHub was unreachable. It is retried here, and when every attempt times
+    /// out it is reported as the failure in transit it is. A cancellation by the caller is not.
     /// </summary>
     private async Task<T> WithRetryAsync<T>(Func<Task<T>> operation, CancellationToken ct)
     {
@@ -86,12 +98,19 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
             {
                 return await operation();
             }
-            catch (HttpRequestException) when (attempt < Attempts)
+            catch (Exception ex) when (attempt < Attempts && FailedInTransit(ex, ct))
             {
                 await Task.Delay(RetryDelay * attempt, ct);
             }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                throw new HttpRequestException($"GitHub did not answer within {http.Timeout.TotalSeconds:0} seconds, {Attempts} times.", ex);
+            }
         }
     }
+
+    private static bool FailedInTransit(Exception ex, CancellationToken ct) =>
+        ex is HttpRequestException || (ex is TaskCanceledException && !ct.IsCancellationRequested);
 
     public Task<PullRequestRef> CreateOrUpdateDraftPullRequestAsync(PullRequestDraft draft, CancellationToken ct) =>
         WithRetryAsync(() => CreateOrUpdateOnceAsync(draft, ct), ct);
