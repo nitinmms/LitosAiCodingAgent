@@ -373,6 +373,13 @@ export interface UsageCall {
   reserved: number;
   actualInput: number;
   actualCachedInput: number;
+  /** What the gateway expected the provider's cache to serve, and what it read from it. */
+  expectedCachedInput: number;
+  actualCacheRead: number;
+  /** Tokens charged above what the call would have cost had the cache served what was expected; 0 when it was not a cache miss. */
+  cacheMissTokens: number;
+  /** A router's upstream, or the provider itself; null until settled. */
+  servedBy: string | null;
   actualOutput: number;
   actualReasoning: number;
   charged: number;

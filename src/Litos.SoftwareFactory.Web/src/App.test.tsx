@@ -546,6 +546,36 @@ describe('live updates', () => {
     expect(budget.getByText('Call 5 · other')).toBeInTheDocument();
   });
 
+  /** The provider's cache misses, told apart from the factory's own cost (m4-architecture.md §9.2). */
+  it('totals the cache misses, and marks each missed call with the upstream that served it', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Running', stage: 'Implement' });
+    host.addCall(thread.id, { servedBy: 'InferenceNet' });
+    host.addCall(thread.id, { servedBy: 'InferenceNet', cacheMissTokens: 30_995 });
+    host.addCall(thread.id, { servedBy: 'Sail Research', cacheMissTokens: 20_000 });
+    start(host);
+
+    const budget = within(await screen.findByRole('region', { name: 'Budget' }));
+    expect(await budget.findByLabelText('Cache misses')).toHaveTextContent(
+      "Cache misses: 2 calls, about 50,995 tokens more than had the provider's cache served them.",
+    );
+    expect(budget.getAllByText('cache miss')).toHaveLength(2);
+    expect(budget.getByText('· Sail Research')).toBeInTheDocument();
+  });
+
+  it('says nothing about the cache when no call missed it', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    const thread = host.addThread(project, { state: 'Running', stage: 'Implement' });
+    host.addCall(thread.id, { phase: 'Implement' });
+    start(host);
+
+    const budget = within(await screen.findByRole('region', { name: 'Budget' }));
+    await budget.findByText('Call 1 · implement');
+    expect(budget.queryByLabelText('Cache misses')).not.toBeInTheDocument();
+  });
+
   it('shows no phase totals before any work has been charged', async () => {
     const host = new FakeHost();
     const project = host.addProject();

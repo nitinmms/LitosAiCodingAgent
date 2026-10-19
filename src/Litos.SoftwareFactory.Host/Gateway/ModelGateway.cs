@@ -140,7 +140,7 @@ public sealed class ModelGateway(
             string? brokenBecause;
             try
             {
-                brokenBecause = await SendAsync(provider, sent, estimate, calibration, requestKey, run, sessionKey, call, write, ct);
+                brokenBecause = await SendAsync(provider, sent, admitted.LimitedBy, estimate, calibration, requestKey, run, sessionKey, call, write, ct);
             }
             catch (OperationCanceledException)
             {
@@ -194,8 +194,9 @@ public sealed class ModelGateway(
     /// null when the call ended (completed, or with an error already written), or why it broke
     /// part-way, when nothing has been written and the call can be sent again.
     /// </summary>
+    /// <param name="limitedBy">What cut the call's output limit below the allowance, if anything.</param>
     private async Task<string?> SendAsync(
-        IChatProvider provider, ChatRequest chat, RequestEstimate estimate, CalibrationWindow calibration, string requestKey,
+        IChatProvider provider, ChatRequest chat, RefusalReason? limitedBy, RequestEstimate estimate, CalibrationWindow calibration, string requestKey,
         ActiveRun run, string sessionKey, CallState call, Func<GatewayEvent, Task> write, CancellationToken ct)
     {
         var nothingProducedRetries = 0;
@@ -238,6 +239,18 @@ public sealed class ModelGateway(
                         // its completion tool when the model never got to answer.
                         if (CutOffBeforeReplying(completed, chat.MaxOutputTokens))
                         {
+                            // A limit the budget cut short is the budget running out, not the
+                            // model: resuming as-is would be cut short again, so it pauses for
+                            // budget. On the M4 check a quota-shortened call was Blocked instead.
+                            if (limitedBy is { } reason)
+                            {
+                                var message = BudgetCutOffMessage(reason, completed.Usage, chat.MaxOutputTokens!.Value);
+                                run.RefuseForBudget(message);
+                                await write(new GatewayError(
+                                    reason == RefusalReason.UserQuota ? GatewayErrorCodes.QuotaExhausted : GatewayErrorCodes.BudgetExhausted, message));
+                                return null;
+                            }
+
                             await write(new GatewayError(GatewayErrorCodes.ProviderError, CutOffMessage(completed.Usage, chat.MaxOutputTokens!.Value)));
                             return null;
                         }
@@ -330,6 +343,16 @@ public sealed class ModelGateway(
         string.Create(CultureInfo.InvariantCulture, $"{CutOffPrefix} of {maxOutputTokens:N0} tokens without producing a reply")
         + (usage.ReasoningTokens > 0 ? string.Create(CultureInfo.InvariantCulture, $" ({usage.ReasoningTokens:N0} of them were reasoning)") : "")
         + ". Nothing was lost; resuming tries the step again.";
+
+    /// <summary>What a call whose output the budget cut short, and that produced no reply, is called in the thread.</summary>
+    internal static string BudgetCutOffMessage(RefusalReason limitedBy, UsageInfo usage, int maxOutputTokens) =>
+        string.Create(CultureInfo.InvariantCulture, $"The model spent the {maxOutputTokens:N0} output tokens ")
+        + (limitedBy == RefusalReason.UserQuota ? "your quota had left" : "the task's budget had left")
+        + (usage.ReasoningTokens > 0 ? " on reasoning" : "")
+        + " without producing a reply. "
+        + (limitedBy == RefusalReason.UserQuota
+            ? "Raise the quota, or wait for it to reset, then resume."
+            : "Raise the task's budget, then resume.");
 
     internal static string RefusalMessage(Refused refused) => refused.Reason == RefusalReason.UserQuota
         ? string.Create(CultureInfo.InvariantCulture, $"The next model call needs about {refused.Needed:N0} tokens, but your quota has {refused.Remaining:N0} left.")

@@ -273,6 +273,15 @@ public sealed class UsageEntry
     public long Reserved { get; set; }
     public long ActualInput { get; set; }
     public long ActualCachedInput { get; set; }
+
+    /// <summary>
+    /// The input the gateway expected the provider's cache to serve when it reserved the call
+    /// (SessionBaseline.ExpectedCachedTokens), and what the cache did serve: ActualCachedInput
+    /// also counts tokens written to the cache, which would hide a miss on Anthropic. Together
+    /// they show a cache miss (UsageCacheMiss). Zero on calls made before they were recorded.
+    /// </summary>
+    public long ExpectedCachedInput { get; set; }
+    public long ActualCacheRead { get; set; }
     public long ActualOutput { get; set; }
     public long ActualReasoning { get; set; }
 

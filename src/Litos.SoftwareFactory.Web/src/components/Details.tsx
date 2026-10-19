@@ -149,6 +149,7 @@ export function Details({
         {usage.length ? (
           <>
             <PhaseSummary calls={usage} />
+            <CacheMissSummary calls={usage} />
             <h3>Recent model calls</h3>
             <div className="ledger">
               {usage
@@ -159,6 +160,8 @@ export function Details({
                   <div key={call.id}>
                     <span>
                       Call {n} · {phaseName(call.phase)}
+                      {call.servedBy && call.servedBy !== thread.provider ? <span className="muted"> · {call.servedBy}</span> : null}
+                      {call.cacheMissTokens > 0 ? <span className="pill you"> cache miss</span> : null}
                     </span>
                     <span className="num">
                       up to {fmt(call.reserved)},{' '}
@@ -355,6 +358,24 @@ function CapabilityRows({ capabilities }: { capabilities: RunCapabilities }) {
 }
 
 /** Where the task's tokens went: the work against its review (ReadMe_CodeVerifyOptimisations.md §11). */
+/** Calls the provider's cache was expected to serve and did not, and what they cost above a hit. */
+export function cacheMisses(calls: UsageCall[]): { calls: number; tokens: number } {
+  const missed = calls.filter((c) => c.cacheMissTokens > 0);
+  return { calls: missed.length, tokens: missed.reduce((sum, c) => sum + c.cacheMissTokens, 0) };
+}
+
+/** Shown only when there was a miss: it is the provider's cost, not the factory's own. */
+function CacheMissSummary({ calls }: { calls: UsageCall[] }) {
+  const misses = cacheMisses(calls);
+  if (misses.calls === 0) return null;
+  return (
+    <p className="small muted num" aria-label="Cache misses">
+      Cache misses: {fmt(misses.calls)} {misses.calls === 1 ? 'call' : 'calls'}, about {fmt(misses.tokens)} tokens more than
+      had the provider's cache served them.
+    </p>
+  );
+}
+
 function PhaseSummary({ calls }: { calls: UsageCall[] }) {
   const totals = phaseTotals(calls);
   if (totals.implementation === 0 && totals.review === 0) return null;

@@ -343,6 +343,26 @@ public sealed class GatewayTests : IAsyncLifetime
         Assert.Equal("AtlasCloud", await _host.Store.LastServedByAsync(_threadId, default));
     }
 
+    /// <summary>
+    /// A call the gateway expected the cache to serve, that came back uncached, is recorded as a
+    /// miss; the first call, which nothing was expected of, is not (m4-architecture.md §9.2).
+    /// </summary>
+    [Fact]
+    public async Task ACallThatMissedAProvenCache_IsRecordedAsAMiss()
+    {
+        await StartRunAsync(cap: 500_000);
+        _host.Provider.EnqueueReply("first", new UsageInfo(1_000, 300, 0, 14_000));
+        _host.Provider.EnqueueReply("second", new UsageInfo(15_500, 300));
+
+        await CallAsync(Request());
+        await CallAsync(Request(more: [ChatMessage.Assistant([new TextBlock("first")]), ChatMessage.User("go on")]));
+
+        var entries = await _host.Store.ListUsageAsync(_threadId, default);
+        Assert.False(UsageCacheMiss.IsMiss(entries[0]));
+        Assert.Equal((15_000L, 0L), (entries[1].ExpectedCachedInput, entries[1].ActualCacheRead));
+        Assert.True(UsageCacheMiss.IsMiss(entries[1]));
+    }
+
     /// <summary>A direct provider reports no upstream of its own; nothing is asked for.</summary>
     [Fact]
     public async Task AProviderThatDoesNotRoute_IsNeverAskedForAnUpstream()
@@ -404,10 +424,13 @@ public sealed class GatewayTests : IAsyncLifetime
         Assert.Empty(_host.Provider.Requests);
     }
 
-    /// <summary>A reply cut off by a limit the budget imposed says so in the same way: the
-    /// message names the limit the call was actually sent with.</summary>
+    /// <summary>
+    /// A reply cut off by a limit the task's budget imposed is the budget running out: the run
+    /// pauses for budget, naming it, instead of being blocked with an output-limit failure that
+    /// resuming cannot fix (m4-architecture.md §9.2). The call is still charged.
+    /// </summary>
     [Fact]
-    public async Task ReplyCutOffAtALimitTheBudgetImposed_NamesThatLimit()
+    public async Task ReplyCutOffAtALimitTheTaskBudgetImposed_IsABudgetRefusal()
     {
         _host.Options.Budget = _host.Options.Budget with { MinimumOutputTokens = 1_000 };
         await StartRunAsync(cap: 18_500);
@@ -415,7 +438,44 @@ public sealed class GatewayTests : IAsyncLifetime
 
         var error = Assert.IsType<GatewayError>(Assert.Single(await CallAsync(Request())));
 
-        Assert.StartsWith("The model reached the output limit of 2,000 tokens without producing a reply", error.Message);
+        Assert.Equal(GatewayErrorCodes.BudgetExhausted, error.Code);
+        Assert.Equal(
+            "The model spent the 2,000 output tokens the task's budget had left on reasoning without producing a reply. Raise the task's budget, then resume.",
+            error.Message);
+        Assert.Equal(error.Message, _run.BudgetRefusal);
+        Assert.Equal(UsageStatus.Settled, (await OnlyEntryAsync()).Status);
+    }
+
+    /// <summary>The M4 check's case: the quota, not the task, had 5,042 left for the output.</summary>
+    [Fact]
+    public async Task ReplyCutOffAtALimitTheQuotaImposed_IsAQuotaRefusal()
+    {
+        _host.Options.Budget = _host.Options.Budget with { MinimumOutputTokens = 1_000 };
+        await StartRunAsync(cap: 1_000_000);
+        await SetBudgetsAsync(b => b with { DailyUserQuota = 18_500 });
+        _host.Provider.Enqueue((_, _) => ScriptedProvider.Events(Completed(new UsageInfo(15_000, 2_000))));
+
+        var error = Assert.IsType<GatewayError>(Assert.Single(await CallAsync(Request())));
+
+        Assert.Equal(GatewayErrorCodes.QuotaExhausted, error.Code);
+        Assert.Equal(
+            "The model spent the 2,000 output tokens your quota had left without producing a reply. Raise the quota, or wait for it to reset, then resume.",
+            error.Message);
+        Assert.Equal(error.Message, _run.BudgetRefusal);
+    }
+
+    /// <summary>A shortened call that did reply is passed on as usual: only an empty one is the budget's.</summary>
+    [Fact]
+    public async Task ReplyAtALimitTheBudgetImposed_ThatDidProduceSomething_IsPassedOn()
+    {
+        _host.Options.Budget = _host.Options.Budget with { MinimumOutputTokens = 1_000 };
+        await StartRunAsync(cap: 18_500);
+        _host.Provider.EnqueueReply("a short answer", new UsageInfo(15_000, 2_000));
+
+        var events = await CallAsync(Request());
+
+        Assert.IsType<GatewayMessageCompleted>(events[^1]);
+        Assert.Null(_run.BudgetRefusal);
     }
 
     [Fact]

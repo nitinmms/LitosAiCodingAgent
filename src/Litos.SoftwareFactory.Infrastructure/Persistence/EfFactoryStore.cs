@@ -1241,6 +1241,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             EstimatedInputRaw = command.EstimatedInputRaw,
             Phase = command.Phase,
             EstimatedInput = command.EstimatedInput,
+            ExpectedCachedInput = command.ExpectedCachedInput,
             Reserved = admitted.Reserved,
             CreatedAt = now,
         });
@@ -1269,6 +1270,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         entry.Status = UsageStatus.Settled;
         entry.ActualInput = usage.TotalInputTokens;
         entry.ActualCachedInput = usage.CacheCreationInputTokens + usage.CacheReadInputTokens;
+        entry.ActualCacheRead = usage.CacheReadInputTokens;
         entry.ActualOutput = usage.OutputTokens;
         entry.ActualReasoning = usage.ReasoningTokens;
         entry.ServedBy = usage.ServedBy is { Length: > 0 } servedBy ? servedBy[..Math.Min(servedBy.Length, 100)] : entry.Provider;

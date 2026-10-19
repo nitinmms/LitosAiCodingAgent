@@ -1079,6 +1079,9 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<long>("ActualCacheRead")
+                        .HasColumnType("bigint");
+
                     b.Property<long>("ActualCachedInput")
                         .HasColumnType("bigint");
 
@@ -1101,6 +1104,9 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint");
 
                     b.Property<long>("EstimatedInputRaw")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ExpectedCachedInput")
                         .HasColumnType("bigint");
 
                     b.Property<string>("Model")

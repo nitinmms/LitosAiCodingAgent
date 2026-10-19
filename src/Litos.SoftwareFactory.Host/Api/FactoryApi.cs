@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
+using Litos.SoftwareFactory.Core.Budget;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
@@ -362,7 +363,7 @@ public static class FactoryApi
         });
 
         // The task's model calls, oldest first: what each reserved and what it was charged (§9).
-        threadRoutes.MapGet("/usage", async (Guid id, IFactoryStore store, CancellationToken ct) =>
+        threadRoutes.MapGet("/usage", async (Guid id, IFactoryStore store, FactoryOptions options, CancellationToken ct) =>
         {
             if (await store.GetThreadAsync(id, ct) is null)
                 return Results.NotFound();
@@ -376,6 +377,13 @@ public static class FactoryApi
                 u.Reserved,
                 u.ActualInput,
                 u.ActualCachedInput,
+                u.ExpectedCachedInput,
+                u.ActualCacheRead,
+                // Tokens charged above what the call would have cost had the cache served what was
+                // expected; zero when it was not a cache miss.
+                CacheMissTokens = UsageCacheMiss.ExtraTokens(u, options.Budget.CachedInputWeight),
+                // A router's upstream, or the provider itself.
+                u.ServedBy,
                 u.ActualOutput,
                 u.ActualReasoning,
                 u.Charged,

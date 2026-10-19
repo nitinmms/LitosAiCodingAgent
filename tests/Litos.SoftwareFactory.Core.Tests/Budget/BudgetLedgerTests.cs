@@ -73,6 +73,7 @@ public class BudgetLedgerTests
 
         Assert.Equal(32_768, admitted.MaxOutputTokens);
         Assert.Equal(11_000 + 32_768, admitted.Reserved);
+        Assert.Null(admitted.LimitedBy);
     }
 
     /// <summary>The call does not need room for the whole output allowance: it is sent with its
@@ -87,6 +88,7 @@ public class BudgetLedgerTests
         Assert.Equal(9_000, admitted.MaxOutputTokens);     // 20,000 left less 11,000 for the input
         Assert.Equal(20_000, admitted.Reserved);           // everything that remains, and no more
         Assert.Equal(0, BudgetLedger.Reserve(budget, admitted.Reserved).TaskRemaining);
+        Assert.Equal(RefusalReason.TaskBudget, admitted.LimitedBy);
     }
 
     [Fact]
@@ -111,6 +113,20 @@ public class BudgetLedgerTests
 
         Assert.Equal(14_000, admitted.MaxOutputTokens); // the quota has 25,000 left
         Assert.Equal(25_000, admitted.Reserved);
+        Assert.Equal(RefusalReason.UserQuota, admitted.LimitedBy);
+    }
+
+    /// <summary>Both limits cut the output: the tighter is named, and on a tie the task's budget,
+    /// as a refusal names it.</summary>
+    [Theory]
+    [InlineData(280_000, 990_000, RefusalReason.UserQuota)] // task 20,000 left, quota 10,000
+    [InlineData(290_000, 975_000, RefusalReason.TaskBudget)] // task 10,000 left, quota 25,000
+    [InlineData(280_000, 980_000, RefusalReason.TaskBudget)] // both 20,000 left
+    public void Admit_BothLimitsCutTheOutput_TheTighterIsNamed(long taskUsed, long quotaUsed, RefusalReason expected)
+    {
+        var budget = new BudgetSnapshot(300_000, taskUsed, 0, QuotaCap: 1_000_000, QuotaUsed: quotaUsed);
+
+        Assert.Equal(expected, Assert.IsType<Admitted>(BudgetLedger.Admit(budget, 5_000, Real)).LimitedBy);
     }
 
     [Fact]
@@ -119,6 +135,7 @@ public class BudgetLedgerTests
         var admitted = Assert.IsType<Admitted>(BudgetLedger.Admit(new BudgetSnapshot(null, 9_000_000, 0), 10_000, Real));
 
         Assert.Equal(32_768, admitted.MaxOutputTokens);
+        Assert.Null(admitted.LimitedBy);
     }
 
     /// <summary>The first real run's call 83: 23,500 estimated, 22,800 of it expected from the

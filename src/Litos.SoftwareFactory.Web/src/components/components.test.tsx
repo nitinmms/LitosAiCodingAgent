@@ -5,7 +5,7 @@ import type { LifecycleState, Stage } from '../api/types';
 import { App } from '../App';
 import { FakeHost, turnOf } from '../test/fakeHost';
 import { blocks, Rail, Rich, SafeLink } from './bits';
-import { phaseName, phaseTotals } from './Details';
+import { cacheMisses, phaseName, phaseTotals } from './Details';
 
 describe('the stage rail', () => {
   const stations = () =>
@@ -203,5 +203,11 @@ describe('model call phases', () => {
 
     const call = (phase: string, charged: number) => ({ phase, charged }) as Parameters<typeof phaseTotals>[0][number];
     expect(phaseTotals([call('Scan', 30), call('Implement', 100), call('Review', 40)])).toEqual({ implementation: 100, review: 40, other: 30 });
+  });
+
+  it('counts only the calls that missed the cache', () => {
+    const call = (cacheMissTokens: number) => ({ cacheMissTokens }) as Parameters<typeof cacheMisses>[0][number];
+    expect(cacheMisses([call(0), call(31_000), call(0), call(9_000)])).toEqual({ calls: 2, tokens: 40_000 });
+    expect(cacheMisses([])).toEqual({ calls: 0, tokens: 0 });
   });
 });

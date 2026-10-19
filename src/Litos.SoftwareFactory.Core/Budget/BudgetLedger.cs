@@ -57,8 +57,9 @@ public enum RefusalReason
 public abstract record AdmissionDecision;
 
 /// <summary>The call may be sent, with the provider's output limit set to MaxOutputTokens so
-/// the response cannot exceed the reservation.</summary>
-public sealed record Admitted(long Reserved, int MaxOutputTokens) : AdmissionDecision;
+/// the response cannot exceed the reservation. LimitedBy names what cut that limit below the
+/// output allowance — the task's budget or the user's quota — and is null when nothing did.</summary>
+public sealed record Admitted(long Reserved, int MaxOutputTokens, RefusalReason? LimitedBy = null) : AdmissionDecision;
 
 /// <summary>The call must not be sent: it does not fit. Nothing has been spent.</summary>
 public sealed record Refused(RefusalReason Reason, long Needed, long Remaining) : AdmissionDecision;
@@ -163,13 +164,15 @@ public static class BudgetLedger
         if (budget.QuotaRemaining is { } quotaRemaining && needed > quotaRemaining)
             return new Refused(RefusalReason.UserQuota, needed, quotaRemaining);
 
+        // The tighter of the two sets the limit; on a tie the task's budget is named, as above.
         long output = policy.OutputAllowanceTokens;
-        if (budget.TaskRemaining is { } task)
-            output = Math.Min(output, task - input);
-        if (budget.QuotaRemaining is { } quota)
-            output = Math.Min(output, quota - input);
+        RefusalReason? limitedBy = null;
+        if (budget.TaskRemaining is { } task && task - input < output)
+            (output, limitedBy) = (task - input, RefusalReason.TaskBudget);
+        if (budget.QuotaRemaining is { } quota && quota - input < output)
+            (output, limitedBy) = (quota - input, RefusalReason.UserQuota);
 
-        return new Admitted(input + output, (int)output);
+        return new Admitted(input + output, (int)output, limitedBy);
     }
 
     /// <summary>The snapshot once an admitted call's reservation is recorded.</summary>

@@ -1015,6 +1015,20 @@ public abstract class FactoryStoreContract : IAsyncLifetime
         Assert.Equal("DeepSeek", Assert.Single(await Store.ListUsageAsync(running.Thread.Id, default)).ServedBy);
     }
 
+    /// <summary>What the cache was expected to serve is kept from the reservation, and what it
+    /// read apart from what was written to it, so a miss can be told on any provider.</summary>
+    [SkippableFact]
+    public async Task ReserveAndSettle_KeepTheExpectedAndTheActualCacheRead()
+    {
+        var running = await RunningAsync(cap: 100_000);
+        await Store.ReserveAsync(Reserve(running, "key-1") with { ExpectedCachedInput = 30_000 }, Policy, T0, default);
+
+        await Store.SettleAsync("key-1", new UsageInfo(2_000, 500, CacheCreationInputTokens: 29_000, CacheReadInputTokens: 1_000), 32_600, T0, default);
+
+        var entry = Assert.Single(await Store.ListUsageAsync(running.Thread.Id, default));
+        Assert.Equal((30_000L, 1_000L, 30_000L), (entry.ExpectedCachedInput, entry.ActualCacheRead, entry.ActualCachedInput));
+    }
+
     /// <summary>A unique request key per call prevents double-charging on repeated callbacks.</summary>
     [SkippableFact]
     public async Task SameRequestKey_IsReservedOnce_AndSettledOnce()
