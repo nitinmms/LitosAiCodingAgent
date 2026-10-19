@@ -14,7 +14,7 @@ namespace Litos.SoftwareFactory.Host.Runs;
 public sealed class ChatExecutor(
     IFactoryStore store, FactoryOptions options, ReadingCopies readingCopies, IWorkerLauncher launcher,
     IWorkerClientFactory clients, FactorySignals signals, IClock clock, Settings.FactorySettings settings, Settings.FactorySkills skills,
-    ILogger<ChatExecutor> logger)
+    RunAttachments attachments, ILogger<ChatExecutor> logger)
 {
     internal const string Failed = "Litos could not answer that. Send the message again.";
     internal const string NoAnswer = "Litos read the code but did not write an answer. Ask again, perhaps more narrowly.";
@@ -50,11 +50,13 @@ public sealed class ChatExecutor(
             worker = await ReadingWorker.StartAsync(launcher, clients, store, options, settings, skills, HostUrl, claimed, active, workspace.Path, ct);
 
             var sessionId = $"chat-{run.Id:N}";
-            var brief = BriefComposer.Chat(new ChatContext(
-                project.Name, branch, thread.Title, details.TaskRequest, Conversation(details, run), run.Request));
+            // A new session each answer: it is given every file on the thread (attachments-architecture.md §4).
+            var given = await attachments.PrepareAsync(thread, workspace.Path, newSince: null, ct);
+            var brief = given.AppendTo(BriefComposer.Chat(new ChatContext(
+                project.Name, branch, thread.Title, details.TaskRequest, Conversation(details, run), run.Request)));
             var turnToken = active.BeginTurn(TurnKind.Chat, TurnKind.Chat, sessionId, ct, phase: "Chat");
             progress.Set(ChatProgressTracker.Thinking);
-            var result = await worker.Client.RunTurnAsync(sessionId, TurnKind.Chat, brief, options.ChatMaxToolCalls, turnToken, progress.Apply);
+            var result = await worker.Client.RunTurnAsync(sessionId, TurnKind.Chat, brief, options.ChatMaxToolCalls, turnToken, progress.Apply, given.Images);
 
             if (!string.IsNullOrWhiteSpace(result.Reply))
                 reply = result.Reply;

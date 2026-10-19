@@ -87,7 +87,7 @@ public static class FactoryHostApp
             sp.GetRequiredService<IWorkspaceProvider>(), sp.GetRequiredService<IVerifier>(), sp.GetRequiredService<IWorkerLauncher>(),
             sp.GetRequiredService<IWorkerClientFactory>(), sp.GetRequiredService<IUserDirectory>(), sp.GetRequiredService<FactorySignals>(),
             sp.GetRequiredService<IClock>(), sp.GetRequiredService<FactorySettings>(),
-            sp.GetRequiredService<FactorySkills>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
+            sp.GetRequiredService<FactorySkills>(), sp.GetRequiredService<RunAttachments>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
             sp.GetRequiredService<VerificationGate>()));
         services.AddSingleton<VerificationGate>();
         services.AddSingleton<ReadingCopies>();
@@ -109,6 +109,10 @@ public static class FactoryHostApp
         services.AddSingleton<RunCoordinator>();
         services.AddHostedService(sp => sp.GetRequiredService<RunCoordinator>());
         services.AddSingleton<Api.AttachmentFiles>();
+        // The documents a run is given are converted as every other Litos face converts them.
+        services.AddSingleton(new global::MarkItDown.MarkItDownClient());
+        services.AddSingleton<Litos.Tools.Attachments.IAttachmentConverter, Litos.Tools.Attachments.MarkItDownAttachmentConverter>();
+        services.AddSingleton<RunAttachments>();
         services.AddHostedService<Api.AttachmentSweeper>();
 
         configureServices?.Invoke(services);

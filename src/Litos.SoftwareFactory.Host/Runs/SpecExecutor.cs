@@ -20,7 +20,7 @@ namespace Litos.SoftwareFactory.Host.Runs;
 public sealed class SpecExecutor(
     IFactoryStore store, FactoryOptions options, ReadingCopies readingCopies, IWorkerLauncher launcher,
     IWorkerClientFactory clients, FactorySignals signals, IClock clock, Settings.FactorySettings settings, Settings.FactorySkills skills,
-    ILogger<SpecExecutor> logger)
+    RunAttachments attachments, ILogger<SpecExecutor> logger)
 {
     internal const string NoSpec = "The spec turn ended without proposing a specification. Resume to try again, or ask with @factory spec in other words.";
 
@@ -50,11 +50,13 @@ public sealed class SpecExecutor(
             worker = await ReadingWorker.StartAsync(launcher, clients, store, options, settings, skills, HostUrl, claimed, active, workspace.Path, ct);
 
             var sessionId = $"spec-{run.Id:N}";
-            var brief = BriefComposer.Spec(new SpecContext(
+            // A new session each revision: it is given every file on the thread (attachments-architecture.md §4).
+            var given = await attachments.PrepareAsync(thread, workspace.Path, newSince: null, ct);
+            var brief = given.AppendTo(BriefComposer.Spec(new SpecContext(
                 project.Name, $"the default branch `{project.DefaultBranch}`", thread.Title, run.Request,
-                Draft(details.LatestSpec), ReadingWorker.Conversation(details, $"spec {run.Request}")));
+                Draft(details.LatestSpec), ReadingWorker.Conversation(details, $"spec {run.Request}"))));
             var turnToken = active.BeginTurn(TurnKind.Spec, TurnKind.Spec, sessionId, ct, phase: "Spec");
-            var result = await worker.Client.RunTurnAsync(sessionId, TurnKind.Spec, brief, options.SpecMaxToolCalls, turnToken);
+            var result = await worker.Client.RunTurnAsync(sessionId, TurnKind.Spec, brief, options.SpecMaxToolCalls, turnToken, images: given.Images);
 
             // A turn that failed while the host was stopping failed because it was (RunExecutor
             // does the same); a proposal that arrived is still recorded.

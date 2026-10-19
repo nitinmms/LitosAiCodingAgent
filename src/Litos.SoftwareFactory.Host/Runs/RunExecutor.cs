@@ -47,7 +47,7 @@ public interface IUserDirectory
 public sealed class RunExecutor(
     IFactoryStore store, FactoryOptions options, IWorkspaceProvider workspaces, IVerifier verifier,
     IWorkerLauncher launcher, IWorkerClientFactory clients, IUserDirectory users, FactorySignals signals, IClock clock, Settings.FactorySettings settings,
-    FactorySkills skills, ILogger<RunExecutor> logger, IGitHub? gitHub = null, VerificationGate? verificationGate = null)
+    FactorySkills skills, RunAttachments attachments, ILogger<RunExecutor> logger, IGitHub? gitHub = null, VerificationGate? verificationGate = null)
 {
     private readonly VerificationGate _verificationGate = verificationGate ?? new VerificationGate(options);
 
@@ -256,6 +256,26 @@ public sealed class RunExecutor(
         await NoteAsync(data, "Resuming. The working copy differs from where this run last recorded it:\n" + data.WorkspaceDrift);
     }
 
+    // ---- Attachments ----
+
+    /// <summary>
+    /// The thread's files, for the first brief of an implementation or a rework only
+    /// (attachments-architecture.md §4): the session keeps them after that, and review, scan,
+    /// repair and reminder turns judge or continue the work. A rework shows again only what was
+    /// sent since the last handoff, with the change request; the rest is listed by path.
+    /// </summary>
+    private async Task<TurnAttachments> GiveAttachmentsAsync(RunData data, StartTurnStep step, CancellationToken ct)
+    {
+        if (step.Brief is not (BriefKind.Run or BriefKind.Rework))
+            return TurnAttachments.None;
+
+        var newSince = step.Brief == BriefKind.Rework ? (await store.GetThreadAsync(data.Thread.Id, ct))?.LatestHandoff?.CreatedAt : null;
+        var given = await attachments.PrepareAsync(data.Thread, data.Workspace.Path, newSince, ct);
+        if (given.Files.Count > 0)
+            await NoteAsync(data, RunAttachments.Describe(given));
+        return given;
+    }
+
     // ---- Preflight ----
 
     /// <param name="ct">Cancelled by a person's stop as well as by the host stopping.</param>
@@ -410,6 +430,8 @@ public sealed class RunExecutor(
             context = context with { ReviewDepth = ReviewDepth.Light };
 
         var brief = BriefComposer.Compose(step, context, state with { Baseline = data.Baseline ?? state.Baseline }, data.Limits);
+        var given = await GiveAttachmentsAsync(data, step, ct);
+        brief = given.AppendTo(brief);
         var before = await FingerprintAsync(data, ct);
 
         using var timeout = new CancellationTokenSource(data.Limits.TurnTimeout);
@@ -424,7 +446,8 @@ public sealed class RunExecutor(
         TurnStreamResult? result = null;
         try
         {
-            result = await client.RunTurnAsync(sessionId, step.Kind, brief, allowance?.MaxToolCalls ?? data.Limits.MaxToolCallsPerTurn, turnToken);
+            result = await client.RunTurnAsync(
+                sessionId, step.Kind, brief, allowance?.MaxToolCalls ?? data.Limits.MaxToolCallsPerTurn, turnToken, images: given.Images);
         }
         catch (OperationCanceledException) when (!hostStopping.IsCancellationRequested)
         {
