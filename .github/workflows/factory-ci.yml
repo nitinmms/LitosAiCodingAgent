@@ -61,6 +61,13 @@ jobs:
           cache: npm
           cache-dependency-path: src/Litos.SoftwareFactory.Web/package-lock.json
 
+      # The Java preset's sample compiles for Java 21 (maven.compiler.release), as the factory's
+      # own machine does; the runner's default JDK is older, and Maven refused to build.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Start PostgreSQL
         shell: pwsh
         run: |
