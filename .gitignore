@@ -258,6 +258,10 @@ Generated_Code/
 # because we have git ;-)
 _UpgradeReport_Files/
 Backup*/
+# ...but not the software factory's backup feature, which this rule kept out of git from
+# M4 step 7 until CI found the branch did not build.
+!src/Litos.SoftwareFactory.Infrastructure/Backup/
+!tests/Litos.SoftwareFactory.Infrastructure.Tests/Backup/
 UpgradeLog*.XML
 UpgradeLog*.htm
 ServiceFabricBackup/
