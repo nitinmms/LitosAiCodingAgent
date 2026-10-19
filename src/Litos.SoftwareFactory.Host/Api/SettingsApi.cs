@@ -36,6 +36,7 @@ public static class SettingsApi
             Mcp = Section(settings, SettingsSections.Mcp, settings.Mcp),
             Skills = Section(settings, SettingsSections.Skills, settings.Skills),
             Presets = Section(settings, SettingsSections.Presets, settings.Presets),
+            Attachments = Section(settings, SettingsSections.Attachments, settings.Attachments),
             // What the Providers tab lists, in order, with what each needs to be called.
             KnownProviders = KnownProviders.All.Select(p => new
             {
@@ -84,6 +85,17 @@ public static class SettingsApi
                 return Results.BadRequest(new { error = string.Join(" ", errors), errors });
 
             return await SaveAsync(settings, SettingsSections.Tools, tools, request.Revision, user, ct);
+        });
+
+        admin.MapPut("/settings/attachments", async (
+            SaveSettingsRequest<AttachmentSettings> request, ClaimsPrincipal user, FactorySettings settings, CancellationToken ct) =>
+        {
+            if (request.Settings is not { } attachments)
+                return Results.BadRequest(new { error = "settings are required." });
+            if (attachments.Validate() is { Count: > 0 } errors)
+                return Results.BadRequest(new { error = string.Join(" ", errors), errors });
+
+            return await SaveAsync(settings, SettingsSections.Attachments, attachments, request.Revision, user, ct);
         });
 
         admin.MapPut("/settings/mcp", async (
@@ -227,7 +239,7 @@ public static class SettingsApi
             held?.Fetch.Error,
             Models = (held?.Models ?? []).Select(m => new
             {
-                Id = m.ModelId, m.DisplayName, m.ContextLength, m.SupportsTools, m.InputPricePerMillion, m.OutputPricePerMillion,
+                Id = m.ModelId, m.DisplayName, m.ContextLength, m.SupportsTools, m.SupportsImages, m.InputPricePerMillion, m.OutputPricePerMillion,
             }),
             Retired = (settings.Entry(provider)?.Models ?? []).Where(m => catalog.IsRetired(provider, m.Id)).Select(m => m.Id),
         };

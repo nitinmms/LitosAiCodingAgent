@@ -47,6 +47,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<LessonRevision> LessonRevisions => Set<LessonRevision>();
     public DbSet<RunLessonSnapshot> RunLessons => Set<RunLessonSnapshot>();
     public DbSet<ReflectionJob> ReflectionJobs => Set<ReflectionJob>();
+    public DbSet<ThreadAttachment> Attachments => Set<ThreadAttachment>();
 
     /// <summary>Set by the store once this context's transaction holds the outbox lock.</summary>
     internal bool HoldsOutboxLock { get; set; }
@@ -276,6 +277,17 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.HasKey(f => f.Provider);
             e.Property(f => f.Provider).HasMaxLength(40);
             e.Property(f => f.Error).HasMaxLength(1000);
+        });
+
+        model.Entity<ThreadAttachment>(e =>
+        {
+            e.ToTable("thread_attachments");
+            e.Property(a => a.FileName).HasMaxLength(ThreadAttachment.MaxFileNameLength);
+            e.Property(a => a.MediaType).HasMaxLength(200);
+            e.Property(a => a.Sha256).HasMaxLength(64);
+            e.Property(a => a.MessageKey).HasMaxLength(200);
+            e.HasIndex(a => new { a.ThreadId, a.MessageKey });
+            e.HasOne<TaskThread>().WithMany().HasForeignKey(a => a.ThreadId).OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<RepositorySkill>(e =>

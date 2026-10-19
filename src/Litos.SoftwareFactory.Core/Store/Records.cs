@@ -136,6 +136,47 @@ public sealed class ThreadMessage
     public DateTimeOffset CreatedAt { get; set; }
 }
 
+/// <summary>What a run does with an attached file (attachments-architecture.md §4).</summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
+public enum AttachmentKind
+{
+    /// <summary>Shown to a model that accepts images.</summary>
+    Image,
+
+    /// <summary>Converted to Markdown by MarkItDown: PDF, Office, EPUB, mail.</summary>
+    Document,
+
+    /// <summary>Read as it is.</summary>
+    Text,
+}
+
+/// <summary>
+/// A file uploaded to a thread (attachments-architecture.md §3). Its bytes are in the data
+/// folder, at attachments/&lt;thread&gt;/&lt;id&gt;. It is sent once a message names it, by that
+/// message's client id; until then only its uploader can send it.
+/// </summary>
+public sealed class ThreadAttachment
+{
+    public Guid Id { get; set; }
+    public Guid ThreadId { get; set; }
+    public Guid ProjectId { get; set; }
+    public required string FileName { get; set; }
+    public required string MediaType { get; set; }
+    public AttachmentKind Kind { get; set; }
+    public long SizeBytes { get; set; }
+
+    /// <summary>Lower-case hex.</summary>
+    public required string Sha256 { get; set; }
+    public Guid UploadedBy { get; set; }
+    public DateTimeOffset UploadedAt { get; set; }
+
+    /// <summary>The client id of the message it was sent with (ThreadMessage.DispatchKey); null until sent.</summary>
+    public string? MessageKey { get; set; }
+    public DateTimeOffset? SentAt { get; set; }
+
+    public const int MaxFileNameLength = 255;
+}
+
 public sealed class Specification
 {
     public Guid Id { get; set; }
@@ -552,6 +593,9 @@ public sealed class ModelCatalogEntry
     /// <summary>Whether it accepts tools; only OpenRouter reports it.</summary>
     public bool? SupportsTools { get; set; }
 
+    /// <summary>Whether it accepts images as input; only OpenRouter reports it (its input modalities).</summary>
+    public bool? SupportsImages { get; set; }
+
     /// <summary>US dollars per million input and output tokens; only OpenRouter reports them.</summary>
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
@@ -610,11 +654,12 @@ public static class SettingsSections
     public const string Mcp = "mcp";
     public const string Skills = "skills";
     public const string Presets = "presets";
+    public const string Attachments = "attachments";
 
     /// <summary>Whether dispatch is paused: changed through /api/admin/dispatch, not the Settings page.</summary>
     public const string Dispatch = "dispatch";
 
-    public static readonly IReadOnlyList<string> All = [Budgets, Providers, Tools, Mcp, Skills, Presets, Dispatch];
+    public static readonly IReadOnlyList<string> All = [Budgets, Providers, Tools, Mcp, Skills, Presets, Attachments, Dispatch];
 }
 
 public static class AuditTargets

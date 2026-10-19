@@ -33,8 +33,20 @@ public static class KnownProviders
     public static BudgetPrecision PrecisionOf(string? name) => Find(name)?.Precision ?? BudgetPrecision.Estimated;
 }
 
-/// <summary>A model members may choose, with the context window the worker compacts against.</summary>
-public sealed record AllowedModel(string Id, int ContextLength);
+/// <summary>
+/// A model members may choose, with the context window the worker compacts against, and whether
+/// it is shown attached images: null for the provider's usual (attachments-architecture.md §6).
+/// </summary>
+public sealed record AllowedModel(string Id, int ContextLength, bool? AcceptsImages = null)
+{
+    /// <summary>
+    /// Whether a model is shown images: what an Admin set, or else what its provider's chat models
+    /// do. Anthropic's, OpenAI's and Gemini's current models all read images; a router's or a
+    /// local server's may not, so those are off unless the catalog or an Admin says otherwise.
+    /// </summary>
+    public static bool Accepts(string provider, AllowedModel? model) =>
+        model?.AcceptsImages ?? provider is "anthropic" or "openai" or "gemini";
+}
 
 /// <summary>One provider's settings. Its key is a secret (SecretNames.Provider), never kept here.</summary>
 public sealed record ProviderEntry

@@ -484,6 +484,9 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)");
 
+                    b.Property<bool?>("SupportsImages")
+                        .HasColumnType("boolean");
+
                     b.Property<bool?>("SupportsTools")
                         .HasColumnType("boolean");
 
@@ -1018,6 +1021,61 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.HasIndex("ProjectId", "Stage", "State");
 
                     b.ToTable("task_threads", (string)null);
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ThreadAttachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("MediaType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("MessageKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ThreadId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UploadedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UploadedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ThreadId", "MessageKey");
+
+                    b.ToTable("thread_attachments", (string)null);
                 });
 
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ThreadMessage", b =>
@@ -1583,6 +1641,15 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ThreadAttachment", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.TaskThread", null)
+                        .WithMany()
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

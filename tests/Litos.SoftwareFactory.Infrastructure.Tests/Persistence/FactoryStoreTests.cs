@@ -25,7 +25,7 @@ internal sealed class TestContextFactory(DbContextOptions<FactoryDbContext> opti
 /// everywhere and fast; PostgreSQL is the real target, with the real migration, row locks and
 /// advisory lock, and is skipped with a message when no server is configured.
 /// </summary>
-public abstract class FactoryStoreContract : IAsyncLifetime
+public abstract partial class FactoryStoreContract : IAsyncLifetime
 {
     protected static readonly DateTimeOffset T0 = new(2026, 10, 1, 9, 0, 0, TimeSpan.Zero);
     protected static readonly Guid Admin = Guid.Parse("11111111-1111-1111-1111-111111111111");

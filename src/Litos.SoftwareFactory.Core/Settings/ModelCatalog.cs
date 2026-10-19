@@ -59,7 +59,7 @@ public sealed class ModelCatalog
             .Where(m => m.SupportsTools != false
                 && m.ContextLength is >= ProviderSettings.MinContextLength and <= ProviderSettings.MaxContextLength
                 && m.ModelId.Length <= ProviderSettings.MaxModelIdLength)
-            .Select(m => new AllowedModel(m.ModelId, m.ContextLength!.Value));
+            .Select(m => new AllowedModel(m.ModelId, m.ContextLength!.Value, m.SupportsImages));
 
     /// <summary>
     /// The id the catalog keeps a model under. Gemini lists <c>models/gemini-x</c>, and is called

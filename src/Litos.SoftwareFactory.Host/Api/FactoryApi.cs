@@ -37,7 +37,8 @@ public sealed record CreateThreadRequest(
 public sealed record SetThreadSkillsRequest(IReadOnlyList<string>? Skills);
 
 /// <summary>MessageId is the client's own id for the message: the dispatch idempotency key.</summary>
-public sealed record PostMessageRequest(string MessageId, string Text);
+/// <param name="AttachmentIds">Files uploaded to the thread to send with the message (attachments-architecture.md §3).</param>
+public sealed record PostMessageRequest(string MessageId, string Text, IReadOnlyList<Guid>? AttachmentIds = null);
 
 public sealed record AnswerDecisionRequest(string Answer);
 
@@ -150,7 +151,8 @@ public static class FactoryApi
                     p.Name,
                     KnownProviders.Find(p.Name)!.DisplayName,
                     BudgetPrecision = Precision(p.Name),
-                    p.Models,
+                    // SeesImages: whether a thread on it is shown attached images (attachments-architecture.md §6).
+                    Models = p.Models.Select(m => new { m.Id, m.ContextLength, m.AcceptsImages, SeesImages = AllowedModel.Accepts(p.Name, m) }),
                     p.DefaultModel,
                 }),
                 // The models of this person's newest threads that they can still choose, pinned in New thread.
@@ -172,6 +174,14 @@ public static class FactoryApi
                 Skills = settings.Skills.Enabled.Select(s => new { s.Name, s.Description, Chars = TaskSkillSelection.Size([s]), s.DefaultFor }),
                 MaxTaskSkillChars = TaskSkillSelection.MaxChars,
                 PromptRevision = Core.Briefs.BriefComposer.Revision,
+                // What the composer may attach (attachments-architecture.md §1).
+                Attachments = new
+                {
+                    settings.Attachments.Enabled,
+                    settings.Attachments.MaxFilesPerMessage,
+                    settings.Attachments.MaxBytesPerThread,
+                    MaxFileBytes = AttachmentTypes.MaxFileBytes,
+                },
             });
         });
 
@@ -342,7 +352,8 @@ public static class FactoryApi
                 .OfType<Guid>().ToHashSet();
             var names = users.Users.Where(u => authors.Contains(u.Id)).ToList()
                 .ToDictionary(u => u.Id, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.UserName : u.DisplayName);
-            return Results.Ok(DetailsView(details, cursor, names));
+            var attachments = await store.ListAttachmentsAsync(id, includeUnsent: false, ct);
+            return Results.Ok(DetailsView(details, cursor, names, attachments));
         });
 
         // Renaming a thread, or filing it under another type: its owner or an Admin.
@@ -417,6 +428,25 @@ public static class FactoryApi
             if (asksForSpec && specRequest.Length == 0)
                 return Problem("Say what the specification is for after @factory spec.");
 
+            // Files go before the message, so a run the message starts finds them; a message the
+            // thread then refuses takes them back. Not to a running task: steering carries text only.
+            var attachmentIds = request.AttachmentIds ?? [];
+            if (attachmentIds.Count > 0)
+            {
+                if (attachmentIds.Count > settings.Attachments.MaxFilesPerMessage)
+                    return Problem($"A message can carry at most {settings.Attachments.MaxFilesPerMessage} files.");
+                if ((await store.GetThreadAsync(id, ct))?.Thread.State == LifecycleState.Running)
+                    return Results.Conflict(new { error = "Files cannot be sent to a task while it is working. Pause it first, or send them once it hands off." });
+                try
+                {
+                    await store.SendAttachmentsAsync(id, user.UserId(), request.MessageId, attachmentIds, clock.UtcNow, ct);
+                }
+                catch (StoreConflictException ex)
+                {
+                    return Results.Conflict(new { error = ex.Message });
+                }
+            }
+
             DispatchResult result;
             try
             {
@@ -430,6 +460,9 @@ public static class FactoryApi
             {
                 return Results.NotFound();
             }
+
+            if (result.Outcome == DispatchOutcome.Rejected && attachmentIds.Count > 0)
+                await store.UnsendAttachmentsAsync(id, request.MessageId, CancellationToken.None);
 
             signals.EventsWritten();
             switch (result.Outcome)
@@ -833,7 +866,8 @@ public static class FactoryApi
         spec.ApprovedAt,
     };
 
-    private static object DetailsView(ThreadDetails details, long eventCursor, IReadOnlyDictionary<Guid, string?> authorNames) => new
+    private static object DetailsView(
+        ThreadDetails details, long eventCursor, IReadOnlyDictionary<Guid, string?> authorNames, IReadOnlyList<ThreadAttachment> attachments) => new
     {
         // Pass to GET .../events?after= to hear everything that happened after this snapshot.
         EventCursor = eventCursor,
@@ -857,6 +891,10 @@ public static class FactoryApi
             m.DecisionId,
             Payload = Parse(m.PayloadJson),
             m.CreatedAt,
+            // The files sent with it, by its client id.
+            Attachments = m.DispatchKey is { } key
+                ? attachments.Where(a => a.MessageKey == key).Select(AttachmentsApi.View)
+                : [],
         }),
         Decisions = details.Decisions.Select(d => new
         {

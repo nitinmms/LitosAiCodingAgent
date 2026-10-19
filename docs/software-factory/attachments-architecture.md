@@ -87,3 +87,9 @@ Viewing an image again after compaction; attachments on a follow-up to a running
 | openrouter / google/gemini-2.5-flash | 2,322 |
 
 Compaction's per-image figure (4,800 characters, about 1,200 tokens) is under three of five, so the factory's estimator now reserves `RequestEstimator.ImageTokens` = 2,500 per image; the engine's constant, which the other faces use, is unchanged.
+
+### Step 2 (2026-10-19): store and API
+
+Migration `ThreadAttachments`: the `thread_attachments` table and `model_catalog.SupportsImages`. `IFactoryStore` adds, gets, lists, sends, unsends and sweeps attachments (`EfFactoryStore.Attachments.cs`); a thread's total is checked under its row lock, unsent uploads counted. `ProjectScoped.Attachment` puts downloads under the one membership rule. `AttachmentsApi`: upload (multipart, one file, read without form binding since the CSRF header and the SameSite=Strict cookie already guard it), download (an image as its type, anything else as `application/octet-stream` to save, `nosniff`, a sandboxing CSP; an unsent file only to its uploader). `PostMessageRequest.AttachmentIds` marks the files sent by the message's client id before the message is posted, and takes them back if the thread refuses it; refused for a Running task and over the per-message limit. Thread details list each message's files. `AttachmentSweeper` removes unsent uploads a day old, hourly. The `attachments` settings section (Admin PUT, and the limits on `GET /api/settings` for the composer). `AllowedModel.AcceptsImages`, with `AllowedModel.Accepts` for the provider's usual; the OpenRouter catalog fills `SupportsImages` from `architecture.input_modalities`. The backup keeps `attachments/`.
+
+Changed from §6: the flag is not copied to the thread. A run reads it from the settings when it starts, so an Admin's correction applies to the next run; a model no longer allowed falls back to its provider's usual.

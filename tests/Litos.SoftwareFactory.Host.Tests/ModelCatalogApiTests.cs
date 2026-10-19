@@ -287,6 +287,24 @@ public sealed class OpenRouterCatalogSourceTests
         Assert.Equal(((bool?)null, (decimal?)null), (models[2].SupportsTools, models[2].InputPricePerMillion));
     }
 
+    /// <summary>Whether a model reads images is in its input modalities (attachments-architecture.md §6).</summary>
+    [Fact]
+    public async Task OpenRoutersList_GivesImageInput_FromTheInputModalities()
+    {
+        var handler = new Canned("""
+            {"data":[
+              {"id":"google/gemini-2.5-flash","context_length":1048576,"architecture":{"input_modalities":["text","image","file"]}},
+              {"id":"some/text-only","context_length":32000,"architecture":{"input_modalities":["text"]}},
+              {"id":"some/unsaid","context_length":32000}
+            ]}
+            """);
+        var source = new ProviderModelCatalogSource(new ScriptedProvider(), new HttpClient(handler) { BaseAddress = new Uri("https://openrouter.ai/api/v1/") });
+
+        var models = await source.ListAsync("openrouter", default);
+
+        Assert.Equal([true, false, null], models.Select(m => m.SupportsImages));
+    }
+
     [Fact]
     public async Task AnotherProvidersList_ComesFromTheEnginesProvider()
     {

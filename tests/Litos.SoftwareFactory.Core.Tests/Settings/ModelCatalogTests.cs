@@ -194,4 +194,20 @@ public class ModelCatalogTests
         Assert.Equal(["gpt-5", "gpt-6-luna"], openai.Models.Select(m => m.Id));
         Assert.Equal("gpt-5", openai.DefaultModel);
     }
+
+    /// <summary>A model the catalog offers takes whether it reads images from the catalog (attachments-architecture.md §6).</summary>
+    [Fact]
+    public void AllowingEveryModel_CarriesWhetherTheCatalogSaysAModelReadsImages()
+    {
+        var settings = new ProviderSettings { Providers = [Entry("openrouter", "a/text", "a/text") with { AllowEveryModel = true }] };
+        var vision = Listed("openrouter", "b/vision", tools: true);
+        vision.SupportsImages = true;
+        var catalog = new ModelCatalog([vision, Listed("openrouter", "c/unsaid", tools: true)], [Fetched("openrouter")]);
+
+        var offered = Assert.Single(settings.Offered(isAdmin: false, AllUsable, catalog)).Models;
+
+        Assert.True(offered.Single(m => m.Id == "b/vision").AcceptsImages);
+        Assert.Null(offered.Single(m => m.Id == "c/unsaid").AcceptsImages);
+        Assert.False(AllowedModel.Accepts("openrouter", offered.Single(m => m.Id == "c/unsaid")));
+    }
 }

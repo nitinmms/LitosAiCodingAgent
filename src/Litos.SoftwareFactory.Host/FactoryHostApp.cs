@@ -108,6 +108,8 @@ public static class FactoryHostApp
         services.AddSingleton<RunLiveness>();
         services.AddSingleton<RunCoordinator>();
         services.AddHostedService(sp => sp.GetRequiredService<RunCoordinator>());
+        services.AddSingleton<Api.AttachmentFiles>();
+        services.AddHostedService<Api.AttachmentSweeper>();
 
         configureServices?.Invoke(services);
 
@@ -126,6 +128,7 @@ public static class FactoryHostApp
         app.MapFactoryInvitations();
         app.MapFactoryUsers();
         app.MapFactoryApi();
+        app.MapFactoryAttachments();
         app.MapFactorySettings();
         app.MapFactoryLessons();
         app.MapFactoryMetrics();

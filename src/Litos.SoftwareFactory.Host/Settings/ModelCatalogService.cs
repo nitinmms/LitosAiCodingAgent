@@ -34,6 +34,7 @@ public sealed class ProviderModelCatalogSource(IChatProviderFactory providers, H
                 DisplayName = m.Name,
                 ContextLength = m.ContextLength,
                 SupportsTools = m.SupportedParameters is { } parameters ? parameters.Contains("tools") : null,
+                SupportsImages = m.Architecture?.InputModalities is { } modalities ? modalities.Contains("image") : null,
                 InputPricePerMillion = PerMillion(m.Pricing?.Prompt),
                 OutputPricePerMillion = PerMillion(m.Pricing?.Completion),
             })];
@@ -60,7 +61,10 @@ public sealed class ProviderModelCatalogSource(IChatProviderFactory providers, H
         string? Name,
         [property: JsonPropertyName("context_length")] int? ContextLength,
         [property: JsonPropertyName("supported_parameters")] List<string>? SupportedParameters,
-        OpenRouterPricing? Pricing);
+        OpenRouterPricing? Pricing,
+        OpenRouterArchitecture? Architecture = null);
+
+    private sealed record OpenRouterArchitecture([property: JsonPropertyName("input_modalities")] List<string>? InputModalities);
 
     private sealed record OpenRouterPricing(string? Prompt, string? Completion);
 }
@@ -113,6 +117,7 @@ public sealed class ModelCatalogService(IFactoryStore store, IModelCatalogSource
                 DisplayName = m.DisplayName is { Length: > MaxDisplayNameLength } name ? name[..MaxDisplayNameLength] : m.DisplayName,
                 ContextLength = m.ContextLength,
                 SupportsTools = m.SupportsTools,
+                SupportsImages = m.SupportsImages,
                 InputPricePerMillion = m.InputPricePerMillion,
                 OutputPricePerMillion = m.OutputPricePerMillion,
             }).Where(m => m.ModelId.Length is > 0 and <= ProviderSettings.MaxModelIdLength).DistinctBy(m => m.ModelId).ToList();

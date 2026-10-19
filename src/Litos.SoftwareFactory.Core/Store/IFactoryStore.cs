@@ -47,6 +47,9 @@ public enum ProjectScoped
     Project,
     Lesson,
     Run,
+
+    /// <summary>A file attached to a thread, for downloading it.</summary>
+    Attachment,
 }
 
 /// <summary>Everything needed to stop a run, applied in one transaction.</summary>
@@ -376,6 +379,37 @@ public interface IFactoryStore
     /// one other than itself (a router's); null when none has.
     /// </summary>
     Task<string?> LastServedByAsync(Guid threadId, CancellationToken ct);
+
+    // ---- Attachments (attachments-architecture.md §3) ----
+
+    /// <summary>
+    /// Records an uploaded file, unsent, if the thread's files stay within <paramref name="maxBytesPerThread"/>
+    /// with it, counting files uploaded and not yet sent too.
+    /// </summary>
+    /// <exception cref="StoreNotFoundException">No thread has this id.</exception>
+    /// <exception cref="StoreConflictException">The thread would hold more than the limit.</exception>
+    Task<ThreadAttachment> AddAttachmentAsync(ThreadAttachment attachment, long maxBytesPerThread, CancellationToken ct);
+
+    Task<ThreadAttachment?> GetAttachmentAsync(Guid attachmentId, CancellationToken ct);
+
+    /// <summary>The thread's files, oldest first; unsent ones only with <paramref name="includeUnsent"/>.</summary>
+    Task<IReadOnlyList<ThreadAttachment>> ListAttachmentsAsync(Guid threadId, bool includeUnsent, CancellationToken ct);
+
+    /// <summary>
+    /// Marks files as sent with the message whose client id is <paramref name="messageKey"/>,
+    /// before the message is posted, so a run started by it finds them. Each must be on this
+    /// thread, uploaded by this user, and unsent or already sent with this same key (a retried
+    /// request). Returns them in the order given.
+    /// </summary>
+    /// <exception cref="StoreConflictException">One of them may not be sent with this message; nothing is changed.</exception>
+    Task<IReadOnlyList<ThreadAttachment>> SendAttachmentsAsync(
+        Guid threadId, Guid userId, string messageKey, IReadOnlyList<Guid> attachmentIds, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Takes back the files sent with a message the thread then refused, so they can be sent again.</summary>
+    Task UnsendAttachmentsAsync(Guid threadId, string messageKey, CancellationToken ct);
+
+    /// <summary>Deletes the records of files uploaded before <paramref name="before"/> and never sent, and returns them so their bytes can go too.</summary>
+    Task<IReadOnlyList<ThreadAttachment>> RemoveUnsentAttachmentsAsync(DateTimeOffset before, CancellationToken ct);
 
     /// <summary>Every finding of every run of the thread, oldest run first.</summary>
     Task<IReadOnlyList<ReviewFindingRecord>> ListFindingsAsync(Guid threadId, CancellationToken ct);
