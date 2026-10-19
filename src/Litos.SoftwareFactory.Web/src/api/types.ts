@@ -21,6 +21,8 @@ export interface CurrentUser {
   userName: string;
   displayName: string | null;
   roles: string[];
+  /** The account must choose a new password before anything else (a one-time installer password). */
+  mustChangePassword?: boolean;
 }
 
 /** A provider a person may choose for a new thread, with the models allowed on it. */

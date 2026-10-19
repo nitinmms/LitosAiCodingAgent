@@ -29,7 +29,15 @@ public static class ToolchainEnvironment
     /// credentials (npm's registry token, a NuGet feed key).</summary>
     private static readonly string[] SecretMarkers = ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "APIKEY", "API_KEY", "_AUTH", "CONNECTIONSTRING"];
 
-    /// <summary>The allowlisted part of the host's environment.</summary>
+    /// <summary>
+    /// When the host's environment has this, it is the PATH given to every toolchain process in
+    /// place of the host's own (SoftwareFactoryInstallation.md, G6): a host started by a service
+    /// manager has a minimal PATH, and one started at login does not see a PATH changed later.
+    /// The host puts its FACTORY_TOOLCHAIN_PATH setting here at start.
+    /// </summary>
+    public const string ToolchainPathVariable = "FACTORY_TOOLCHAIN_PATH";
+
+    /// <summary>The allowlisted part of the host's environment, with the toolchain PATH when one is set.</summary>
     public static Dictionary<string, string> Scrub(IReadOnlyDictionary<string, string> hostEnvironment)
     {
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -38,6 +46,9 @@ public static class ToolchainEnvironment
             if (IsAllowed(name))
                 environment[name] = value;
         }
+
+        if (hostEnvironment.TryGetValue(ToolchainPathVariable, out var toolchainPath) && !string.IsNullOrWhiteSpace(toolchainPath))
+            environment["PATH"] = toolchainPath;
 
         return environment;
     }

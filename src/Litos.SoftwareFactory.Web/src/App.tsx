@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangePassword } from './components/ChangePassword';
 import { ApiError, createApi, type FactoryApi } from './api/client';
 import { resubscribeDelay, subscribeToBoard, type EventSourceFactory } from './api/events';
 import type { CurrentUser, DispatchStatus, Project, Settings, Thread } from './api/types';
@@ -46,6 +47,7 @@ export function App({ createClient, openEvents }: AppProps) {
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dispatch, setDispatch] = useState<DispatchStatus | null>(null);
+  const [changingPassword, setChangingPassword] = useState(false);
   const route = useRoute();
 
   const api = useMemo(() => {
@@ -89,7 +91,8 @@ export function App({ createClient, openEvents }: AppProps) {
     });
   }, []);
 
-  const signedIn = !!user;
+  // Until a one-time password is replaced the host answers nothing else, so nothing is loaded.
+  const signedIn = !!user && !user.mustChangePassword;
   useEffect(() => {
     if (!signedIn) {
       setLoaded(false);
@@ -239,6 +242,17 @@ export function App({ createClient, openEvents }: AppProps) {
     );
   }
 
+  const signOut = () => {
+    api
+      .logout()
+      .catch(() => {})
+      .finally(() => setUser(null));
+  };
+
+  if (user.mustChangePassword) {
+    return <ChangePassword api={api} required onChanged={(me) => setUser(me)} onSignOut={signOut} />;
+  }
+
   // "Awaiting you" is personal (§7.1): only what this user owns and must act on.
   const waiting = threads.filter((t) => awaitsYou(t, user.id));
 
@@ -261,13 +275,20 @@ export function App({ createClient, openEvents }: AppProps) {
           )
         }
         onAwaitingYou={() => waiting[0] && navigate({ view: 'threads', threadId: waiting[0].id })}
-        onSignOut={() => {
-          api
-            .logout()
-            .catch(() => {})
-            .finally(() => setUser(null));
-        }}
+        onSignOut={signOut}
+        onChangePassword={() => setChangingPassword(true)}
       />
+      {changingPassword ? (
+        <ChangePassword
+          api={api}
+          onChanged={(me) => {
+            setUser(me);
+            setChangingPassword(false);
+            say('Your password is changed. Your other sessions sign out within a minute.');
+          }}
+          onCancel={() => setChangingPassword(false)}
+        />
+      ) : null}
       {problem ? (
         <p className="banner" role="alert">
           {problem}

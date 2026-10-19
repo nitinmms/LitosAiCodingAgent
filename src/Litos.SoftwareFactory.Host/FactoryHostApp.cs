@@ -28,7 +28,14 @@ public static class FactoryHostApp
     /// to swap the database, the provider and the ports for fakes.</param>
     public static WebApplication Build(string[] args, FactoryOptions options, Action<IServiceCollection>? configureServices = null)
     {
-        var builder = WebApplication.CreateBuilder(args);
+        // The app and relative paths are found beside the host's binary, not in whatever folder it
+        // was started from: a service manager starts it elsewhere, and the API then worked while
+        // the web app answered 404 (SoftwareFactoryInstallation.md, G2).
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            Args = args,
+            ContentRootPath = options.ContentRoot ?? AppContext.BaseDirectory,
+        });
 
         // Loopback by default (§13.3). Exposing the host on a network is a deliberate choice,
         // made by setting ASPNETCORE_URLS behind HTTPS. Set in the settings file it reaches only the
@@ -38,6 +45,9 @@ public static class FactoryHostApp
 
         // EF Core logs every SQL statement at Information; that is noise in a host's log.
         builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
+        // Created by the container, so it is disposed with the host and the file is closed.
+        if (options.LogDirectory is { } logDirectory)
+            builder.Logging.Services.AddSingleton<ILoggerProvider>(_ => new Logging.FileLoggerProvider(logDirectory));
 
         var services = builder.Services;
         services.AddSingleton(options);
@@ -121,6 +131,7 @@ public static class FactoryHostApp
         app.UseRateLimiter();
         app.UseFactoryCsrfHeader();
         app.UseAuthentication();
+        app.UseFactoryPasswordChangeGate();
         app.UseAuthorization();
 
         // The React build, once there is one (step 6), is served from wwwroot.
@@ -128,6 +139,27 @@ public static class FactoryHostApp
         app.UseStaticFiles();
 
         app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+        // Ready to work, not only listening (SoftwareFactoryInstallation.md §9.7): the database
+        // answers and the coordinator has started. A launcher waits on this; 503 says which is not.
+        app.MapGet("/readyz", async (IDbContextFactory<FactoryDbContext> contexts, RunCoordinator coordinator, CancellationToken ct) =>
+        {
+            bool database;
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(5));
+                await using var db = await contexts.CreateDbContextAsync(timeout.Token);
+                database = await db.Database.CanConnectAsync(timeout.Token);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                database = false;
+            }
+
+            var running = coordinator.Started.Task.IsCompletedSuccessfully;
+            var body = new { ready = database && running, database = database ? "ok" : "unreachable", coordinator = running ? "running" : "starting" };
+            return database && running ? Results.Ok(body) : Results.Json(body, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }).AllowAnonymous();
         app.MapFactoryAuth();
         app.MapFactoryInvitations();
         app.MapFactoryUsers();

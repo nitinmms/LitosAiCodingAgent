@@ -14,7 +14,10 @@ public static class FactoryRoles
 
 public sealed record LoginRequest(string UserName, string Password);
 
-public sealed record CurrentUser(Guid Id, string UserName, string? DisplayName, IReadOnlyList<string> Roles);
+/// <param name="MustChangePassword">The account must choose a new password before anything else.</param>
+public sealed record CurrentUser(Guid Id, string UserName, string? DisplayName, IReadOnlyList<string> Roles, bool MustChangePassword = false);
+
+public sealed record ChangePasswordRequest(string? CurrentPassword, string? NewPassword);
 
 /// <summary>
 /// Sign-in for the factory (ReadMe_LitosSoftwareFactory_V1.md §13.3): local username/password
@@ -31,6 +34,12 @@ public static class FactoryAuth
 
     public const string LoginRateLimit = "login";
 
+    /// <summary>Carried in the session of an account that must choose a new password.</summary>
+    public const string MustChangePasswordClaim = "factory:must_change_password";
+
+    /// <summary>What such an account may still call: who it is, the change itself, and signing out.</summary>
+    private static readonly string[] AllowedBeforePasswordChange = ["/api/auth/me", "/api/auth/password", "/api/auth/logout"];
+
     public static IServiceCollection AddFactoryAuth(this IServiceCollection services)
     {
         services.AddIdentityCore<FactoryUser>(options =>
@@ -46,7 +55,8 @@ public static class FactoryAuth
             })
             .AddRoles<IdentityRole<Guid>>()
             .AddEntityFrameworkStores<FactoryDbContext>()
-            .AddSignInManager();
+            .AddSignInManager()
+            .AddClaimsPrincipalFactory<FactoryClaimsPrincipalFactory>();
 
         services.AddAuthentication(IdentityConstants.ApplicationScheme).AddIdentityCookies();
         services.ConfigureApplicationCookie(cookie =>
@@ -88,6 +98,25 @@ public static class FactoryAuth
         return services;
     }
 
+    /// <summary>
+    /// Until an account that must change its password has done so, every other API call answers
+    /// 403 with a reason the app shows: the one-time Admin password an installer generated works
+    /// only to choose a new one (SoftwareFactoryInstallation.md §4.4). Runs after authentication.
+    /// </summary>
+    public static IApplicationBuilder UseFactoryPasswordChangeGate(this IApplicationBuilder app) => app.Use(async (context, next) =>
+    {
+        if (context.User.HasClaim(MustChangePasswordClaim, "true")
+            && context.Request.Path.StartsWithSegments("/api")
+            && !AllowedBeforePasswordChange.Any(path => context.Request.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { error = "Choose a new password before going on.", mustChangePassword = true });
+            return;
+        }
+
+        await next(context);
+    });
+
     /// <summary>Refuses state-changing API calls that do not carry the CSRF header.</summary>
     public static IApplicationBuilder UseFactoryCsrfHeader(this IApplicationBuilder app) => app.Use(async (context, next) =>
     {
@@ -116,8 +145,40 @@ public static class FactoryAuth
             if (!result.Succeeded)
                 return Results.Json(new { error = "The user name or password is incorrect." }, statusCode: StatusCodes.Status401Unauthorized);
 
-            return Results.Ok(new CurrentUser(user.Id, user.UserName!, user.DisplayName, [.. await users.GetRolesAsync(user)]));
+            return Results.Ok(new CurrentUser(user.Id, user.UserName!, user.DisplayName, [.. await users.GetRolesAsync(user)], user.MustChangePassword));
         }).AllowAnonymous().RequireRateLimiting(LoginRateLimit);
+
+        // Any signed-in account changes its own password; the current one is required, so a
+        // session left open cannot be used to take the account over.
+        app.MapPost("/api/auth/password", async (
+            ChangePasswordRequest request, ClaimsPrincipal principal, UserManager<FactoryUser> users, SignInManager<FactoryUser> signIn) =>
+        {
+            var user = await users.GetUserAsync(principal);
+            if (user is null)
+                return Results.Unauthorized();
+            if (string.IsNullOrEmpty(request.CurrentPassword) || string.IsNullOrEmpty(request.NewPassword))
+                return Results.BadRequest(new { error = "Give the current password and a new one." });
+            if (request.NewPassword == request.CurrentPassword)
+                return Results.BadRequest(new { error = "The new password must differ from the current one." });
+
+            var changed = await users.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+            if (!changed.Succeeded)
+            {
+                var wrong = changed.Errors.Any(e => e.Code == nameof(IdentityErrorDescriber.PasswordMismatch));
+                return Results.BadRequest(new { error = wrong ? "The current password is incorrect." : string.Join(" ", changed.Errors.Select(e => e.Description)) });
+            }
+
+            if (user.MustChangePassword)
+            {
+                user.MustChangePassword = false;
+                await users.UpdateAsync(user);
+            }
+
+            // A new session without the must-change mark; the password change rotated the
+            // security stamp, so other sessions of this account end at their next check.
+            await signIn.RefreshSignInAsync(user);
+            return Results.Ok(new CurrentUser(user.Id, user.UserName!, user.DisplayName, [.. await users.GetRolesAsync(user)]));
+        });
 
         app.MapPost("/api/auth/logout", async (SignInManager<FactoryUser> signIn) =>
         {
@@ -130,7 +191,7 @@ public static class FactoryAuth
             var user = await users.GetUserAsync(principal);
             return user is null
                 ? Results.Unauthorized()
-                : Results.Ok(new CurrentUser(user.Id, user.UserName!, user.DisplayName, [.. await users.GetRolesAsync(user)]));
+                : Results.Ok(new CurrentUser(user.Id, user.UserName!, user.DisplayName, [.. await users.GetRolesAsync(user)], user.MustChangePassword));
         });
 
         return app;
@@ -164,12 +225,31 @@ public static class FactoryAuth
         if (string.IsNullOrWhiteSpace(options.AdminPassword))
             return "No account exists and FACTORY_ADMIN_PASSWORD is not set, so nobody can sign in.";
 
-        var admin = new FactoryUser { Id = Guid.NewGuid(), UserName = options.AdminUser, DisplayName = options.AdminUser };
+        var admin = new FactoryUser
+        {
+            Id = Guid.NewGuid(), UserName = options.AdminUser, DisplayName = options.AdminUser,
+            // A generated password shown once works once: the Admin chooses their own at first sign-in.
+            MustChangePassword = options.AdminPasswordOneTime,
+        };
         var created = await users.CreateAsync(admin, options.AdminPassword);
         if (!created.Succeeded)
             return "The admin account could not be created: " + string.Join(" ", created.Errors.Select(e => e.Description));
 
         await users.AddToRoleAsync(admin, FactoryRoles.Admin);
         return null;
+    }
+}
+
+/// <summary>Adds the must-change-password mark to the session of an account that carries it.</summary>
+public sealed class FactoryClaimsPrincipalFactory(
+    UserManager<FactoryUser> users, RoleManager<IdentityRole<Guid>> roles, Microsoft.Extensions.Options.IOptions<IdentityOptions> options)
+    : UserClaimsPrincipalFactory<FactoryUser, IdentityRole<Guid>>(users, roles, options)
+{
+    protected override async Task<ClaimsIdentity> GenerateClaimsAsync(FactoryUser user)
+    {
+        var identity = await base.GenerateClaimsAsync(user);
+        if (user.MustChangePassword)
+            identity.AddClaim(new Claim(FactoryAuth.MustChangePasswordClaim, "true"));
+        return identity;
     }
 }

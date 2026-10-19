@@ -379,7 +379,7 @@ Secrets needed in CI: `APPLE_SIGN_IDENTITY`, `APPLE_INSTALLER_IDENTITY`, `APPLE_
 ## 11. Build order
 
 1. **CI on all three OSes** (G9), test jobs only. Fix what breaks. Nothing else is trustworthy until the suites pass on macOS and Linux.
-2. **Host fixes**: G2 content root, G6 toolchain PATH, readiness check, file logging, first-sign-in password change.
+2. **Host fixes**: G2 content root, G6 toolchain PATH, readiness check, file logging, first-sign-in password change. **Built 2026-10-19** (see §11.1).
 3. **G1: per-OS executables in profiles**, with a preset revision.
 4. **Publish scripts** for host + worker + kernel per RID into one folder, plus `wwwroot` (G3). Smoke-test each RID by hand: start, sign in, register a repo, run one small task. Measure the package size.
 5. **`litos-factory` CLI**: setup, run/start/stop/open/status/doctor, compose file (G7), env generator (G5), service registration for all three OSes.
@@ -389,6 +389,16 @@ Secrets needed in CI: `APPLE_SIGN_IDENTITY`, `APPLE_INSTALLER_IDENTITY`, `APPLE_
 9. **Windows MSI**, then the winget manifest.
 10. **Server mode** (`--server`, system services, reverse-proxy examples).
 11. **Installation check** (§12) on clean machines.
+
+### 11.1 Built
+
+**Step 2, host fixes (2026-10-19).**
+
+- **G2:** the host's content root is its binary's folder (`FactoryOptions.ContentRoot` overrides it, for tests), and the build copies `wwwroot` there, as publishing does. A started-from-anywhere host serves the app. In the source tree, rebuild the host after `npm run build` so the new app is copied beside it.
+- **G6:** `FACTORY_TOOLCHAIN_PATH` (setting or environment) is the PATH of every worker, verification command, MCP server and registration PATH check, in `ToolchainEnvironment.Scrub`; the host's own PATH is untouched.
+- **Readiness:** `GET /readyz`, anonymous: 200 with `{ready, database, coordinator}` once the database answers (5 s limit) and the coordinator has started, otherwise 503 saying which. `/healthz` stays "listening".
+- **Log file:** `FACTORY_LOG_DIR` adds a file logger, `host-YYYYMMDD.log` by UTC date, kept 14 days, flushed per line, shared for reading.
+- **Passwords:** every account can change its own password (`POST /api/auth/password`, current password required, must differ, Identity's rules; other sessions end at their next stamp check), from the top bar. With `FACTORY_ADMIN_PASSWORD_ONE_TIME=1` the seeded Admin is marked `MustChangePassword` (migration `UserMustChangePassword`): its session carries a claim, every other API call answers 403 until it changes the password, and the app shows only the change screen. Off by default, so existing installs are unchanged.
 
 Steps 1–4 are worth doing even if installers wait. They are what makes "runs on Mac and Linux" true at all.
 

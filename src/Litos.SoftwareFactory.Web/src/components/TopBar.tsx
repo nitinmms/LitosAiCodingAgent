@@ -11,6 +11,7 @@ export function TopBar({
   onNavigate,
   onAwaitingYou,
   onSignOut,
+  onChangePassword,
 }: {
   user: CurrentUser;
   view: Route['view'];
@@ -21,6 +22,7 @@ export function TopBar({
   onNavigate: (view: Exclude<Route['view'], 'invite'>) => void;
   onAwaitingYou: () => void;
   onSignOut: () => void;
+  onChangePassword?: () => void;
 }) {
   const name = user.displayName || user.userName;
   const tabs: [Exclude<Route['view'], 'invite'>, string][] = [
@@ -67,6 +69,11 @@ export function TopBar({
             {name}
             {user.roles.includes('Admin') ? <span className="muted"> (Admin)</span> : null}
           </span>
+          {onChangePassword ? (
+            <button className="btn ghost small" onClick={onChangePassword}>
+              Change password
+            </button>
+          ) : null}
           <button className="btn ghost small" onClick={onSignOut}>
             Sign out
           </button>

@@ -98,6 +98,8 @@ export interface FactoryApi {
   usage(id: string): Promise<UsageCall[]>;
   /** Sends a message; attachmentIds are files already uploaded to the thread, sent with it. */
   postMessage(id: string, messageId: string, text: string, attachmentIds?: string[]): Promise<DispatchResult>;
+  /** Changes the signed-in account's password; answers the account as it now stands. */
+  changePassword(currentPassword: string, newPassword: string): Promise<CurrentUser>;
   /** Uploads one file to the thread, unsent until a message names it. */
   uploadAttachment(threadId: string, file: File): Promise<Attachment>;
   /** Approves the specification revision the person read; a newer one makes this a 409. */
@@ -244,6 +246,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     },
     login: (userName, password) => send<CurrentUser>('POST', '/api/auth/login', { userName, password }, true),
     logout: () => send<void>('POST', '/api/auth/logout', undefined, true),
+    changePassword: (currentPassword, newPassword) =>
+      send<CurrentUser>('POST', '/api/auth/password', { currentPassword, newPassword }),
     settings: () => send<Settings>('GET', '/api/settings'),
     projects: () => send<Project[]>('GET', '/api/projects'),
     registerProject: (request) => send<Project>('POST', '/api/projects', request),

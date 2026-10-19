@@ -191,6 +191,8 @@ export function evidence(overrides: Partial<HandoffEvidence> = {}): HandoffEvide
  */
 export class FakeHost {
   user: CurrentUser = ADMIN;
+  /** The signed-in account's password, changed through POST /api/auth/password. */
+  password = PASSWORD;
   signedIn = false;
   settings: Settings = {
     provider: 'openrouter',
@@ -682,7 +684,7 @@ export class FakeHost {
     const data = (body ?? {}) as Record<string, unknown>;
 
     if (path === '/api/auth/login' && method === 'POST') {
-      if (data.userName !== this.user.userName || data.password !== PASSWORD)
+      if (data.userName !== this.user.userName || data.password !== this.password)
         return [401, { error: 'The user name or password is incorrect.' }];
       this.signedIn = true;
       return [200, this.user];
@@ -700,6 +702,17 @@ export class FakeHost {
       return [400, { error: `State-changing requests must send the ${CSRF_HEADER} header.` }];
 
     if (path === '/api/auth/me') return [200, this.user];
+    // As FactoryAuth: the current password is required, and the new one must differ and be long enough.
+    if (path === '/api/auth/password' && method === 'POST') {
+      if (data.currentPassword !== this.password) return [400, { error: 'The current password is incorrect.' }];
+      if (data.newPassword === data.currentPassword) return [400, { error: 'The new password must differ from the current one.' }];
+      if (String(data.newPassword ?? '').length < 12) return [400, { error: 'Passwords must be at least 12 characters.' }];
+      this.password = String(data.newPassword);
+      this.user = { ...this.user, mustChangePassword: false };
+      return [200, this.user];
+    }
+    if (this.user.mustChangePassword && path.startsWith('/api/') && path !== '/api/auth/logout')
+      return [403, { error: 'Choose a new password before going on.', mustChangePassword: true }];
     if (path === '/api/auth/logout') {
       this.signedIn = false;
       return [200];

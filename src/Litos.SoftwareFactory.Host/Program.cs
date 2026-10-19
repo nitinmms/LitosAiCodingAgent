@@ -34,6 +34,11 @@ if (envFile is not null)
 configuration.AddEnvironmentVariables();
 var options = FactoryOptions.From(configuration.Build());
 
+// A toolchain PATH set in the settings file reaches every worker and verification command the
+// way the environment variable would (G6): ToolchainEnvironment reads it from the host's environment.
+if (options.ToolchainPath is { } toolchainPath)
+    Environment.SetEnvironmentVariable(FactoryOptions.ToolchainPathVariable, toolchainPath);
+
 if (migrate)
 {
     if (string.IsNullOrWhiteSpace(options.MigrationsConnectionString))

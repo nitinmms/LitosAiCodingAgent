@@ -22,4 +22,10 @@
     <InternalsVisibleTo Include="Litos.SoftwareFactory.Host.Tests" />
   </ItemGroup>
 
+  <!-- The host serves the web app from beside its binary (FactoryHostApp: content root), so the
+       React build in wwwroot is copied there on build, as publishing already does. -->
+  <ItemGroup>
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

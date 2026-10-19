@@ -13,6 +13,10 @@ public sealed class FactoryUser : IdentityUser<Guid>
     public string? DisplayName { get; set; }
 
     public bool Disabled { get; set; }
+
+    /// <summary>Signed in, the account can do nothing but choose a new password: set on an Admin
+    /// seeded from a password an installer generated and showed once.</summary>
+    public bool MustChangePassword { get; set; }
 }
 
 /// <summary>

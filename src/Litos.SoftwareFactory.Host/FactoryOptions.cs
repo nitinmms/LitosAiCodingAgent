@@ -81,6 +81,29 @@ public sealed class FactoryOptions
     /// </summary>
     public string? Urls { get; set; }
 
+    /// <summary>
+    /// The folder the host serves its web app from (its wwwroot) and resolves relative paths in;
+    /// null is the folder of the host's own binary, so a host started by a service manager from
+    /// any working directory still finds the app (SoftwareFactoryInstallation.md, G2).
+    /// </summary>
+    public string? ContentRoot { get; set; }
+
+    /// <summary>
+    /// FACTORY_TOOLCHAIN_PATH: the PATH given to workers, verification commands and MCP servers in
+    /// place of the host's own (G6). A service starts with a minimal PATH, and on Windows a PATH
+    /// changed after login is not seen until the host restarts; a captured login PATH fixes both.
+    /// </summary>
+    public string? ToolchainPath { get; set; }
+
+    /// <summary>FACTORY_LOG_DIR: where the host also writes its log, one file a day; null writes none.</summary>
+    public string? LogDirectory { get; set; }
+
+    /// <summary>
+    /// FACTORY_ADMIN_PASSWORD_ONE_TIME: the seeded Admin must choose a new password at first
+    /// sign-in, for an installer that generated FACTORY_ADMIN_PASSWORD and showed it once.
+    /// </summary>
+    public bool AdminPasswordOneTime { get; set; }
+
     public string CommitName { get; set; } = "Litos Software Factory";
 
     public string CommitEmail { get; set; } = "factory@litos.invalid";
@@ -126,6 +149,8 @@ public sealed class FactoryOptions
 
     /// <summary>Reads the options from configuration: environment variables, and the private
     /// settings file when one was given.</summary>
+    public const string ToolchainPathVariable = Infrastructure.Processes.ToolchainEnvironment.ToolchainPathVariable;
+
     public static FactoryOptions From(IConfiguration configuration)
     {
         var options = new FactoryOptions
@@ -139,6 +164,9 @@ public sealed class FactoryOptions
             AdminPassword = NullIfEmpty(configuration["FACTORY_ADMIN_PASSWORD"]),
             WorkerPath = NullIfEmpty(configuration["FACTORY_WORKER_PATH"]),
             Urls = NullIfEmpty(configuration["ASPNETCORE_URLS"]),
+            ToolchainPath = NullIfEmpty(configuration[ToolchainPathVariable]),
+            LogDirectory = NullIfEmpty(configuration["FACTORY_LOG_DIR"]),
+            AdminPasswordOneTime = IsOn(configuration["FACTORY_ADMIN_PASSWORD_ONE_TIME"]),
         };
 
         if (NullIfEmpty(configuration["FACTORY_MODEL"]) is { } model)
