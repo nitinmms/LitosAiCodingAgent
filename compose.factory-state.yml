@@ -1,4 +1,5 @@
-# Factory state database for Litos.SoftwareFactory.Host — development only.
+# Factory state database for Litos.SoftwareFactory.Host — development only. Keep the service in
+# step with deploy/factory/compose.yml, the installed factory's copy (image, healthcheck, roles).
 # See ReadMe_LitosSoftwareFactory_V1.md §20. Pair with a private .env.factory file:
 #
 #   docker compose -f compose.factory-state.yml --env-file .env.factory up -d

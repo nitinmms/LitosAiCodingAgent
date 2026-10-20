@@ -1,0 +1,101 @@
+<!--
+  Litos Software Factory for Windows (SoftwareFactoryInstallation.md §5.1, §14.4 step 3).
+
+  The MSI only copies files and calls litos-factory, which does the real work and is unit-tested:
+    install, repair, upgrade   litos-factory-w setup, from the installer  (after the files are in place)
+    before files change        litos-factory stop                         (a running host locks its files)
+    uninstall                  litos-factory uninstall                    (purged with msiexec /x … PURGE=1)
+
+  setup never fails the install: if Docker is missing or not running it says what to do in a
+  dialog and exits 0, so the files stay and the Start-menu shortcut finishes setup later.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="Litos Software Factory"
+           Manufacturer="Litos"
+           Version="$(ProductVersion)"
+           UpgradeCode="ACB0F33B-CE3B-4410-A363-856E46DFAB8F"
+           Scope="perUser"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Litos Software Factory is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="FactoryIcon" SourceFile="$(IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="FactoryIcon" />
+
+    <!-- Welcome and licence, install, then Finish with "Open Litos Software Factory" ticked. -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open Litos Software Factory" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenFactory"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT REMOVE" />
+    </UI>
+
+    <!-- %LOCALAPPDATA%\Programs\LitosSoftwareFactory, as per-user installs go (§2). -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="UserProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="LitosSoftwareFactory" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="FactoryFiles" Directory="INSTALLFOLDER">
+      <!-- Host, worker, kernel, litos-factory (console and windowless), wwwroot/, db/. -->
+      <Files Include="$(PublishDir)\**" />
+
+      <!-- litos-factory on the user's PATH, for status, doctor and the rest in a terminal. -->
+      <Component Id="UserPath" Guid="5B1E2C55-0A5F-4D4B-9C77-0B3F7E6C9A21">
+        <Environment Id="FactoryOnPath" Name="PATH" Value="[INSTALLFOLDER]" Action="set" Part="last" System="no" Permanent="no" />
+        <RegistryValue Root="HKCU" Key="Software\Litos\SoftwareFactory" Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveUserProgramsFolder" Directory="UserProgramsFolder" On="uninstall" />
+      </Component>
+    </ComponentGroup>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcuts" Guid="9F0C1D3A-6B2E-4E0F-8A61-3C5D7B9E2F14">
+        <!-- Starts Docker (asking first) and the factory if needed, then opens the browser. -->
+        <Shortcut Id="OpenShortcut" Name="Litos Software Factory"
+                  Description="Open Litos Software Factory in your browser"
+                  Target="[INSTALLFOLDER]litos-factory-w.exe" Arguments="open"
+                  WorkingDirectory="INSTALLFOLDER" Icon="FactoryIcon" />
+        <Shortcut Id="StatusShortcut" Name="Litos Software Factory - Status"
+                  Description="What is running, and where things are"
+                  Target="[System64Folder]cmd.exe" Arguments="/k &quot;&quot;[INSTALLFOLDER]litos-factory.exe&quot; status&quot;"
+                  WorkingDirectory="INSTALLFOLDER" Icon="FactoryIcon" />
+        <RegistryValue Root="HKCU" Key="Software\Litos\SoftwareFactory" Name="Shortcuts" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Factory" Title="Litos Software Factory" Level="1">
+      <ComponentGroupRef Id="FactoryFiles" />
+      <ComponentRef Id="StartMenuShortcuts" />
+    </Feature>
+
+    <!-- Without a person to answer (msiexec /qn, winget), setup shows no dialogs and starts nothing it would ask about. -->
+    <SetProperty Id="SETUPQUIET" Value="--quiet" Before="SetupFactory" Sequence="execute" Condition="UILevel &lt; 4" />
+    <SetProperty Id="UNINSTALLPURGE" Value="--purge" Before="UninstallFactory" Sequence="execute" Condition="PURGE = 1" />
+
+    <!-- Before any file is removed or replaced: an uninstall, an upgrade's removal of the old
+         version (run from that version's own package), or a repair. -->
+    <CustomAction Id="StopFactory" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]litos-factory.exe&quot; stop"
+                  Execute="deferred" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="UninstallFactory" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]litos-factory.exe&quot; uninstall [UNINSTALLPURGE]"
+                  Execute="deferred" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="SetupFactory" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]litos-factory-w.exe&quot; setup --from-installer [SETUPQUIET]"
+                  Execute="deferred" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="OpenFactory" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]litos-factory-w.exe&quot; open"
+                  Execute="immediate" Impersonate="yes" Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="StopFactory" Before="RemoveFiles" Condition="Installed" />
+      <!-- Not when an upgrade removes the old version: the settings, data and start at sign-in stay. -->
+      <Custom Action="UninstallFactory" After="StopFactory" Condition="REMOVE ~= &quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="SetupFactory" After="InstallFiles" Condition="NOT REMOVE ~= &quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+  </Package>
+</Wix>

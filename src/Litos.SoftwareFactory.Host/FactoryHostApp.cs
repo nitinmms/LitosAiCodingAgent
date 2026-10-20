@@ -172,6 +172,7 @@ public static class FactoryHostApp
         app.MapFactoryDispatch();
         app.MapFactoryEvents();
         app.MapWorkerCallbacks();
+        app.MapFactoryControl(options);
 
         app.Lifetime.ApplicationStarted.Register(() =>
         {

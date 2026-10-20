@@ -1,0 +1,22 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <!-- The Windows installer for Litos Software Factory (SoftwareFactoryInstallation.md §5.1, §14):
+       a per-user MSI, no UAC, that installs the folder deploy/publish-factory-windows.ps1 makes and
+       calls litos-factory to do everything else. Built by deploy/package-factory-msi.ps1, which
+       passes PublishDir, ProductVersion and LicenseRtf. WiX v5: MS-RL, no maintenance fee.
+       Not part of LitosAiAgent.slnx: it needs the published folder, not a build. -->
+  <PropertyGroup>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.0</ProductVersion>
+    <OutputName>LitosSoftwareFactory-$(ProductVersion)-win-x64</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(PublishDir);LicenseRtf=$(LicenseRtf);IconFile=$(MSBuildThisFileDirectory)..\..\deploy\icon-source.ico</DefineConstants>
+    <!-- A per-user install puts files in the user's profile, which these checks want keyed by a
+         registry value per component; Windows Installer itself handles the files correctly. -->
+    <SuppressIces>ICE38;ICE64;ICE91</SuppressIces>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+  </ItemGroup>
+
+</Project>

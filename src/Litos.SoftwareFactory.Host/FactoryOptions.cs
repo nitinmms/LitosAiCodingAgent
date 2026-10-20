@@ -104,6 +104,12 @@ public sealed class FactoryOptions
     /// </summary>
     public bool AdminPasswordOneTime { get; set; }
 
+    /// <summary>
+    /// FACTORY_CONTROL_TOKEN: the secret the installed launcher (litos-factory) sends to stop this
+    /// host and ask about its first sign-in (Api/ControlApi.cs); null maps no control endpoints.
+    /// </summary>
+    public string? ControlToken { get; set; }
+
     public string CommitName { get; set; } = "Litos Software Factory";
 
     public string CommitEmail { get; set; } = "factory@litos.invalid";
@@ -167,6 +173,7 @@ public sealed class FactoryOptions
             ToolchainPath = NullIfEmpty(configuration[ToolchainPathVariable]),
             LogDirectory = NullIfEmpty(configuration["FACTORY_LOG_DIR"]),
             AdminPasswordOneTime = IsOn(configuration["FACTORY_ADMIN_PASSWORD_ONE_TIME"]),
+            ControlToken = NullIfEmpty(configuration["FACTORY_CONTROL_TOKEN"]),
         };
 
         if (NullIfEmpty(configuration["FACTORY_MODEL"]) is { } model)

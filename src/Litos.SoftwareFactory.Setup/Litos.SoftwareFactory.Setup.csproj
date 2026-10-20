@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- litos-factory, the installed factory's control program (SoftwareFactoryInstallation.md §4.1):
+       setup, the background supervisor (run), start/stop/open/status/doctor and uninstall. The
+       installers only copy files and call it. It never references the host: it starts the host's
+       published executable as a process.
+
+       Windows only for now (§14: the MSI comes first); its prompts use Windows Forms' TaskDialog.
+       The macOS and Linux ports retarget it with their own prompt and service registration.
+
+       Published twice from this project (deploy/publish-factory-windows.ps1): litos-factory.exe,
+       a console program for the terminal, and litos-factory-w.exe (OutputType=WinExe), which the
+       Scheduled Task and the Start-menu shortcut run so that no console window flashes. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>litos-factory</AssemblyName>
+    <RootNamespace>Litos.SoftwareFactory.Setup</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- LibraryImport's generated marshalling (JobObject). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- The MSI and the publish script pass the release version; a source build is 0.1.0. -->
+    <Version Condition="'$(Version)' == ''">0.1.0</Version>
+  </PropertyGroup>
+
+  <!-- Windows Forms' implicit usings would bring System.Windows.Forms into every file. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.SoftwareFactory.Setup.Tests" />
+  </ItemGroup>
+
+</Project>

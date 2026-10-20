@@ -1,0 +1,32 @@
+# Factory state database for an installed factory (SoftwareFactoryInstallation.md G7).
+# Shipped as db/compose.yml beside init-roles.sh in the install folder; litos-factory runs it as
+#
+#   docker compose -f <install>/db/compose.yml --env-file <config>/factory.env up -d --wait
+#
+# The project name is fixed, so the container and the volume keep their names whatever folder
+# the factory is installed in, and never meet the source tree's dev database
+# (compose.factory-state.yml, project "litosaiagent10"; keep the service in step with it). The port comes from factory.env, so an
+# install beside a dev setup takes the next free one. Removing the volume deletes all factory state.
+name: litos-factory
+services:
+  factory-db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: litos_factory
+      POSTGRES_USER: factory_admin
+      POSTGRES_PASSWORD: ${FACTORY_DB_ADMIN_PASSWORD:?Set FACTORY_DB_ADMIN_PASSWORD}
+      FACTORY_DB_MIGRATOR_PASSWORD: ${FACTORY_DB_MIGRATOR_PASSWORD:?Set FACTORY_DB_MIGRATOR_PASSWORD}
+      FACTORY_DB_RUNTIME_PASSWORD: ${FACTORY_DB_RUNTIME_PASSWORD:?Set FACTORY_DB_RUNTIME_PASSWORD}
+    ports:
+      - "127.0.0.1:${FACTORY_DB_PORT:-5433}:5432"
+    volumes:
+      - state:/var/lib/postgresql
+      - ./init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factory_admin -d litos_factory"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+volumes:
+  state:

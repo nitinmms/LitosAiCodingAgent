@@ -8,6 +8,8 @@ export function TopBar({
   view,
   awaitingYou,
   reconnecting = false,
+  soundOn,
+  onToggleSound,
   onNavigate,
   onAwaitingYou,
   onSignOut,
@@ -19,6 +21,9 @@ export function TopBar({
   awaitingYou: number;
   /** The live stream is down and being reopened: what is shown may be out of date. */
   reconnecting?: boolean;
+  /** Whether a task that starts waiting on this user plays the "meal ready" beeps. */
+  soundOn?: boolean;
+  onToggleSound?: () => void;
   onNavigate: (view: Exclude<Route['view'], 'invite'>) => void;
   onAwaitingYou: () => void;
   onSignOut: () => void;
@@ -61,6 +66,16 @@ export function TopBar({
         <button className={`btn ${awaitingYou ? 'attn' : ''}`} onClick={onAwaitingYou} disabled={!awaitingYou}>
           {awaitingYou} awaiting you
         </button>
+        {onToggleSound ? (
+          <button
+            className="btn ghost small"
+            aria-pressed={!!soundOn}
+            onClick={onToggleSound}
+            title="Three beeps when one of your tasks starts waiting on you"
+          >
+            {soundOn ? 'Sound on' : 'Sound off'}
+          </button>
+        ) : null}
         <div className="userbox">
           <span className="avatar" aria-hidden="true">
             {initials(name)}

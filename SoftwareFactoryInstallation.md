@@ -1,6 +1,6 @@
 # Litos Software Factory: installing on Windows, macOS and Linux
 
-Status: proposal, 2026-10-19, partly built: the host fixes and Windows CI are done (§11.1), and the Windows installer goes first (§14). This evaluates whether the factory can run on all three platforms and how a simple installer would work on each, and lists the code changes needed first.
+Status: proposal, 2026-10-19, partly built: the host fixes and Windows CI are done (§11.1), and the Windows installer, which goes first (§14), is built unsigned (§14.7). This evaluates whether the factory can run on all three platforms and how a simple installer would work on each, and lists the code changes needed first.
 
 Decisions this plan follows (agreed 2026-10-19):
 
@@ -494,6 +494,34 @@ Each step lands with its unit tests, as every factory change does.
 
 This machine's dev setup already uses ports 5180 and 5433, the compose project `litosaiagent10` and `%LOCALAPPDATA%\LitosSoftwareFactory` (§13, last item). The first MSI tests run on a clean Windows machine or VM. On this machine, `setup` must either adopt the existing `.env.factory`, database and data folder (an offer, never silently) or install beside it on other ports and folders; which one is decided before step 3.
 
+Decided 2026-10-20: **install beside**. `setup` never adopts a dev setup. When the usual data folder already holds files that no install wrote, the install uses `%LOCALAPPDATA%\LitosSoftwareFactory-Installed` and starts its port search at 5181/5434, so it also keeps off the dev ports while the dev host is stopped. The compose project is `litos-factory`, never `litosaiagent10`.
+
 ### 14.6 Acceptance
 
 §12's installation check, Windows items only, on a clean Windows 11 machine with only Docker Desktop and Git: install with no terminal commands and the browser on the sign-in page within 2 minutes; a forced password change; a .NET and a Python project registered and one small task accepted with a PDF attached; the factory back on its own after a reboot; an upgrade over it with the data intact; backup, purge, reinstall, restore; a clear one-sentence message without Docker; and uninstall keeping the data.
+
+### 14.7 Built (2026-10-20): steps 1–3, unsigned
+
+**Build it:** `powershell -File deploy/package-factory-msi.ps1 -Version 0.1.0` → `deploy/out/factory/LitosSoftwareFactory-0.1.0-win-x64.msi`. It runs the publish script, then builds the WiX project with WiX v5 from NuGet (MS-RL; nothing to install, no maintenance fee).
+
+| Part | Where | What it does |
+|---|---|---|
+| Publish script | `deploy/publish-factory-windows.ps1` | Builds the web app, publishes host, worker, kernel and `litos-factory` self-contained single-file for `win-x64`, each in its own staging folder, and copies only the executables into one folder with `wwwroot/` and `db/` (`compose.yml`, `init-roles.sh` with LF endings). `litos-factory-w.exe` is `litos-factory.exe` with its PE subsystem set to Windows, so nothing flashes a console. Fails if a publish leaves anything beside an executable (an unbundled native library). 494 MB unpacked; the MSI is 238 MB. |
+| Compose file (G7) | `deploy/factory/compose.yml` | `name: litos-factory`, port from `FACTORY_DB_PORT`, init script beside it. |
+| `litos-factory` | `src/Litos.SoftwareFactory.Setup` | The §4.1 commands except backup/restore (next, with the M4 step 7 restore check). Windows only for now: `net10.0-windows`, TaskDialog prompts. |
+| Control endpoints | `Host/Api/ControlApi.cs` | `FACTORY_CONTROL_TOKEN` (setup generates it) maps `POST /control/stop` (as Ctrl+C) and `GET /control/status` (`adminMustChangePassword`), loopback only, token compared in constant time, 404 otherwise. A hidden host has no console to send Ctrl+C to, and dispatch pausing needs an Admin sign-in the CLI doesn't have. |
+| MSI | `installer/windows/` | Per-user, no UAC, `%LOCALAPPDATA%\Programs\LitosSoftwareFactory`, licence page, Finish with "Open Litos Software Factory" ticked. Start menu: the app (`open`) and Status (`status` in a console). Adds the folder to the user's PATH. |
+
+**How the pieces fit.**
+
+- **setup** (from the MSI after the files are in place, or by the shortcut if it never finished): preflight, `factory.env` if missing (owner-only ACL, never overwritten, `FACTORY_ADMIN_PASSWORD_ONE_TIME=1`, `first-sign-in.txt` beside it), `FACTORY_TOOLCHAIN_PATH` from the registry's Machine + User PATH, stop a running factory, `compose up --wait`, `--migrate`, the Scheduled Task, start, wait on `/readyz`. Run from the MSI, a failure is a dialog with the fix and exit 0, so the files stay. `msiexec /qn` passes `--quiet`: no dialogs.
+- **Starting Docker** (`FACTORY_START_DOCKER`, `ask` by default): when Docker Desktop or Rancher Desktop is installed but not running, setup and the Start-menu shortcut ask *Start Docker* with an *Always start Docker automatically* tick-box (which writes `always`). With `always`, the supervisor starts it at sign-in too; with `ask`, sign-in only waits, so there is no surprise dialog. `stop` never quits Docker. setup and `doctor` say when Docker Desktop doesn't start at sign-in itself (its `AutoStart` setting).
+- **run** (the Scheduled Task, 30 s after sign-in, normal priority, restarted 3 times on failure; the user's Run key if Windows refuses the task): waits for Docker **for as long as it takes** (logging every 5 minutes), `compose up`, `--migrate`, then runs the host in a Job object (kill-on-close, so host, workers and kernels never outlive it) and restarts it after a crash with 5 s/15 s/30 s/1 min backoff, reset after 10 minutes of healthy running. A clean exit ends it. One per user (`supervisor.lock` in the config folder). Log: `<data>/logs/launcher-YYYYMMDD.log` beside the host's.
+- **stop** sets a named event the supervisor watches (named after the config folder; created before the lock is taken, so a supervisor seen running can always be signalled); the supervisor calls `/control/stop`, waits up to 2 minutes, then ends the host. If the event can't be opened (another session), `stop` calls `/control/stop` itself. Runs come back Interrupted (§16).
+- **uninstall --purge** deletes the settings and data only after `compose down --volumes` succeeded: the settings hold the passwords the volume was created with, so deleting them beside a surviving volume would leave a reinstall that can never open its database. With Docker stopped it keeps all three and prints the `docker volume rm` to finish by hand. It deletes a data folder only if it carries setup's marker.
+- **open** starts Docker per the setting and the factory if needed, opens the browser, and shows `first-sign-in.txt` in Notepad until `/control/status` says the password was changed, then deletes it.
+- **MSI sequencing:** `stop` before `RemoveFiles` whenever a version is installed (uninstall, repair, and an upgrade's removal of the old version, which runs from the old package); `uninstall` only when removing without an upgrade (`PURGE=1` adds `--purge`); `setup --from-installer` after `InstallFiles` unless removing.
+
+**Checked on this machine, beside the dev setup** (it chose `-Installed` and ports 5181/5434): `setup` from the published folder; `stop` (33 s with a browser tab open, under 1 s without: the event stream holds the host's shutdown) and `start`; silent MSI install; upgrade 0.1.0 → 0.1.1 (old package stops it, new one sets up, `factory.env` unchanged); uninstall keeping settings, data and volume, with task, PATH entry and processes gone; reinstall over the kept data; `PURGE=1` removing container, volume, settings and data, leaving the dev setup's data alone. 63 unit tests in `tests/Litos.SoftwareFactory.Setup.Tests` (in the Windows CI job; `Commands` runs against fake programs, machine and host through `IProcessRunner`, `IMachine` and `IHostControl`) and 7 in `ControlApiTests`. A review on 2026-10-20 found, and this fixed: the purge rule above, a lost stop signal, a supervisor ended by a host that could not start (now retried with backoff, and the host killed if it cannot join the job), and a stop arriving as the supervisor exited crashing it on a disposed token. The whole MSI cycle was re-run after the fixes.
+
+**Not yet checked:** the dialogs (interactive install, the Docker prompt, a failure dialog), Docker not running or missing, the Run-key fallback, a reboot, and §14.6 on a clean machine. Steps 4 (signing) and 5 (CI packaging, winget) wait for a certificate.

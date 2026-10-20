@@ -14,6 +14,8 @@ import { SettingsPage } from './components/SettingsPage';
 import { ThreadsPage } from './components/ThreadsPage';
 import { TopBar } from './components/TopBar';
 import { navigate, SETTINGS_TABS, useRoute, type Route } from './domain/route';
+import { newlyAwaiting } from './domain/attention';
+import { playMealReady, setSoundEnabled, soundEnabled } from './domain/sound';
 import { awaitsYou, newer } from './domain/task';
 
 const NOTICE_MS = 6_000;
@@ -24,9 +26,11 @@ export interface AppProps {
   /** Builds the API client; tests pass one backed by a fake host. */
   createClient?: (onSignedOut: () => void) => FactoryApi;
   openEvents?: EventSourceFactory;
+  /** The "meal ready" sound when a task starts waiting on this user; tests pass a spy. */
+  playAttentionSound?: () => void;
 }
 
-export function App({ createClient, openEvents }: AppProps) {
+export function App({ createClient, openEvents, playAttentionSound = playMealReady }: AppProps) {
   // undefined: not known yet. null: signed out.
   const [user, setUser] = useState<CurrentUser | null | undefined>(undefined);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -48,6 +52,9 @@ export function App({ createClient, openEvents }: AppProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [dispatch, setDispatch] = useState<DispatchStatus | null>(null);
   const [changingPassword, setChangingPassword] = useState(false);
+  const [soundOn, setSoundOn] = useState(() => soundEnabled());
+  /** The tasks that awaited this user at the last look; null until the list has loaded. */
+  const awaitingBefore = useRef<Set<string> | null>(null);
   const route = useRoute();
 
   const api = useMemo(() => {
@@ -146,6 +153,19 @@ export function App({ createClient, openEvents }: AppProps) {
       stop();
     };
   }, [signedIn, boardCursor, boardOpened, mergeThread, openEvents]);
+
+  // A task that has just started waiting on this user rings, once, however it got there: a live
+  // event, or a fresh list after the stream was down. Tasks already waiting when the list first
+  // loads do not: the top bar's count shows those.
+  useEffect(() => {
+    if (!loaded || !user) {
+      awaitingBefore.current = null;
+      return;
+    }
+    const { awaiting, arrived } = newlyAwaiting(awaitingBefore.current, threads, user.id);
+    awaitingBefore.current = awaiting;
+    if (arrived.length > 0 && soundOn) playAttentionSound();
+  }, [threads, loaded, user, soundOn, playAttentionSound]);
 
   // After the board's stream was closed: the list again, and a new stream from its cursor. The
   // list replaces the old one, so a thread in a project the user has left goes away.
@@ -263,6 +283,14 @@ export function App({ createClient, openEvents }: AppProps) {
         view={route.view}
         awaitingYou={waiting.length}
         reconnecting={boardReconnecting}
+        soundOn={soundOn}
+        onToggleSound={() => {
+          const on = !soundOn;
+          setSoundOn(on);
+          setSoundEnabled(on);
+          // Turning it on plays it once, so the person hears what to listen for.
+          if (on) playAttentionSound();
+        }}
         onNavigate={(view) =>
           navigate(
             view === 'threads'
