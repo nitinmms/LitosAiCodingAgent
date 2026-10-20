@@ -853,6 +853,17 @@ describe('after a handoff, @factory is a change request', () => {
     return context;
   }
 
+  /**
+   * The Withdraw button once it can be pressed. It appears as soon as the task's events say the
+   * rework is queued, which can be before the send that queued it has finished; until then the
+   * page is busy and the button disabled, and clicking a disabled button does nothing.
+   */
+  async function withdrawButton() {
+    const button = await screen.findByRole('button', { name: 'Withdraw change request' });
+    await waitFor(() => expect(button).toBeEnabled());
+    return button;
+  }
+
   /** The first real task's mistake: a question, sent with @factory, became a rework run. */
   it('says so before anything is sent, and a question without @factory is asked instead', async () => {
     const { user } = await handedOff();
@@ -885,7 +896,7 @@ describe('after a handoff, @factory is a change request', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('You can withdraw it if that is not what you meant.');
     expect(screen.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
 
-    await user.click(await screen.findByRole('button', { name: 'Withdraw change request' }));
+    await user.click(await withdrawButton());
 
     expect(await screen.findByRole('button', { name: 'Accept' })).toBeEnabled();
     expect(host.sent('POST', `/api/threads/${thread.id}/withdraw`)).toHaveLength(1);
@@ -902,7 +913,7 @@ describe('after a handoff, @factory is a change request', () => {
     act(() => void host.change(thread.id, { state: 'Running' }));
     act(() => void host.change(thread.id, { state, stateReason: 'Stopped.' }));
 
-    await user.click(await screen.findByRole('button', { name: 'Withdraw change request' }));
+    await user.click(await withdrawButton());
 
     await waitFor(() => expect(host.details(thread.id).thread.state).toBe('AwaitingHumanTesting'));
     expect(await screen.findByRole('button', { name: 'Accept' })).toBeEnabled();
@@ -935,13 +946,18 @@ describe('after a handoff, @factory is a change request', () => {
   it("shows the host's reason when the withdrawal is refused", async () => {
     const { host, thread, user } = await handedOff();
     await user.type(composer(), '@factory How do I set up manual tests?{Enter}');
-    const button = await screen.findByRole('button', { name: 'Withdraw change request' });
-    // The agent picked it up a moment ago; this tab has not heard yet.
-    host.details(thread.id).thread = { ...host.details(thread.id).thread, state: 'Running', revision: 99 };
+    const button = await withdrawButton();
+    // The agent picked it up a moment ago and this tab has not heard yet, so the host refuses. The
+    // refusal is the host's own answer: changing the task's state here instead would race the
+    // page's own reloads, which can hear of it first and take the button away before the click.
+    host.failNext('POST', '/withdraw', 409, 'The change request is being worked on. Pause the task, then withdraw it.');
 
     await user.click(button);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Pause the task, then withdraw it.');
+    // The toast says the change request was sent until the refusal replaces it, so wait for the
+    // refusal rather than taking whichever notice is showing.
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Pause the task, then withdraw it.'));
+    expect(host.sent('POST', `/api/threads/${thread.id}/withdraw`)).toHaveLength(1);
   });
 });
 
