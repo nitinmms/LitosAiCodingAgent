@@ -11,10 +11,11 @@ export type Route =
   | { view: 'board' }
   | { view: 'threads'; threadId: string | null }
   | { view: 'projects' }
-  /** A project's lessons (m4-architecture.md §3.4); the first project when none is named. */
-  | { view: 'lessons'; projectId: string | null }
-  /** The flow metrics (m4-architecture.md §6). */
-  | { view: 'metrics' }
+  /** A project's lessons (m4-architecture.md §3.4); the first project when none is named. `lesson` is
+   * one lesson's number to bring into view, as the Metrics tab's improvements link to it. */
+  | { view: 'lessons'; projectId: string | null; lesson?: number }
+  /** The flow metrics (m4-architecture.md §6), or how the skills and lessons are doing (§12). */
+  | { view: 'metrics'; tab?: 'guidance' }
   /** The Admin's people screen: accounts, invitations and project membership. */
   | { view: 'people' }
   /** The Admin's factory settings, one tab per section. */
@@ -23,7 +24,7 @@ export type Route =
   | { view: 'invite'; token: string };
 
 /**
- * The app's routes live in the URL fragment (#/board, #/threads/<id>, #/projects, #/lessons/<id>, #/people,
+ * The app's routes live in the URL fragment (#/board, #/threads/<id>, #/projects, #/lessons/<id>[/L-<n>], #/metrics[/guidance], #/people,
  * #/settings/<tab>, #/invite/<token>), so the host only ever serves index.html and a reload lands
  * on the same screen. An invitation's token stays in the fragment, which the browser never sends
  * to the host.
@@ -32,8 +33,11 @@ export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   if (parts.length === 0 || parts[0] === 'board') return { view: 'board' };
   if (parts[0] === 'projects') return { view: 'projects' };
-  if (parts[0] === 'lessons') return { view: 'lessons', projectId: parts[1] ? decodeURIComponent(parts[1]) : null };
-  if (parts[0] === 'metrics') return { view: 'metrics' };
+  if (parts[0] === 'lessons') {
+    const lesson = /^L-(\d+)$/.exec(parts[2] ?? '');
+    return { view: 'lessons', projectId: parts[1] ? decodeURIComponent(parts[1]) : null, ...(lesson ? { lesson: Number(lesson[1]) } : {}) };
+  }
+  if (parts[0] === 'metrics') return parts[1] === 'guidance' ? { view: 'metrics', tab: 'guidance' } : { view: 'metrics' };
   if (parts[0] === 'people') return { view: 'people' };
   if (parts[0] === 'settings')
     return { view: 'settings', tab: SETTINGS_TABS.find((t) => t === parts[1]) ?? SETTINGS_TABS[0] };
@@ -48,9 +52,11 @@ export const routeHash = (route: Route): string => {
     case 'projects':
       return '#/projects';
     case 'lessons':
-      return route.projectId ? `#/lessons/${encodeURIComponent(route.projectId)}` : '#/lessons';
+      return route.projectId
+        ? `#/lessons/${encodeURIComponent(route.projectId)}${route.lesson ? `/L-${route.lesson}` : ''}`
+        : '#/lessons';
     case 'metrics':
-      return '#/metrics';
+      return route.tab === 'guidance' ? '#/metrics/guidance' : '#/metrics';
     case 'people':
       return '#/people';
     case 'settings':

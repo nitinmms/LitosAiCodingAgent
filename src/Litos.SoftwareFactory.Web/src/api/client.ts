@@ -12,6 +12,7 @@ import type {
   DispatchResult,
   FindingVerdict,
   FlowMetrics,
+  LessonReport,
   Counters,
   DispatchStatus,
   Invitation,
@@ -123,6 +124,8 @@ export interface FactoryApi {
   skipReflection(threadId: string): Promise<unknown>;
   /** The flow metrics over one project, or all the person's, for the last 7, 30 or 90 days. */
   metrics(projectId: string | null, days: number): Promise<FlowMetrics>;
+  /** How the project lessons are doing, over the same scope and period as the metrics. */
+  lessonMetrics(projectId: string | null, days: number): Promise<LessonReport>;
   /** The operational counters; Admins only. */
   counters(): Promise<Counters>;
   /** Whether dispatch is paused, for the banner everyone sees. */
@@ -290,6 +293,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     setDispatch: (paused, reason) => send<unknown>('POST', '/api/admin/dispatch', { paused, reason }),
     metrics: (projectId, days) =>
       send<FlowMetrics>('GET', `/api/metrics?days=${days}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`),
+    lessonMetrics: (projectId, days) =>
+      send<LessonReport>('GET', `/api/metrics/lessons?days=${days}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`),
     accept: (id) => send<Thread>('POST', `${thread(id)}/accept`),
     // Pausing or cancelling a running task answers 202 with { stopping: true } before the task
     // has stopped; the new state arrives on the event stream, so neither returns a thread to trust.

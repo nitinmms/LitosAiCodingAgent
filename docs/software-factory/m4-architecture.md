@@ -155,7 +155,7 @@ Computed on read from existing records; no new tables. `GET /api/metrics?project
 | Queue wait for locks and slots | Each stretch a task spent Queued, from its state events, split by the waiting reason those events recorded ("… held by …" for the repository, "Waiting for a free slot" for a slot); a task claimed at once counts for neither. Built this way, not as `StartedAt − QueuedAt`, because a resumed run is queued again while its `StartedAt` keeps the first start |
 | Lessons | Lessons included per run, and the helped verdicts (§4.5) |
 
-The **Metrics tab** shows a project picker (or all), the period, a summary of the rates and counts, and tables for time in state and stage, and tokens by phase and model (built as tables, not charts: the figures are few and read best as numbers). Indexes are checked against the queries in the step; `outbox_events (ThreadId, Sequence)` and `usage_entries (ThreadId)` are expected to suffice.
+The **Metrics tab** shows a project picker (or all), the period, a summary of the rates and counts, and tables for time in state and stage, and tokens by phase and model. (Built as tables first; replaced by charts with a Tables view in §12.) Indexes are checked against the queries in the step; `outbox_events (ThreadId, Sequence)` and `usage_entries (ThreadId)` are expected to suffice.
 
 ## 7. Operational counters (build step 6)
 
@@ -337,3 +337,94 @@ Live check (2026-10-17), ahead of the full one in §9: a real backup of the live
 - **A shell guard for scenario 11.** The agent's shell could refuse commands that start the application, deploy, or change a database, as it already refuses stopping processes by name (§9.1). Taken up only if the M4 check's worker logs show such a command.
 - **The skills A/B run** (m3-architecture.md §13, "Not done") can run alongside any step.
 - **M2's cost regression** (m2-architecture.md §10.1) stays parked; the M4 regression check will show whether it persists.
+
+## 12. The metrics dashboard (2026-10-20)
+
+The Metrics tab of §6 showed the flow metrics as a definition list and tables. It is now a dashboard, first shown to the user as an interactive mockup (https://claude.ai/artifact/2u1M7k5MBQSYPPPUxH2K3x) and approved. It also says how the project lessons, and later the skills, are doing, so they can be improved.
+
+### 12.1 Decisions
+
+Made with the user on 2026-10-20:
+
+- **Two steps.** Step A: the visual Flow tab and the lesson half of the evaluation, with no migration. Step B: record which skills each run is given and loads, then the skills half (§12.5).
+- **Skills are judged by outcomes only.** There is no Helped / Did not matter / Misled verdict for skills, unlike lessons (§4.5). A skill is judged by how often it is loaded, what it costs and how tasks given it fare.
+- **Hand-written SVG charts**, as small React components (`components/charts.tsx`), with no chart library. They draw from the stylesheet's tokens, so both themes work.
+- **Each improvement opens the page where the change is made.** For a lesson that is its card on the Lessons page (`#/lessons/<project>/L-<n>`, which opens the lesson's tab, scrolls it into view and marks it). For a skill (Step B) it is the Skills settings.
+
+Chosen without asking, and open to change: the thresholds in §12.3; the M1 gate (7 of 12) as the mark on the first-handoff tile; the tab is called **Lessons** until Step B adds skills, when it becomes **Skills & lessons** (the route, `#/metrics/guidance`, stays).
+
+### 12.2 Flow tab
+
+`GET /api/metrics` gains two fields, both computed by `FlowMetrics.Compute` from rows it already reads:
+
+- `perTask`: every task in the period with what it was charged and its change requests, most first.
+- `series`: the period in equal stretches (a day each over 7 days, three days over 30, a week over 90), each with the tasks created in it and the tasks accepted in it, by the state event that recorded the acceptance, and how many of those needed no change request.
+
+The tab shows, in order:
+
+- what needs attention: a decision waiting, and for Admins the counters' orphaned runs, push failures and people close to a quota;
+- four tiles: tasks with a trend line, first-handoff acceptance against the M1 gate, tokens per task, and the decisions waiting on people;
+- where the time goes: one sentence, the time split by whose turn it was (§7.1's grouping: factory working, waiting on people, stopped, queued), and the stages in order, each with its median and its share of the time;
+- time in each state (median and 90th percentile per state, coloured by whose turn), rework rounds, tokens task by task (one dot per task, one lane per project), tokens by phase and model, queue waits, the oldest open decision, and lessons in brief;
+- the Admin's Operations section, unchanged.
+
+**Charts or Tables**: one switch shows every chart's figures as a table instead; the choice is remembered in the browser. Every chart also has an aria-label and shows a mark's figures on hover.
+
+### 12.3 Lessons tab: the lesson report
+
+`GET /api/metrics/lessons?projectId=&days=` uses the same scope and periods as `/api/metrics`. `LessonMetrics.Compute` (Core) is a pure function over `GetLessonMetricsDataAsync`:
+
+- every lesson of the projects, with the revision runs are given;
+- the run snapshots taken in the period;
+- the tasks created in the period, with their runs.
+
+Nothing new is stored. Per lesson it reports:
+
+- **Given, picked by hand, and left out past the limit.**
+- **Verdicts**, and a **net verdict**: helped less misled, over the judged uses.
+- **First-handoff acceptance with vs without the lesson.** This compares the project's accepted tasks in the period that were given the lesson with those that were not. It is shown only when each side has at least 5 tasks (`MinTasksToCompare`). It is a correlation, and the page says what it compares.
+- **A standing**, by these rules:
+  - Never given: *new* if approved under 7 days ago, otherwise *never matched*.
+  - Fewer than 2 judged uses: *too few verdicts*.
+  - *Misleading*: a quarter of the judged uses misled, or two did on a lesson whose net verdict is under 0.4.
+  - Net verdict of 0.4 or more: *working*, or *helps, rarely matched* when given fewer than five times a month (scaled to the period, at least 2).
+  - Otherwise: *little effect*.
+
+From those it ranks **improvements**, most urgent first:
+
+| Severity | When | Suggested change |
+| --- | --- | --- |
+| Fix now | misleading | edit the rule, or disable it |
+| Improve | little effect (usable) | narrow its topics, or disable it |
+| Improve | never matched (usable) | check its topics against how tasks are worded |
+| Opportunity | helps, rarely matched | add topics or paths |
+| Opportunity | working or rarely matched, left out twice or more | raise the limit, or merge lessons that overlap |
+| Missing data | too few verdicts, given three times or more | ask testers to judge it |
+
+It also reports the verdicts at each rank retrieval gave (does ranking put the useful lessons first?). It shows what became of the period's reflection proposals: approved as written, approved after an edit, dismissed or waiting, plus the lessons people wrote. And it shows how often lessons from each kind of source helped.
+
+The tab shows a summary (verdict coverage, helped rate, lessons by standing), the improvements, a **lesson map**, a sortable **scorecard**, the ranking chart and the sources. The lesson map plots each lesson by times given against net verdict, in four zones: keep, widen topics, narrow or disable, fix now.
+
+### 12.4 Built (Step A)
+
+Core `FlowReport.PerTask` and `Series`, `LessonMetrics`; store `GetLessonMetricsDataAsync`; `MetricsApi` with the shared scope check; web `charts.tsx`, `MetricsPage.tsx` (Flow), `Guidance.tsx` (Lessons), `domain/metrics.ts`, the routes, and the Lessons page's `focus`.
+
+Tests:
+
+- Core `FlowMetricsTests`: per task, and the series' stretches and counting.
+- Core `LessonMetricsTests`: counts, every standing and the misleading rule, the scaled threshold, who is scored, the comparison and its minimum, ranks, proposals, sources, improvements and their order.
+- Store, on both databases: the lesson data, its approved revision and the period.
+- Host `MetricsApiTests`: the new fields, the lesson report, membership and 404, and periods.
+- Web `Metrics.test.tsx`: helpers, routes, each Flow section, the tooltip, Tables and its memory, attention, both tabs' refetching, improvements and their links, the map, sorting, ranking and sources, the empty state, and a lesson opened on the Lessons page.
+
+### 12.5 Step B, next: skills
+
+- **Record what a run is given.** At a run's start, store a run-skill snapshot of each skill the run has: a task skill in the system prompt, a library skill offered to load, or a repository skill allowed at its hash. Record its name, origin, hash or library revision, and size.
+- **Record what it loads.** The worker reports each `skill` tool call to the host. That covers direct calls and calls from kernel code, which the gateway does not see. Each load is stored against the snapshot, with the turn it came in.
+- **The report** gives, per skill:
+  - runs given and loads;
+  - an estimate of the tokens its text costs a run;
+  - first-handoff acceptance of comparable tasks with and without it (same project and task type, at least 8 runs, otherwise "too few runs");
+  - improvements: never loaded, costly with no clear gain, worse with it, changed since its approval.
+
+  The improvements link to Settings > Skills. The tab becomes **Skills & lessons**.

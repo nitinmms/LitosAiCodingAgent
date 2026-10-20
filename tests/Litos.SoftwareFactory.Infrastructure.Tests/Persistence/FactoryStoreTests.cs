@@ -2787,6 +2787,50 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(2, (await Store.GetFlowDataAsync(null, T0.AddDays(-1), default)).Threads.Count);
     }
 
+    // ---- Lesson report (m4-architecture.md §12) ----
+
+    [SkippableFact]
+    public async Task LessonMetricsData_IsEveryLessonOfTheProjects_WithTheApprovedRevision_AndTheSnapshotsAndTasksSinceTheDate()
+    {
+        var running = await RunningAsync();
+        var given = await Store.AddLessonAsync(running.Project.Id, Lesson(), Admin, approve: true, null, T0, default);
+        var revised = await Store.AddLessonAsync(running.Project.Id, Lesson("Dates are stored in UTC.", LessonSource.Manual), Admin, approve: true, null, T0, default);
+        await Store.ReviseLessonAsync(revised.Lesson.Id, 1, Lesson("Dates are stored in UTC, and shown in local time."), Admin, approve: true, T0.AddHours(1), default);
+        var suggested = await Store.AddLessonAsync(running.Project.Id, Lesson("A suggestion."), null, approve: false, null, T0, default);
+        var disabled = await Store.AddLessonAsync(running.Project.Id, Lesson("Turned off."), Admin, approve: true, null, T0, default);
+        await Store.SetLessonEnabledAsync(disabled.Lesson.Id, 1, false, Admin, T0, default);
+        await Store.AddLessonAsync((await AddProjectAsync("billing")).Id, Lesson("Elsewhere."), Admin, approve: true, null, T0, default);
+
+        var candidate = (await Store.ListRetrievableLessonsAsync(running.Project.Id, default)).Single(c => c.LessonId == given.Lesson.Id);
+        var left = new LessonCandidate(revised.Lesson.Id, revised.Lesson.Number, 2, "Dates.", ["dates"], [], T0);
+        await Store.SaveRunLessonsAsync(running.Run.Id,
+            [new LessonPick(candidate, 3, LessonInclusion.Retrieved), new LessonPick(left, 1, LessonInclusion.NotIncluded)], T0, default);
+        await Store.SetRunLessonVerdictAsync(running.Run.Id, given.Lesson.Id, LessonVerdict.Helped, Ben, T0, default);
+
+        var data = await Store.GetLessonMetricsDataAsync([running.Project.Id], T0.AddDays(-1), default);
+
+        Assert.Equal(4, data.Lessons.Count);
+        var row = data.Lessons.Single(l => l.Id == revised.Lesson.Id);
+        Assert.Equal(("Dates are stored in UTC, and shown in local time.", 2, (int?)2, true), (row.Rule, row.Revision, row.ApprovedRevision, row.Usable));
+        Assert.Equal(T0.AddHours(1), row.ApprovedAt);
+        var proposal = data.Lessons.Single(l => l.Id == suggested.Lesson.Id);
+        Assert.Equal((LessonStatus.Suggested, false, (DateTimeOffset?)null), (proposal.Status, proposal.Usable, proposal.ApprovedAt));
+        Assert.False(data.Lessons.Single(l => l.Id == disabled.Lesson.Id).Usable);
+
+        Assert.Equal(
+            [(given.Lesson.Id, LessonInclusion.Retrieved, 0, (LessonVerdict?)LessonVerdict.Helped), (revised.Lesson.Id, LessonInclusion.NotIncluded, 1, null)],
+            data.Given.OrderBy(g => g.Position).Select(g => (g.LessonId, g.Inclusion, g.Position, g.Verdict)));
+        Assert.All(data.Given, g => Assert.Equal(running.Thread.Id, g.ThreadId));
+        Assert.Equal([running.Thread.Id], data.Threads.Select(t => t.Id));
+        Assert.Equal(RunKind.Implement, Assert.Single(data.Runs).Kind);
+
+        var later = await Store.GetLessonMetricsDataAsync([running.Project.Id], T0.AddDays(1), default);
+        Assert.Equal(4, later.Lessons.Count); // the lessons themselves are not limited to the period
+        Assert.Empty(later.Given);
+        Assert.Empty(later.Threads);
+        Assert.Equal(5, (await Store.GetLessonMetricsDataAsync(null, T0.AddDays(-1), default)).Lessons.Count);
+    }
+
     // ---- Operational counters (m4-architecture.md §7) ----
 
     [SkippableFact]

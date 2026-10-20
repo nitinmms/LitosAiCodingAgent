@@ -18,7 +18,8 @@ export const splitList = (text: string): string[] =>
     .map((t) => t.trim())
     .filter((t) => t.length > 0);
 
-const SOURCE: Record<Lesson['current']['source'], string> = {
+/** Where a lesson came from, as people say it. */
+export const SOURCE: Record<Lesson['current']['source'], string> = {
   Manual: 'Written by hand',
   HumanCorrection: 'A change request',
   Decision: 'An answered decision',
@@ -38,6 +39,7 @@ export function LessonsPage({
   isAdmin,
   onProject,
   onNotice,
+  focus,
 }: {
   api: FactoryApi;
   projects: Project[];
@@ -45,6 +47,8 @@ export function LessonsPage({
   isAdmin: boolean;
   onProject: (projectId: string) => void;
   onNotice: (text: string) => void;
+  /** A lesson's number to open on: its tab, scrolled into view and marked (the Metrics tab links here). */
+  focus?: number;
 }) {
   const project = projects.find((p) => p.id === projectId) ?? projects[0] ?? null;
   const [lessons, setLessons] = useState<Lesson[] | null>(null);
@@ -66,6 +70,15 @@ export function LessonsPage({
     setLessons(null);
     void reload();
   }, [reload]);
+
+  const focused = focus === undefined ? undefined : lessons?.find((l) => l.number === focus);
+  useEffect(() => {
+    if (focused) setTab(tabOf(focused));
+  }, [focused]);
+  useEffect(() => {
+    // jsdom has no scrollIntoView; a browser always does.
+    if (focused) document.getElementById(`lesson-${focused.number}`)?.scrollIntoView?.({ block: 'center' });
+  }, [focused, tab]);
 
   /** Replaces one lesson with the host's answer, so the list shows what was saved. */
   const replaced = (lesson: Lesson) =>
@@ -134,6 +147,7 @@ export function LessonsPage({
         <LessonCard
           key={lesson.id}
           lesson={lesson}
+          focused={lesson.number === focus}
           isAdmin={isAdmin}
           replacements={approvedOthers(lesson.id)}
           numberOf={(id) => lessons?.find((l) => l.id === id)?.number ?? null}
@@ -160,6 +174,7 @@ export function LessonsPage({
 
 function LessonCard({
   lesson,
+  focused = false,
   isAdmin,
   replacements,
   numberOf,
@@ -168,6 +183,7 @@ function LessonCard({
   onSupersede,
 }: {
   lesson: Lesson;
+  focused?: boolean;
   isAdmin: boolean;
   replacements: Lesson[];
   numberOf: (id: string) => number | null;
@@ -214,7 +230,7 @@ function LessonCard({
     );
 
   return (
-    <section className="section" aria-label={`L-${lesson.number}`}>
+    <section id={`lesson-${lesson.number}`} className={focused ? 'section focused' : 'section'} aria-label={`L-${lesson.number}`} aria-current={focused || undefined}>
       <div className="section-head">
         <h3>L-{lesson.number}</h3>
         <span className="tag">revision {lesson.currentRevision}</span>

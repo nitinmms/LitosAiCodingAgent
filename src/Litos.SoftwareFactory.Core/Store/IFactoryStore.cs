@@ -286,6 +286,13 @@ public interface IFactoryStore
     /// <paramref name="since"/> in these projects (every project when null), and every open decision on their tasks.</summary>
     Task<Metrics.FlowData> GetFlowDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct);
 
+    /// <summary>
+    /// What the lesson report is computed from (Metrics.LessonMetrics): every lesson in the projects
+    /// (all of them when null), the run snapshots taken since the date, and the tasks created since
+    /// then with their runs.
+    /// </summary>
+    Task<Metrics.LessonData> GetLessonMetricsDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct);
+
     /// <summary>What the operational counters are read from (m4-architecture.md §7); handoff failures since <paramref name="failuresSince"/>.</summary>
     Task<Metrics.OperationsData> GetOperationsDataAsync(DateTimeOffset failuresSince, DateTimeOffset now, CancellationToken ct);
 

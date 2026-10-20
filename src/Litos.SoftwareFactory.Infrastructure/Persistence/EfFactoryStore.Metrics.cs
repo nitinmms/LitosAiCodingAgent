@@ -56,6 +56,48 @@ public sealed partial class EfFactoryStore
             [.. lessons.Select(l => new FlowLessonUse(runs.First(r => r.Id == l.RunId).ThreadId, l.Inclusion, l.Verdict))]);
     }
 
+    public async Task<LessonData> GetLessonMetricsDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var lessons = await db.Lessons.AsNoTracking().Where(l => projectIds == null || projectIds.Contains(l.ProjectId)).ToListAsync(ct);
+        var lessonIds = lessons.Select(l => l.Id).ToList();
+        var revisions = (await db.LessonRevisions.AsNoTracking().Where(r => lessonIds.Contains(r.LessonId)).ToListAsync(ct))
+            .ToDictionary(r => (r.LessonId, r.Revision));
+
+        // Dates filtered after reading, as in GetFlowDataAsync: SQLite cannot compare a DateTimeOffset in a query.
+        var threadRows = await db.Threads.AsNoTracking()
+            .Where(t => projectIds == null || projectIds.Contains(t.ProjectId))
+            .Select(t => new { t.Id, t.ProjectId, t.Title, t.State, t.CreatedAt })
+            .ToListAsync(ct);
+        var visibleIds = threadRows.Select(t => t.Id).ToList();
+        var runs = await db.Runs.AsNoTracking().Where(r => visibleIds.Contains(r.ThreadId)).Select(r => new { r.Id, r.ThreadId, r.Kind }).ToListAsync(ct);
+        var threadOfRun = runs.ToDictionary(r => r.Id, r => r.ThreadId);
+        var runIds = runs.Select(r => r.Id).ToList();
+        var snapshots = await db.RunLessons.AsNoTracking()
+            .Where(s => runIds.Contains(s.RunId))
+            .Select(s => new { s.RunId, s.LessonId, s.Inclusion, s.Position, s.Verdict, s.IncludedAt })
+            .ToListAsync(ct);
+
+        var threads = threadRows.Where(t => t.CreatedAt >= since).Select(t => new FlowThread(t.Id, t.ProjectId, t.Title, t.State, t.CreatedAt)).ToList();
+        var inPeriod = threads.Select(t => t.Id).ToHashSet();
+
+        return new LessonData(
+            [.. lessons.Select(l =>
+            {
+                // A lesson's figures describe the revision runs are given; one never approved shows its newest.
+                var shown = revisions[(l.Id, l.ApprovedRevision ?? l.CurrentRevision)];
+                return new LessonRow(
+                    l.Id, l.ProjectId, l.Number, l.Status,
+                    l.Status == Core.Lessons.LessonStatus.Approved && l.Enabled && l.SupersededById is null && l.ApprovedRevision is not null,
+                    shown.Rule, shown.SourceKind, shown.Revision, l.ApprovedRevision, l.ProposedByJobId is not null, l.CreatedAt,
+                    l.ApprovedRevision is { } approved ? revisions[(l.Id, approved)].ApprovedAt : null);
+            })],
+            [.. snapshots.Where(s => s.IncludedAt >= since)
+                .Select(s => new LessonGiven(s.LessonId, threadOfRun[s.RunId], s.Inclusion, s.Position, s.Verdict, s.IncludedAt))],
+            threads,
+            [.. runs.Where(r => inPeriod.Contains(r.ThreadId)).Select(r => new FlowRun(r.ThreadId, r.Kind))]);
+    }
+
     private static FlowStateEvent? Parse(Guid threadId, DateTimeOffset at, string payload)
     {
         try

@@ -5,6 +5,7 @@ import type {
   AttachmentSettings,
   Counters,
   FlowMetrics,
+  LessonReport,
   Lesson,
   LessonRevision,
   RunLesson,
@@ -791,6 +792,7 @@ export class FakeHost {
     }
 
     if (path.split('?')[0] === '/api/metrics' && method === 'GET') return [200, this.metrics];
+    if (path.split('?')[0] === '/api/metrics/lessons' && method === 'GET') return [200, this.lessonReport];
     if (path === '/api/admin/counters' && method === 'GET')
       return this.user.roles.includes('Admin') ? [200, { ...this.counters, dispatch: this.dispatchState }] : [403, { error: 'Forbidden.' }];
     if (path === '/api/dispatch' && method === 'GET')
@@ -1242,6 +1244,70 @@ export class FakeHost {
     queueForRepository: { count: 2, median: 12, p90: 30 },
     queueForSlot: { count: 0, median: 0, p90: 0 },
     lessons: { included: 5, leftOut: 1, helped: 2, didNotMatter: 1, misled: 0, unjudged: 2 },
+    perTask: [
+      { threadId: 't-9', projectId: 'p-1', title: 'Export orders', state: 'AwaitingDecision', tokens: 400_000, reworkRounds: 0 },
+      { threadId: 't-3', projectId: 'p-1', title: 'Fix the totals', state: 'Accepted', tokens: 180_000, reworkRounds: 1 },
+      { threadId: 't-4', projectId: 'p-1', title: 'Rename a column', state: 'Accepted', tokens: 120_000, reworkRounds: 0 },
+      { threadId: 't-6', projectId: 'p-1', title: 'Draft only', state: 'Draft', tokens: 0, reworkRounds: 0 },
+    ],
+    series: Array.from({ length: 10 }, (_, i) => ({
+      start: new Date(Date.UTC(2026, 8, 20 + i * 3)).toISOString(),
+      days: 3,
+      created: i % 3 === 0 ? 1 : 0,
+      accepted: i === 9 ? 2 : i === 5 ? 1 : 0,
+      acceptedFirstTime: i === 9 ? 1 : i === 5 ? 1 : 0,
+    })),
+  };
+
+  /** What GET /api/metrics/lessons answers; the query it was asked with is in sent(). */
+  lessonReport: LessonReport = {
+    projectId: null,
+    days: 30,
+    given: 12,
+    judged: 9,
+    helped: 5,
+    misled: 3,
+    leftOut: 2,
+    rarelyBelow: 5,
+    lessons: [
+      {
+        lessonId: 'l-12', projectId: 'p-1', number: 12, rule: 'Prefer Span<byte> over byte[] in the page cache.', source: 'ReviewFinding', revision: 2,
+        usable: true, given: 5, manual: 0, leftOut: 0, helped: 1, didNotMatter: 1, misled: 3, unjudged: 0, net: -0.4,
+        firstHandoff: { with: 0.2, withTasks: 5, without: 0.6, withoutTasks: 5 }, lastGiven: '2026-10-18T09:00:00Z', standing: 'Misleading',
+      },
+      {
+        lessonId: 'l-3', projectId: 'p-1', number: 3, rule: 'Run page-format tests against both file versions.', source: 'HumanCorrection', revision: 1,
+        usable: true, given: 6, manual: 1, leftOut: 2, helped: 4, didNotMatter: 1, misled: 0, unjudged: 1, net: 0.8,
+        firstHandoff: null, lastGiven: '2026-10-19T09:00:00Z', standing: 'Working',
+      },
+      {
+        lessonId: 'l-15', projectId: 'p-1', number: 15, rule: 'Take the table lock before the page lock.', source: 'Decision', revision: 1,
+        usable: true, given: 0, manual: 0, leftOut: 0, helped: 0, didNotMatter: 0, misled: 0, unjudged: 0, net: null,
+        firstHandoff: null, lastGiven: null, standing: 'NeverMatched',
+      },
+    ],
+    byRank: [
+      { rank: 1, helped: 3, didNotMatter: 1, misled: 1, unjudged: 1 },
+      { rank: 2, helped: 2, didNotMatter: 1, misled: 1, unjudged: 0 },
+      { rank: 3, helped: 0, didNotMatter: 0, misled: 1, unjudged: 0 },
+      { rank: 4, helped: 0, didNotMatter: 0, misled: 0, unjudged: 0 },
+      { rank: 5, helped: 0, didNotMatter: 0, misled: 0, unjudged: 0 },
+    ],
+    proposals: { approvedAsWritten: 3, approvedAfterEdit: 1, dismissed: 2, waiting: 1, writtenByPeople: 1 },
+    bySource: [
+      { source: 'HumanCorrection', lessons: 1, judged: 5, helped: 4 },
+      { source: 'ReviewFinding', lessons: 1, judged: 5, helped: 1 },
+    ],
+    improvements: [
+      {
+        severity: 'FixNow', subject: 'L-12', lessonId: 'l-12', projectId: 'p-1', rule: 'Prefer Span<byte> over byte[] in the page cache.',
+        problem: 'Misled 3 of the 5 runs that judged it.', action: 'Edit the rule, or disable it.',
+      },
+      {
+        severity: 'Improve', subject: 'L-15', lessonId: 'l-15', projectId: 'p-1', rule: 'Take the table lock before the page lock.',
+        problem: 'No task matched it in the last 30 days.', action: 'Check its topics against how tasks are worded.',
+      },
+    ],
   };
 
   /** Whether dispatch is paused: GET /api/dispatch, and the counters' dispatch. */

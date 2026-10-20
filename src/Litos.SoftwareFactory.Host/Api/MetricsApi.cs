@@ -7,8 +7,9 @@ using Litos.SoftwareFactory.Host.Auth;
 namespace Litos.SoftwareFactory.Host.Api;
 
 /// <summary>
-/// The flow metrics (ReadMe_LitosSoftwareFactory_V1.md §12.1, m4-architecture.md §6), for everyone,
-/// over the projects they belong to: one project, or all of theirs. Computed on read; nothing is stored.
+/// The flow metrics (ReadMe_LitosSoftwareFactory_V1.md §12.1, m4-architecture.md §6) and the lesson
+/// report (§12 there), for everyone, over the projects they belong to: one project, or all of theirs.
+/// Computed on read; nothing is stored.
 /// </summary>
 public static class MetricsApi
 {
@@ -20,26 +21,16 @@ public static class MetricsApi
         app.MapGet("/api/metrics", async (
             Guid? projectId, int? days, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, IClock clock, CancellationToken ct) =>
         {
-            var period = days ?? 30;
-            if (!Periods.Contains(period))
-                return Results.BadRequest(new { error = $"days must be one of {string.Join(", ", Periods)}." });
-
-            var visible = await access.VisibleProjectsAsync(user, ct);
-            IReadOnlyCollection<Guid>? projects = visible;
-            if (projectId is { } one)
-            {
-                // Outside the caller's projects, a project's metrics are not found, as the project itself is not.
-                if (!await access.CanSeeProjectAsync(user, one, ct))
-                    return Results.NotFound(new { error = "The project does not exist." });
-                projects = [one];
-            }
+            var (scope, refused) = await ScopeAsync(projectId, days, user, access, ct);
+            if (refused is not null)
+                return refused;
 
             var now = clock.UtcNow;
-            var report = FlowMetrics.Compute(await store.GetFlowDataAsync(projects, now.AddDays(-period), ct), now);
+            var report = FlowMetrics.Compute(await store.GetFlowDataAsync(scope!.Projects, now.AddDays(-scope.Days), ct), now, scope.Days);
             return Results.Ok(new
             {
                 ProjectId = projectId,
-                Days = period,
+                scope.Days,
                 report.Tasks,
                 report.Accepted,
                 report.Cancelled,
@@ -57,9 +48,81 @@ public static class MetricsApi
                 report.QueueForRepository,
                 report.QueueForSlot,
                 report.Lessons,
+                report.PerTask,
+                report.Series,
+            });
+        }).RequireAuthorization();
+
+        app.MapGet("/api/metrics/lessons", async (
+            Guid? projectId, int? days, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, IClock clock, CancellationToken ct) =>
+        {
+            var (scope, refused) = await ScopeAsync(projectId, days, user, access, ct);
+            if (refused is not null)
+                return refused;
+
+            var now = clock.UtcNow;
+            var report = LessonMetrics.Compute(await store.GetLessonMetricsDataAsync(scope!.Projects, now.AddDays(-scope.Days), ct), now, scope.Days);
+            return Results.Ok(new
+            {
+                ProjectId = projectId,
+                scope.Days,
+                report.Given,
+                report.Judged,
+                report.Helped,
+                report.Misled,
+                report.LeftOut,
+                // Given fewer times than this, a helpful lesson counts as rarely matched; the lesson map draws the line.
+                RarelyBelow = LessonMetrics.RarelyBelow(scope.Days),
+                Lessons = report.Lessons.Select(l => new
+                {
+                    l.LessonId,
+                    l.ProjectId,
+                    l.Number,
+                    l.Rule,
+                    Source = l.Source.ToString(),
+                    l.Revision,
+                    l.Usable,
+                    l.Given,
+                    l.Manual,
+                    l.LeftOut,
+                    l.Helped,
+                    l.DidNotMatter,
+                    l.Misled,
+                    l.Unjudged,
+                    l.Net,
+                    l.FirstHandoff,
+                    l.LastGiven,
+                    Standing = l.Standing.ToString(),
+                }),
+                report.ByRank,
+                report.Proposals,
+                BySource = report.BySource.Select(s => new { Source = s.Source.ToString(), s.Lessons, s.Judged, s.Helped }),
+                Improvements = report.Improvements.Select(i => new { Severity = i.Severity.ToString(), i.Subject, i.LessonId, i.ProjectId, i.Rule, i.Problem, i.Action }),
             });
         }).RequireAuthorization();
 
         return app;
+    }
+
+    /// <param name="Projects">Null for every project (an Admin asking for all).</param>
+    private sealed record Scope(IReadOnlyCollection<Guid>? Projects, int Days);
+
+    /// <summary>The period, and the projects to read: the one asked for, or every project the caller belongs to.</summary>
+    private static async Task<(Scope? Scope, IResult? Refused)> ScopeAsync(
+        Guid? projectId, int? days, ClaimsPrincipal user, ProjectAccess access, CancellationToken ct)
+    {
+        var period = days ?? 30;
+        if (!Periods.Contains(period))
+            return (null, Results.BadRequest(new { error = $"days must be one of {string.Join(", ", Periods)}." }));
+
+        if (projectId is { } one)
+        {
+            // Outside the caller's projects, a project's metrics are not found, as the project itself is not.
+            return await access.CanSeeProjectAsync(user, one, ct)
+                ? (new Scope([one], period), null)
+                : (null, Results.NotFound(new { error = "The project does not exist." }));
+        }
+
+        return (new Scope(await access.VisibleProjectsAsync(user, ct), period), null);
     }
 }

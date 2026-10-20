@@ -842,6 +842,66 @@ export interface FlowMetrics {
   queueForRepository: Spread;
   queueForSlot: Spread;
   lessons: { included: number; leftOut: number; helped: number; didNotMatter: number; misled: number; unjudged: number };
+  /** Every task in the period with what it was charged, most first. */
+  perTask: { threadId: string; projectId: string; title: string; state: string; tokens: number; reworkRounds: number }[];
+  /** The period in equal stretches, oldest first: a day each over 7 days, three over 30, a week over 90. */
+  series: { start: string; days: number; created: number; accepted: number; acceptedFirstTime: number }[];
+}
+
+/** Where a lesson stands (Core/Metrics/LessonMetrics.cs). */
+export type LessonStanding = 'Working' | 'RarelyMatched' | 'LittleEffect' | 'Misleading' | 'TooFewVerdicts' | 'NeverMatched' | 'New';
+export type ImprovementSeverity = 'FixNow' | 'Improve' | 'Opportunity' | 'MissingData';
+
+export interface LessonScore {
+  lessonId: string;
+  projectId: string;
+  number: number;
+  rule: string;
+  source: LessonSource;
+  revision: number;
+  /** Approved, enabled and not superseded: runs may be given it. */
+  usable: boolean;
+  given: number;
+  manual: number;
+  leftOut: number;
+  helped: number;
+  didNotMatter: number;
+  misled: number;
+  unjudged: number;
+  /** Helped less misled, over judged uses; null with none judged. */
+  net: number | null;
+  /** First-handoff acceptance of the project's accepted tasks with the lesson and without; null while too few. */
+  firstHandoff: { with: number; withTasks: number; without: number; withoutTasks: number } | null;
+  lastGiven: string | null;
+  standing: LessonStanding;
+}
+
+/** How the project lessons are doing (Api/MetricsApi.cs, m4-architecture.md §12). */
+export interface LessonReport {
+  projectId: string | null;
+  days: number;
+  given: number;
+  judged: number;
+  helped: number;
+  misled: number;
+  leftOut: number;
+  /** Given fewer times than this in the period, a helpful lesson is rarely matched. */
+  rarelyBelow: number;
+  lessons: LessonScore[];
+  /** Verdicts at each rank retrieval gave, 1 to 5. */
+  byRank: { rank: number; helped: number; didNotMatter: number; misled: number; unjudged: number }[];
+  proposals: { approvedAsWritten: number; approvedAfterEdit: number; dismissed: number; waiting: number; writtenByPeople: number };
+  bySource: { source: LessonSource; lessons: number; judged: number; helped: number }[];
+  /** Changes to make, most urgent first. */
+  improvements: {
+    severity: ImprovementSeverity;
+    subject: string;
+    lessonId: string | null;
+    projectId: string | null;
+    rule: string;
+    problem: string;
+    action: string;
+  }[];
 }
 
 /** Whether dispatch is paused, as everyone sees it (Api/DispatchApi.cs, m4-architecture.md §8.1). */

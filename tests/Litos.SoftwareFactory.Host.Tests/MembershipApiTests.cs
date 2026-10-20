@@ -186,8 +186,11 @@ public sealed class MembershipApiTests : IAsyncLifetime
     [Fact]
     public void EveryRouteNamingAProjectsThing_ChecksMembership()
     {
+        // The metrics routes take a project as a query parameter and check it themselves, as the
+        // flow metrics always have (MetricsApiTests.AMember_SeesTheLessonReportOfTheirProjectsOnly).
         var routes = _host.App.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>()
             .Where(e => e.RoutePattern.RawText is { } raw
+                && !raw.StartsWith("/api/metrics", StringComparison.Ordinal)
                 && (raw.Contains("threads/{id", StringComparison.Ordinal) || raw.Contains("decisions/{id", StringComparison.Ordinal) || raw.Contains("findings/{id", StringComparison.Ordinal)
                     || raw.Contains("lessons", StringComparison.Ordinal)))
             .ToList();

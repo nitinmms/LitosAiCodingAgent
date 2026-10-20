@@ -3,7 +3,7 @@ import { ApiError, type FactoryApi } from '../api/client';
 import type { Counters } from '../api/types';
 import { fmt } from '../domain/format';
 import { ErrorNote } from './bits';
-import { duration } from './MetricsPage';
+import { duration } from '../domain/metrics';
 
 const label = (name: string) => name.replace(/([a-z])([A-Z])/g, '$1 $2');
 const share = (value: number | null) => (value === null ? '' : ` (${Math.round(value * 100)}%)`);
@@ -12,13 +12,22 @@ const share = (value: number | null) => (value === null ? '' : ` (${Math.round(v
  * The operational counters (ReadMe_LitosSoftwareFactory_V1.md §24, m4-architecture.md §7), for Admins:
  * read when shown, with Refresh. A run the host is not executing is what to look at first.
  */
-export function Operations({ api, onDispatchChanged }: { api: FactoryApi; onDispatchChanged?: () => void }) {
+export function Operations({
+  api,
+  onDispatchChanged,
+  onCounters,
+}: {
+  api: FactoryApi;
+  onDispatchChanged?: () => void;
+  /** Each time the counters load: the page flags what needs attention from them. */
+  onCounters?: (counters: Counters) => void;
+}) {
   const [counters, setCounters] = useState<Counters | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = () =>
     api.counters().then(
-      (c) => (setCounters(c), setError(null)),
+      (c) => (setCounters(c), setError(null), onCounters?.(c)),
       (failure: unknown) => setError(failure instanceof ApiError ? failure.message : 'The counters could not be loaded.'),
     );
 

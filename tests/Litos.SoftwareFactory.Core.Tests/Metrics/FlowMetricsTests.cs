@@ -138,6 +138,59 @@ public class FlowMetricsTests
     }
 
     [Fact]
+    public void PerTask_ListsEveryTaskWithItsChargeAndChangeRequests_MostFirst()
+    {
+        var small = Thread(LifecycleState.Accepted, "Small");
+        var big = Thread(LifecycleState.Running, "Big");
+        var idle = Thread(LifecycleState.Draft, "Idle");
+        FlowUsage[] usage = [new(small.Id, "Implement", "m", 100), new(big.Id, "Implement", "m", 900), new(big.Id, "Review", "m", 100)];
+        FlowRun[] runs = [new(small.Id, RunKind.Implement), new(small.Id, RunKind.Rework)];
+
+        var report = FlowMetrics.Compute(Data([small, big, idle], usage: usage, runs: runs), T0);
+
+        Assert.Equal(
+            [("Big", "Running", 1_000L, 0), ("Small", "Accepted", 100L, 1), ("Idle", "Draft", 0L, 0)],
+            report.PerTask.Select(t => (t.Title, t.State, t.Tokens, t.ReworkRounds)));
+        Assert.All(report.PerTask, t => Assert.Equal(Project, t.ProjectId));
+    }
+
+    [Theory]
+    [InlineData(7, 1, 7)]
+    [InlineData(30, 3, 10)]
+    [InlineData(90, 7, 13)]
+    public void Series_SplitsThePeriodIntoEqualStretches_OldestFirst_EndingNow(int days, int size, int count)
+    {
+        var now = T0.AddDays(100);
+
+        var series = FlowMetrics.Compute(Data([]), now, days).Series;
+
+        Assert.Equal(count, series.Count);
+        Assert.All(series, b => Assert.Equal(size, b.Days));
+        Assert.Equal(now, series[^1].Start.AddDays(size));
+        Assert.True(series[0].Start <= now.AddDays(-days));
+        Assert.Empty(FlowMetrics.Compute(Data([]), now).Series); // no period, no trend
+    }
+
+    [Fact]
+    public void Series_CountsATaskWhenCreated_AndWhenItsAcceptanceWasRecorded_SayingWhetherItWasFirstTime()
+    {
+        var now = T0.AddDays(7);
+        FlowThread Created(double daysBeforeNow, LifecycleState state) => new(Guid.NewGuid(), Project, "Task", state, now.AddDays(-daysBeforeNow));
+        var firstTime = Created(6.5, LifecycleState.Accepted);
+        var reworked = Created(6.5, LifecycleState.Accepted);
+        var open = Created(0.5, LifecycleState.Running);
+        FlowStateEvent Accepted(FlowThread t, double daysBeforeNow) => new(t.Id, now.AddDays(-daysBeforeNow), "Accepted", "Done", null);
+
+        var series = FlowMetrics.Compute(
+            Data([firstTime, reworked, open], [Accepted(firstTime, 4.5), Accepted(reworked, 0.5)], runs: [new(reworked.Id, RunKind.Rework)]),
+            now, 7).Series;
+
+        Assert.Equal([2, 0, 0, 0, 0, 0, 1], series.Select(b => b.Created));
+        Assert.Equal([0, 0, 1, 0, 0, 0, 1], series.Select(b => b.Accepted));
+        Assert.Equal([0, 0, 1, 0, 0, 0, 0], series.Select(b => b.AcceptedFirstTime));
+    }
+
+    [Fact]
     public void Spread_IsTheMedianAndNinetiethPercentile_ByNearestRank()
     {
         Assert.Equal(new Spread(10, 5, 9), FlowMetrics.SpreadOf([.. Enumerable.Range(1, 10).Select(i => (double)i)]));

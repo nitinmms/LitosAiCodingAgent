@@ -37,10 +37,19 @@ public sealed record OldestDecision(Guid ThreadId, string Title, string Question
 
 public sealed record LessonUse(int Included, int LeftOut, int Helped, int DidNotMatter, int Misled, int Unjudged);
 
+/// <summary>One task in the period, for the tokens-per-task view.</summary>
+public sealed record FlowTask(Guid ThreadId, Guid ProjectId, string Title, string State, long Tokens, int ReworkRounds);
+
+/// <summary>One stretch of the period, oldest first: tasks created in it, and tasks accepted in it.</summary>
+/// <param name="AcceptedFirstTime">Of those accepted, how many needed no change request.</param>
+public sealed record FlowBucket(DateTimeOffset Start, int Days, int Created, int Accepted, int AcceptedFirstTime);
+
 /// <param name="FirstHandoffAcceptance">Accepted tasks that needed no change request, over all accepted tasks; null with none accepted.</param>
 /// <param name="ReworkRounds">Change requests per accepted task, as how many tasks needed each number.</param>
 /// <param name="QueueForRepository">Minutes a task waited in the queue for its repository's lock.</param>
 /// <param name="QueueForSlot">Minutes a task waited in the queue for a free slot.</param>
+/// <param name="PerTask">Every task in the period with what it was charged, most first.</param>
+/// <param name="Series">The period in equal stretches, for trends; empty when no period was given.</param>
 public sealed record FlowReport(
     int Tasks, int Accepted, int Cancelled, int Open,
     double? FirstHandoffAcceptance,
@@ -52,7 +61,9 @@ public sealed record FlowReport(
     IReadOnlyList<TokenShare> TokensByModel,
     int OpenDecisions, OldestDecision? OldestOpenDecision,
     Spread QueueForRepository, Spread QueueForSlot,
-    LessonUse Lessons);
+    LessonUse Lessons,
+    IReadOnlyList<FlowTask> PerTask,
+    IReadOnlyList<FlowBucket> Series);
 
 /// <summary>
 /// The flow metrics of ReadMe_LitosSoftwareFactory_V1.md §12.1 (m4-architecture.md §6), computed on
@@ -65,7 +76,8 @@ public static class FlowMetrics
 {
     private static readonly HashSet<string> Finished = [nameof(LifecycleState.Accepted), nameof(LifecycleState.Cancelled)];
 
-    public static FlowReport Compute(FlowData data, DateTimeOffset now)
+    /// <param name="days">The period's length, for <see cref="FlowReport.Series"/>; 0 for none.</param>
+    public static FlowReport Compute(FlowData data, DateTimeOffset now, int days = 0)
     {
         var threads = data.Threads;
         var ids = threads.Select(t => t.Id).ToHashSet();
@@ -107,7 +119,48 @@ public static class FlowMetrics
                 included.Count(l => l.Verdict == LessonVerdict.Helped),
                 included.Count(l => l.Verdict == LessonVerdict.DidNotMatter),
                 included.Count(l => l.Verdict == LessonVerdict.Misled),
-                included.Count(l => l.Verdict is null)));
+                included.Count(l => l.Verdict is null)),
+            [.. threads
+                .Select(t => new FlowTask(t.Id, t.ProjectId, t.Title, t.State.ToString(), usage.Where(u => u.ThreadId == t.Id).Sum(u => u.Charged), reworks.GetValueOrDefault(t.Id)))
+                .OrderByDescending(t => t.Tokens)],
+            Buckets(threads, data.Events, reworks, now, days));
+    }
+
+    /// <summary>
+    /// The period in equal stretches: a day each over a week, three days over a month, and a week
+    /// beyond. A task counts as created in the stretch it was created in, and as accepted in the
+    /// stretch of its state event that recorded the acceptance.
+    /// </summary>
+    private static List<FlowBucket> Buckets(
+        IReadOnlyList<FlowThread> threads, IReadOnlyList<FlowStateEvent> events, Dictionary<Guid, int> reworks, DateTimeOffset now, int days)
+    {
+        if (days <= 0)
+            return [];
+        var size = days <= 7 ? 1 : days <= 30 ? 3 : 7;
+        var count = (int)Math.Ceiling((double)days / size);
+        var start = now.AddDays(-count * size);
+        var ids = threads.Select(t => t.Id).ToHashSet();
+        var acceptedAt = events
+            .Where(e => ids.Contains(e.ThreadId) && e.State == nameof(LifecycleState.Accepted))
+            .GroupBy(e => e.ThreadId)
+            .ToDictionary(g => g.Key, g => g.Min(e => e.At));
+        // A time outside the period falls in no stretch.
+        int? Index(DateTimeOffset at) => Math.Floor((at - start).TotalDays / size) is var i && i >= 0 && i < count ? (int)i : null;
+
+        var buckets = new (int Created, int Accepted, int First)[count];
+        foreach (var thread in threads)
+        {
+            if (Index(thread.CreatedAt) is { } created)
+                buckets[created].Created++;
+            if (acceptedAt.TryGetValue(thread.Id, out var at) && Index(at) is { } accepted)
+            {
+                buckets[accepted].Accepted++;
+                if (reworks.GetValueOrDefault(thread.Id) == 0)
+                    buckets[accepted].First++;
+            }
+        }
+
+        return [.. buckets.Select((b, i) => new FlowBucket(start.AddDays(i * size), size, b.Created, b.Accepted, b.First))];
     }
 
     /// <summary>

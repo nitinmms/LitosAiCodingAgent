@@ -358,12 +358,19 @@ export function App({ createClient, openEvents, playAttentionSound = playMealRea
           <p className="note">Only an admin can change the factory's settings.</p>
         )
       ) : route.view === 'metrics' ? (
-        <MetricsPage api={api} projects={projects} isAdmin={user.roles.includes('Admin')} onDispatchChanged={refreshDispatch} />
+        <MetricsPage
+          api={api}
+          projects={projects}
+          tab={route.tab ?? 'flow'}
+          isAdmin={user.roles.includes('Admin')}
+          onDispatchChanged={refreshDispatch}
+        />
       ) : route.view === 'lessons' ? (
         <LessonsPage
           api={api}
           projects={projects}
           projectId={route.projectId}
+          focus={route.lesson}
           isAdmin={user.roles.includes('Admin')}
           onProject={(projectId) => navigate({ view: 'lessons', projectId })}
           onNotice={say}
