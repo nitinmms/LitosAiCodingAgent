@@ -1257,7 +1257,75 @@ To run it:
 2. Run `py -3 serve.py` in `LitosSoftwareFactory_Demo`.
 3. Open `http://127.0.0.1:8080`.
 
-## 26. References
+## 26. Attention alerts and the tray app (proposed, deferred)
+
+Status: proposed 2026-10-20, not scheduled. Only the browser beeps (§26.1) are built.
+
+The goal: a person learns that a task is waiting on them without watching the board. "Waiting on them" is the host's own rule, the turn label `AwaitingYou` on a task they own (§7.1): Decision needed, Ready for testing, Blocked, Budget paused or Interrupted. Every channel below fires when a task *starts* waiting. Tasks already waiting when a channel connects, other people's tasks and further updates to a task already waiting don't fire it.
+
+### 26.1 Built: beeps in the web app
+
+Three short "meal ready" beeps, made with the Web Audio API (no sound file), when one of the user's tasks starts awaiting them. A Sound on/off button in the top bar is remembered per browser (`src/Litos.SoftwareFactory.Web/src/domain/sound.ts`, `domain/attention.ts`).
+
+Limits:
+- It needs an open factory tab.
+- The browser plays no sound until the person has clicked on the page once. Signing in counts; a tab reopened with a live session (the Start-menu shortcut, a restored tab after a reboot) stays silent until its first click, and nothing says so.
+
+### 26.2 Still to do in the browser
+
+- **Blocked-sound indicator.** While the browser holds audio back, the button reads "Sound: click to enable" in amber, so the silent case is visible.
+- **Title badge.** "(2) Litos Factory" on the tab, the count of tasks awaiting the user. It works on every connection, background tabs included.
+- **Desktop notification.** The browser asks for permission once, and the permission lasts. It shows "*Add CSV export* needs a decision" with the OS notification sound, and a click opens the task. Browsers allow it only on a secure page (HTTPS, or `127.0.0.1`/`localhost`), so it works locally and behind the HTTPS reverse proxy of server mode (SoftwareFactoryInstallation.md §8). Over plain HTTP on a network it isn't available, and the setting says "Desktop notifications need HTTPS".
+
+| Channel | Same PC (`127.0.0.1`) | Network over HTTPS | Network over plain HTTP |
+|---|---|---|---|
+| Beeps | yes | yes | yes |
+| Blocked-sound indicator | yes | yes | yes |
+| Title badge | yes | yes | yes |
+| Desktop notification | yes | yes | no |
+
+### 26.3 The tray app
+
+The browser channels all need an open tab, and the desktop notification needs HTTPS. The tray app needs neither.
+
+It is a small program on each person's own PC that connects to the factory as the web app does, whether the factory runs on that PC or on a server across the network, and alerts natively with no browser rules.
+
+- **Icon:** the count of tasks awaiting the user, changing when one arrives.
+- **Alert:** the beeps, played natively, and an OS notification naming the task and the reason. A click opens the task in the browser.
+- **Menu:** Open factory, the tasks awaiting the user, Mute, Sign out. When the factory runs on the same PC, also Start, Stop, Status and Doctor through `litos-factory`.
+- **Starts at sign-in**, as the factory does (SoftwareFactoryInstallation.md §5.3, §6.3, §7.3).
+- **Built with Avalonia**, whose tray icon and native menu work on all three OSes; Litos.Gui already uses it. Notifications, sound and start at sign-in are per-OS.
+
+| | Tray icon | Notification | Sound | Start at sign-in |
+|---|---|---|---|---|
+| Windows | Solid | Windows toast; the MSI's Start-menu shortcut gives it the app identity it needs | Built-in WAV playback | Run key or Scheduled Task |
+| macOS | Menu-bar icon, solid | Native; needs the signed, notarized app bundle (SoftwareFactoryInstallation.md §6) | `afplay` | LaunchAgent |
+| Linux | KDE, Ubuntu, Xfce, Cinnamon. Plain GNOME (Fedora, Debian) hides it unless the AppIndicator extension is installed | `notify-send` (freedesktop notifications, on every desktop) | `paplay` | XDG autostart |
+
+So it works well on Windows and macOS. On Linux, plain GNOME users get the notification and the sound but no icon.
+
+**Signing in: personal access tokens.** This is the one host change it needs.
+- An account creates a token in the web app (Settings → Tray app → Create token) and pastes it into the tray app once.
+- The tray app keeps it in the OS's secure store: Windows Credential Manager, the macOS Keychain or the Linux Secret Service.
+- Tokens are read-only, limited to the event stream (`/api/events`) and the task list, listed and revocable by their owner and by Admins, and stored hashed.
+- The tray app never holds a password and never sees a session expire. Over plain HTTP the token travels unencrypted, as a session cookie would; server mode's HTTPS fixes both.
+
+**Packaging.**
+- Windows: shipped in the MSI, beside `litos-factory`.
+- Network users: a standalone per-OS download.
+- macOS: inside the same signed app bundle.
+- Linux: in the `.deb`/`.rpm` and the tarball.
+
+**Build order**, following the installers:
+1. Host: personal access tokens, with tests (about 1 day).
+2. The Windows tray app, in the MSI and as a standalone download (about 2 days).
+3. macOS, once the `.pkg` is signed, then Linux (1–2 days each).
+
+### 26.4 Later: alerts from the host
+
+For people away from any computer, the host itself could send each alert by email, Microsoft Teams or Slack. Each user would choose where their alerts go. It works from anywhere, phones included. It needs settings, a sender per channel and per-user preferences, so it is a separate feature after the tray app.
+
+## 27. References
 
 - Zach Lloyd, “Software Engineering Is Becoming Factory Engineering” (AI Engineer, Warp), https://www.youtube.com/watch?v=tUPPVhBBcoM. This was the source for the board, "whose turn" labels, spec stage, agent review and flow metrics. The transcript was not directly accessible; the design drew on a written summary and Warp's public board at https://build.warp.dev.
 - PostgreSQL 18 SELECT and row locking: https://www.postgresql.org/docs/18/sql-select.html
