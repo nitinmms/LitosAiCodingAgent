@@ -848,6 +848,40 @@ export interface FlowMetrics {
   series: { start: string; days: number; created: number; accepted: number; acceptedFirstTime: number }[];
 }
 
+/** Where a skill stands (Core/Metrics/SkillMetrics.cs). Skills get no verdicts; they are judged by outcomes. */
+export type SkillStanding = 'EarnsItsPlace' | 'NoClearEffect' | 'CostlyNoGain' | 'WorseWithIt' | 'NeverLoaded' | 'TooFewTasks';
+
+export interface SkillScore {
+  name: string;
+  origin: 'Library' | 'Repository';
+  /** Runs given it whole in the system prompt, chosen for their task. */
+  runsChosen: number;
+  /** Runs it was offered to load by name. */
+  runsOffered: number;
+  runsLoaded: number;
+  loads: number;
+  /** About what its text costs a run that has it; null when no run had it. */
+  tokensPerRun: number | null;
+  /** First-handoff acceptance of comparable tasks (same project and type) with it and without; null while too few. */
+  firstHandoff: { with: number; withTasks: number; without: number; withoutTasks: number } | null;
+  standing: SkillStanding;
+  /** A repository skill changed since its approval: runs no longer get it. */
+  changedSinceApproval: boolean;
+}
+
+/** How the skills are doing (Api/MetricsApi.cs, m4-architecture.md §12.5). */
+export interface SkillReport {
+  projectId: string | null;
+  days: number;
+  runs: number;
+  runsWithSkills: number;
+  loads: number;
+  /** Both sides of a comparison need this many accepted tasks. */
+  minTasksToCompare: number;
+  skills: SkillScore[];
+  improvements: { severity: ImprovementSeverity; subject: string; problem: string; action: string }[];
+}
+
 /** Where a lesson stands (Core/Metrics/LessonMetrics.cs). */
 export type LessonStanding = 'Working' | 'RarelyMatched' | 'LittleEffect' | 'Misleading' | 'TooFewVerdicts' | 'NeverMatched' | 'New';
 export type ImprovementSeverity = 'FixNow' | 'Improve' | 'Opportunity' | 'MissingData';

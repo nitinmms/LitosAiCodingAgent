@@ -623,6 +623,7 @@ public sealed class ApiTests : IAsyncLifetime
     [InlineData("submissions")]
     [InlineData("gateway")]
     [InlineData("ready")]
+    [InlineData("skill-loads")]
     public async Task WorkerCallback_ForARunThatIsNotActive_Is401_EvenForASignedInAdmin(string endpoint)
     {
         using var response = await _host.Client.PostAsJsonAsync($"internal/runs/{Guid.NewGuid():N}/{endpoint}", new { });

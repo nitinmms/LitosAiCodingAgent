@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
+using Litos.SoftwareFactory.Core.Ports;
+using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Gateway;
 
 namespace Litos.SoftwareFactory.Host.Runs;
@@ -77,6 +79,28 @@ public static class WorkerCallbacks
                 return Results.Json(new WebSearchResponse(true, "A 'query' argument is required."), FactoryWire.Json);
 
             return Results.Json(await search.SearchAsync(active, body, ct), FactoryWire.Json);
+        });
+
+        // A skill the agent loaded (m4-architecture.md §12.5): bookkeeping for the skill report, never refused for the agent's sake.
+        runs.MapPost("/skill-loads", async (string runId, HttpRequest request, RunRegistry registry, IFactoryStore store, IClock clock, CancellationToken ct) =>
+        {
+            if (Authenticate(runId, request, registry) is not { } active)
+                return Results.Unauthorized();
+
+            SkillLoadReport? report;
+            try
+            {
+                report = await request.ReadFromJsonAsync<SkillLoadReport>(FactoryWire.Json, ct);
+            }
+            catch (JsonException)
+            {
+                report = null;
+            }
+
+            if (report is null || string.IsNullOrWhiteSpace(report.Name))
+                return Results.BadRequest();
+            await store.RecordSkillLoadAsync(active.RunId, report.Name, clock.UtcNow, ct);
+            return Results.Ok();
         });
 
         runs.MapPost("/gateway", async (string runId, HttpContext context, RunRegistry registry, ModelGateway gateway) =>

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
-import type { ImprovementSeverity, LessonReport, LessonScore, LessonStanding, Project } from '../api/types';
+import type { ImprovementSeverity, LessonReport, LessonScore, LessonStanding, Project, SkillReport } from '../api/types';
 import { fmt } from '../domain/format';
 import { ErrorNote } from './bits';
 import { Columns, Key, Meter, niceScale, tickValues, useWidth, type Segment } from './charts';
 import { SOURCE } from './LessonsPage';
-import { percent } from '../domain/metrics';
+import { Skills } from './SkillsReport';
+import { percent, pointsText } from '../domain/metrics';
 
 /** How each standing reads and is coloured. Colour is never alone: the name is always shown beside it. */
 export const STANDING: Record<LessonStanding, { name: string; color: string }> = {
@@ -35,36 +36,66 @@ const VERDICTS = [
 const verdictParts = (v: { helped: number; didNotMatter: number; misled: number; unjudged: number }): Segment[] =>
   VERDICTS.map((x) => ({ label: x.name, value: v[x.key], color: x.color }));
 
-/** First-handoff acceptance with the lesson against without it, in percentage points. */
-export const pointsText = (c: LessonScore['firstHandoff']): string =>
-  c === null ? 'too few tasks' : `${c.with >= c.without ? '+' : '−'}${Math.round(Math.abs(c.with - c.without) * 100)} pts`;
+export { pointsText } from '../domain/metrics';
+
+/** One change to make, to a lesson or a skill, with where it is made. */
+export interface Fix {
+  severity: ImprovementSeverity;
+  subject: string;
+  problem: string;
+  action: string;
+  rule: string;
+  /** The page the change is made on: the lesson's card, or the Skills settings. */
+  href: string;
+}
+
+const SEVERITY_ORDER: ImprovementSeverity[] = ['FixNow', 'Improve', 'Opportunity', 'MissingData'];
+
+/** The lessons' and the skills' improvements as one list, most urgent first; each report's own order holds within a severity. */
+export function fixesOf(lessons: LessonReport | null, skills: SkillReport | null): Fix[] {
+  const fromLessons: Fix[] = (lessons?.improvements ?? []).map((i) => ({
+    severity: i.severity,
+    subject: i.subject,
+    problem: i.problem,
+    action: i.action,
+    rule: i.rule,
+    href: i.projectId ? `#/lessons/${encodeURIComponent(i.projectId)}/${i.subject}` : '#/lessons',
+  }));
+  const fromSkills: Fix[] = (skills?.improvements ?? []).map((i) => ({ ...i, rule: '', href: '#/settings/skills' }));
+  return SEVERITY_ORDER.flatMap((severity) => [...fromLessons, ...fromSkills].filter((f) => f.severity === severity));
+}
 
 /**
- * How the project lessons are doing, so they can be improved (m4-architecture.md §12): what to
- * change first, each lesson by use and verdict, whether ranking puts the useful ones first, and
- * which sources make lessons that help. Each improvement opens its lesson on the Lessons page.
+ * How the project lessons and the factory's skills are doing, so they can be improved
+ * (m4-architecture.md §12): what to change first, each lesson by use and verdict, whether ranking
+ * puts the useful ones first, which sources make lessons that help, and each skill by cost and
+ * outcome. Each improvement opens the page where the change is made.
  */
 export function Guidance({ api, projects, projectId, days }: { api: FactoryApi; projects: Project[]; projectId: string | null; days: number }) {
   const [report, setReport] = useState<LessonReport | null>(null);
+  const [skills, setSkills] = useState<SkillReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let current = true;
     setReport(null);
-    api.lessonMetrics(projectId, days).then(
-      (r) => current && (setReport(r), setError(null)),
-      (failure: unknown) => current && setError(failure instanceof ApiError ? failure.message : 'The lesson report could not be loaded.'),
-    );
+    setSkills(null);
+    const failed = (what: string) => (failure: unknown) =>
+      current && setError(failure instanceof ApiError ? failure.message : `The ${what} report could not be loaded.`);
+    api.lessonMetrics(projectId, days).then((r) => current && (setReport(r), setError(null)), failed('lesson'));
+    api.skillMetrics(projectId, days).then((r) => current && setSkills(r), failed('skill'));
     return () => {
       current = false;
     };
   }, [api, projectId, days]);
 
   const nameOf = (id: string) => projects.find((p) => p.id === id)?.name ?? '';
+  const loading = (report === null || skills === null) && !error;
   return (
     <>
       <ErrorNote message={error} />
-      {report === null && !error ? <p className="small muted">Loading…</p> : null}
+      {loading ? <p className="small muted">Loading…</p> : null}
+      {!loading ? <Improvements fixes={fixesOf(report, skills)} /> : null}
       {report && report.lessons.length === 0 ? (
         <section className="section" aria-label="Lesson summary">
           <p className="small muted">No approved lessons yet. Lessons come from accepted tasks' reflections, or are written on the Lessons page.</p>
@@ -73,7 +104,6 @@ export function Guidance({ api, projects, projectId, days }: { api: FactoryApi; 
       {report && report.lessons.length > 0 ? (
         <>
           <Summary r={report} />
-          <Improvements r={report} />
           <LessonMap r={report} />
           <Scorecard r={report} projectName={projects.length > 1 && !projectId ? nameOf : null} />
           <div className="metrics-pair">
@@ -82,6 +112,7 @@ export function Guidance({ api, projects, projectId, days }: { api: FactoryApi; 
           </div>
         </>
       ) : null}
+      {skills ? <Skills r={skills} /> : null}
     </>
   );
 }
@@ -135,41 +166,34 @@ function Summary({ r }: { r: LessonReport }) {
   );
 }
 
-function Improvements({ r }: { r: LessonReport }) {
+function Improvements({ fixes }: { fixes: Fix[] }) {
   return (
     <section className="section" aria-label="What to improve">
       <div className="section-head">
         <h3>What to improve</h3>
       </div>
-      <p className="small muted">Ranked from the verdicts, matching and outcomes below. Each names the change to make, and opens the lesson to make it.</p>
-      {r.improvements.length === 0 ? (
+      <p className="small muted">Ranked from the verdicts, matching and outcomes below. Each names the change to make, and opens the page to make it on.</p>
+      {fixes.length === 0 ? (
         <p className="small muted">Nothing to change in this period.</p>
       ) : (
         <ul className="fixes">
-          {r.improvements.map((i) => {
-            const number = Number(i.subject.replace(/^L-/, ''));
-            return (
-              <li key={`${i.subject}-${i.problem}`} className="fix" style={{ ['--sev' as string]: SEVERITY[i.severity].color }}>
-                <div className="fix-what">
-                  <span className={`pill ${SEVERITY[i.severity].pill}`}>{SEVERITY[i.severity].name}</span>
-                  <span className="mono strong">{i.subject}</span>
-                  <span>{i.problem}</span>
-                  {i.rule ? (
-                    <span className="fix-rule" title={i.rule}>
-                      “{i.rule}”
-                    </span>
-                  ) : null}
-                </div>
-                {i.projectId ? (
-                  <a className="btn small" href={`#/lessons/${encodeURIComponent(i.projectId)}/L-${number}`}>
-                    {i.action} →
-                  </a>
-                ) : (
-                  <span className="small">{i.action}</span>
-                )}
-              </li>
-            );
-          })}
+          {fixes.map((i) => (
+            <li key={`${i.subject}-${i.problem}`} className="fix" style={{ ['--sev' as string]: SEVERITY[i.severity].color }}>
+              <div className="fix-what">
+                <span className={`pill ${SEVERITY[i.severity].pill}`}>{SEVERITY[i.severity].name}</span>
+                <span className="mono strong">{i.subject}</span>
+                <span>{i.problem}</span>
+                {i.rule ? (
+                  <span className="fix-rule" title={i.rule}>
+                    “{i.rule}”
+                  </span>
+                ) : null}
+              </div>
+              <a className="btn small" href={i.href}>
+                {i.action} →
+              </a>
+            </li>
+          ))}
         </ul>
       )}
     </section>

@@ -351,7 +351,7 @@ Made with the user on 2026-10-20:
 - **Hand-written SVG charts**, as small React components (`components/charts.tsx`), with no chart library. They draw from the stylesheet's tokens, so both themes work.
 - **Each improvement opens the page where the change is made.** For a lesson that is its card on the Lessons page (`#/lessons/<project>/L-<n>`, which opens the lesson's tab, scrolls it into view and marks it). For a skill (Step B) it is the Skills settings.
 
-Chosen without asking, and open to change: the thresholds in §12.3; the M1 gate (7 of 12) as the mark on the first-handoff tile; the tab is called **Lessons** until Step B adds skills, when it becomes **Skills & lessons** (the route, `#/metrics/guidance`, stays).
+Chosen without asking, and open to change: the thresholds in §12.3 and §12.5; the M1 gate (7 of 12) as the mark on the first-handoff tile; the tab's route, `#/metrics/guidance`.
 
 ### 12.2 Flow tab
 
@@ -417,14 +417,48 @@ Tests:
 - Host `MetricsApiTests`: the new fields, the lesson report, membership and 404, and periods.
 - Web `Metrics.test.tsx`: helpers, routes, each Flow section, the tooltip, Tables and its memory, attention, both tabs' refetching, improvements and their links, the map, sorting, ranking and sources, the empty state, and a lesson opened on the Lessons page.
 
-### 12.5 Step B, next: skills
+### 12.5 Step B: skills (built 2026-10-20)
 
-- **Record what a run is given.** At a run's start, store a run-skill snapshot of each skill the run has: a task skill in the system prompt, a library skill offered to load, or a repository skill allowed at its hash. Record its name, origin, hash or library revision, and size.
-- **Record what it loads.** The worker reports each `skill` tool call to the host. That covers direct calls and calls from kernel code, which the gateway does not see. Each load is stored against the snapshot, with the turn it came in.
-- **The report** gives, per skill:
-  - runs given and loads;
-  - an estimate of the tokens its text costs a run;
-  - first-handoff acceptance of comparable tasks with and without it (same project and task type, at least 8 runs, otherwise "too few runs");
-  - improvements: never loaded, costly with no clear gain, worse with it, changed since its approval.
+**What a run is given** needs no new record. Each run's capabilities, stored when it starts, already name:
 
-  The improvements link to Settings > Skills. The tab becomes **Skills & lessons**.
+- the task's chosen skills, with their text;
+- the library skills it was offered to load;
+- the repository skills it was allowed, by hash.
+
+**What it loads is new.** The worker wraps the engine's `skill` tool (`ReportedSkillTool`). Each successful load is reported to the host on `POST /internal/runs/{id}/skill-loads`, with the run's secret, and stored in `run_skill_loads` (RunId, Name, LoadedAt; migration `M4RunSkillLoads`). The tool-set policy gives kernel code the same wrapper, so a load made from kernel code, which the gateway never sees, is counted too. A host that cannot be told never fails the load.
+
+`GET /api/metrics/skills?projectId=&days=` has the same scope and periods as the other reports. `SkillMetrics.Compute` (Core) runs over `GetSkillMetricsDataAsync` plus the library's sizes from the settings. A reflection run is not counted, since it has no skills. Per skill it reports:
+
+- **Use:** runs that had it chosen, runs it was offered to, runs that loaded it, and loads.
+- **Cost per run:** about what its text costs a run that had it. The first call is counted in full and each later call at the cached weight (0.1); a loaded skill is costed as if read from the start, an upper bound.
+- **First-handoff acceptance with vs without:** the accepted tasks that had it in effect (chosen, or loaded), against accepted tasks of the same projects and task types that did not. It is shown only with at least 8 on each side.
+- **A standing**, by these rules:
+  - *Never loaded*: offered to 5 runs or more, never chosen, never loaded.
+  - *Too few tasks*: no comparison yet.
+  - *Worse with it*: more than 5 points lower.
+  - *Earns its place*: more than 5 points higher.
+  - *Costly, no clear gain*: chosen for tasks, about 5,000 tokens a run or more, and within 5 points.
+  - Otherwise: *no clear effect*.
+- **Changed since its approval**, for a repository skill whose newest version waits for approval while an older one was approved.
+
+Its improvements:
+
+| Severity | When | Suggested change |
+| --- | --- | --- |
+| Fix now | worse with it | review what it tells the agent |
+| Improve | costly, no clear gain | let it load on demand instead |
+| Improve | never loaded | rewrite its description, or remove it |
+| Improve | changed since its approval | review and approve the new version |
+
+The tab is now **Skills & lessons**:
+
+- **What to improve** lists both kinds together, most urgent first. A lesson's item opens its card; a skill's opens Settings > Skills.
+- **The Skills section** charts each skill by tokens a run against the change in first-time acceptance, with its shape saying how runs get it (chosen, on demand, or the repository's), and lists every skill in a table.
+
+Tests:
+
+- Worker: a load is told from a turn and from kernel code; a failed load is not; an unreachable host does not fail it.
+- Core `SkillMetricsTests`: cost, counting, the repository's own text, the comparison and its minimum, every standing, changed skills, improvements and their order, and reflection runs left out.
+- Store, on both databases: what each run was given, its calls and loads, and repository versions.
+- Host: the callback (and its 401 and 400), the report, membership and 404, and periods.
+- Web: the merged improvements and their links, the chart and table, and the empty state.

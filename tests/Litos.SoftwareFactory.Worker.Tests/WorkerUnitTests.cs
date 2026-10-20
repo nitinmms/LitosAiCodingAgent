@@ -853,6 +853,59 @@ public class FactoryToolSetPolicyTests
         Assert.Contains("skill", Names(policy.CreateForBridge("review")));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ALoadedSkill_IsToldToTheHost_FromATurnOrFromKernelCode(bool fromKernel)
+    {
+        var handler = new FakeHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK);
+        var policy = new FactoryToolSetPolicy(Registered.Select(n => new NamedTool(n)), TestOptions.HostClient(handler), skills: true);
+        var turn = policy.Create("work", "Implement");
+        var tools = fromKernel ? policy.CreateForBridge("work") : turn;
+
+        var result = await tools.Resolve("skill").InvokeAsync(JsonSerializer.SerializeToElement(new { name = "dotnet-testing" }), default);
+
+        Assert.False(result.IsError);
+        var posted = Assert.Single(handler.Requests);
+        Assert.Equal("/internal/runs/run-1/skill-loads", posted.Uri.AbsolutePath);
+        Assert.Equal(new SkillLoadReport("work", "dotnet-testing"), JsonSerializer.Deserialize<SkillLoadReport>(posted.Body!, FactoryWire.Json));
+        Assert.Equal(TestOptions.Secret, posted.Headers[FactoryWire.SecretHeader]);
+    }
+
+    [Fact]
+    public async Task ASkillThatDidNotLoad_IsNotTold()
+    {
+        var handler = new FakeHttpMessageHandler();
+        var tool = new ReportedSkillTool(new AnsweringTool("skill", ToolResult.Error("Unknown skill 'nope'.")), TestOptions.HostClient(handler), "work");
+
+        var result = await tool.InvokeAsync(JsonSerializer.SerializeToElement(new { name = "nope" }), default);
+
+        Assert.True(result.IsError);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task AHostThatCannotBeTold_NeverFailsTheLoad()
+    {
+        var handler = new FakeHttpMessageHandler();
+        handler.EnqueueFailure();
+        var tool = new ReportedSkillTool(new AnsweringTool("skill", ToolResult.Ok("The skill's instructions.")), TestOptions.HostClient(handler), "work");
+
+        var result = await tool.InvokeAsync(JsonSerializer.SerializeToElement(new { name = "dotnet-testing" }), default);
+
+        Assert.Equal(ToolResult.Ok("The skill's instructions."), result);
+        Assert.Equal(("skill", "skill"), (tool.Name, tool.Description));
+    }
+
+    private sealed class AnsweringTool(string name, ToolResult answer) : ITool
+    {
+        public string Name { get; } = name;
+        public string Description => name;
+        public JsonElement ParameterSchema { get; } = JsonSerializer.SerializeToElement(new { type = "object" });
+        public Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct) => Task.FromResult(answer);
+    }
+
     [Fact]
     public void ARunWithSkills_NeedsTheEnginesSkillTool() =>
         Assert.Contains("skill", Assert.Throws<InvalidOperationException>(() => Policy(Registered.Where(n => n != "skill"), skills: true)).Message);

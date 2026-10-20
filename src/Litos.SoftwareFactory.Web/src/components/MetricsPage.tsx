@@ -70,8 +70,8 @@ const readView = (): 'charts' | 'tables' => {
 /**
  * The Metrics tab (ReadMe_LitosSoftwareFactory_V1.md §12.1, m4-architecture.md §6 and §12), over the
  * projects the person belongs to: one project or all, for the last 7, 30 or 90 days of tasks. Flow
- * shows where tasks spend their time and tokens; Lessons shows how the project lessons are doing,
- * so they can be improved. Charts or, for anyone who reads numbers better, the same figures as tables.
+ * shows where tasks spend their time and tokens; Skills & lessons shows how the project lessons and
+ * the skills are doing, so they can be improved. Charts or, for anyone who reads numbers better, the same figures as tables.
  */
 export function MetricsPage({
   api,
@@ -111,7 +111,7 @@ export function MetricsPage({
                 Flow
               </button>
               <button type="button" aria-pressed={tab === 'guidance'} onClick={() => navigate({ view: 'metrics', tab: 'guidance' })}>
-                Lessons
+                Skills &amp; lessons
               </button>
             </nav>
             <select aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
@@ -140,7 +140,7 @@ export function MetricsPage({
           <p className="small muted">
             {tab === 'flow'
               ? 'Tasks created in the period. Open decisions are those waiting now, on any task.'
-              : 'Lessons given to runs in the period, and what people said each did.'}
+              : 'Lessons and skills given to runs in the period: what people said each lesson did, and how tasks with each skill fared.'}
           </p>
         </section>
 

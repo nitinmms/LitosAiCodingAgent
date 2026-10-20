@@ -293,6 +293,17 @@ public interface IFactoryStore
     /// </summary>
     Task<Metrics.LessonData> GetLessonMetricsDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct);
 
+    /// <summary>Records a skill a run's agent loaded (m4-architecture.md §12.5).</summary>
+    Task RecordSkillLoadAsync(Guid runId, string name, DateTimeOffset at, CancellationToken ct);
+
+    /// <summary>
+    /// What the skill report is computed from (Metrics.SkillMetrics): the tasks created since the
+    /// date in the projects (all when null), what each of their runs was given and made in model
+    /// calls, the skills they loaded, and every version of the projects' repository skills. The
+    /// library's sizes are the caller's to add: the library lives in the settings.
+    /// </summary>
+    Task<Metrics.SkillData> GetSkillMetricsDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct);
+
     /// <summary>What the operational counters are read from (m4-architecture.md §7); handoff failures since <paramref name="failuresSince"/>.</summary>
     Task<Metrics.OperationsData> GetOperationsDataAsync(DateTimeOffset failuresSince, DateTimeOffset now, CancellationToken ct);
 

@@ -13,3 +13,7 @@ export const tokens = (n: number): string =>
 
 /** State and stage names as the app shows them elsewhere: "AwaitingHumanTesting" → "Awaiting Human Testing". */
 export const label = (name: string): string => name.replace(/([a-z])([A-Z])/g, '$1 $2');
+
+/** First-handoff acceptance with something against without it, in percentage points: "+25 pts". */
+export const pointsText = <T extends { with: number; without: number }>(c: T | null): string =>
+  c === null ? 'too few tasks' : `${c.with >= c.without ? '+' : '−'}${Math.round(Math.abs(c.with - c.without) * 100)} pts`;

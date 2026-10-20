@@ -50,6 +50,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<Lesson> Lessons => Set<Lesson>();
     public DbSet<LessonRevision> LessonRevisions => Set<LessonRevision>();
     public DbSet<RunLessonSnapshot> RunLessons => Set<RunLessonSnapshot>();
+    public DbSet<RunSkillLoad> RunSkillLoads => Set<RunSkillLoad>();
     public DbSet<ReflectionJob> ReflectionJobs => Set<ReflectionJob>();
     public DbSet<ThreadAttachment> Attachments => Set<ThreadAttachment>();
 
@@ -349,6 +350,15 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(s => s.Rule).HasMaxLength(LessonRules.MaxRuleChars);
             e.HasOne<TaskRun>().WithMany().HasForeignKey(s => s.RunId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<Lesson>().WithMany().HasForeignKey(s => s.LessonId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        model.Entity<RunSkillLoad>(e =>
+        {
+            e.ToTable("run_skill_loads");
+            e.HasKey(l => l.Id);
+            e.Property(l => l.Name).HasMaxLength(RunSkillLoad.MaxNameChars);
+            e.HasIndex(l => l.RunId);
+            e.HasOne<TaskRun>().WithMany().HasForeignKey(l => l.RunId).OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<AuditEvent>(e =>

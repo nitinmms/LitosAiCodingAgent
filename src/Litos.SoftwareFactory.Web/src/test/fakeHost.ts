@@ -6,6 +6,7 @@ import type {
   Counters,
   FlowMetrics,
   LessonReport,
+  SkillReport,
   Lesson,
   LessonRevision,
   RunLesson,
@@ -793,6 +794,7 @@ export class FakeHost {
 
     if (path.split('?')[0] === '/api/metrics' && method === 'GET') return [200, this.metrics];
     if (path.split('?')[0] === '/api/metrics/lessons' && method === 'GET') return [200, this.lessonReport];
+    if (path.split('?')[0] === '/api/metrics/skills' && method === 'GET') return [200, this.skillReport];
     if (path === '/api/admin/counters' && method === 'GET')
       return this.user.roles.includes('Admin') ? [200, { ...this.counters, dispatch: this.dispatchState }] : [403, { error: 'Forbidden.' }];
     if (path === '/api/dispatch' && method === 'GET')
@@ -1257,6 +1259,34 @@ export class FakeHost {
       accepted: i === 9 ? 2 : i === 5 ? 1 : 0,
       acceptedFirstTime: i === 9 ? 1 : i === 5 ? 1 : 0,
     })),
+  };
+
+  /** What GET /api/metrics/skills answers; the query it was asked with is in sent(). */
+  skillReport: SkillReport = {
+    projectId: null,
+    days: 30,
+    runs: 40,
+    runsWithSkills: 36,
+    loads: 14,
+    minTasksToCompare: 8,
+    skills: [
+      {
+        name: 'security-review', origin: 'Library', runsChosen: 30, runsOffered: 0, runsLoaded: 0, loads: 0, tokensPerRun: 9_800,
+        firstHandoff: { with: 0.61, withTasks: 20, without: 0.63, withoutTasks: 9 }, standing: 'CostlyNoGain', changedSinceApproval: false,
+      },
+      {
+        name: 'page-format', origin: 'Repository', runsChosen: 0, runsOffered: 30, runsLoaded: 11, loads: 14, tokensPerRun: 3_300,
+        firstHandoff: { with: 0.82, withTasks: 11, without: 0.6, withoutTasks: 19 }, standing: 'EarnsItsPlace', changedSinceApproval: false,
+      },
+      {
+        name: 'csv-and-encoding', origin: 'Library', runsChosen: 0, runsOffered: 40, runsLoaded: 0, loads: 0, tokensPerRun: null,
+        firstHandoff: null, standing: 'NeverLoaded', changedSinceApproval: false,
+      },
+    ],
+    improvements: [
+      { severity: 'Improve', subject: 'security-review', problem: 'Costs about 9,800 tokens a run, and tasks with it did no better (61% against 63% accepted first time).', action: 'Let it load on demand instead of choosing it for every task.' },
+      { severity: 'Improve', subject: 'csv-and-encoding', problem: 'Offered to 40 runs, and never loaded.', action: 'Rewrite its description so the agent knows when to load it, or remove it.' },
+    ],
   };
 
   /** What GET /api/metrics/lessons answers; the query it was asked with is in sent(). */

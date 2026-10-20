@@ -108,7 +108,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     private ToolRegistry ToolsFor(TurnKind kind, string sessionId, bool forKernel = false) => kind switch
     {
         TurnKind.Implement or TurnKind.Repair or TurnKind.Rework => new ToolRegistry(
-            [.. BuiltIn(WorkTools), .. Skill(), .. WebSearch(sessionId, readOnly: false), .. _mcpTools(),
+            [.. BuiltIn(WorkTools), .. Skill(sessionId), .. WebSearch(sessionId, readOnly: false), .. _mcpTools(),
              .. forKernel ? _deniedMcpTools() : [],
              new SubmitWorkTool(_host, sessionId), new RequestDecisionTool(_host, sessionId)]),
         TurnKind.Review => new ToolRegistry([.. ReadOnly(sessionId), new SubmitReviewTool(_host, sessionId)]),
@@ -120,12 +120,13 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
         _ => throw new InvalidOperationException($"No tool set is defined for a {kind} turn."),
     };
 
-    private IEnumerable<ITool> ReadOnly(string sessionId) => [.. BuiltIn(ReadOnlyTools), .. Skill(), .. WebSearch(sessionId, readOnly: true)];
+    private IEnumerable<ITool> ReadOnly(string sessionId) => [.. BuiltIn(ReadOnlyTools), .. Skill(sessionId), .. WebSearch(sessionId, readOnly: true)];
 
     private const string SkillToolName = "skill";
 
-    /// <summary>The engine's skill tool, reading what the worker's skill discovery offers.</summary>
-    private IEnumerable<ITool> Skill() => _skills ? [_builtIn[SkillToolName]] : [];
+    /// <summary>The engine's skill tool, reading what the worker's skill discovery offers, and telling
+    /// the host what it loaded. Kernel code gets the same tool, so its loads are told too.</summary>
+    private IEnumerable<ITool> Skill(string sessionId) => _skills ? [new ReportedSkillTool(_builtIn[SkillToolName], _host, sessionId)] : [];
 
     /// <summary>The engine's web_search tool, searching through the host, where this run allows it.</summary>
     private IEnumerable<ITool> WebSearch(string sessionId, bool readOnly) =>

@@ -231,18 +231,19 @@ describe('the Flow tab', () => {
   });
 });
 
-describe('the Lessons tab', () => {
+describe('the Skills & lessons tab', () => {
   it('opens from the Flow tab, and asks for the lesson report over the same scope', async () => {
     const host = new FakeHost();
     host.addProject();
     const user = start(host, '#/metrics');
     await screen.findByRole('region', { name: 'Summary' });
 
-    await user.click(within(screen.getByRole('navigation', { name: 'Metrics' })).getByRole('button', { name: 'Lessons' }));
+    await user.click(within(screen.getByRole('navigation', { name: 'Metrics' })).getByRole('button', { name: 'Skills & lessons' }));
 
     expect(window.location.hash).toBe('#/metrics/guidance');
     const summary = within(await screen.findByRole('region', { name: 'Lesson summary' }));
     expect(host.sent('GET', '/api/metrics/lessons?days=30')).toHaveLength(1);
+    expect(host.sent('GET', '/api/metrics/skills?days=30')).toHaveLength(1);
     expect(summary.getByText('75%')).toBeInTheDocument(); // 9 of 12 uses judged
     expect(summary.getByText('enough to go on')).toBeInTheDocument();
     expect(summary.getByText('3 misled')).toHaveClass('bad');
@@ -250,20 +251,57 @@ describe('the Lessons tab', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Last 90 days' }));
     await waitFor(() => expect(host.sent('GET', '/api/metrics/lessons?days=90')).toHaveLength(1));
+    expect(host.sent('GET', '/api/metrics/skills?days=90')).toHaveLength(1);
   });
 
-  it('lists what to improve, most urgent first, each opening its lesson', async () => {
+  it('lists what to improve for lessons and skills together, most urgent first, each opening the page to change it on', async () => {
     const host = new FakeHost();
     host.addProject();
     start(host, '#/metrics/guidance');
 
     const fixes = within(await screen.findByRole('region', { name: 'What to improve' }));
     const items = fixes.getAllByRole('listitem');
-    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.querySelector('.mono')!.textContent)).toEqual(['L-12', 'L-15', 'security-review', 'csv-and-encoding']);
     expect(within(items[0]!).getByText('Fix now')).toHaveClass('pill', 'bad');
     expect(within(items[0]!).getByText('Misled 3 of the 5 runs that judged it.')).toBeInTheDocument();
     expect(within(items[0]!).getByRole('link', { name: 'Edit the rule, or disable it. →' })).toHaveAttribute('href', '#/lessons/p-1/L-12');
     expect(within(items[1]!).getByText('Improve')).toBeInTheDocument();
+    expect(within(items[2]!).getByRole('link', { name: 'Let it load on demand instead of choosing it for every task. →' })).toHaveAttribute(
+      'href',
+      '#/settings/skills',
+    );
+  });
+
+  it('shows each skill by its cost and how tasks with it fared, and names the ones it cannot place', async () => {
+    const host = new FakeHost();
+    host.addProject();
+    start(host, '#/metrics/guidance');
+
+    const skills = within(await screen.findByRole('region', { name: 'Skills' }));
+    expect(skills.getByText('36 of 40 runs had skills; the agent loaded one 14 times.')).toBeInTheDocument();
+    const chart = skills.getByRole('img', { name: 'Skills by what they cost a run and the change in first-time acceptance' }) as unknown as HTMLElement;
+    expect(within(chart).getByText('page-format')).toBeInTheDocument();
+    expect(within(chart).getByText('accepted first time: with − without (points)')).toBeInTheDocument();
+    expect(skills.getByText('never loaded', { selector: '.chip' })).toBeInTheDocument();
+
+    const table = within(skills.getByRole('table', { name: 'Skills' }));
+    const row = (name: string) => within(table.getByRole('link', { name }).closest('tr')!);
+    expect(row('page-format').getByText('repository skill')).toBeInTheDocument();
+    expect(row('page-format').getByText('+22 pts')).toHaveClass('lift', 'up');
+    expect(row('security-review').getByText('chosen for the task')).toBeInTheDocument();
+    expect(row('security-review').getByText('Costly, no clear gain')).toHaveClass('pill');
+    expect(row('csv-and-encoding').getByText('too few tasks')).toBeInTheDocument();
+    expect(table.getByRole('link', { name: 'csv-and-encoding' })).toHaveAttribute('href', '#/settings/skills');
+  });
+
+  it('says so when no run had a skill, and still shows the lessons', async () => {
+    const host = new FakeHost();
+    host.addProject();
+    host.skillReport = { ...host.skillReport, runsWithSkills: 0, loads: 0, skills: [], improvements: [] };
+    start(host, '#/metrics/guidance');
+
+    expect(await screen.findByText('No run in the period had a skill.')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Lesson map' })).toBeInTheDocument();
   });
 
   it('maps each judged lesson, and names the ones it cannot place', async () => {

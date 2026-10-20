@@ -721,6 +721,30 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.ToTable("review_findings", (string)null);
                 });
 
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.RunSkillLoad", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("LoadedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId");
+
+                    b.ToTable("run_skill_loads", (string)null);
+                });
+
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.SettingsSection", b =>
                 {
                     b.Property<string>("Section")
@@ -1612,6 +1636,15 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ReviewFindingRecord", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.TaskRun", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.RunSkillLoad", b =>
                 {
                     b.HasOne("Litos.SoftwareFactory.Core.Store.TaskRun", null)
                         .WithMany()

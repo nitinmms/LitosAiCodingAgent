@@ -2,7 +2,9 @@ using System.Security.Claims;
 using Litos.SoftwareFactory.Core.Metrics;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Host.Auth;
+using Litos.SoftwareFactory.Host.Settings;
 
 namespace Litos.SoftwareFactory.Host.Api;
 
@@ -98,6 +100,43 @@ public static class MetricsApi
                 report.Proposals,
                 BySource = report.BySource.Select(s => new { Source = s.Source.ToString(), s.Lessons, s.Judged, s.Helped }),
                 Improvements = report.Improvements.Select(i => new { Severity = i.Severity.ToString(), i.Subject, i.LessonId, i.ProjectId, i.Rule, i.Problem, i.Action }),
+            });
+        }).RequireAuthorization();
+
+        app.MapGet("/api/metrics/skills", async (
+            Guid? projectId, int? days, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, FactorySettings settings, IClock clock,
+            CancellationToken ct) =>
+        {
+            var (scope, refused) = await ScopeAsync(projectId, days, user, access, ct);
+            if (refused is not null)
+                return refused;
+
+            var now = clock.UtcNow;
+            var library = settings.ReadWithRevision<SkillSettings>(SettingsSections.Skills).Settings.Library.ToDictionary(s => s.Name, s => s.Body.Length);
+            var data = await store.GetSkillMetricsDataAsync(scope!.Projects, now.AddDays(-scope.Days), ct);
+            var report = SkillMetrics.Compute(data with { LibraryChars = library }, now, scope.Days);
+            return Results.Ok(new
+            {
+                ProjectId = projectId,
+                scope.Days,
+                report.Runs,
+                report.RunsWithSkills,
+                report.Loads,
+                MinTasksToCompare = SkillMetrics.MinTasksToCompare,
+                Skills = report.Skills.Select(s => new
+                {
+                    s.Name,
+                    s.Origin,
+                    s.RunsChosen,
+                    s.RunsOffered,
+                    s.RunsLoaded,
+                    s.Loads,
+                    s.TokensPerRun,
+                    s.FirstHandoff,
+                    Standing = s.Standing.ToString(),
+                    s.ChangedSinceApproval,
+                }),
+                Improvements = report.Improvements.Select(i => new { Severity = i.Severity.ToString(), i.Subject, i.Problem, i.Action }),
             });
         }).RequireAuthorization();
 

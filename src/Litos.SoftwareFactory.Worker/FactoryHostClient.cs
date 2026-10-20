@@ -46,6 +46,14 @@ public sealed class FactoryHostClient
             ?? throw new HttpRequestException("The factory host returned an empty response to a web search.");
     }
 
+    /// <summary>Tells the host a skill was loaded.</summary>
+    /// <exception cref="HttpRequestException">The host could not be reached or answered with an error.</exception>
+    public async Task SkillLoadedAsync(SkillLoadReport report, CancellationToken ct)
+    {
+        using var response = await Http.PostAsJsonAsync(FactoryWire.SkillLoadsPath(RunId), report, FactoryWire.Json, ct);
+        response.EnsureSuccessStatusCode();
+    }
+
     public async Task ReadyAsync(WorkerReady ready, CancellationToken ct)
     {
         using var response = await Http.PostAsJsonAsync(FactoryWire.ReadyPath(RunId), ready, FactoryWire.Json, ct);

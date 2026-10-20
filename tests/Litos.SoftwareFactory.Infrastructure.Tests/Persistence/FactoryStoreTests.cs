@@ -2831,6 +2831,48 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(5, (await Store.GetLessonMetricsDataAsync(null, T0.AddDays(-1), default)).Lessons.Count);
     }
 
+    // ---- Skill report (m4-architecture.md §12.5) ----
+
+    [SkippableFact]
+    public async Task SkillMetricsData_IsWhatEachRunWasGivenMadeAndLoaded_AndEveryVersionOfTheRepositorysSkills()
+    {
+        var running = await RunningAsync();
+        var capabilities = new RunCapabilities
+        {
+            TaskSkills = [new TaskSkill("dotnet-testing", "Write tests first.")],
+            LibrarySkills = [new RunLibrarySkill("ef-migrations", "Migrations."), new RunLibrarySkill("page-format", "Library version.")],
+            RepositorySkills = [new RepositorySkillUse("page-format", "sha256:b", RepositorySkillStatus.Used, ReplacesLibrarySkill: true),
+                new RepositorySkillUse("not-approved", "sha256:c", RepositorySkillStatus.WaitingForApproval)],
+        };
+        await Store.SetRunCapabilitiesAsync(running.Run.Id, JsonSerializer.Serialize(capabilities, FactoryWire.Json), default);
+        foreach (var key in new[] { "k-skill-1", "k-skill-2" })
+        {
+            await Store.ReserveAsync(Reserve(running, key), Policy, T0, default);
+            await Store.SettleAsync(key, new UsageInfo(1_000, 100), 1_100, T0, default);
+        }
+
+        await Store.RecordSkillLoadAsync(running.Run.Id, "ef-migrations", T0, default);
+        await Store.RecordSkillLoadAsync(running.Run.Id, "  page-format  ", T0.AddMinutes(1), default);
+        await Store.RecordRepositorySkillsAsync(running.Project.Id, [Found("page-format", "sha256:a"), Found("page-format", "sha256:b")], T0, default);
+        await Store.SetRepositorySkillApprovalAsync(running.Project.Id, "page-format", "sha256:a", true, Admin, T0, default);
+
+        var data = await Store.GetSkillMetricsDataAsync([running.Project.Id], T0.AddDays(-1), default);
+
+        Assert.Equal((running.Thread.Id, LifecycleState.Running), (Assert.Single(data.Threads).Id, data.Threads[0].State));
+        var run = Assert.Single(data.Runs);
+        Assert.Equal((running.Run.Id, 2), (run.RunId, run.Calls));
+        Assert.Equal([new Core.Metrics.GivenSkill("dotnet-testing", 18)], run.Chosen);
+        Assert.Equal(["ef-migrations", "page-format"], run.Offered); // an unapproved repository skill is not offered
+        Assert.Equal(["page-format"], run.FromRepository);
+        Assert.Equal(["ef-migrations", "page-format"], data.Loads.Select(l => l.Name).Order());
+        Assert.Equal([true, false], data.Repository.OrderBy(v => v.Chars).ThenByDescending(v => v.Approved).Select(v => v.Approved));
+        Assert.Empty(data.LibraryChars); // the library's sizes come from the settings
+
+        var later = await Store.GetSkillMetricsDataAsync([running.Project.Id], T0.AddDays(1), default);
+        Assert.Empty(later.Runs);
+        Assert.Equal(2, later.Repository.Count); // repository skills are not limited to the period
+    }
+
     // ---- Operational counters (m4-architecture.md §7) ----
 
     [SkippableFact]

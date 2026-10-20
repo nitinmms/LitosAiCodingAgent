@@ -45,6 +45,9 @@ public static class FactoryWire
 
     public static string WebSearchPath(string runId) => $"/internal/runs/{Uri.EscapeDataString(runId)}/web-search";
 
+    /// <summary>Where a worker says it loaded a skill, so the skill report can count it (m4-architecture.md §12.5).</summary>
+    public static string SkillLoadsPath(string runId) => $"/internal/runs/{Uri.EscapeDataString(runId)}/skill-loads";
+
     /// <summary>The worker's own extra endpoints, beside Litos.Hosting's turn endpoints.</summary>
     public static string CompactPath(string sessionId) => $"/sessions/{Uri.EscapeDataString(sessionId)}/compact";
 
@@ -81,6 +84,9 @@ public sealed record McpServerReport(string Name, bool Connected, IReadOnlyList<
 
 /// <summary>A search the agent asked for; the host searches with its own key (m3-architecture.md §6).</summary>
 public sealed record WebSearchRequest(string SessionId, string Query, int MaxResults);
+
+/// <summary>A skill the agent loaded with the skill tool, directly or from kernel code.</summary>
+public sealed record SkillLoadReport(string SessionId, string Name);
 
 /// <summary>What the model is shown: the results, or, when <paramref name="IsError"/>, why there are none.</summary>
 public sealed record WebSearchResponse(bool IsError, string Text);

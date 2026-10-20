@@ -1,4 +1,7 @@
 using System.Text.Json;
+using Litos.SoftwareFactory.Contracts;
+using Litos.SoftwareFactory.Core.Orchestration;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Metrics;
 using Litos.SoftwareFactory.Core.Store;
@@ -96,6 +99,85 @@ public sealed partial class EfFactoryStore
                 .Select(s => new LessonGiven(s.LessonId, threadOfRun[s.RunId], s.Inclusion, s.Position, s.Verdict, s.IncludedAt))],
             threads,
             [.. runs.Where(r => inPeriod.Contains(r.ThreadId)).Select(r => new FlowRun(r.ThreadId, r.Kind))]);
+    }
+
+    public async Task RecordSkillLoadAsync(Guid runId, string name, DateTimeOffset at, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var trimmed = name.Trim();
+        write.Db.RunSkillLoads.Add(new RunSkillLoad
+        {
+            Id = Guid.NewGuid(),
+            RunId = runId,
+            Name = trimmed.Length > RunSkillLoad.MaxNameChars ? trimmed[..RunSkillLoad.MaxNameChars] : trimmed,
+            LoadedAt = at,
+        });
+        await write.CommitAsync(ct);
+    }
+
+    public async Task<SkillData> GetSkillMetricsDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        // Dates filtered after reading, as in GetFlowDataAsync: SQLite cannot compare a DateTimeOffset in a query.
+        var threads = (await db.Threads.AsNoTracking()
+                .Where(t => projectIds == null || projectIds.Contains(t.ProjectId))
+                .Select(t => new { t.Id, t.ProjectId, t.TypeLabel, t.State, t.CreatedAt })
+                .ToListAsync(ct))
+            .Where(t => t.CreatedAt >= since)
+            .ToList();
+        var ids = threads.Select(t => t.Id).ToList();
+        var runs = await db.Runs.AsNoTracking()
+            .Where(r => ids.Contains(r.ThreadId))
+            .Select(r => new { r.Id, r.ThreadId, r.Kind, r.CapabilitiesJson })
+            .ToListAsync(ct);
+        var runIds = runs.Select(r => r.Id).ToList();
+        var calls = (await db.Usage.AsNoTracking()
+                .Where(u => u.RunId != null && runIds.Contains(u.RunId.Value))
+                .GroupBy(u => u.RunId)
+                .Select(g => new { RunId = g.Key!.Value, Calls = g.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(c => c.RunId, c => c.Calls);
+        var loads = await db.RunSkillLoads.AsNoTracking()
+            .Where(l => runIds.Contains(l.RunId))
+            .Select(l => new SkillLoad(l.RunId, l.Name))
+            .ToListAsync(ct);
+        var repository = await db.RepositorySkills.AsNoTracking()
+            .Where(s => projectIds == null || projectIds.Contains(s.ProjectId))
+            .Select(s => new { s.ProjectId, s.Name, Chars = s.Content.Length, s.LastFoundAt, Approved = s.ApprovedAt != null })
+            .ToListAsync(ct);
+
+        return new SkillData(
+            [.. threads.Select(t => new SkillThread(t.Id, t.ProjectId, t.TypeLabel, t.State))],
+            [.. runs.Select(r => SkillRunOf(r.Id, r.ThreadId, r.Kind, calls.GetValueOrDefault(r.Id), r.CapabilitiesJson))],
+            loads,
+            [.. repository.Select(s => new RepositorySkillVersion(s.ProjectId, s.Name, s.Chars, s.LastFoundAt, s.Approved))],
+            new Dictionary<string, int>());
+    }
+
+    /// <summary>What a run was given of the skills, from the capabilities it recorded when it started.</summary>
+    private static SkillRun SkillRunOf(Guid runId, Guid threadId, RunKind kind, int calls, string? capabilitiesJson)
+    {
+        RunCapabilities? capabilities = null;
+        if (capabilitiesJson is { Length: > 0 })
+        {
+            try
+            {
+                capabilities = JsonSerializer.Deserialize<RunCapabilities>(capabilitiesJson, FactoryWire.Json);
+            }
+            catch (JsonException)
+            {
+                // A run whose record cannot be read counts as given nothing.
+            }
+        }
+
+        if (capabilities is null)
+            return new SkillRun(runId, threadId, kind, calls, [], [], new HashSet<string>());
+        var fromRepository = (capabilities.RepositorySkills ?? []).Where(s => s.Used).Select(s => s.Name).ToHashSet(StringComparer.Ordinal);
+        return new SkillRun(
+            runId, threadId, kind, calls,
+            [.. capabilities.TaskSkills.Select(s => new GivenSkill(s.Name, s.Text.Length))],
+            [.. capabilities.LibrarySkills.Select(s => s.Name).Concat(fromRepository).Distinct(StringComparer.Ordinal)],
+            fromRepository);
     }
 
     private static FlowStateEvent? Parse(Guid threadId, DateTimeOffset at, string payload)

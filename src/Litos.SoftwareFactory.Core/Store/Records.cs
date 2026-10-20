@@ -646,6 +646,22 @@ public sealed class RepositorySkill
     public const int MaxContentChars = 100_000;
 }
 
+/// <summary>
+/// A skill a run's agent loaded with the skill tool, directly or from kernel code (m4-architecture.md
+/// §12.5). What a run was given is in its capabilities; this is what it chose to read.
+/// </summary>
+public sealed class RunSkillLoad
+{
+    public Guid Id { get; set; }
+    public Guid RunId { get; set; }
+
+    /// <summary>The name the agent asked for, as the skill's SKILL.md gives it.</summary>
+    public required string Name { get; set; }
+    public DateTimeOffset LoadedAt { get; set; }
+
+    public const int MaxNameChars = 200;
+}
+
 public static class SettingsSections
 {
     public const string Budgets = "budgets";
