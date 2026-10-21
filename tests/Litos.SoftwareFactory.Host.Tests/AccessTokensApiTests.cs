@@ -118,6 +118,25 @@ public sealed class AccessTokensApiTests : IAsyncLifetime
         Assert.Contains("Settings → Tray app", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
     }
 
+    [Theory]
+    [InlineData("GET", "api/auth/me")]
+    [InlineData("POST", "api/auth/login")]
+    [InlineData("POST", "api/invitations/lookup")]
+    public async Task ARefusedToken_IsSaidSo_EvenWhereAnonymousCallersAreAnswered(string method, string path)
+    {
+        var (id, secret) = await CreateAsync(_ben);
+        using (var revoke = await _ben.PostAsync($"api/access-tokens/{id}/revoke", null))
+            Assert.Equal(HttpStatusCode.NoContent, revoke.StatusCode);
+        using var tray = TokenClient(secret);
+        tray.DefaultRequestHeaders.Add("X-Factory-Request", "1");
+
+        using var request = new HttpRequestMessage(new HttpMethod(method), path) { Content = method == "POST" ? JsonContent.Create(new { }) : null };
+        using var response = await tray.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains("Settings → Tray app", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+    }
+
     [Fact]
     public async Task ABearerToken_WinsOverASessionCookie()
     {

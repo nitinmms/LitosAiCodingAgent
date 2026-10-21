@@ -35,6 +35,9 @@ public static class AccessTokensApi
     /// <summary>Carried by a request signed in with a token: the token's id.</summary>
     public const string TokenIdClaim = "factory:access_token";
 
+    /// <summary>What a refused token is told; the tray app shows it.</summary>
+    public const string InvalidToken = "The access token is not valid. Create a new one in the web app, under Settings → Tray app.";
+
     /// <summary>How many tokens one account may have that still work.</summary>
     public const int MaxActivePerUser = 20;
 
@@ -60,9 +63,22 @@ public static class AccessTokensApi
             options.ForwardDefaultSelector = context => BearerOf(context.Request) is not null ? Scheme : IdentityConstants.ApplicationScheme)
         .AddScheme<AuthenticationSchemeOptions, AccessTokenHandler>(Scheme, null);
 
-    /// <summary>Refuses everything but the readable calls to a request signed in with a token. Runs after authentication.</summary>
+    /// <summary>
+    /// Refuses everything but the readable calls to a request signed in with a token, and refuses a
+    /// request whose token was not accepted on every route, saying why: one that answers anonymous
+    /// callers too (/api/auth/me answers a bare 401) must not hide that the token itself is the
+    /// problem. Runs after authentication.
+    /// </summary>
     public static IApplicationBuilder UseFactoryAccessTokenScope(this IApplicationBuilder app) => app.Use(async (context, next) =>
     {
+        if (context.Request.Path.StartsWithSegments("/api") && BearerOf(context.Request) is not null && !IsTokenRequest(context.User))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.Headers.WWWAuthenticate = "Bearer";
+            await context.Response.WriteAsJsonAsync(new { error = InvalidToken });
+            return;
+        }
+
         if (IsTokenRequest(context.User)
             && context.Request.Path.StartsWithSegments("/api")
             && !(HttpMethods.IsGet(context.Request.Method) && Readable.Any(path => context.Request.Path.Equals(path, StringComparison.OrdinalIgnoreCase))))
@@ -174,8 +190,6 @@ public static class AccessTokensApi
         IFactoryStore store, UserManager<FactoryUser> users, IUserClaimsPrincipalFactory<FactoryUser> principals, IClock clock)
         : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
     {
-        private const string Invalid = "The access token is not valid. Create a new one in the web app, under Settings → Tray app.";
-
         protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
         {
             if (BearerOf(Request) is not { } presented)
@@ -186,7 +200,7 @@ public static class AccessTokensApi
                 || await store.FindAccessTokenAsync(InvitationsApi.Hash(presented), ct) is not { RevokedAt: null } token
                 || await users.FindByIdAsync(token.UserId.ToString()) is not { Disabled: false } user)
             {
-                return AuthenticateResult.Fail(Invalid);
+                return AuthenticateResult.Fail(InvalidToken);
             }
 
             var principal = await principals.CreateAsync(user);
@@ -203,7 +217,7 @@ public static class AccessTokensApi
         {
             Response.StatusCode = StatusCodes.Status401Unauthorized;
             Response.Headers.WWWAuthenticate = "Bearer";
-            await Response.WriteAsJsonAsync(new { error = Invalid });
+            await Response.WriteAsJsonAsync(new { error = InvalidToken });
         }
     }
 }

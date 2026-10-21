@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The tray app's platform-neutral core (ReadMe_LitosSoftwareFactory_V1.md §26.3): the factory's
+       event-stream client, the "awaiting you" rule, merging bursts into one alert, the alert sounds
+       and texts, and the settings. No UI: the Windows shell (WinForms) and, later, the macOS and
+       Linux shells (Avalonia) sit on top of it. It never references the host; it talks to it over
+       HTTP with a personal access token, as a tray app on another PC does. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Litos.SoftwareFactory.Tray</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.SoftwareFactory.Tray.Tests" />
+  </ItemGroup>
+
+</Project>

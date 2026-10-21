@@ -99,7 +99,7 @@ jobs:
         id: build
         shell: pwsh
         run: |
-          foreach ($project in 'Core', 'Infrastructure', 'Worker', 'Host', 'Setup') {
+          foreach ($project in 'Core', 'Infrastructure', 'Worker', 'Host', 'Setup', 'Tray') {
             dotnet build "tests/Litos.SoftwareFactory.$project.Tests" -c Release
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
@@ -124,6 +124,10 @@ jobs:
       - name: Setup tests (litos-factory)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet test tests/Litos.SoftwareFactory.Setup.Tests -c Release --no-build --logger "trx;LogFileName=setup.trx" --results-directory test-results
+
+      - name: Tray tests (the tray app's core)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: dotnet test tests/Litos.SoftwareFactory.Tray.Tests -c Release --no-build --logger "trx;LogFileName=tray.trx" --results-directory test-results
 
       - name: Web app (typecheck and tests)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

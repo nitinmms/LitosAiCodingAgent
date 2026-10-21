@@ -1325,12 +1325,26 @@ Decided 2026-10-21 (proposal page with a clickable mock: https://claude.ai/artif
 
 **Build order:**
 1. Host: personal access tokens, and the web app's Tray app page, with tests. **Built 2026-10-21.**
-2. Tray core (`Litos.SoftwareFactory.Tray.Core`): SSE client with resume, the rule, burst merging, WAV synthesis; tested against a fake stream (about 1 day).
+2. Tray core (`Litos.SoftwareFactory.Tray.Core`): SSE client with resume, the rule, burst merging, WAV synthesis; tested against a fake stream. **Built 2026-10-21.**
 3. Windows shell (`Litos.SoftwareFactory.Tray`, `litos-factory-tray.exe`): icon, menu, notification, settings window, Credential Manager, Do not disturb (about 1 day).
 4. Installers: in the factory MSI (Run key, started after setup, stopped before an upgrade), and the tray-only MSI (about 1 day).
 5. macOS, once the `.pkg` is signed, then Linux (1–2 days each).
 
 **Built, step 1 (2026-10-21).** Host: `Auth/AccessTokensApi.cs` (a policy scheme picks the Bearer handler when a request carries `Authorization: Bearer`, else the session cookie; a scope gate after authentication; `GET/POST /api/access-tokens`, `POST /api/access-tokens/{id}/revoke`, `?all=true` for Admins), `EfFactoryStore.AccessTokens.cs`, and `/api/events` checks a token on every pass. Web: `#/tray` (`components/TrayPage.tsx`), opened from the top bar's "Tray app" button by anyone. Tests: 22 in `AccessTokensApiTests`, 4 store tests run on SQLite and PostgreSQL (`FactoryStoreTests.AccessTokens.cs`), 7 in `Tray.test.tsx`. The whole host suite (760), the Infrastructure suite with PostgreSQL (897, the migration included) and the web suite (486) pass.
+
+**Built, step 2 (2026-10-21).** `src/Litos.SoftwareFactory.Tray.Core` (net10.0, no UI, no reference to the host):
+
+| Part | What it does |
+|---|---|
+| `FactoryClient` | The three GETs a token may make, with the Bearer token; no overall HttpClient timeout (the stream stays open), 30 s on the other two. 401/403 become `TokenRefusedException` carrying the host's reason; anything else is worth retrying. |
+| `SseReader` | The board stream's framing, id-only blocks included (they move the cursor). Nothing at all for 45 s (three missed keep-alives) means the connection is dead: a slept laptop or a dropped VPN reconnects instead of hanging. |
+| `AwaitingSet` | `newlyAwaiting` in C#: seeded from the list without ringing; a task rings when it starts waiting, again only after it stopped. |
+| `AttentionWatcher` | me → list → stream from the list's cursor. Arrivals within 3 s ring once, and only those still waiting at the end of the window. On a drop it retries after 2, 4, 8 … 60 s and resumes from the last event id without re-reading the list. A refused token stops it (`SignInNeeded`, with the host's reason). It tells the shell through `IAttentionListener`. |
+| `Chime` | Ding, Ding-dong and the web app's beeps as 16-bit mono WAV in memory, never clipping, ending in silence. |
+| `AlertText` | The reason per state, the notification (one task, or "3 tasks need you" with a list), the tooltip, each cut to what Windows shows (63/255/127). |
+| `TraySettings`, `FactoryAddress`, `ITokenStore` | Settings as JSON (written through a temporary file), mute and reminders; the address check (a pasted page address is tidied, a proxy path kept, plain HTTP to another machine refused unless allowed); the web app's task, board and Tray app pages; the secure-store interface the shells implement. |
+
+One host change came out of it: a request whose Bearer token is refused now gets 401 with the reason on every `/api` route. `/api/auth/me` answers anonymous callers with a bare 401, which had hidden from the tray app why it was refused. Tests: 75 in `tests/Litos.SoftwareFactory.Tray.Tests` (against a fake factory), 3 in `TrayAppTests` running the core against the real host (an owner's handoff rings, a task already waiting does not, a revoke ends in sign-in needed), and 3 more in `AccessTokensApiTests`. CI builds and runs the new suite.
 
 ### 26.4 Later: alerts from the host
 

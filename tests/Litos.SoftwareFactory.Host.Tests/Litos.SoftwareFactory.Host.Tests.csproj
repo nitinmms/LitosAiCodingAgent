@@ -26,6 +26,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Litos.SoftwareFactory.Host\Litos.SoftwareFactory.Host.csproj" />
+    <!-- The tray app's client, run against the real host (TrayAppTests). -->
+    <ProjectReference Include="..\..\src\Litos.SoftwareFactory.Tray.Core\Litos.SoftwareFactory.Tray.Core.csproj" />
     <!-- Built beside the tests so one test can run a real worker process against the host. -->
     <ProjectReference Include="..\..\src\Litos.SoftwareFactory.Worker\Litos.SoftwareFactory.Worker.csproj" />
   </ItemGroup>
