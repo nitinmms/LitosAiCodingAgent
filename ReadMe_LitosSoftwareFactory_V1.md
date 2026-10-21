@@ -1326,7 +1326,7 @@ Decided 2026-10-21 (proposal page with a clickable mock: https://claude.ai/artif
 **Build order:**
 1. Host: personal access tokens, and the web app's Tray app page, with tests. **Built 2026-10-21.**
 2. Tray core (`Litos.SoftwareFactory.Tray.Core`): SSE client with resume, the rule, burst merging, WAV synthesis; tested against a fake stream. **Built 2026-10-21.**
-3. Windows shell (`Litos.SoftwareFactory.Tray`, `litos-factory-tray.exe`): icon, menu, notification, settings window, Credential Manager, Do not disturb (about 1 day).
+3. Windows shell (`Litos.SoftwareFactory.Tray.Windows`, `litos-factory-tray.exe`): icon, menu, notification, settings window, Credential Manager, Do not disturb. **Built 2026-10-21.**
 4. Installers: in the factory MSI (Run key, started after setup, stopped before an upgrade), and the tray-only MSI (about 1 day).
 5. macOS, once the `.pkg` is signed, then Linux (1–2 days each).
 
@@ -1345,6 +1345,17 @@ Decided 2026-10-21 (proposal page with a clickable mock: https://claude.ai/artif
 | `TraySettings`, `FactoryAddress`, `ITokenStore` | Settings as JSON (written through a temporary file), mute and reminders; the address check (a pasted page address is tidied, a proxy path kept, plain HTTP to another machine refused unless allowed); the web app's task, board and Tray app pages; the secure-store interface the shells implement. |
 
 One host change came out of it: a request whose Bearer token is refused now gets 401 with the reason on every `/api` route. `/api/auth/me` answers anonymous callers with a bare 401, which had hidden from the tray app why it was refused. Tests: 75 in `tests/Litos.SoftwareFactory.Tray.Tests` (against a fake factory), 3 in `TrayAppTests` running the core against the real host (an owner's handoff rings, a task already waiting does not, a revoke ends in sign-in needed), and 3 more in `AccessTokensApiTests`. CI builds and runs the new suite.
+
+**Built, step 3 (2026-10-21).** `src/Litos.SoftwareFactory.Tray.Windows`, published as `litos-factory-tray.exe` (WinForms, .NET 10, Windows only):
+
+- **Starting.** One copy per Windows user (a named mutex). A second start only asks the running one to open Settings, so a Start-menu shortcut doubles as "settings". `--background` (the Run key, the installer) starts quietly: if it is not set up yet it shows a notification "Click to connect it to your factory" instead of a window. With no arguments and nothing set up, Settings opens.
+- **Icon.** Drawn at the taskbar's size: the factory mark with a corner badge, an amber count (to 9+), muted, grey while connecting or reconnecting, red when not set up or the token was refused. The tooltip says the same in words.
+- **Left-click** opens the board, or Settings when not set up. **Right-click** is the menu of §26.3: the connection line ("Connected · host · name", "Reconnecting at 14:32:08: why", "Sign in needed: why"), the waiting tasks (8, then "and N more on the board"), Open board, Mute alerts, Mute for 1 hour ("Muted until 15:32"), the local factory's Start, Stop, Status and Doctor when `litos-factory.exe` is beside it, Settings, Sign out, Quit.
+- **Alerts.** A notify-icon balloon, which Windows 10/11 shows as a notification, and the chosen sound; a click opens the task, or the board for several. Muted: neither, but the count still shows. While Windows holds notifications back (`SHQueryUserNotificationState`: presenting, full screen, quiet time) the sound is skipped if "stay silent" is on; the balloon is left to Windows. A refused token notifies once, without sound, and a click opens Settings. Reminders are checked every minute.
+- **Settings window.** Address (filled in from `factory.env` when the factory is on this PC), the plain-HTTP consent, the token (never shown once saved), a link to the web app's Tray app page, Test connection ("Connected as …" or the host's reason), the sound with Play, reminders, stay silent, start at sign-in. Saving writes `%APPDATA%\LitosSoftwareFactory	ray.json`, the token to Credential Manager ("Litos Factory Tray: <address>"), the Run key value `LitosFactoryTray`, and reconnects.
+- **Logic is testable:** every decision (icon, tooltip, menu, whether to ring, notify or remind) is `TrayPresenter`'s, which has no WinForms in it. 41 tests in `tests/Litos.SoftwareFactory.Tray.Windows.Tests`: the presenter, the drawn icons (sizes, colours, transparent corners, caching), Credential Manager and the Run key (each under a name of its own, so a run never touches a real install), `factory.env` reading and the local commands.
+
+Not yet checked by hand: the balloon as a Windows 11 notification, and whether Windows 11's Do not disturb shows through `SHQueryUserNotificationState` (it is documented for presentation mode and full screen; if it does not, the sound plays and only the notification is held back).
 
 ### 26.4 Later: alerts from the host
 

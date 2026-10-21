@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- litos-factory-tray, the Windows tray app (ReadMe_LitosSoftwareFactory_V1.md §26.3): an icon
+       in the taskbar that rings and shows a notification when one of your tasks starts waiting on
+       you, whether the factory runs on this PC or on a server. The logic is in Tray.Core and in
+       TrayPresenter here; the rest is WinForms (NotifyIcon, whose balloon Windows 10/11 shows as a
+       notification) and a little Win32: Credential Manager and the notification state. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>litos-factory-tray</AssemblyName>
+    <RootNamespace>Litos.SoftwareFactory.Tray.Windows</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\deploy\icon-source.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version Condition="'$(Version)' == ''">0.1.0</Version>
+  </PropertyGroup>
+
+  <!-- Windows Forms' implicit usings would bring System.Windows.Forms into every file. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.SoftwareFactory.Tray.Core\Litos.SoftwareFactory.Tray.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.SoftwareFactory.Tray.Windows.Tests" />
+  </ItemGroup>
+
+</Project>

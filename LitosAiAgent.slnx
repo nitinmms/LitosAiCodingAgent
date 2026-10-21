@@ -21,6 +21,7 @@
     <Project Path="src/Litos.SoftwareFactory.Infrastructure/Litos.SoftwareFactory.Infrastructure.csproj" />
     <Project Path="src/Litos.SoftwareFactory.Setup/Litos.SoftwareFactory.Setup.csproj" />
     <Project Path="src/Litos.SoftwareFactory.Tray.Core/Litos.SoftwareFactory.Tray.Core.csproj" />
+    <Project Path="src/Litos.SoftwareFactory.Tray.Windows/Litos.SoftwareFactory.Tray.Windows.csproj" />
     <Project Path="src/Litos.SoftwareFactory.Worker/Litos.SoftwareFactory.Worker.csproj" />
     <Project Path="src/Litos.Tools/Litos.Tools.csproj" />
     <Project Path="src/Litos.Tools.Mcp/Litos.Tools.Mcp.csproj" />
@@ -42,6 +43,7 @@
     <Project Path="tests/Litos.SoftwareFactory.Worker.Tests/Litos.SoftwareFactory.Worker.Tests.csproj" />
     <Project Path="tests/Litos.SoftwareFactory.Setup.Tests/Litos.SoftwareFactory.Setup.Tests.csproj" />
     <Project Path="tests/Litos.SoftwareFactory.Tray.Tests/Litos.SoftwareFactory.Tray.Tests.csproj" />
+    <Project Path="tests/Litos.SoftwareFactory.Tray.Windows.Tests/Litos.SoftwareFactory.Tray.Windows.Tests.csproj" />
     <Project Path="tests/Litos.SoftwareFactory.TestMcpServer/Litos.SoftwareFactory.TestMcpServer.csproj" />
     <Project Path="tests/Litos.Tools.Tests/Litos.Tools.Tests.csproj" />
     <Project Path="tests/Litos.Tools.Mcp.Tests/Litos.Tools.Mcp.Tests.csproj" />
