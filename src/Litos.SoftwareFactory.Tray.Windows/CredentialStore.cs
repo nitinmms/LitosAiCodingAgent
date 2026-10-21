@@ -77,6 +77,35 @@ internal sealed class CredentialStore(string prefix = CredentialStore.DefaultPre
             throw new Win32Exception(error);
     }
 
+    /// <summary>Deletes the token of every factory address (a purged uninstall). Returns how many.</summary>
+    public int DeleteAll()
+    {
+        if (!CredEnumerate(prefix + "*", 0, out var count, out var list))
+        {
+            var error = Marshal.GetLastWin32Error();
+            return error == NotFound ? 0 : throw new Win32Exception(error);
+        }
+
+        var targets = new List<string>();
+        try
+        {
+            for (var i = 0; i < count; i++)
+                targets.Add(Marshal.PtrToStructure<Credential>(Marshal.ReadIntPtr(list, i * IntPtr.Size)).TargetName);
+        }
+        finally
+        {
+            CredFree(list);
+        }
+
+        foreach (var target in targets)
+        {
+            if (!CredDelete(target, GenericCredential, 0) && Marshal.GetLastWin32Error() is var error and not NotFound)
+                throw new Win32Exception(error);
+        }
+
+        return targets.Count;
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct Credential
     {
@@ -102,6 +131,9 @@ internal sealed class CredentialStore(string prefix = CredentialStore.DefaultPre
 
     [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CredDelete(string target, uint type, uint flags);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredEnumerateW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredEnumerate(string filter, uint flags, out int count, out IntPtr credentials);
 
     [DllImport("advapi32.dll")]
     private static extern void CredFree(IntPtr buffer);

@@ -17,9 +17,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $runtime = "win-x64"
 $publishDir = Join-Path $repoRoot "deploy/out/factory/windows/$runtime"
 $outDir = Join-Path $repoRoot "deploy/out/factory"
-
-# An MSI's ProductVersion is three numbers; a major upgrade needs one of them to grow.
-if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "The version must be major.minor.patch, such as 0.1.0." }
+. (Join-Path $PSScriptRoot "msi-common.ps1")
+Assert-MsiVersion $Version
 
 if (-not $SkipPublish) {
     $publishArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "publish-factory-windows.ps1"), "-Runtime", $runtime, "-Version", $Version)
@@ -29,25 +28,8 @@ if (-not $SkipPublish) {
 }
 if (-not (Test-Path (Join-Path $publishDir "litos-factory-w.exe"))) { throw "Nothing is published in $publishDir." }
 
-# The licence page shows RTF: LICENSE.txt with \ { } escaped, anything beyond ASCII as \uN, one
-# paragraph per line.
-function ConvertTo-RtfLine([string]$Line) {
-    $rtf = [System.Text.StringBuilder]::new()
-    foreach ($c in $Line.ToCharArray()) {
-        $code = [int]$c
-        if ($c -eq '\' -or $c -eq '{' -or $c -eq '}') { [void]$rtf.Append('\').Append($c) }
-        elseif ($code -gt 127) {
-            # \uN takes a signed 16-bit number; ? is what a reader without Unicode shows.
-            if ($code -gt 32767) { $code -= 65536 }
-            [void]$rtf.Append("\u$code?")
-        }
-        else { [void]$rtf.Append($c) }
-    }
-    return $rtf.Append('\par').ToString()
-}
 $licenseRtf = Join-Path $outDir "License.rtf"
-$lines = Get-Content (Join-Path $repoRoot "LICENSE.txt") -Encoding UTF8 | ForEach-Object { ConvertTo-RtfLine $_ }
-Set-Content $licenseRtf -Encoding ascii -Value ("{\rtf1\ansi\deff0{\fonttbl{\f0 Consolas;}}\f0\fs16`r`n" + ($lines -join "`r`n") + "`r`n}")
+New-LicenseRtf $repoRoot $licenseRtf
 
 # Always a full build: incrementally, WiX skipped linking when only the version had changed. Into
 # its own folder, then copied out: a full build cleans its output folder, which took the MSI of the

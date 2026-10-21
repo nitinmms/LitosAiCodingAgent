@@ -1327,7 +1327,7 @@ Decided 2026-10-21 (proposal page with a clickable mock: https://claude.ai/artif
 1. Host: personal access tokens, and the web app's Tray app page, with tests. **Built 2026-10-21.**
 2. Tray core (`Litos.SoftwareFactory.Tray.Core`): SSE client with resume, the rule, burst merging, WAV synthesis; tested against a fake stream. **Built 2026-10-21.**
 3. Windows shell (`Litos.SoftwareFactory.Tray.Windows`, `litos-factory-tray.exe`): icon, menu, notification, settings window, Credential Manager, Do not disturb. **Built 2026-10-21.**
-4. Installers: in the factory MSI (Run key, started after setup, stopped before an upgrade), and the tray-only MSI (about 1 day).
+4. Installers: in the factory MSI (Run key, started after setup, stopped before an upgrade), and the tray-only MSI. **Built 2026-10-21** (SoftwareFactoryInstallation.md §14.8).
 5. macOS, once the `.pkg` is signed, then Linux (1–2 days each).
 
 **Built, step 1 (2026-10-21).** Host: `Auth/AccessTokensApi.cs` (a policy scheme picks the Bearer handler when a request carries `Authorization: Bearer`, else the session cookie; a scope gate after authentication; `GET/POST /api/access-tokens`, `POST /api/access-tokens/{id}/revoke`, `?all=true` for Admins), `EfFactoryStore.AccessTokens.cs`, and `/api/events` checks a token on every pass. Web: `#/tray` (`components/TrayPage.tsx`), opened from the top bar's "Tray app" button by anyone. Tests: 22 in `AccessTokensApiTests`, 4 store tests run on SQLite and PostgreSQL (`FactoryStoreTests.AccessTokens.cs`), 7 in `Tray.test.tsx`. The whole host suite (760), the Infrastructure suite with PostgreSQL (897, the migration included) and the web suite (486) pass.
@@ -1356,6 +1356,8 @@ One host change came out of it: a request whose Bearer token is refused now gets
 - **Logic is testable:** every decision (icon, tooltip, menu, whether to ring, notify or remind) is `TrayPresenter`'s, which has no WinForms in it. 41 tests in `tests/Litos.SoftwareFactory.Tray.Windows.Tests`: the presenter, the drawn icons (sizes, colours, transparent corners, caching), Credential Manager and the Run key (each under a name of its own, so a run never touches a real install), `factory.env` reading and the local commands.
 
 Not yet checked by hand: the balloon as a Windows 11 notification, and whether Windows 11's Do not disturb shows through `SHQueryUserNotificationState` (it is documented for presentation mode and full screen; if it does not, the sound plays and only the notification is held back).
+
+**Built, step 4 (2026-10-21).** The factory's MSI installs `litos-factory-tray.exe` beside `litos-factory`, with a Start-menu shortcut; `deploy/package-tray-msi.ps1` builds a 43 MB tray-only MSI for people whose factory is on a server. The tray app took installer options: `--register` (start at sign-in unless turned off), `--quit` (exit via a named event, waited for), `--unregister [--purge]`. Both MSIs were run silently on this machine: install, upgrade with the Settings window open, uninstall; and the factory MSI end to end, with the installed tray app connecting to the installed factory with a real token. SoftwareFactoryInstallation.md §14.8 has the details. 50 tests in the Windows tray suite now.
 
 ### 26.4 Later: alerts from the host
 

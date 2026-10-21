@@ -1,0 +1,20 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <!-- The tray app's own installer (ReadMe_LitosSoftwareFactory_V1.md §26.3), for people whose
+       factory runs on a server: a per-user MSI, no UAC, with only litos-factory-tray.exe. Built by
+       deploy/package-tray-msi.ps1, which passes PublishDir, ProductVersion and LicenseRtf.
+       Not part of LitosAiAgent.slnx: it needs the published program, not a build. -->
+  <PropertyGroup>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.0</ProductVersion>
+    <OutputName>LitosFactoryTray-$(ProductVersion)-win-x64</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(PublishDir);LicenseRtf=$(LicenseRtf);IconFile=$(MSBuildThisFileDirectory)..\..\deploy\icon-source.ico</DefineConstants>
+    <!-- Per-user files in the user's profile, as in the factory's MSI. -->
+    <SuppressIces>ICE38;ICE64;ICE91</SuppressIces>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+  </ItemGroup>
+
+</Project>

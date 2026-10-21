@@ -1,5 +1,6 @@
 # Publishes the installed software factory for Windows into one folder (SoftwareFactoryInstallation.md
-# §14.4 step 1, G3): the host, the worker, the PTC kernel and litos-factory, each self-contained
+# §14.4 step 1, G3): the host, the worker, the PTC kernel, litos-factory and the tray app
+# (litos-factory-tray, ReadMe_LitosSoftwareFactory_V1.md §26.3), each self-contained
 # and single-file, beside the web app (wwwroot/) and the database's compose file (db/). This folder
 # is what the MSI installs (deploy/package-factory-msi.ps1).
 #
@@ -70,6 +71,7 @@ $hostDir = Publish-Program "src/Litos.SoftwareFactory.Host/Litos.SoftwareFactory
 $workerDir = Publish-Program "src/Litos.SoftwareFactory.Worker/Litos.SoftwareFactory.Worker.csproj" "worker" @("-p:IncludeNativeLibrariesForSelfExtract=true")
 $kernelDir = Publish-Program "src/Litos.Kernel.Host/Litos.Kernel.Host.csproj" "kernel"
 $setupDir = Publish-Program "src/Litos.SoftwareFactory.Setup/Litos.SoftwareFactory.Setup.csproj" "setup"
+$trayDir = Publish-Program "src/Litos.SoftwareFactory.Tray.Windows/Litos.SoftwareFactory.Tray.Windows.csproj" "tray"
 
 Copy-Item (Join-Path $hostDir "Litos.SoftwareFactory.Host.exe") $outDir
 Copy-Item (Join-Path $workerDir "Litos.SoftwareFactory.Worker.exe") $outDir
@@ -77,10 +79,11 @@ Copy-Item (Join-Path $kernelDir "Litos.Kernel.Host.exe") $outDir
 Copy-Item (Join-Path $setupDir "litos-factory.exe") $outDir
 Copy-Item (Join-Path $setupDir "litos-factory.exe") (Join-Path $outDir "litos-factory-w.exe")
 Set-WindowsSubsystem (Join-Path $outDir "litos-factory-w.exe")
+Copy-Item (Join-Path $trayDir "litos-factory-tray.exe") $outDir
 
 # Anything else a single-file publish left beside an executable would be a native library it could
 # not bundle: fail here, not at runtime on someone else's machine.
-foreach ($folder in @($hostDir, $workerDir, $kernelDir, $setupDir)) {
+foreach ($folder in @($hostDir, $workerDir, $kernelDir, $setupDir, $trayDir)) {
     $extra = Get-ChildItem $folder -File | Where-Object { $_.Extension -notin '.exe', '.pdb', '.json', '.config', '.xml' }
     if ($extra) { throw "Publishing left files beside the executable in ${folder}: $($extra.Name -join ', ')" }
 }

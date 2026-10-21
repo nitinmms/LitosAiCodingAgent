@@ -510,7 +510,7 @@ Decided 2026-10-20: **install beside**. `setup` never adopts a dev setup. When t
 | Compose file (G7) | `deploy/factory/compose.yml` | `name: litos-factory`, port from `FACTORY_DB_PORT`, init script beside it. |
 | `litos-factory` | `src/Litos.SoftwareFactory.Setup` | The §4.1 commands except backup/restore (next, with the M4 step 7 restore check). Windows only for now: `net10.0-windows`, TaskDialog prompts. |
 | Control endpoints | `Host/Api/ControlApi.cs` | `FACTORY_CONTROL_TOKEN` (setup generates it) maps `POST /control/stop` (as Ctrl+C) and `GET /control/status` (`adminMustChangePassword`), loopback only, token compared in constant time, 404 otherwise. A hidden host has no console to send Ctrl+C to, and dispatch pausing needs an Admin sign-in the CLI doesn't have. |
-| MSI | `installer/windows/` | Per-user, no UAC, `%LOCALAPPDATA%\Programs\LitosSoftwareFactory`, licence page, Finish with "Open Litos Software Factory" ticked. Start menu: the app (`open`) and Status (`status` in a console). Adds the folder to the user's PATH. |
+| MSI | `installer/windows/` | Per-user, no UAC, `%LOCALAPPDATA%\Programs\LitosSoftwareFactory`, licence page, Finish with "Open Litos Software Factory" ticked. Start menu: the app (`open`), Status (`status` in a console) and, since 2026-10-21, Litos Factory Tray (§14.8). Adds the folder to the user's PATH. |
 
 **How the pieces fit.**
 
@@ -525,3 +525,24 @@ Decided 2026-10-20: **install beside**. `setup` never adopts a dev setup. When t
 **Checked on this machine, beside the dev setup** (it chose `-Installed` and ports 5181/5434): `setup` from the published folder; `stop` (33 s with a browser tab open, under 1 s without: the event stream holds the host's shutdown) and `start`; silent MSI install; upgrade 0.1.0 → 0.1.1 (old package stops it, new one sets up, `factory.env` unchanged); uninstall keeping settings, data and volume, with task, PATH entry and processes gone; reinstall over the kept data; `PURGE=1` removing container, volume, settings and data, leaving the dev setup's data alone. 63 unit tests in `tests/Litos.SoftwareFactory.Setup.Tests` (in the Windows CI job; `Commands` runs against fake programs, machine and host through `IProcessRunner`, `IMachine` and `IHostControl`) and 7 in `ControlApiTests`. A review on 2026-10-20 found, and this fixed: the purge rule above, a lost stop signal, a supervisor ended by a host that could not start (now retried with backoff, and the host killed if it cannot join the job), and a stop arriving as the supervisor exited crashing it on a disposed token. The whole MSI cycle was re-run after the fixes.
 
 **Not yet checked:** the dialogs (interactive install, the Docker prompt, a failure dialog), Docker not running or missing, the Run-key fallback, a reboot, and §14.6 on a clean machine. Steps 4 (signing) and 5 (CI packaging, winget) wait for a certificate.
+
+### 14.8 The tray app in the installers (2026-10-21)
+
+The tray app (`litos-factory-tray.exe`, ReadMe_LitosSoftwareFactory_V1.md §26.3) rings when one of a person's tasks starts waiting on them. It ships two ways.
+
+**In the factory's MSI**, beside `litos-factory`: `deploy/publish-factory-windows.ps1` publishes it like the other programs, and `installer/windows/Package.wxs` adds a Start-menu shortcut and four custom actions:
+
+| When | Runs | Why |
+|---|---|---|
+| Before files are removed or replaced (uninstall, repair, an upgrade's removal of the old version) | `litos-factory-tray --quit` | A running tray app locks its file. It is asked to exit through a named event, and the installer waits up to 10 s. |
+| Uninstall, not an upgrade | `litos-factory-tray --unregister` | Takes it out of the user's Run key. |
+| After the files are in place | `litos-factory-tray --register` | Starts it at sign-in, unless the person turned that off in its Settings, so an upgrade keeps their choice. |
+| After the install has finished | `litos-factory-tray --background` (async) | Puts it in the tray now. Not set up yet, it shows "Click to connect it to your factory"; its Settings window fills in the address from `factory.env`. |
+
+**On its own**, for people whose factory runs on a server: `deploy/package-tray-msi.ps1 -Version 0.1.0` → `deploy/out/tray/LitosFactoryTray-0.1.0-win-x64.msi` (43 MB), from `installer/windows-tray/`. Per-user, no UAC, `%LOCALAPPDATA%\Programs\LitosFactoryTray`, its own upgrade code, the same four custom actions, and Finish with "Connect it to your factory now" ticked, which opens its Settings. No Docker, database or host.
+
+Both keep the tray app's settings (`%APPDATA%\LitosSoftwareFactory	ray.json`) and its token (Credential Manager) on uninstall, as the factory keeps its data. The factory's `PURGE=1` passes the purge on (`--unregister --purge`): the settings and every "Litos Factory Tray:" credential go too. Both packages' licence-to-RTF and version checks are in `deploy/msi-common.ps1`.
+
+**Checked on this machine (tray-only MSI, silent):** install (program, Run key value `LitosFactoryTray` = `"…\litos-factory-tray.exe" --background`, Start-menu shortcut, the tray app running); a second start opened Settings in the running copy and started no other; an upgrade 0.1.0 → 0.1.1 with that Settings window open quit the old copy, started the new one and kept the Run key; uninstall removed the program, folder, shortcut, Run key and registry key.
+
+**Checked on this machine (factory MSI 0.1.2, silent, beside the dev setup):** the install took 36 s; the factory answered ready on 5181, and the tray app was installed, running, in the Run key and on the Start menu. With a token made through the installed factory's API and stored by the tray app's own credential code, a restarted tray app connected: the factory showed the token used seconds later. `PURGE=1` removed the factory (container, volume, settings, data, Scheduled Task) and the tray app (process, Run key, shortcut, settings). It first left the tray's token in Credential Manager, which is why the purge is now passed on to the tray app; that was then checked by running it.
