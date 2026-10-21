@@ -20,11 +20,13 @@ export type Route =
   | { view: 'people' }
   /** The Admin's factory settings, one tab per section. */
   | { view: 'settings'; tab: SettingsTab }
+  /** Your access tokens for the tray app (§26.3); an Admin also sees everyone's. */
+  | { view: 'tray' }
   /** An invitation's one-time link, opened by someone who is not signed in yet. */
   | { view: 'invite'; token: string };
 
 /**
- * The app's routes live in the URL fragment (#/board, #/threads/<id>, #/projects, #/lessons/<id>[/L-<n>], #/metrics[/guidance], #/people,
+ * The app's routes live in the URL fragment (#/board, #/threads/<id>, #/projects, #/lessons/<id>[/L-<n>], #/metrics[/guidance], #/people, #/tray,
  * #/settings/<tab>, #/invite/<token>), so the host only ever serves index.html and a reload lands
  * on the same screen. An invitation's token stays in the fragment, which the browser never sends
  * to the host.
@@ -39,6 +41,7 @@ export function parseRoute(hash: string): Route {
   }
   if (parts[0] === 'metrics') return parts[1] === 'guidance' ? { view: 'metrics', tab: 'guidance' } : { view: 'metrics' };
   if (parts[0] === 'people') return { view: 'people' };
+  if (parts[0] === 'tray') return { view: 'tray' };
   if (parts[0] === 'settings')
     return { view: 'settings', tab: SETTINGS_TABS.find((t) => t === parts[1]) ?? SETTINGS_TABS[0] };
   if (parts[0] === 'invite' && parts[1]) return { view: 'invite', token: decodeURIComponent(parts[1]) };
@@ -59,6 +62,8 @@ export const routeHash = (route: Route): string => {
       return route.tab === 'guidance' ? '#/metrics/guidance' : '#/metrics';
     case 'people':
       return '#/people';
+    case 'tray':
+      return '#/tray';
     case 'settings':
       return `#/settings/${route.tab}`;
     case 'invite':

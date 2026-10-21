@@ -22,6 +22,7 @@ import type {
   Decision,
   Finding,
   HandoffEvidence,
+  AccessToken,
   Invitation,
   LifecycleState,
   McpSettings,
@@ -332,6 +333,8 @@ export class FakeHost {
     { id: ADMIN.id, userName: ADMIN.userName, displayName: ADMIN.displayName, role: 'Admin', disabled: false, projectIds: [] },
   ];
   readonly invitations: Invitation[] = [];
+  /** Everyone's access tokens for the tray app (Auth/AccessTokensApi.cs), newest first. */
+  readonly accessTokens: AccessToken[] = [];
   /** Each invitation's link token, which the real host never keeps; tests open links with it. */
   readonly invitationTokens = new Map<string, string>();
   /** What "now" is for invitation expiry. */
@@ -720,6 +723,38 @@ export class FakeHost {
       return [200];
     }
     if (path === '/api/settings') return [200, this.settings];
+
+    // As AccessTokensApi: your own tokens, or everyone's for an Admin; shown once on creation.
+    if (path.split('?')[0] === '/api/access-tokens' && method === 'GET') {
+      const all = path.endsWith('?all=true');
+      if (all && !this.user.roles.includes('Admin')) return [403, { error: "Only an Admin sees everyone's access tokens." }];
+      return [200, this.accessTokens.filter((t) => all || t.userId === this.user.id)];
+    }
+    if (path === '/api/access-tokens' && method === 'POST') {
+      const name = String(data.name ?? '').trim();
+      if (!name) return [400, { error: 'Give the token a name of up to 100 characters, such as the PC it is for.' }];
+      const token: AccessToken = {
+        id: `tok-${this.accessTokens.length + 1}`,
+        userId: this.user.id,
+        userName: this.user.userName,
+        name,
+        status: 'Active',
+        createdAt: this.now.toISOString(),
+        lastUsedAt: null,
+        revokedAt: null,
+      };
+      this.accessTokens.unshift(token);
+      return [201, { token, secret: `lsf_secret-${token.id}` }];
+    }
+    const revokeToken = /^\/api\/access-tokens\/([^/]+)\/revoke$/.exec(path);
+    if (revokeToken && method === 'POST') {
+      const token = this.accessTokens.find((t) => t.id === revokeToken[1]);
+      if (!token || (token.userId !== this.user.id && !this.user.roles.includes('Admin'))) return [404];
+      if (token.status === 'Revoked') return [409, { error: 'This access token has already been revoked.' }];
+      token.status = 'Revoked';
+      token.revokedAt = this.now.toISOString();
+      return [204];
+    }
 
     if (path === '/api/projects' && method === 'GET') return [200, this.projects];
     if (path === '/api/projects' && method === 'POST') {

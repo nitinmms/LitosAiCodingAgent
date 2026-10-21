@@ -132,6 +132,7 @@ public static class FactoryHostApp
         app.UseFactoryCsrfHeader();
         app.UseAuthentication();
         app.UseFactoryPasswordChangeGate();
+        app.UseFactoryAccessTokenScope();
         app.UseAuthorization();
 
         // The React build, once there is one (step 6), is served from wwwroot.
@@ -162,6 +163,7 @@ public static class FactoryHostApp
         }).AllowAnonymous();
         app.MapFactoryAuth();
         app.MapFactoryInvitations();
+        app.MapFactoryAccessTokens();
         app.MapFactoryUsers();
         app.MapFactoryApi();
         app.MapFactoryAttachments();

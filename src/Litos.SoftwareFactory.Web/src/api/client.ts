@@ -1,9 +1,11 @@
 import type {
+  AccessToken,
   AccountRole,
   AdminSettings,
   Attachment,
   AttachmentSettings,
   BudgetSettings,
+  CreatedAccessToken,
   CreatedInvitation,
   CreateInvitation,
   CreateThread,
@@ -154,6 +156,10 @@ export interface FactoryApi {
   /** The token travels in the body, never the URL, so the host never logs it. */
   lookupInvitation(token: string): Promise<InvitationPreview>;
   acceptInvitation(token: string, password: string, displayName?: string): Promise<CurrentUser>;
+  /** Your own access tokens for the tray app, or everyone's (Admin) with `all`. */
+  accessTokens(all?: boolean): Promise<AccessToken[]>;
+  createAccessToken(name: string): Promise<CreatedAccessToken>;
+  revokeAccessToken(id: string): Promise<void>;
   people(): Promise<Person[]>;
   disablePerson(id: string): Promise<Person>;
   enablePerson(id: string): Promise<Person>;
@@ -318,6 +324,9 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     lookupInvitation: (token) => send<InvitationPreview>('POST', '/api/invitations/lookup', { token }, true),
     acceptInvitation: (token, password, displayName) =>
       send<CurrentUser>('POST', '/api/invitations/accept', { token, password, displayName }, true),
+    accessTokens: (all = false) => send<AccessToken[]>('GET', `/api/access-tokens${all ? '?all=true' : ''}`),
+    createAccessToken: (name) => send<CreatedAccessToken>('POST', '/api/access-tokens', { name }),
+    revokeAccessToken: async (id) => void (await send<unknown>('POST', `/api/access-tokens/${encodeURIComponent(id)}/revoke`)),
     people: () => send<Person[]>('GET', '/api/users'),
     disablePerson: (id) => send<Person>('POST', `/api/users/${encodeURIComponent(id)}/disable`),
     enablePerson: (id) => send<Person>('POST', `/api/users/${encodeURIComponent(id)}/enable`),

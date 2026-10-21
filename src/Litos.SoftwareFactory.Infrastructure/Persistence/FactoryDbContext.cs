@@ -40,6 +40,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<WorkspaceLease> Leases => Set<WorkspaceLease>();
     public DbSet<OutboxEvent> Outbox => Set<OutboxEvent>();
     public DbSet<Invitation> Invitations => Set<Invitation>();
+    public DbSet<AccessToken> AccessTokens => Set<AccessToken>();
     public DbSet<ProjectMember> ProjectMembers => Set<ProjectMember>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<SettingsSection> Settings => Set<SettingsSection>();
@@ -238,6 +239,16 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             Json(e.Property(i => i.ProjectIdsJson));
             e.HasIndex(i => i.TokenHash).IsUnique();
             e.HasIndex(i => i.UserName);
+        });
+
+        model.Entity<AccessToken>(e =>
+        {
+            e.ToTable("access_tokens");
+            e.Property(t => t.Name).HasMaxLength(100);
+            e.Property(t => t.TokenHash).HasMaxLength(64);
+            e.HasIndex(t => t.TokenHash).IsUnique();
+            e.HasIndex(t => t.UserId);
+            e.HasOne<FactoryUser>().WithMany().HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<ProjectMember>(e =>

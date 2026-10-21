@@ -508,6 +508,34 @@ public sealed class Invitation
         : null;
 }
 
+/// <summary>
+/// A personal access token (§26.3): how a program that cannot hold a session, the tray app,
+/// reads the task list and the board's event stream as its owner. Only the SHA-256 of the token
+/// is kept, as for an invitation link, so it is shown once and cannot be recovered.
+/// </summary>
+public sealed class AccessToken
+{
+    public Guid Id { get; set; }
+
+    /// <summary>Whose token it is: the host acts as this user, with their roles and projects.</summary>
+    public Guid UserId { get; set; }
+
+    /// <summary>What the owner called it, e.g. "Work laptop", so they can tell which to revoke.</summary>
+    public required string Name { get; set; }
+
+    /// <summary>Lower-case hex SHA-256 of the token.</summary>
+    public required string TokenHash { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>When it last signed a request in, to the minute or so; null if never used.</summary>
+    public DateTimeOffset? LastUsedAt { get; set; }
+
+    public DateTimeOffset? RevokedAt { get; set; }
+
+    /// <summary>Who revoked it: the owner, or an Admin.</summary>
+    public Guid? RevokedBy { get; set; }
+}
+
 /// <summary>A Member's place in a project (§14). Admins need none: they see every project.</summary>
 public sealed class ProjectMember
 {
@@ -686,6 +714,7 @@ public static class AuditTargets
     public const string Finding = "finding";
     public const string User = "user";
     public const string Invitation = "invitation";
+    public const string AccessToken = "access_token";
     public const string Settings = "settings";
     public const string Secret = "secret";
     public const string RepositorySkill = "repository_skill";
@@ -701,6 +730,8 @@ public static class AuditActions
     public const string InvitationCreate = "invitation.create";
     public const string InvitationRevoke = "invitation.revoke";
     public const string InvitationAccept = "invitation.accept";
+    public const string AccessTokenCreate = "access_token.create";
+    public const string AccessTokenRevoke = "access_token.revoke";
     public const string UserDisable = "user.disable";
     public const string UserEnable = "user.enable";
     public const string UserRole = "user.role";

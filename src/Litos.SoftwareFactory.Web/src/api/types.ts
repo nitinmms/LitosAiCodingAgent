@@ -490,6 +490,25 @@ export interface CreatedInvitation {
   link: string;
 }
 
+/** A personal access token for the tray app (blueprint §26.3). Its secret is shown only once, when it is created. */
+export interface AccessToken {
+  id: string;
+  userId: string;
+  /** Who owns it: filled in on an Admin's list of everyone's tokens. */
+  userName: string | null;
+  name: string;
+  status: 'Active' | 'Revoked';
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+export interface CreatedAccessToken {
+  token: AccessToken;
+  /** `lsf_…`: the one time the token exists anywhere. */
+  secret: string;
+}
+
 /** What the invitation page shows before the invitee chooses a password. */
 export interface InvitationPreview {
   userName: string;

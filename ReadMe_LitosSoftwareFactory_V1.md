@@ -1257,9 +1257,9 @@ To run it:
 2. Run `py -3 serve.py` in `LitosSoftwareFactory_Demo`.
 3. Open `http://127.0.0.1:8080`.
 
-## 26. Attention alerts and the tray app (proposed, deferred)
+## 26. Attention alerts and the tray app (in progress)
 
-Status: proposed 2026-10-20, not scheduled. Only the browser beeps (§26.1) are built.
+Status: proposed 2026-10-20. The browser beeps (§26.1) and the tray app's access tokens (§26.3, step 1, 2026-10-21) are built; the tray app itself is next.
 
 The goal: a person learns that a task is waiting on them without watching the board. "Waiting on them" is the host's own rule, the turn label `AwaitingYou` on a task they own (§7.1): Decision needed, Ready for testing, Blocked, Budget paused or Interrupted. Every channel below fires when a task *starts* waiting. Tasks already waiting when a channel connects, other people's tasks and further updates to a task already waiting don't fire it.
 
@@ -1288,38 +1288,49 @@ Limits:
 
 The browser channels all need an open tab, and the desktop notification needs HTTPS. The tray app needs neither.
 
-It is a small program on each person's own PC that connects to the factory as the web app does, whether the factory runs on that PC or on a server across the network, and alerts natively with no browser rules.
+It is a small program on each person's own PC that connects to the factory as the web app does, whether the factory runs on that PC or on a server across the network, and alerts natively with no browser rules. One program covers both cases; only the address in its settings differs.
 
-- **Icon:** the count of tasks awaiting the user, changing when one arrives.
-- **Alert:** the beeps, played natively, and an OS notification naming the task and the reason. A click opens the task in the browser.
-- **Menu:** Open factory, the tasks awaiting the user, Mute, Sign out. When the factory runs on the same PC, also Start, Stop, Status and Doctor through `litos-factory`.
-- **Starts at sign-in**, as the factory does (SoftwareFactoryInstallation.md §5.3, §6.3, §7.3).
-- **Built with Avalonia**, whose tray icon and native menu work on all three OSes; Litos.Gui already uses it. Notifications, sound and start at sign-in are per-OS.
+Decided 2026-10-21 (proposal page with a clickable mock: https://claude.ai/artifact/7inzmu6EeMr4Bd3jK5Wnx8):
+
+- **Push channel: the existing board stream, `/api/events`, not SignalR.** Each event is the task's whole view (`turn`, `ownerId`, `title`, `state`, `stateReason`), and a reconnect resumes from `Last-Event-ID`, so nothing sent while the app was away is lost. SignalR drops what is sent to a disconnected client, so the same cursor and replay would have to be rebuilt on it, and the tray app never sends anything. SignalR becomes worth it only if a notification gets an action (an "Approve" button) or the factory runs on more than one host instance.
+- **The rule is the web app's** (`domain/attention.ts`): an alert when one of the user's tasks *starts* awaiting them. Tasks already waiting when the app connects (`GET /api/threads`, whose `X-Event-Cursor` header is where the stream starts) count but don't ring. Two or more arriving within 3 seconds give one alert. After an outage, only tasks still waiting ring.
+- **Sound: "Ding"**, a single bell strike, by default; Ding-dong, the web app's meal-ready beeps and None in settings. Synthesised into an in-memory WAV, so no sound file ships. Silent while Windows Do not disturb is on.
+- **Reminders:** a setting, Never by default; every 15 minutes or hourly.
+- **Toolkit on Windows: WinForms** (`NotifyIcon`, whose balloon Windows 10/11 shows as a notification), as `litos-factory` already is. macOS and Linux get Avalonia shells later, on the same platform-neutral core (event client, rule, sound, token store interface).
+- **Signing in: a pasted address and personal access token.**
 
 | | Tray icon | Notification | Sound | Start at sign-in |
 |---|---|---|---|---|
-| Windows | Solid | Windows toast; the MSI's Start-menu shortcut gives it the app identity it needs | Built-in WAV playback | Run key or Scheduled Task |
-| macOS | Menu-bar icon, solid | Native; needs the signed, notarized app bundle (SoftwareFactoryInstallation.md §6) | `afplay` | LaunchAgent |
-| Linux | KDE, Ubuntu, Xfce, Cinnamon. Plain GNOME (Fedora, Debian) hides it unless the AppIndicator extension is installed | `notify-send` (freedesktop notifications, on every desktop) | `paplay` | XDG autostart |
+| Windows | `NotifyIcon` | Balloon, shown as a Windows notification | `SoundPlayer` on a synthesised WAV | Run key |
+| macOS | Avalonia menu-bar icon | Native; needs the signed, notarized app bundle (SoftwareFactoryInstallation.md §6) | `afplay` | LaunchAgent |
+| Linux | Avalonia: KDE, Ubuntu, Xfce, Cinnamon. Plain GNOME (Fedora, Debian) hides it unless the AppIndicator extension is installed | `notify-send` (freedesktop notifications, on every desktop) | `paplay` | XDG autostart |
 
-So it works well on Windows and macOS. On Linux, plain GNOME users get the notification and the sound but no icon.
+**Menu:** the header (which factory, connected or not), up to 8 tasks awaiting the user (a click opens `#/threads/{id}`), Open board (also a left-click on the icon), Mute alerts, Mute for 1 hour, Settings, Sign out, Quit. When `litos-factory.exe` sits beside it, so the factory is installed on that PC, also Start, Stop, Status and Doctor.
 
-**Signing in: personal access tokens.** This is the one host change it needs.
-- An account creates a token in the web app (Settings → Tray app → Create token) and pastes it into the tray app once.
-- The tray app keeps it in the OS's secure store: Windows Credential Manager, the macOS Keychain or the Linux Secret Service.
-- Tokens are read-only, limited to the event stream (`/api/events`) and the task list, listed and revocable by their owner and by Admins, and stored hashed.
-- The tray app never holds a password and never sees a session expire. Over plain HTTP the token travels unencrypted, as a session cookie would; server mode's HTTPS fixes both.
+**Icon states:** connected, the count of tasks awaiting the user (amber, up to 9+), muted, reconnecting (grey; retries 2 s to 60 s), sign-in needed (the token was refused).
+
+**Over the network:** the address is the server's, e.g. `https://factory.acme.internal`, through the reverse proxy of server mode (SoftwareFactoryInstallation.md §8), which must not buffer the stream (§13.3). The app warns, and needs a tick-box, before sending a token over plain HTTP to another machine. It uses the Windows proxy settings and certificate store. Start, Stop, Status and Doctor are left out: the server is the admin's to run.
+
+**Personal access tokens** (built 2026-10-21, see below):
+- Anyone creates one in the web app (top bar → Tray app → Create token, with a name such as "Work laptop") and pastes it into the tray app once, with the factory address the same page shows.
+- `lsf_` plus 32 random bytes, shown once; only its SHA-256 is stored (table `access_tokens`, migration `AccessTokens`).
+- Sent as `Authorization: Bearer lsf_…`, it signs a request in as its owner, with their roles and projects, on **three GET routes only**: `/api/auth/me`, `/api/threads`, `/api/events`. Everything else answers 403 to a token, so one that leaks shows task titles and changes nothing.
+- Listed and revoked by their owner, and by Admins for everyone (that page has an "Everyone's tokens" list). Revoking takes effect at once, including an open stream, which ends at its next pass. A disabled account's tokens stop working. A password change does not revoke them. At most 20 working tokens per account. Creating and revoking are audited; use is noted on the token (Last used) at most once a minute.
+- The tray app keeps its token in Windows Credential Manager (the macOS Keychain, the Linux Secret Service later), never in a file. Over plain HTTP it travels unencrypted, as a session cookie would; server mode's HTTPS fixes both.
 
 **Packaging.**
-- Windows: shipped in the MSI, beside `litos-factory`.
-- Network users: a standalone per-OS download.
-- macOS: inside the same signed app bundle.
+- Windows: in the factory MSI, beside `litos-factory`; and a separate small tray-only MSI (no Docker, database or host) for people whose factory runs on a server, also on winget.
+- macOS: inside the same signed app bundle, and a standalone download.
 - Linux: in the `.deb`/`.rpm` and the tarball.
 
-**Build order**, following the installers:
-1. Host: personal access tokens, with tests (about 1 day).
-2. The Windows tray app, in the MSI and as a standalone download (about 2 days).
-3. macOS, once the `.pkg` is signed, then Linux (1–2 days each).
+**Build order:**
+1. Host: personal access tokens, and the web app's Tray app page, with tests. **Built 2026-10-21.**
+2. Tray core (`Litos.SoftwareFactory.Tray.Core`): SSE client with resume, the rule, burst merging, WAV synthesis; tested against a fake stream (about 1 day).
+3. Windows shell (`Litos.SoftwareFactory.Tray`, `litos-factory-tray.exe`): icon, menu, notification, settings window, Credential Manager, Do not disturb (about 1 day).
+4. Installers: in the factory MSI (Run key, started after setup, stopped before an upgrade), and the tray-only MSI (about 1 day).
+5. macOS, once the `.pkg` is signed, then Linux (1–2 days each).
+
+**Built, step 1 (2026-10-21).** Host: `Auth/AccessTokensApi.cs` (a policy scheme picks the Bearer handler when a request carries `Authorization: Bearer`, else the session cookie; a scope gate after authentication; `GET/POST /api/access-tokens`, `POST /api/access-tokens/{id}/revoke`, `?all=true` for Admins), `EfFactoryStore.AccessTokens.cs`, and `/api/events` checks a token on every pass. Web: `#/tray` (`components/TrayPage.tsx`), opened from the top bar's "Tray app" button by anyone. Tests: 22 in `AccessTokensApiTests`, 4 store tests run on SQLite and PostgreSQL (`FactoryStoreTests.AccessTokens.cs`), 7 in `Tray.test.tsx`. The whole host suite (760), the Infrastructure suite with PostgreSQL (897, the migration included) and the web suite (486) pass.
 
 ### 26.4 Later: alerts from the host
 

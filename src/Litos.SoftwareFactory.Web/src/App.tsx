@@ -7,6 +7,7 @@ import { BoardPage } from './components/BoardPage';
 import { InvitePage } from './components/InvitePage';
 import { Login } from './components/Login';
 import { PeoplePage } from './components/PeoplePage';
+import { TrayPage } from './components/TrayPage';
 import { LessonsPage } from './components/LessonsPage';
 import { MetricsPage } from './components/MetricsPage';
 import { ProjectsPage } from './components/ProjectsPage';
@@ -357,6 +358,8 @@ export function App({ createClient, openEvents, playAttentionSound = playMealRea
         ) : (
           <p className="note">Only an admin can change the factory's settings.</p>
         )
+      ) : route.view === 'tray' ? (
+        <TrayPage api={api} isAdmin={user.roles.includes('Admin')} onNotice={say} />
       ) : route.view === 'metrics' ? (
         <MetricsPage
           api={api}

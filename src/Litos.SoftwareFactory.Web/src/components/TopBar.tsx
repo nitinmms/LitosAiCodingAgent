@@ -84,6 +84,14 @@ export function TopBar({
             {name}
             {user.roles.includes('Admin') ? <span className="muted"> (Admin)</span> : null}
           </span>
+          <button
+            className="btn ghost small"
+            aria-current={view === 'tray' ? 'page' : undefined}
+            title="Connect the tray app, which rings when a task starts waiting on you"
+            onClick={() => onNavigate('tray')}
+          >
+            Tray app
+          </button>
           {onChangePassword ? (
             <button className="btn ghost small" onClick={onChangePassword}>
               Change password

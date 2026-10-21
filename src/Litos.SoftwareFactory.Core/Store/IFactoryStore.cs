@@ -537,6 +537,29 @@ public interface IFactoryStore
     /// message says which.</exception>
     Task<Invitation> AcceptInvitationAsync(Guid invitationId, Guid userId, DateTimeOffset now, CancellationToken ct);
 
+    // ---- Personal access tokens (§26.3) ----
+
+    /// <summary>Records a new token, made by its owner.</summary>
+    Task<AccessToken> AddAccessTokenAsync(AccessToken token, CancellationToken ct);
+
+    /// <summary>The user's tokens, or everyone's when <paramref name="userId"/> is null; newest first,
+    /// revoked ones included.</summary>
+    Task<IReadOnlyList<AccessToken>> ListAccessTokensAsync(Guid? userId, CancellationToken ct);
+
+    /// <summary>The token that hashes to this, revoked or not, or null.</summary>
+    Task<AccessToken?> FindAccessTokenAsync(string tokenHash, CancellationToken ct);
+
+    /// <summary>The token with this id, or null.</summary>
+    Task<AccessToken?> GetAccessTokenAsync(Guid tokenId, CancellationToken ct);
+
+    /// <summary>Makes a token stop working, at once.</summary>
+    /// <exception cref="StoreNotFoundException">There is no such token.</exception>
+    /// <exception cref="StoreConflictException">It was already revoked.</exception>
+    Task RevokeAccessTokenAsync(Guid tokenId, Guid actorId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Notes that the token signed a request in. Not audited: reads are not recorded.</summary>
+    Task MarkAccessTokenUsedAsync(Guid tokenId, DateTimeOffset now, CancellationToken ct);
+
     // ---- Factory settings and secrets (m3-architecture.md §3) ----
 
     /// <summary>Every settings section written so far; a section never written is absent.</summary>

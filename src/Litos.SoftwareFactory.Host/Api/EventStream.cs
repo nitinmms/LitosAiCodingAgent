@@ -2,6 +2,8 @@ using System.Text;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Auth;
 using Litos.SoftwareFactory.Host.Runs;
+using Litos.SoftwareFactory.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace Litos.SoftwareFactory.Host.Api;
 
@@ -75,7 +77,7 @@ public static class EventStream
         // Who can see what is asked again on every pass, so a membership change takes effect.
         app.MapGet("/api/events", async (
             long? after, HttpContext context, IFactoryStore store, ProjectAccess access, FactorySignals signals, EventStreams streams,
-            CancellationToken ct) =>
+            IDbContextFactory<FactoryDbContext> contexts, CancellationToken ct) =>
         {
             var cursor = StartCursor(after, context.Request.Headers["Last-Event-ID"]);
             StartStream(context);
@@ -86,6 +88,10 @@ public static class EventStream
             {
                 while (!ct.IsCancellationRequested)
                 {
+                    // The tray app's stream ends when its access token is revoked; its reconnect then gets a 401.
+                    if (!await AccessTokensApi.StillSignedInAsync(context.User, contexts, ct))
+                        break;
+
                     var woken = signals.NextEvents;
                     var visible = await access.VisibleProjectsAsync(context.User, ct);
                     var events = await store.ReadBoardEventsAsync(visible, cursor, PageSize, ct);

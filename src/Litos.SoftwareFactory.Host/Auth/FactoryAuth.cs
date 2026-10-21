@@ -58,7 +58,10 @@ public static class FactoryAuth
             .AddSignInManager()
             .AddClaimsPrincipalFactory<FactoryClaimsPrincipalFactory>();
 
-        services.AddAuthentication(IdentityConstants.ApplicationScheme).AddIdentityCookies();
+        // The session cookie for the web app, or a Bearer access token for the tray app (§26.3).
+        var authentication = services.AddAuthentication(AccessTokensApi.SelectorScheme);
+        authentication.AddIdentityCookies();
+        authentication.AddFactoryAccessTokens();
         services.ConfigureApplicationCookie(cookie =>
         {
             cookie.Cookie.Name = "factory.session";
