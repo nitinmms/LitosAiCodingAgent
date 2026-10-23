@@ -77,6 +77,10 @@ public sealed partial class BriefExampleTests
         Assert.Equal(["Export_Admin_Succeeds"], work.TestsAdded);
         Assert.Single(work.KnownLimitations);
         Assert.Single(work.ManualTestSteps);
+        Assert.Equal([".NET 9 SDK"], work.HowToRun!.Prerequisites);
+        Assert.Equal("dotnet run --project src/SalesApp.Web", work.HowToRun.Steps[0].Command);
+        Assert.Null(work.HowToRun.Steps[1].Command);
+        Assert.Equal("Nothing new to set up.", work.HowToRun.SetupChanges);
 
         var decision = Assert.IsType<DecisionSubmission>(submissions[1]);
         Assert.Equal(2, decision.Options.Count);

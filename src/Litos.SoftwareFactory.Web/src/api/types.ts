@@ -330,6 +330,25 @@ export interface HandoffEvidence {
   budgetCap: number | null;
   /** The approved specification revision the work built, if it built one. */
   specificationRevision?: number | null;
+  /** Where the tester gets the branch. Absent from handoffs recorded before they named it. */
+  repositoryUrl?: string | null;
+  cloneUrl?: string | null;
+  defaultBranch?: string | null;
+  /** The agent's suggestion for running the application; the factory never runs it. */
+  howToRun?: RunInstructions | null;
+}
+
+/** How to run the application from a fresh clone (Contracts/Submissions.cs). */
+export interface RunInstructions {
+  prerequisites: string[];
+  steps: HowToRunStep[];
+  setupChanges?: string | null;
+}
+
+export interface HowToRunStep {
+  /** Empty when the step is only its command. */
+  text: string;
+  command?: string | null;
 }
 
 /** A proposed specification, in full: a Spec message's payload (m2-architecture.md §5). */

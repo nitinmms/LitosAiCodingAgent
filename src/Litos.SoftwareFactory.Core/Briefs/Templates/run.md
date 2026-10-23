@@ -52,9 +52,14 @@ Call `submit_work` with these fields, using exactly these names:
 - `criteria`: one object per acceptance criterion, each `{ criterion, tests }` where `tests` is a list of the unit test names that cover it, or `{ criterion, manualOnly: true }` when it can only be checked by hand;
 - `testsAdded`: a list of the tests you added or changed;
 - `knownLimitations`: a list of anything left undone, unverified or assumed;
-- `manualTestSteps`: a list of steps a person can follow, with expected results.
+- `manualTestSteps`: a list of steps a person can follow, with expected results;
+- `prerequisites`: a list of what the tester must have installed to run the application, such as `Node.js 20 or later`;
+- `runSteps`: one object per step, each `{ text, command }`, saying how to start the application and reach the change; leave out `command` for a step that has none, such as opening a page;
+- `setupChanges`: one sentence on what this change alters about setting up or running the application, such as a new environment variable or an unapplied migration, or `Nothing new to set up.`
 
-Every list is a list of strings, except `criteria`.
+Every list is a list of strings, except `criteria` and `runSteps`.
+
+The tester has never seen this branch: they have only just cloned it onto their own machine, and have the tools in `prerequisites` and nothing else. Write `runSteps` for that person, from what the repository says: its README, its build and start scripts (`package.json`, launch settings, a compose file), and any example settings file such as `.env.example`. Commands run from the repository root. Give every step from a fresh clone to the change on screen: installing dependencies, creating settings files and the values they need, starting the application, and the address to open. Name a secret the tester must supply (an API key, say) but never write a value for one. Do not run these steps yourself: the factory shows them as suggested, not checked. If the repository is a library with nothing to start, say how to try the change instead, for example by running its tests or a sample.
 
 Every call to a completion tool is acted on at once: never call one to test it or to find out its parameters. From kernel code, pass the arguments as name and value pairs; named C# arguments (`summary: "..."`) do not compile. For example:
 
@@ -66,7 +71,12 @@ await submit_work(
         new { criterion = "Opens correctly in Excel.", manualOnly = true } },
     "testsAdded", new[] { "Export_Admin_Succeeds" },
     "knownLimitations", new[] { "Large exports are not streamed." },
-    "manualTestSteps", new[] { "Sign in as an administrator and export: a CSV file downloads." });
+    "manualTestSteps", new[] { "Sign in as an administrator and export: a CSV file downloads." },
+    "prerequisites", new[] { ".NET 9 SDK" },
+    "runSteps", new object[] {
+        new { text = "Start the web app.", command = "dotnet run --project src/SalesApp.Web" },
+        new { text = "Open https://localhost:5001/orders and sign in as admin@example.com." } },
+    "setupChanges", "Nothing new to set up.");
 
 await request_decision(
     "question", "Should the export include every filtered row or only the current page?",

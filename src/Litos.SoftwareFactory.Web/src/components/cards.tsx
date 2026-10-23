@@ -2,7 +2,9 @@ import { useState } from 'react';
 import type { Decision, HandoffEvidence, Message, PullRequestState, SpecPayload, SpecStatus, Thread } from '../api/types';
 import { fmt, pct, shortSha, words } from '../domain/format';
 import { pullRequestLabel } from '../domain/task';
+import { tryItGuide } from '../domain/tryIt';
 import { SafeLink } from './bits';
+import { TryItYourself } from './TryIt';
 
 interface DecisionPayload {
   question?: string;
@@ -308,6 +310,39 @@ export function HandoffCard({
     );
   }
 
+  // A superseded handoff's branch has moved on, so only the newest one says how to try it.
+  const guide = latest ? tryItGuide(e, thread.id) : null;
+  // A handoff records the draft it opened; what became of it since is GitHub's to say.
+  const pullRequest =
+    e.pullRequestNumber !== null ? (
+      <SafeLink href={e.pullRequestUrl}>{pullRequestLabel(e.pullRequestNumber, pullRequestState)}</SafeLink>
+    ) : null;
+  const tests = e.manualTestSteps.length ? (
+    <div className="checks">
+      {e.manualTestSteps.map((step, i) => (
+        <label key={i} className="check">
+          <input
+            type="checkbox"
+            disabled={!active}
+            checked={accepted || !!checked[i]}
+            onChange={(event) => setChecked({ ...checked, [i]: event.target.checked })}
+          />
+          <span>{step}</span>
+        </label>
+      ))}
+    </div>
+  ) : null;
+  const answer = active ? (
+    <div className="btn-row">
+      <button className="btn primary" onClick={onAccept} disabled={busy}>
+        Accept
+      </button>
+      <button className="btn" onClick={onRequestChanges} disabled={busy}>
+        Request changes
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className={`panel${active ? ' you' : accepted ? ' okp' : ''}`} role="group" aria-label="Handoff">
       <div className="panel-head">
@@ -317,9 +352,19 @@ export function HandoffCard({
         </span>
       </div>
       {e.summary ? <p>{e.summary}</p> : null}
+      {guide ? (
+        <>
+          <TryItYourself guide={guide} branch={e.branch} pullRequest={pullRequest} howToRun={e.howToRun} tests={tests} answer={answer} />
+          <h3>What the factory checked</h3>
+        </>
+      ) : null}
       <dl className="kv">
-        <dt>Branch</dt>
-        <dd className="mono">{e.branch}</dd>
+        {guide ? null : (
+          <>
+            <dt>Branch</dt>
+            <dd className="mono">{e.branch}</dd>
+          </>
+        )}
         {e.commitSha ? (
           <>
             <dt>Commit</dt>
@@ -328,13 +373,10 @@ export function HandoffCard({
             </dd>
           </>
         ) : null}
-        {e.pullRequestNumber !== null ? (
+        {pullRequest && !guide ? (
           <>
             <dt>Pull request</dt>
-            <dd>
-              {/* A handoff records the draft it opened; what became of it since is GitHub's to say. */}
-              <SafeLink href={e.pullRequestUrl}>{pullRequestLabel(e.pullRequestNumber, pullRequestState)}</SafeLink>
-            </dd>
+            <dd>{pullRequest}</dd>
           </>
         ) : null}
         <dt>Build</dt>
@@ -419,22 +461,10 @@ export function HandoffCard({
       ) : null}
       <p className="small muted">Unit tests are not application testing. That part is yours.</p>
 
-      {e.manualTestSteps.length ? (
+      {tests && !guide ? (
         <>
           <h3>Manual tests for you</h3>
-          <div className="checks">
-            {e.manualTestSteps.map((step, i) => (
-              <label key={i} className="check">
-                <input
-                  type="checkbox"
-                  disabled={!active}
-                  checked={accepted || !!checked[i]}
-                  onChange={(event) => setChecked({ ...checked, [i]: event.target.checked })}
-                />
-                <span>{step}</span>
-              </label>
-            ))}
-          </div>
+          {tests}
         </>
       ) : null}
 
@@ -449,16 +479,7 @@ export function HandoffCard({
         </details>
       ) : null}
 
-      {active ? (
-        <div className="btn-row">
-          <button className="btn primary" onClick={onAccept} disabled={busy}>
-            Accept
-          </button>
-          <button className="btn" onClick={onRequestChanges} disabled={busy}>
-            Request changes
-          </button>
-        </div>
-      ) : null}
+      {guide ? null : answer}
     </div>
   );
 }

@@ -385,6 +385,40 @@ public sealed class ReworkRoundTests : IAsyncLifetime
         Assert.Contains("draft PR #212", second.Messages[^1].Text);
     }
 
+    /// <summary>
+    /// A tester who has never seen the branch gets it from the repository the handoff names, and
+    /// runs it the way the agent said. A rework that does not say again keeps those instructions.
+    /// </summary>
+    [Fact]
+    public async Task TheHandoffNamesWhereToGetTheBranch_AndARework_KeepsTheRunInstructions()
+    {
+        var howToRun = new RunInstructions(["Node.js 20 or later"], [new HowToRunStep("Start it.", "npm run dev")], "Nothing new to set up.");
+        _host.Workers.Default = async call =>
+        {
+            if (call.Kind != TurnKind.Implement)
+                return await _host.DefaultTurnAsync(call);
+            _host.Workers.WorkspaceOf(call.Worker).Write("src/Orders.cs", "export\n");
+            await call.Worker.SubmitAsync(call.SessionId, FakeWorkerLauncher.Work() with { HowToRun = howToRun });
+            return FakeWorkerLauncher.Done();
+        };
+        var (_, threadId, first) = await HandedOffAsync();
+
+        var evidence = JsonSerializer.Deserialize<HandoffEvidence>(first.LatestHandoff!.EvidenceJson, FactoryWire.Json)!;
+        Assert.Equal("https://github.com/acme/salesapp", evidence.RepositoryUrl);
+        Assert.Equal("https://github.com/acme/salesapp.git", evidence.CloneUrl);
+        Assert.Equal("main", evidence.DefaultBranch);
+        Assert.Equal(howToRun.Steps, evidence.HowToRun!.Steps);
+
+        // The rework's turn is the default one, which says nothing about running the application.
+        await _host.DelegateAsync(threadId, "@factory Quote fields that contain commas.");
+        var second = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.NotEqual(first.LatestHandoff.CommitSha, second.LatestHandoff!.CommitSha);
+        var reworked = JsonSerializer.Deserialize<HandoffEvidence>(second.LatestHandoff.EvidenceJson, FactoryWire.Json)!;
+        Assert.Equal(howToRun.Steps, reworked.HowToRun!.Steps);
+        Assert.Equal("Nothing new to set up.", reworked.HowToRun.SetupChanges);
+    }
+
     [Fact]
     public async Task WhenTheFirstPullRequestCannotBeOpened_TheHandoffSaysSo_AndNamesNone()
     {

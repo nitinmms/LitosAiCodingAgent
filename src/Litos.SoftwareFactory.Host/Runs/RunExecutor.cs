@@ -784,6 +784,7 @@ public sealed class RunExecutor(
 
             var current = (await store.GetThreadAsync(data.Thread.Id, CancellationToken.None))!;
             var thread = current.Thread;
+            var repository = new Infrastructure.GitHub.GitHubRepository(data.Project.GitHubOwner, data.Project.GitHubRepository);
             var spec = ApprovedSpec(current, data.Run);
             var evidence = HandoffComposer.Evidence(state, new HandoffFacts(data.Branch, head, pullRequest?.Number, pullRequest?.Url)
             {
@@ -794,6 +795,10 @@ public sealed class RunExecutor(
                 Notes = notes,
                 SpecificationRevision = spec?.Revision,
                 ApprovedCriteria = spec?.AcceptanceCriteria ?? [],
+                RepositoryUrl = repository.WebUrl,
+                CloneUrl = repository.CloneUrl,
+                DefaultBranch = data.Project.DefaultBranch,
+                PreviousHowToRun = PreviousHowToRun(current.LatestHandoff),
             });
 
             await store.SetRunCommitsAsync(data.Run.Id, null, head, null, CancellationToken.None);
@@ -817,6 +822,22 @@ public sealed class RunExecutor(
         {
             // Local commits are kept; the push is retried on Resume (§16).
             return new HandoffCompleted(false, ex.Message);
+        }
+    }
+
+    /// <summary>The run instructions of the task's last handoff, if it gave any. A handoff whose
+    /// evidence cannot be read gives none: the new handoff then shows none rather than failing.</summary>
+    private static RunInstructions? PreviousHowToRun(HandoffRecord? handoff)
+    {
+        if (handoff is null)
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<HandoffEvidence>(handoff.EvidenceJson, FactoryWire.Json)?.HowToRun;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

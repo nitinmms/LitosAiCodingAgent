@@ -291,6 +291,72 @@ public class CompletionToolTests
         var work = Assert.IsType<WorkSubmission>(Posted(handler).Submission);
         Assert.Empty(work.Criteria);
         Assert.Empty(work.TestsAdded);
+        // Saying nothing about running the application leaves the instructions the host has.
+        Assert.Null(work.HowToRun);
+    }
+
+    [Fact]
+    public async Task SubmitWork_PostsTheRunInstructions()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitWorkTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""
+            {
+              "summary": "Added a caption count.",
+              "prerequisites": ["Node.js 20 or later"],
+              "runSteps": [
+                { "text": "Install the dependencies.", "command": "npm install" },
+                { "text": "Open http://localhost:5173." }
+              ],
+              "setupChanges": "Nothing new to set up."
+            }
+            """), default);
+
+        Assert.False(result.IsError, result.Text);
+        var howToRun = Assert.IsType<WorkSubmission>(Posted(handler).Submission).HowToRun!;
+        Assert.Equal(["Node.js 20 or later"], howToRun.Prerequisites);
+        Assert.Equal([new HowToRunStep("Install the dependencies.", "npm install"), new HowToRunStep("Open http://localhost:5173.")], howToRun.Steps);
+        Assert.Equal("Nothing new to set up.", howToRun.SetupChanges);
+    }
+
+    /// <summary>As with the criteria, kernel code guesses the run steps' item fields.</summary>
+    [Fact]
+    public async Task SubmitWork_TakesTheRunStepShapesTheModelGuesses()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitWorkTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""
+            {
+              "summary": "x",
+              "prerequisites": "Docker",
+              "runSteps": [
+                "Copy .env.example to .env.",
+                { "step": "Start everything.", "cmd": "docker compose up" },
+                { "command": "npm run dev" },
+                "   "
+              ]
+            }
+            """), default);
+
+        Assert.False(result.IsError, result.Text);
+        var howToRun = Assert.IsType<WorkSubmission>(Posted(handler).Submission).HowToRun!;
+        Assert.Equal(["Docker"], howToRun.Prerequisites);
+        Assert.Equal(
+            [new HowToRunStep("Copy .env.example to .env."), new HowToRunStep("Start everything.", "docker compose up"), new HowToRunStep("", "npm run dev")],
+            howToRun.Steps);
+        Assert.Null(howToRun.SetupChanges);
+    }
+
+    [Fact]
+    public async Task SubmitWork_OnlySetupChanges_IsKeptAsRunInstructionsWithNoSteps()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitWorkTool(h, s));
+
+        await tool.InvokeAsync(Args("""{"summary":"x","setupChanges":"Add STORY_LIMIT to .env."}"""), default);
+
+        var howToRun = Assert.IsType<WorkSubmission>(Posted(handler).Submission).HowToRun!;
+        Assert.Empty(howToRun.Steps);
+        Assert.Equal("Add STORY_LIMIT to .env.", howToRun.SetupChanges);
     }
 
     [Theory]
@@ -303,6 +369,10 @@ public class CompletionToolTests
     [InlineData("""{"summary":"x","criteria":[{"criterion":"Works","tests":7}]}""", "'tests' must be an array")]
     [InlineData("""{"summary":"x","testsAdded":{"a":1}}""", "must be arrays of strings")]
     [InlineData("""{"summary":"x","knownLimitations":[1,2]}""", "must be arrays of strings")]
+    [InlineData("""{"summary":"x","prerequisites":{"node":20}}""", "'prerequisites' must be an array of strings")]
+    [InlineData("""{"summary":"x","runSteps":"npm install"}""", "'runSteps' must be an array of objects")]
+    [InlineData("""{"summary":"x","runSteps":[7]}""", "every entry in 'runSteps' must be an object")]
+    [InlineData("""{"summary":"x","runSteps":[{"note":"?"}]}""", "needs a 'text' or a 'command'")]
     public async Task SubmitWork_BadArguments_AreRejectedWithTheReason_AndNothingIsPosted(string json, string expected)
     {
         var (tool, handler) = Create((h, s) => new SubmitWorkTool(h, s));

@@ -433,3 +433,22 @@ button.sort:focus-visible{outline:2px solid var(--focus)}
 .lift.up{color:var(--ok)}
 .lift.down{color:var(--bad)}
 .section.focused{box-shadow:0 0 0 2px var(--petrol)}
+
+/* The handoff's "Try it yourself": getting the unmerged branch, running it, testing it */
+.tryit{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2);padding:16px;display:grid;gap:16px}
+.tryit h4{margin:0;font-size:.9rem;font-weight:700}
+.stack-tight{display:grid;gap:4px}
+.tryit-step{display:flex;gap:12px}
+.tryit-step>.stack{flex:1;min-width:0}
+.tryit-num{flex:none;width:24px;height:24px;border-radius:50%;background:var(--petrol);color:var(--surface);font-weight:700;font-size:.78rem;display:grid;place-items:center}
+.tryit .btn-row a{display:inline-flex;align-items:center;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);padding:5px 11px;font-weight:600;font-size:.84rem;text-decoration:none;color:var(--ink)}
+.tryit .btn-row a:hover{border-color:var(--muted)}
+.tryit .tabs button{min-height:36px}
+.tryit-run{margin:0;padding-left:20px;display:grid;gap:8px}
+.tryit-run li{display:grid;gap:4px}
+.cmd{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 6px 6px 10px}
+.cmd code{flex:1;min-width:0;background:none;border:0;padding:0;overflow-wrap:anywhere}
+.cmd code::before{content:"$ ";color:var(--muted);user-select:none}
+.cmd .btn{flex:none;min-width:64px;justify-content:center}
+.tryit-none{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);padding:10px 12px;display:grid;gap:6px;justify-items:start}
+.tryit-setup{background:var(--amber-soft);border-radius:var(--r-sm);padding:6px 10px}

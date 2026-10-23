@@ -24,6 +24,18 @@ public sealed record HandoffFacts(string Branch, string? CommitSha, int? PullReq
 
     /// <summary>That revision's acceptance criteria, each of which the work must report on.</summary>
     public IReadOnlyList<string> ApprovedCriteria { get; init; } = [];
+
+    /// <summary>The repository's page on GitHub, which the tester gets the branch from.</summary>
+    public string? RepositoryUrl { get; init; }
+
+    public string? CloneUrl { get; init; }
+
+    /// <summary>The branch the work is compared against.</summary>
+    public string? DefaultBranch { get; init; }
+
+    /// <summary>How to run the application, from the task's last handoff: a rework that does not
+    /// say again keeps it.</summary>
+    public RunInstructions? PreviousHowToRun { get; init; }
 }
 
 /// <summary>The handoff as structured evidence, stored with the thread and shown as a card.</summary>
@@ -55,7 +67,11 @@ public sealed record HandoffEvidence(
     IReadOnlyList<AnsweredDecision> Decisions,
     long TokensUsed,
     long? BudgetCap,
-    int? SpecificationRevision = null);
+    int? SpecificationRevision = null,
+    string? RepositoryUrl = null,
+    string? CloneUrl = null,
+    string? DefaultBranch = null,
+    RunInstructions? HowToRun = null);
 
 /// <summary>
 /// Composes the handoff (ReadMe_LitosSoftwareFactory_V1.md §11) deterministically, with no
@@ -104,7 +120,11 @@ public static class HandoffComposer
             Decisions: state.Decisions,
             TokensUsed: facts.TokensUsed,
             BudgetCap: facts.BudgetCap,
-            SpecificationRevision: facts.SpecificationRevision);
+            SpecificationRevision: facts.SpecificationRevision,
+            RepositoryUrl: facts.RepositoryUrl,
+            CloneUrl: facts.CloneUrl,
+            DefaultBranch: facts.DefaultBranch,
+            HowToRun: submission?.HowToRun ?? facts.PreviousHowToRun);
     }
 
     /// <summary>

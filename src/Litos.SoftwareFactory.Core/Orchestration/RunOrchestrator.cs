@@ -316,8 +316,12 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             case WorkSubmission when turn.NothingSubmitted && !state.NudgeUsed:
                 return Enter(state, new StartTurnStep(TurnKind.Nudge, BriefKind.EmptySubmission));
 
+            // A repair turn reports on its fix and seldom repeats how to run the application, which
+            // has not changed: the earlier turn's instructions stand until a turn gives new ones.
             case WorkSubmission work:
-                return Enter(state with { LastSubmission = work }, new VerifyStep());
+                return Enter(
+                    state with { LastSubmission = work with { HowToRun = work.HowToRun ?? state.LastSubmission?.HowToRun } },
+                    new VerifyStep());
 
             case DecisionSubmission decision when state.DecisionsAsked < Limits.MaxDecisions:
                 return Stop(

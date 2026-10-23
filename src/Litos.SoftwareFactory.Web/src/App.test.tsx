@@ -734,6 +734,98 @@ describe('a handoff', () => {
     expect(card.queryByRole('link')).not.toBeInTheDocument();
   });
 
+  const onGitHub = {
+    repositoryUrl: 'https://github.com/harbor-tools/salesapp',
+    cloneUrl: 'https://github.com/harbor-tools/salesapp.git',
+    defaultBranch: 'main',
+  };
+
+  it('tells a tester who has never seen the branch how to get it, run it and test it', async () => {
+    const { card, thread, user } = await handedOff({
+      ...onGitHub,
+      howToRun: {
+        prerequisites: ['.NET 9 SDK'],
+        steps: [
+          { text: 'Start the API.', command: 'dotnet run --project src/SalesApp.Api' },
+          { text: 'Open https://localhost:5001/orders.', command: null },
+        ],
+        setupChanges: 'Nothing new to set up.',
+      },
+    });
+    const tryIt = within(card.getByRole('region', { name: 'Try it yourself' }));
+    const folder = `salesapp-${thread.id.replace(/-/g, '').slice(0, 4)}`;
+
+    expect(tryIt.getByText(/This change is not merged/)).toBeInTheDocument();
+    expect(tryIt.getByRole('link', { name: 'harbor-tools/salesapp' })).toHaveAttribute('href', 'https://github.com/harbor-tools/salesapp');
+    expect(tryIt.getByRole('link', { name: 'View branch on GitHub' })).toHaveAttribute(
+      'href',
+      'https://github.com/harbor-tools/salesapp/tree/factory/add-csv-export-1a2b',
+    );
+    expect(tryIt.getByRole('link', { name: 'Compare with the base branch' })).toHaveAttribute(
+      'href',
+      'https://github.com/harbor-tools/salesapp/compare/main...factory/add-csv-export-1a2b',
+    );
+    expect(await tryIt.findByRole('link', { name: 'Draft PR #12' })).toBeInTheDocument();
+
+    // A tester with nothing gets a fresh copy by default; one with a clone switches it.
+    expect(tryIt.getByRole('tab', { name: "I don't have the repository" })).toHaveAttribute('aria-selected', 'true');
+    expect(tryIt.getByText(`git clone -b factory/add-csv-export-1a2b https://github.com/harbor-tools/salesapp.git ${folder}`)).toBeInTheDocument();
+    expect(tryIt.getByText(`cd ${folder}`)).toBeInTheDocument();
+    await user.click(tryIt.getByRole('tab', { name: 'I already have a clone' }));
+    expect(tryIt.getByText('git fetch origin')).toBeInTheDocument();
+    expect(tryIt.getByText('git switch factory/add-csv-export-1a2b')).toBeInTheDocument();
+    expect(tryIt.queryByText(/^git clone/)).not.toBeInTheDocument();
+
+    // The run steps are the agent's suggestion, and are labelled so.
+    expect(tryIt.getByText('Suggested by the agent · not run by the factory')).toBeInTheDocument();
+    expect(tryIt.getByText(/\.NET 9 SDK/)).toBeInTheDocument();
+    expect(tryIt.getByText('Start the API.')).toBeInTheDocument();
+    expect(tryIt.getByText('dotnet run --project src/SalesApp.Api')).toBeInTheDocument();
+    expect(tryIt.getByText('Open https://localhost:5001/orders.')).toBeInTheDocument();
+    expect(tryIt.getByText('Nothing new to set up.')).toBeInTheDocument();
+
+    // Then the manual tests, and the answer.
+    expect(tryIt.getByLabelText('Export 10 orders and open the file in Excel')).not.toBeChecked();
+    expect(tryIt.getByRole('button', { name: 'Accept' })).toBeEnabled();
+    expect(tryIt.getByRole('button', { name: 'Request changes' })).toBeEnabled();
+    expect(tryIt.getByText(/Accepting does not merge the branch/)).toBeInTheDocument();
+
+    // The evidence follows, without repeating the branch.
+    expect(card.getByRole('heading', { name: 'What the factory checked' })).toBeInTheDocument();
+    expect(card.getAllByText('factory/add-csv-export-1a2b')).toHaveLength(1);
+    expect(card.getAllByRole('button', { name: 'Accept' })).toHaveLength(1);
+  });
+
+  it('copies a command to the clipboard', async () => {
+    const { card, user } = await handedOff(onGitHub);
+    const tryIt = within(card.getByRole('region', { name: 'Try it yourself' }));
+
+    await user.click(tryIt.getByRole('button', { name: /^Copy: cd / }));
+
+    expect(await navigator.clipboard.readText()).toMatch(/^cd salesapp-/);
+    expect(tryIt.getByRole('button', { name: /^Copy: cd / })).toHaveTextContent('Copied');
+  });
+
+  it('says so when the agent gave no run steps, and points to the README on the branch', async () => {
+    const { card } = await handedOff({ ...onGitHub, howToRun: null });
+    const tryIt = within(card.getByRole('region', { name: 'Try it yourself' }));
+
+    expect(tryIt.getByText("The agent didn't say how to run this project.")).toBeInTheDocument();
+    expect(tryIt.getByRole('link', { name: 'Open the README on this branch' })).toHaveAttribute(
+      'href',
+      'https://github.com/harbor-tools/salesapp/tree/factory/add-csv-export-1a2b#readme',
+    );
+    expect(tryIt.queryByText('Suggested by the agent · not run by the factory')).not.toBeInTheDocument();
+  });
+
+  it('keeps the earlier layout for a handoff recorded before handoffs named their repository', async () => {
+    const { card } = await handedOff();
+
+    expect(card.queryByRole('region', { name: 'Try it yourself' })).not.toBeInTheDocument();
+    expect(card.getByRole('heading', { name: 'Manual tests for you' })).toBeInTheDocument();
+    expect(card.getByRole('button', { name: 'Accept' })).toBeInTheDocument();
+  });
+
   it('lets a person judge each review finding, and pressing the verdict again clears it', async () => {
     const context = await withThread({ state: 'Running', stage: 'Review', branch: 'factory/add-csv-export-1a2b' });
     context.host.details(context.thread.id).findings = [

@@ -419,10 +419,23 @@ public class BriefComposerTests
         var brief = Compose(BriefKind.Run, State());
 
         Assert.Contains("using exactly these names", brief);
-        foreach (var field in new[] { "`summary`", "`criteria`", "`testsAdded`", "`knownLimitations`", "`manualTestSteps`" })
+        foreach (var field in new[] { "`summary`", "`criteria`", "`testsAdded`", "`knownLimitations`", "`manualTestSteps`", "`prerequisites`", "`runSteps`", "`setupChanges`" })
             Assert.Contains(field, brief);
         Assert.Contains("`{ criterion, tests }`", brief);
         Assert.Contains("`{ criterion, manualOnly: true }`", brief);
+        Assert.Contains("`{ text, command }`", brief);
+    }
+
+    /// <summary>The run steps are for a tester with nothing but a fresh clone, and are never run
+    /// by the agent: the brief also forbids starting the application.</summary>
+    [Fact]
+    public void TheRunBrief_AsksForRunStepsAFreshCloneCanFollow_WithoutRunningThem()
+    {
+        var brief = Compose(BriefKind.Run, State());
+
+        Assert.Contains("only just cloned it onto their own machine", brief);
+        Assert.Contains("never write a value for one", brief);
+        Assert.Contains("Do not run these steps yourself", brief);
     }
 
     [Fact]

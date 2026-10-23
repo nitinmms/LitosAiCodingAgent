@@ -135,6 +135,23 @@ public sealed class SubmitWorkTool(FactoryHostClient host, string sessionId) : C
             testsAdded = StringArray("Unit tests added or changed."),
             knownLimitations = StringArray("Anything left undone, unverified, or assumed."),
             manualTestSteps = StringArray("Steps a person can follow to test the change, with expected results."),
+            prerequisites = StringArray("What a tester must have installed to run the application, such as \"Node.js 20 or later\"."),
+            runSteps = new
+            {
+                type = "array",
+                description = "How a tester who has just cloned this branch starts the application, in order. Each step says what to do, with its command when it has one.",
+                items = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        text = new { type = "string", description = "What this step does, such as \"Install the dependencies.\"" },
+                        command = new { type = "string", description = "The command to type, run from the repository root, such as \"npm install\"." },
+                    },
+                    required = new[] { "text" },
+                },
+            },
+            setupChanges = new { type = "string", description = "What this change alters about setting up or running the application, such as a new environment variable; \"Nothing new to set up.\" when nothing." },
         },
         required = new[] { "summary" },
     });
@@ -175,11 +192,60 @@ public sealed class SubmitWorkTool(FactoryHostClient host, string sessionId) : C
             return (null, "'testsAdded', 'knownLimitations' and 'manualTestSteps' must be arrays of strings.");
         }
 
-        return (new WorkSubmission(summary, criteria, testsAdded, limitations, manualSteps), null);
+        if (Strings(arguments, "prerequisites") is not { } prerequisites)
+            return (null, "'prerequisites' must be an array of strings.");
+
+        var (steps, stepsProblem) = RunSteps(arguments);
+        if (steps is null)
+            return (null, stepsProblem);
+
+        var setupChanges = Text(arguments, "setupChanges");
+        var howToRun = steps.Count > 0 || prerequisites.Count > 0 || setupChanges is not null
+            ? new RunInstructions(prerequisites, steps, setupChanges)
+            : null;
+
+        return (new WorkSubmission(summary, criteria, testsAdded, limitations, manualSteps, howToRun), null);
+    }
+
+    /// <summary>
+    /// The run steps. Like the criteria, their item fields are guessed from kernel code, so the
+    /// common names are taken; a plain string is a step with no command, and a step that is only
+    /// a command is kept as one, since the command is what a tester needs.
+    /// </summary>
+    private static (IReadOnlyList<HowToRunStep>? Steps, string? Problem) RunSteps(JsonElement arguments)
+    {
+        if (!arguments.TryGetProperty("runSteps", out var value) || value.ValueKind == JsonValueKind.Null)
+            return ([], null);
+        if (value.ValueKind != JsonValueKind.Array)
+            return (null, $"'runSteps' must be an array of objects: {RunStepShape}.");
+
+        var steps = new List<HowToRunStep>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                if (!string.IsNullOrWhiteSpace(item.GetString()))
+                    steps.Add(new HowToRunStep(item.GetString()!.Trim()));
+                continue;
+            }
+
+            if (item.ValueKind != JsonValueKind.Object)
+                return (null, $"every entry in 'runSteps' must be an object: {RunStepShape}.");
+
+            var text = Text(item, "text", "step", "description", "name");
+            var command = Text(item, "command", "cmd");
+            if (text is null && command is null)
+                return (null, $"every entry in 'runSteps' needs a 'text' or a 'command': {RunStepShape}.");
+            steps.Add(new HowToRunStep(text ?? "", command));
+        }
+
+        return (steps, null);
     }
 
     private const string CriterionShape =
         "{ \"criterion\": \"Admins can export.\", \"tests\": [\"Export_Admin_Succeeds\"] }, or { \"criterion\": \"...\", \"manualOnly\": true }";
+
+    private const string RunStepShape = "{ \"text\": \"Install the dependencies.\", \"command\": \"npm install\" }";
 }
 
 public sealed class RequestDecisionTool(FactoryHostClient host, string sessionId) : CompletionTool(host, sessionId)

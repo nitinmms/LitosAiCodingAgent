@@ -25,12 +25,30 @@ public sealed record LessonProposal(
     string Rule, IReadOnlyList<string> Topics, IReadOnlyList<string> Paths, string Source, string SourceRef, string Reason);
 
 /// <summary>submit_work: an implement, repair or rework turn is finished and ready to verify.</summary>
+/// <param name="HowToRun">How a tester who has only just got the branch runs the application.
+/// Null when the turn did not say; the host then keeps the instructions it already has.</param>
 public sealed record WorkSubmission(
     string Summary,
     IReadOnlyList<CriterionCoverage> Criteria,
     IReadOnlyList<string> TestsAdded,
     IReadOnlyList<string> KnownLimitations,
-    IReadOnlyList<string> ManualTestSteps) : Submission;
+    IReadOnlyList<string> ManualTestSteps,
+    RunInstructions? HowToRun = null) : Submission;
+
+/// <summary>
+/// The agent's suggestion for running the application from a fresh copy of the branch. The
+/// factory never runs these: the handoff shows them as suggested, not checked.
+/// </summary>
+/// <param name="Prerequisites">What must be installed first, such as "Node.js 20 or later".</param>
+/// <param name="SetupChanges">What this task changed about setting up or running the
+/// application, such as a new environment variable; null when the agent did not say.</param>
+public sealed record RunInstructions(
+    IReadOnlyList<string> Prerequisites,
+    IReadOnlyList<HowToRunStep> Steps,
+    string? SetupChanges = null);
+
+/// <summary>One step of running the application: what to do and, when there is one, the command.</summary>
+public sealed record HowToRunStep(string Text, string? Command = null);
 
 /// <summary>One acceptance criterion and the tests that cover it, or a statement that it can
 /// only be checked by hand.</summary>
