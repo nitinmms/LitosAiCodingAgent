@@ -137,7 +137,16 @@ public static class FactoryHostApp
 
         // The React build, once there is one (step 6), is served from wwwroot.
         app.UseDefaultFiles();
-        app.UseStaticFiles();
+        // The page names its hashed bundles, so it must be fetched fresh: a cached copy after an
+        // upgrade keeps loading the old bundles. The bundles themselves change name, so they cache.
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            OnPrepareResponse = context =>
+            {
+                if (context.File.Name.Equals("index.html", StringComparison.OrdinalIgnoreCase))
+                    context.Context.Response.Headers.CacheControl = "no-cache";
+            },
+        });
 
         app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
         // Ready to work, not only listening (SoftwareFactoryInstallation.md §9.7): the database

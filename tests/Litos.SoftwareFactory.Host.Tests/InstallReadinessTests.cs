@@ -32,6 +32,35 @@ public sealed class InstallReadinessTests
         }
     }
 
+    /// <summary>After an upgrade a browser must not keep the old page, which names the old bundles.</summary>
+    [Fact]
+    public async Task ThePage_IsRevalidated_ButItsBundlesAreNot()
+    {
+        var root = Directory.CreateTempSubdirectory("litos-content-root-").FullName;
+        Directory.CreateDirectory(Path.Combine(root, "wwwroot", "assets"));
+        await File.WriteAllTextAsync(Path.Combine(root, "wwwroot", "index.html"), "<!doctype html><title>Litos Software Factory</title>");
+        await File.WriteAllTextAsync(Path.Combine(root, "wwwroot", "assets", "index-abc123.js"), "console.log(1);");
+        try
+        {
+            await using var host = await TestHost.StartAsync(o => o.ContentRoot = root);
+            var client = host.NewClient();
+
+            using var page = await client.GetAsync("/");
+            using var named = await client.GetAsync("/index.html");
+            using var bundle = await client.GetAsync("/assets/index-abc123.js");
+
+            Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+            Assert.True(page.Headers.CacheControl?.NoCache);
+            Assert.True(named.Headers.CacheControl?.NoCache);
+            Assert.Equal(HttpStatusCode.OK, bundle.StatusCode);
+            Assert.Null(bundle.Headers.CacheControl);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public void WithoutAContentRoot_TheHostsOwnFolderIsUsed()
     {
