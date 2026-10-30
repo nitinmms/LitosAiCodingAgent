@@ -98,7 +98,7 @@ public sealed class MembershipApiTests : IAsyncLifetime
     {
         { "GET", "" }, { "GET", "/usage" }, { "GET", "/pull-request" }, { "GET", "/review-yield" }, { "GET", "/events" },
         { "POST", "/messages" }, { "POST", "/budget" }, { "POST", "/accept" }, { "POST", "/pause" }, { "POST", "/cancel" },
-        { "POST", "/withdraw" }, { "POST", "/resume" },
+        { "POST", "/withdraw" }, { "POST", "/resume" }, { "POST", "/request-changes" },
     };
 
     [Theory]

@@ -457,10 +457,20 @@ public sealed class FakeWorker(WorkerLaunch launch, FakeWorkerLauncher owner) : 
         return await behaviour(call);
     }
 
-    public Task SteerAsync(string sessionId, string message, CancellationToken ct)
+    public Task<bool> SteerAsync(string sessionId, string message, CancellationToken ct)
     {
+        // As the worker's steer-only route: refused when no turn is running to take it.
+        if (owner.RefuseSteering)
+            return Task.FromResult(false);
         Steered.Add(message);
-        return Task.CompletedTask;
+        return Task.FromResult(true);
+    }
+
+    public Task<IReadOnlyList<string>> TakeUndeliveredSteeringAsync(string sessionId, CancellationToken ct)
+    {
+        IReadOnlyList<string> unread = [.. owner.UnreadSteering];
+        owner.UnreadSteering.Clear();
+        return Task.FromResult(unread);
     }
 
     public Task<bool> CancelAsync(string sessionId, CancellationToken ct) => Task.FromResult(true);
@@ -488,6 +498,12 @@ public sealed class FakeWorkerLauncher(FakeWorkspaceProvider workspaces) : IWork
     public ConcurrentQueue<FakeWorker> Workers { get; } = new();
 
     public Exception? FailLaunch { get; set; }
+
+    /// <summary>While set, a worker refuses steering, as one with no turn running does.</summary>
+    public bool RefuseSteering { get; set; }
+
+    /// <summary>What the next ended turn reports it never read of its steering, taken once.</summary>
+    public List<string> UnreadSteering { get; } = [];
 
     /// <summary>While set, a worker asked to shut down does not finish shutting down until this
     /// completes: a run that has stopped is then still tearing down.</summary>
@@ -705,6 +721,14 @@ public sealed class TestHost : IAsyncDisposable
 
     public Task<JsonElement> DelegateAsync(Guid threadId, string text = "@factory Add CSV export for Orders.", string? messageId = null, HttpStatusCode expected = HttpStatusCode.Accepted) =>
         PostAsync($"api/threads/{threadId}/messages", new { messageId = messageId ?? Guid.NewGuid().ToString(), text }, expected);
+
+    /// <summary>Request changes after a handoff: the one way to hand a task back (m2-architecture.md §5.1).
+    /// A leading @factory, as a person might still type it, is dropped by the route.</summary>
+    public Task<JsonElement> RequestChangesAsync(
+        Guid threadId, string text, string? messageId = null, HttpStatusCode expected = HttpStatusCode.Accepted, IReadOnlyList<Guid>? attachmentIds = null) =>
+        PostAsync(
+            $"api/threads/{threadId}/request-changes",
+            new { messageId = messageId ?? Guid.NewGuid().ToString(), text, attachmentIds = attachmentIds ?? [] }, expected);
 
     public async Task<ThreadDetails> ThreadAsync(Guid threadId) => (await Store.GetThreadAsync(threadId, default))!;
 

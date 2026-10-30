@@ -52,8 +52,14 @@ public sealed class RunAttachmentsTests : IAsyncLifetime
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetGuid();
     }
 
-    private Task SendAsync(string text, params Guid[] ids) =>
-        _host.PostAsync($"api/threads/{_threadId}/messages", new { messageId = Guid.NewGuid().ToString(), text, attachmentIds = ids }, HttpStatusCode.Accepted);
+    /// <summary>A message, or after a handoff a change request: either way, the files go with it.</summary>
+    private async Task SendAsync(string text, params Guid[] ids)
+    {
+        if ((await _host.ThreadAsync(_threadId)).Thread.State == LifecycleState.AwaitingHumanTesting)
+            await _host.RequestChangesAsync(_threadId, text, attachmentIds: ids);
+        else
+            await _host.PostAsync($"api/threads/{_threadId}/messages", new { messageId = Guid.NewGuid().ToString(), text, attachmentIds = ids }, HttpStatusCode.Accepted);
+    }
 
     [Fact]
     public async Task TheFirstImplementationTurn_GetsTheFilesInItsBrief_TheImagesAfterIt_AndCopiesInTheWorkingCopy()

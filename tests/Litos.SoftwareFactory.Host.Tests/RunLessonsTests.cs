@@ -95,7 +95,7 @@ public sealed class RunLessonsTests : IAsyncLifetime
 
         // An Admin edits and approves the lesson after the handoff.
         await _host.PostAsync($"api/lessons/{lessonId}/revisions", new { expectedRevision = 1, rule = "Quote every CSV value, even numbers.", topics = new[] { "csv" }, approve = true }, HttpStatusCode.OK);
-        await _host.DelegateAsync(threadId, "@factory CSV values containing commas are wrong.");
+        await _host.RequestChangesAsync(threadId, "@factory CSV values containing commas are wrong.");
         var rework = await WorkerAsync(2);
         await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 

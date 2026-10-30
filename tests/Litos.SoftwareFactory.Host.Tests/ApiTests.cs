@@ -811,6 +811,26 @@ public class FactoryOptionsTests
     }
 
     [Fact]
+    public void From_ReadsTheChatSlots_AndDefaultsThem()
+    {
+        Assert.Equal(2, From().ChatSlotCap);
+        Assert.Equal(4, From(("FACTORY_CHAT_SLOTS", "4")).ChatSlotCap);
+        Assert.Equal(2, From(("FACTORY_CHAT_SLOTS", "many")).ChatSlotCap);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    public void Validate_RefusesFewerThanOneChatSlot(string value)
+    {
+        var options = From(
+            ("ConnectionStrings:FactoryState", "Host=127.0.0.1"), ("FACTORY_DATA_DIR", "data"), ("OPENROUTER_API_KEY", "key"),
+            ("FACTORY_CHAT_SLOTS", value));
+
+        Assert.Contains(options.Validate(), p => p.Contains("FACTORY_CHAT_SLOTS"));
+    }
+
+    [Fact]
     public void Validate_RefusesANonPositiveLivenessInterval()
     {
         var options = Valid();

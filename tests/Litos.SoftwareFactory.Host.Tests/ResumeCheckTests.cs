@@ -108,7 +108,7 @@ public sealed class ResumeCheckTests : IAsyncLifetime
         await _host.DelegateAsync(threadId);
         await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
-        await _host.DelegateAsync(threadId, "@factory Also handle an empty result.");
+        await _host.RequestChangesAsync(threadId, "@factory Also handle an empty result.");
         var done = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
         Assert.Equal(RunKind.Rework, done.LatestRun!.Kind);

@@ -63,7 +63,7 @@ public sealed class ReviewYieldApiTests : IAsyncLifetime
     public async Task AfterARework_TheFirstReviewsFindings_AreStillListed_AndCanBeJudged()
     {
         var threadId = await HandedOffWithTwoFindingsAsync();
-        await _host.DelegateAsync(threadId, "@factory Keep the user's choice when regenerating.");
+        await _host.RequestChangesAsync(threadId, "@factory Keep the user's choice when regenerating.");
         await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
         var details = await _host.GetAsync($"api/threads/{threadId}");

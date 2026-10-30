@@ -6,15 +6,16 @@ using Litos.SoftwareFactory.Core.Store;
 namespace Litos.SoftwareFactory.Host.Runs;
 
 /// <summary>
-/// Answers a plain message (docs/software-factory/m2-architecture.md §5): one read-only turn, on
-/// the project's reading copy, whose last message is posted to the thread. A chat run never
+/// Answers a plain message (docs/software-factory/m2-architecture.md §5), in any state of the task:
+/// one read-only turn, on the project's reading copy, told where the task stands, whose last
+/// message is posted to the thread. It never reaches the task's agent. A chat run never
 /// changes the task's state, never takes the repository's lease, and is charged to its own
 /// budget, not the task's.
 /// </summary>
 public sealed class ChatExecutor(
     IFactoryStore store, FactoryOptions options, ReadingCopies readingCopies, IWorkerLauncher launcher,
     IWorkerClientFactory clients, FactorySignals signals, IClock clock, Settings.FactorySettings settings, Settings.FactorySkills skills,
-    RunAttachments attachments, ILogger<ChatExecutor> logger)
+    RunAttachments attachments, RunRegistry registry, ILogger<ChatExecutor> logger)
 {
     internal const string Failed = "Litos could not answer that. Send the message again.";
     internal const string NoAnswer = "Litos read the code but did not write an answer. Ask again, perhaps more narrowly.";
@@ -52,8 +53,10 @@ public sealed class ChatExecutor(
             var sessionId = $"chat-{run.Id:N}";
             // A new session each answer: it is given every file on the thread (attachments-architecture.md §4).
             var given = await attachments.PrepareAsync(thread, workspace.Path, newSince: null, ct);
+            // Where the task stands, read now: what the question is most often about (§5.3).
+            var snapshot = ChatSnapshot.Describe(details, registry.FindByThread(thread.Id)?.Activity, clock.UtcNow);
             var brief = given.AppendTo(BriefComposer.Chat(new ChatContext(
-                project.Name, branch, thread.Title, details.TaskRequest, Conversation(details, run), run.Request)));
+                project.Name, branch, thread.Title, details.TaskRequest, Conversation(details, run), run.Request, snapshot)));
             var turnToken = active.BeginTurn(TurnKind.Chat, TurnKind.Chat, sessionId, ct, phase: "Chat");
             progress.Set(ChatProgressTracker.Thinking);
             var result = await worker.Client.RunTurnAsync(sessionId, TurnKind.Chat, brief, options.ChatMaxToolCalls, turnToken, progress.Apply, given.Images);

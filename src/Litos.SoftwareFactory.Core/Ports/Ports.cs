@@ -261,8 +261,13 @@ public interface IWorkerClient
         string sessionId, TurnKind kind, string brief, int maxToolCalls, CancellationToken ct, Action<TurnProgress>? onProgress = null,
         IReadOnlyList<TurnImage>? images = null);
 
-    /// <summary>Sends a steering message to the turn in progress.</summary>
-    Task SteerAsync(string sessionId, string message, CancellationToken ct);
+    /// <summary>Sends a steering message to the turn in progress. False when no turn was running
+    /// to take it; it never starts one.</summary>
+    Task<bool> SteerAsync(string sessionId, string message, CancellationToken ct);
+
+    /// <summary>The steering messages the session's last turn took but ended before reading,
+    /// oldest first, taken once (m2-architecture.md §5.4).</summary>
+    Task<IReadOnlyList<string>> TakeUndeliveredSteeringAsync(string sessionId, CancellationToken ct);
 
     /// <summary>Returns false when no turn was running.</summary>
     Task<bool> CancelAsync(string sessionId, CancellationToken ct);

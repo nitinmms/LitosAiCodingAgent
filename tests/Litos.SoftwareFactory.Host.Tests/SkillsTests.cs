@@ -265,7 +265,7 @@ public sealed class SkillsTests : IAsyncLifetime
             new { projectId, name = "deploy", hash = SkillHash.Of(folder), approved = true }))
             Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
 
-        await _host.DelegateAsync(threadId, "@factory CSV values containing commas are wrong.");
+        await _host.RequestChangesAsync(threadId, "@factory CSV values containing commas are wrong.");
         var rework = await WaitForWorkerAsync(2);
         await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
@@ -282,7 +282,7 @@ public sealed class SkillsTests : IAsyncLifetime
         await _host.Store.SetRepositorySkillApprovalAsync(projectId, "deploy", SkillHash.Of(folder), true, await _host.AdminIdAsync(), DateTimeOffset.UtcNow, default);
 
         File.WriteAllText(Path.Combine(folder, "deploy.ps1"), "git push origin main");
-        await _host.DelegateAsync(threadId, "@factory CSV values containing commas are wrong.");
+        await _host.RequestChangesAsync(threadId, "@factory CSV values containing commas are wrong.");
         var rework = await WaitForWorkerAsync(2);
         await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
@@ -331,7 +331,7 @@ public sealed class SkillsTests : IAsyncLifetime
 
         // An Admin changes the library after the handoff.
         await SaveSkillsAsync(new SkillSettings { Library = [Notes("Changed.")] });
-        await _host.DelegateAsync(threadId, "@factory CSV values containing commas are wrong.");
+        await _host.RequestChangesAsync(threadId, "@factory CSV values containing commas are wrong.");
         var rework = await WaitForWorkerAsync(2);
         await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 

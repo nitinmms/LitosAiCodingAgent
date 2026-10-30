@@ -61,7 +61,7 @@ public sealed class WithdrawTests : IAsyncLifetime
         var workspace = _host.Workspaces.Of(projectId);
         var handedOff = workspace.Files["src/Orders.cs"];
         TheNextTurnEditsThenFails();
-        await _host.DelegateAsync(threadId, "@factory How do I set up manual tests?");
+        await _host.RequestChangesAsync(threadId, "@factory How do I set up manual tests?");
         var blocked = await _host.WaitForStateAsync(threadId, LifecycleState.Blocked);
         Assert.Equal(RunKind.Rework, blocked.LatestRun!.Kind);
         Assert.Equal("half reworked\n", workspace.Files["src/Orders.cs"]);
@@ -99,7 +99,7 @@ public sealed class WithdrawTests : IAsyncLifetime
             await Task.Delay(Timeout.Infinite, call.Token);
             return FakeWorkerLauncher.Done();
         });
-        await _host.DelegateAsync(threadId, "@factory How do I set up manual tests?");
+        await _host.RequestChangesAsync(threadId, "@factory How do I set up manual tests?");
         await started.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
         var refusal = await _host.PostAsync($"api/threads/{threadId}/withdraw", null, HttpStatusCode.Conflict);
@@ -120,7 +120,7 @@ public sealed class WithdrawTests : IAsyncLifetime
     {
         var (projectId, threadId, _) = await HandedOffAsync();
         TheNextTurnEditsThenFails();
-        await _host.DelegateAsync(threadId, "@factory How do I set up manual tests?");
+        await _host.RequestChangesAsync(threadId, "@factory How do I set up manual tests?");
         await _host.WaitForStateAsync(threadId, LifecycleState.Blocked);
         _host.Workspaces.Of(projectId).FailDiscard = new WorkspaceException("The working copy is on 'main', not 'factory/x'; nothing was discarded.");
 
@@ -143,7 +143,7 @@ public sealed class WithdrawTests : IAsyncLifetime
         await host.DelegateAsync(threadId);
         await host.App.Services.GetRequiredService<RunSupervisor>().Start((await host.Store.ClaimNextRunAsync(1, DateTimeOffset.UtcNow, default))!, default);
         Assert.Equal(LifecycleState.AwaitingHumanTesting, (await host.ThreadAsync(threadId)).Thread.State);
-        await host.DelegateAsync(threadId, "@factory How do I set up manual tests?"); // queued; nothing claims it
+        await host.RequestChangesAsync(threadId, "@factory How do I set up manual tests?"); // queued; nothing claims it
 
         await host.PostAsync($"api/threads/{threadId}/withdraw", null, HttpStatusCode.OK);
 
@@ -322,7 +322,7 @@ public sealed class ReworkRoundTests : IAsyncLifetime
         await _host.DelegateAsync(threadId);
         await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
-        await _host.DelegateAsync(threadId, "@factory CSV values containing commas are incorrect. Fix this.");
+        await _host.RequestChangesAsync(threadId, "@factory CSV values containing commas are incorrect. Fix this.");
         var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
         Assert.Equal(900_000, details.Thread.BudgetCap);
@@ -344,7 +344,7 @@ public sealed class ReworkRoundTests : IAsyncLifetime
             return FakeWorkerLauncher.Done();
         });
 
-        await _host.DelegateAsync(threadId, "@factory CSV values containing commas are incorrect. Fix this.");
+        await _host.RequestChangesAsync(threadId, "@factory CSV values containing commas are incorrect. Fix this.");
         await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
         var reviews = _host.Workers.Turns.Where(t => t.Kind == TurnKind.Review).ToList();
@@ -373,7 +373,7 @@ public sealed class ReworkRoundTests : IAsyncLifetime
         Assert.Equal(212, first.LatestHandoff!.PullRequestNumber);
         _host.GitHub.Fail = new HttpRequestException("An error occurred while sending the request.");
 
-        await _host.DelegateAsync(threadId, "@factory Quote fields that contain commas.");
+        await _host.RequestChangesAsync(threadId, "@factory Quote fields that contain commas.");
         var second = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
         Assert.NotEqual(first.LatestHandoff.CommitSha, second.LatestHandoff!.CommitSha);
@@ -410,7 +410,7 @@ public sealed class ReworkRoundTests : IAsyncLifetime
         Assert.Equal(howToRun.Steps, evidence.HowToRun!.Steps);
 
         // The rework's turn is the default one, which says nothing about running the application.
-        await _host.DelegateAsync(threadId, "@factory Quote fields that contain commas.");
+        await _host.RequestChangesAsync(threadId, "@factory Quote fields that contain commas.");
         var second = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
         Assert.NotEqual(first.LatestHandoff.CommitSha, second.LatestHandoff!.CommitSha);

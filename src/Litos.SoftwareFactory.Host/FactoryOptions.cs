@@ -133,6 +133,10 @@ public sealed class FactoryOptions
     /// charged to the task's budget (§5); this bounds what a single question can cost.</summary>
     public long ChatTurnCap { get; set; } = 100_000;
 
+    /// <summary>How many chat answers may run at once (FACTORY_CHAT_SLOTS). Chats have slots of
+    /// their own, so a question is answered while every task slot is busy (m2-architecture.md §5.3).</summary>
+    public int ChatSlotCap { get; set; } = 2;
+
     /// <summary>A chat answer is cut off after this many tool calls...</summary>
     public int ChatMaxToolCalls { get; set; } = 30;
 
@@ -211,6 +215,8 @@ public sealed class FactoryOptions
             options.VerifyConcurrency = verifyConcurrency;
         if (long.TryParse(configuration["FACTORY_CHAT_TURN_CAP"], out var chatTurnCap))
             options.ChatTurnCap = chatTurnCap;
+        if (int.TryParse(configuration["FACTORY_CHAT_SLOTS"], out var chatSlots))
+            options.ChatSlotCap = chatSlots;
 
         if (configuration["FACTORY_DEFAULT_BUDGET"] is { Length: > 0 } defaultBudget)
         {
@@ -241,6 +247,8 @@ public sealed class FactoryOptions
             problems.Add("The liveness interval must be positive.");
         if (ChatTurnCap < 1)
             problems.Add("FACTORY_CHAT_TURN_CAP must be at least 1.");
+        if (ChatSlotCap < 1)
+            problems.Add("FACTORY_CHAT_SLOTS must be at least 1.");
         return problems;
     }
 

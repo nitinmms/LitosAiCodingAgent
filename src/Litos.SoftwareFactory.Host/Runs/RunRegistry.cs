@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Estimation;
+using Litos.SoftwareFactory.Core.Ports;
 
 namespace Litos.SoftwareFactory.Host.Runs;
 
@@ -116,7 +117,8 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
     /// limitation may then describe exactly what the person chose.</param>
     public CancellationToken BeginTurn(
         TurnKind kind, TurnKind workKind, string sessionId, CancellationToken runToken,
-        string? phase = null, Core.Orchestration.TurnAllowance? allowance = null, bool askAboutBreakingLimitations = true)
+        string? phase = null, Core.Orchestration.TurnAllowance? allowance = null, bool askAboutBreakingLimitations = true,
+        DateTimeOffset? startedAt = null)
     {
         lock (_lock)
         {
@@ -138,7 +140,114 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             BudgetRefusal = null;
             DecisionId = null;
             _followUps = 0;
+            _inTurn = true;
+            _turnStartedAt = startedAt ?? DateTimeOffset.UtcNow;
+            _recentTools.Clear();
+            _steers.Clear();
             return _turn.Token;
+        }
+    }
+
+    // ---- What the turn in progress is doing, for a chat's snapshot (m2-architecture.md §5.3) ----
+
+    /// <summary>The tool calls a chat is told about, newest kept.</summary>
+    public const int RecentToolCalls = 5;
+
+    private bool _inTurn;
+    private DateTimeOffset _turnStartedAt;
+    private readonly Queue<Core.Briefs.ToolActivity> _recentTools = new();
+
+    /// <summary>The turn's stream has ended: steering can no longer reach it, and it is doing nothing.</summary>
+    public void EndTurn()
+    {
+        lock (_lock)
+            _inTurn = false;
+    }
+
+    /// <summary>Notes a tool call the turn in progress made, for <see cref="Activity"/>.</summary>
+    public void TrackProgress(TurnProgress progress, DateTimeOffset at)
+    {
+        if (progress.Kind != TurnProgressKind.ToolCall)
+            return;
+
+        lock (_lock)
+        {
+            _recentTools.Enqueue(new Core.Briefs.ToolActivity(ChatProgressTracker.Describe(progress), at));
+            while (_recentTools.Count > RecentToolCalls)
+                _recentTools.Dequeue();
+        }
+    }
+
+    /// <summary>What the run's turn in progress is doing; null between turns.</summary>
+    public Core.Briefs.RunActivity? Activity
+    {
+        get
+        {
+            lock (_lock)
+                return _inTurn && TurnKind is not null
+                    ? new Core.Briefs.RunActivity(Phase ?? TurnKind.ToString()!, _turnStartedAt, TurnCalls, TurnCharged, [.. _recentTools])
+                    : null;
+        }
+    }
+
+    // ---- @factory messages to the turn in progress (m2-architecture.md §5.4) ----
+
+    private readonly List<(Guid MessageId, string Steer)> _steers = [];
+
+    /// <summary>
+    /// Whether a person's @factory message can go to the turn in progress now: only work turns
+    /// take one. A review or a scan has its own session, and its reviewer is not the agent the
+    /// person is guiding, so the message waits for the next work turn.
+    /// </summary>
+    public bool TakesSteering
+    {
+        get
+        {
+            lock (_lock)
+                return _inTurn && Client is not null && SessionId is not null && IsWorkTurn(WorkKind);
+        }
+    }
+
+    /// <summary>The turns that do the task's work: implement, rework and repair, and their nudges.
+    /// Only they get cost notes and a person's @factory messages; a review or a scan gets neither.</summary>
+    internal static bool IsWorkTurn(TurnKind kind) =>
+        kind is Contracts.TurnKind.Implement or Contracts.TurnKind.Rework or Contracts.TurnKind.Repair;
+
+    /// <summary>A person's message passed to the turn in progress, as the worker was sent it.</summary>
+    public void NoteSteer(Guid messageId, string steer)
+    {
+        lock (_lock)
+        {
+            _steers.Add((messageId, steer));
+            _followUps++;
+        }
+    }
+
+    /// <summary>The worker did not take it after all.</summary>
+    public void ForgetSteer(Guid messageId)
+    {
+        lock (_lock)
+        {
+            if (_steers.RemoveAll(s => s.MessageId == messageId) > 0)
+                _followUps--;
+        }
+    }
+
+    /// <summary>The messages, of those passed to this turn, whose text is among what the worker
+    /// says the turn never read: each once, oldest first.</summary>
+    public IReadOnlyList<Guid> UnreadSteers(IReadOnlyList<string> unread)
+    {
+        lock (_lock)
+        {
+            var left = unread.ToList();
+            var found = new List<Guid>();
+            foreach (var (messageId, steer) in _steers)
+            {
+                if (left.Remove(steer))
+                    found.Add(messageId);
+            }
+
+            return found;
         }
     }
 
@@ -173,7 +282,7 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
         lock (_lock)
         {
             if (TurnKind is null || _submission is not null
-                || WorkKind is not (Contracts.TurnKind.Implement or Contracts.TurnKind.Rework or Contracts.TurnKind.Repair))
+                || !IsWorkTurn(WorkKind))
             {
                 return false;
             }

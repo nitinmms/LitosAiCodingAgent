@@ -198,8 +198,22 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
 
     // ---- Dispatch and user actions ----
 
-    public async Task<DispatchResult> DispatchAsync(
-        Guid threadId, Guid userId, string dispatchKey, string text, DateTimeOffset now, CancellationToken ct, double reworkTopUpShare = 0)
+    public Task<DispatchResult> DispatchAsync(Guid threadId, Guid userId, string dispatchKey, string text, DateTimeOffset now, CancellationToken ct) =>
+        DispatchAsync(threadId, userId, dispatchKey, text, now, ct, changeRequest: false, reworkTopUpShare: 0);
+
+    public Task<DispatchResult> RequestChangesAsync(
+        Guid threadId, Guid userId, string dispatchKey, string text, double reworkTopUpShare, DateTimeOffset now, CancellationToken ct) =>
+        DispatchAsync(threadId, userId, dispatchKey, text, now, ct, changeRequest: true, reworkTopUpShare);
+
+    /// <summary>Why an @factory message does not hand a finished task back (m2-architecture.md §5.1).</summary>
+    public const string HandBackRefusal = "After a handoff, @factory does not hand the task back. Use Request changes on the handoff card.";
+
+    public const string SpecBeingWritten = "Litos is writing the specification. Once it is proposed, ask for changes to it with @factory spec.";
+
+    public const string NothingToChange = "This task is not waiting for testing, so there are no changes to request.";
+
+    private async Task<DispatchResult> DispatchAsync(
+        Guid threadId, Guid userId, string dispatchKey, string text, DateTimeOffset now, CancellationToken ct, bool changeRequest, double reworkTopUpShare)
     {
         await using var write = await BeginWriteAsync(ct);
         var db = write.Db;
@@ -216,9 +230,14 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         // A proposed specification is approved before the work is delegated against it (§5).
         var spec = await db.Specifications.AsNoTracking().Where(s => s.ThreadId == threadId)
             .OrderByDescending(s => s.Revision).FirstOrDefaultAsync(ct);
-        if (thread.State == LifecycleState.Draft && spec is { ApprovedAt: null })
+        if (thread.State == LifecycleState.Draft && spec is { ApprovedAt: null } && !changeRequest)
             return new DispatchResult(DispatchOutcome.Rejected, thread, null, SpecAwaitsApproval(spec.Revision));
 
+        // A change request is the one way back from a handoff, and goes nowhere else.
+        if (changeRequest != (thread.State == LifecycleState.AwaitingHumanTesting))
+            return new DispatchResult(DispatchOutcome.Rejected, thread, null, changeRequest ? NothingToChange : HandBackRefusal);
+
+        string? payload = null;
         switch (thread.State)
         {
             case LifecycleState.Draft:
@@ -234,6 +253,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
                 runId = AddRun(db, thread, userId, RunKind.Rework, text, now);
                 outcome = DispatchOutcome.Queued;
                 action = AuditActions.ThreadChangeRequest;
+                payload = ChangeRequestPayload;
 
                 // A change the tester asks for is new work, and gets budget of its own.
                 topUp = thread.BudgetCap is null ? 0 : BudgetLedger.ReworkTopUp(thread.InitialBudgetCap ?? thread.BudgetCap, reworkTopUpShare);
@@ -241,8 +261,15 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
                 break;
 
             case LifecycleState.Queued or LifecycleState.Running:
-                runId = await ActiveRunIdAsync(db, threadId, ct);
+                var active = await ActiveRunAsync(db, threadId, ct);
+                // A spec run has no work turn to take guidance, and the work it would reach is not
+                // delegated yet: the specification is changed with @factory spec once proposed.
+                if (active?.Kind == RunKind.Spec)
+                    return new DispatchResult(DispatchOutcome.Rejected, thread, null, SpecBeingWritten);
+                runId = active?.Id;
                 outcome = DispatchOutcome.FollowUp;
+                // Held until a turn takes it: the host marks it delivered when one does (§5.4).
+                payload = SteerPayload.For(SteerStatus.Held);
                 break;
 
             default:
@@ -263,7 +290,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             Audit(db, userId, action!, AuditTargets.Thread, threadId, thread.ProjectId, new { RunId = runId, BudgetTopUp = topUp }, now);
         }
 
-        AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, text, now, dispatchKey: dispatchKey);
+        var message = AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, text, now, dispatchKey: dispatchKey, payloadJson: payload);
         if (topUp > 0)
         {
             AddMessage(
@@ -286,7 +313,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             return new DispatchResult(DispatchOutcome.Duplicate, thread, null);
         }
 
-        return new DispatchResult(outcome, thread, runId);
+        return new DispatchResult(outcome, thread, runId) { MessageId = message.Id };
     }
 
     private static string RejectionReason(LifecycleState state) => state switch
@@ -453,10 +480,6 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         return spec;
     }
 
-    /// <summary>Where a plain message can start a chat (m2-architecture.md §5).</summary>
-    private static bool CanChat(LifecycleState state) =>
-        state is LifecycleState.Draft or LifecycleState.AwaitingHumanTesting or LifecycleState.Accepted;
-
     public async Task<DispatchResult> ChatAsync(
         Guid threadId, Guid userId, string dispatchKey, string text, long chatTurnCap, DateTimeOffset now, CancellationToken ct)
     {
@@ -467,33 +490,17 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         if (await db.Messages.AsNoTracking().AnyAsync(m => m.DispatchKey == dispatchKey, ct))
             return new DispatchResult(DispatchOutcome.Duplicate, thread, null);
 
-        Guid? runId;
-        DispatchOutcome outcome;
-        if (thread.State is LifecycleState.Queued or LifecycleState.Running)
-        {
-            // Said to a task that is working: guidance for the agent, as an @factory follow-up is.
-            runId = await ActiveRunIdAsync(db, threadId, ct);
-            outcome = DispatchOutcome.FollowUp;
-        }
-        else if (!CanChat(thread.State))
-        {
-            return new DispatchResult(DispatchOutcome.Rejected, thread, null, RejectionReason(thread.State));
-        }
-        else if (await db.Runs.AnyAsync(r => r.ThreadId == threadId && r.Kind == RunKind.Chat && r.Status != RunStatus.Finished, ct))
-        {
+        // In every state, beside whatever the task is doing, and never to its agent (§5.2): only
+        // @factory reaches a working agent.
+        if (await db.Runs.AnyAsync(r => r.ThreadId == threadId && r.Kind == RunKind.Chat && r.Status != RunStatus.Finished, ct))
             return new DispatchResult(DispatchOutcome.Rejected, thread, null, "Litos is still answering your last message. Wait for the reply, then send this.");
-        }
-        else
-        {
-            runId = AddRun(db, thread, userId, RunKind.Chat, text, now);
-            var run = db.Runs.Local.First(r => r.Id == runId);
-            run.ChatBudgetCap = chatTurnCap;
-            outcome = DispatchOutcome.Chat;
-        }
+
+        var runId = AddRun(db, thread, userId, RunKind.Chat, text, now);
+        db.Runs.Local.First(r => r.Id == runId).ChatBudgetCap = chatTurnCap;
 
         // Marked, because an @factory message is stored without its mention: the client shows
         // which of the two a person sent.
-        AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, text, now, dispatchKey: dispatchKey, payloadJson: PlainMessagePayload);
+        var message = AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Text, text, now, dispatchKey: dispatchKey, payloadJson: PlainMessagePayload);
         try
         {
             await write.CommitAsync(ct);
@@ -503,8 +510,108 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             return new DispatchResult(DispatchOutcome.Duplicate, thread, null);
         }
 
-        return new DispatchResult(outcome, thread, runId);
+        return new DispatchResult(DispatchOutcome.Chat, thread, runId) { MessageId = message.Id };
     }
+
+    public async Task<IReadOnlyList<HeldSteer>> TakeHeldSteersAsync(Guid threadId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var thread = await LockThreadAsync(db, threadId, ct);
+
+        var held = await HeldSteersAsync(db, threadId, ct);
+        foreach (var message in held)
+            SetSteer(db, thread, message, SteerStatus.Delivered, null, now);
+        await write.CommitAsync(ct);
+        return [.. held.Select(m => new HeldSteer(m.Id, m.Text))];
+    }
+
+    public async Task<bool> TakeSteerAsync(Guid threadId, Guid messageId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var thread = await LockThreadAsync(db, threadId, ct);
+        var message = (await HeldSteersAsync(db, threadId, ct)).FirstOrDefault(m => m.Id == messageId);
+        if (message is null)
+            return false;
+
+        SetSteer(db, thread, message, SteerStatus.Delivered, null, now);
+        await write.CommitAsync(ct);
+        return true;
+    }
+
+    public async Task SetSteerStatusAsync(Guid threadId, IReadOnlyCollection<Guid> messageIds, SteerStatus status, DateTimeOffset now, CancellationToken ct)
+    {
+        if (messageIds.Count == 0)
+            return;
+
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var thread = await LockThreadAsync(db, threadId, ct);
+        foreach (var message in (await SteersAsync(db, threadId, ct)).Where(m => messageIds.Contains(m.Id)))
+        {
+            // A dropped message was told it would never arrive; that stays true.
+            if (SteerPayload.Read(message.PayloadJson) is { } current && current != SteerStatus.Dropped && current != status)
+                SetSteer(db, thread, message, status, null, now);
+        }
+
+        await write.CommitAsync(ct);
+    }
+
+    /// <summary>The thread's @factory follow-ups, oldest first. A thread has few messages, so the
+    /// payload is read here rather than queried.</summary>
+    private static async Task<List<ThreadMessage>> SteersAsync(FactoryDbContext db, Guid threadId, CancellationToken ct) =>
+        [.. (await db.Messages.Where(m => m.ThreadId == threadId && m.Author == MessageAuthor.User && m.Kind == MessageKind.Text && m.PayloadJson != null).ToListAsync(ct))
+            .Where(m => SteerPayload.Read(m.PayloadJson) is not null)
+            .OrderBy(m => m.Sequence)];
+
+    private static async Task<List<ThreadMessage>> HeldSteersAsync(FactoryDbContext db, Guid threadId, CancellationToken ct) =>
+        [.. (await SteersAsync(db, threadId, ct)).Where(m => SteerPayload.Read(m.PayloadJson) == SteerStatus.Held)];
+
+    private static void SetSteer(FactoryDbContext db, TaskThread thread, ThreadMessage message, SteerStatus status, string? reason, DateTimeOffset now)
+    {
+        message.PayloadJson = SteerPayload.For(status, reason);
+        db.Outbox.Add(new OutboxEvent
+        {
+            ThreadId = thread.Id,
+            ProjectId = thread.ProjectId,
+            Type = EventTypes.MessageChanged,
+            PayloadJson = JsonSerializer.Serialize(new { message.Id, Payload = message.PayloadJson }, FactoryWire.Json),
+            CreatedAt = now,
+        });
+    }
+
+    /// <summary>
+    /// The work stopped where no later turn of it will run, so the held @factory messages never
+    /// will reach an agent: each is marked dropped, and the thread says so once. Pause, a decision,
+    /// a paused budget or an interruption keep them: the same run continues (§5.4).
+    /// </summary>
+    private static async Task DropHeldSteersAsync(
+        FactoryDbContext db, TaskThread thread, LifecycleState next, DateTimeOffset now, CancellationToken ct, string? because = null)
+    {
+        var reason = because ?? next switch
+        {
+            LifecycleState.AwaitingHumanTesting => "It arrived after the work finished. Use Request changes to ask for more.",
+            LifecycleState.Cancelled => "The task was cancelled.",
+            LifecycleState.Blocked => "The task was blocked; resuming it does not resend it.",
+            _ => null,
+        };
+        if (reason is null)
+            return;
+
+        var held = await HeldSteersAsync(db, thread.Id, ct);
+        if (held.Count == 0)
+            return;
+
+        foreach (var message in held)
+            SetSteer(db, thread, message, SteerStatus.Dropped, reason, now);
+        AddMessage(
+            db, thread, MessageAuthor.Factory, null, MessageKind.Status,
+            $"{(held.Count == 1 ? "An @factory message" : $"{held.Count} @factory messages")} did not reach the agent: {reason}", now);
+    }
+
+    /// <summary>The payload of a change request after a handoff, which the thread shows as one.</summary>
+    public const string ChangeRequestPayload = """{"changeRequest":true}""";
 
     /// <summary>The payload of a message sent without @factory.</summary>
     public const string PlainMessagePayload = """{"plain":true}""";
@@ -623,6 +730,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         thread.State = next;
         thread.StateReason = null;
         AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Status, note, now);
+        await DropHeldSteersAsync(db, thread, next, now, ct);
         Touch(db, thread, now);
         await write.CommitAsync(ct);
         return thread;
@@ -663,6 +771,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         var heldLease = await db.Leases.AnyAsync(l => l.ThreadId == threadId, ct);
         var project = await db.Projects.AsNoTracking().FirstAsync(p => p.Id == thread.ProjectId, ct);
         AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Status, "Change request withdrawn. The task is back at its last handoff.", now);
+        await DropHeldSteersAsync(db, thread, next, now, ct, "The change request was withdrawn.");
         Audit(db, userId, AuditActions.ThreadWithdraw, AuditTargets.Thread, threadId, thread.ProjectId, new { RunId = run.Id }, now);
         Touch(db, thread, now);
         await write.CommitAsync(ct);
@@ -785,15 +894,30 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
     // ---- The coordinator ----
 
     public async Task<ClaimedRun?> ClaimNextRunAsync(
-        int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null, string? pausedReason = null)
+        int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null, string? pausedReason = null, int chatSlotCap = 2)
     {
         await using var write = await BeginWriteAsync(ct, claim: true);
         var db = write.Db;
 
         // The host's registry knows which runs still have an executor, including one that has
         // stopped and is still tearing down. Without it, the runs marked Running are the slots.
+        // Chats have slots of their own, so a question is answered while every task slot is busy.
         var held = heldRuns ?? (await db.Runs.Where(r => r.Status == RunStatus.Running).Select(r => r.Id).ToListAsync(ct)).ToHashSet();
-        var full = held.Count >= slotCap;
+        var heldIds = held.ToList();
+        var chatsHeld = heldIds.Count == 0 ? 0 : await db.Runs.CountAsync(r => heldIds.Contains(r.Id) && r.Kind == RunKind.Chat, ct);
+        var taskSlotsHeld = held.Count - chatsHeld;
+        var full = taskSlotsHeld >= slotCap;
+        var chatsFull = chatsHeld >= chatSlotCap;
+        var slotWaiting = $"Waiting for a free slot ({taskSlotsHeld} of {slotCap} busy).";
+
+        // A waiting thread says what it waits for; the board hears of it only when that changes.
+        void Waiting(TaskThread thread, string reason)
+        {
+            if (thread.StateReason == reason)
+                return;
+            thread.StateReason = reason;
+            Touch(db, thread, now);
+        }
 
         // Even when every slot is busy the queue is scanned, so each waiting thread says why.
         var queued = await db.Runs.Where(r => r.Status == RunStatus.Queued)
@@ -821,8 +945,8 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             if (run.Kind is RunKind.Chat or RunKind.Reflection)
             {
                 // Read-only, on a copy of its own: it waits only for a slot, and leaves the task's
-                // state and its repository alone.
-                if (full)
+                // state and its repository alone. A chat waits for a chat slot, a reflection for a task slot.
+                if (run.Kind == RunKind.Chat ? chatsFull : full)
                     continue;
                 run.Status = RunStatus.Running;
                 run.StartedAt ??= now;
@@ -841,13 +965,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
                 // takes no lease: it waits only for a slot (m2-architecture.md §5).
                 if (full)
                 {
-                    var waiting = $"Waiting for a free slot ({held.Count} of {slotCap} busy).";
-                    if (thread.StateReason != waiting)
-                    {
-                        thread.StateReason = waiting;
-                        Touch(db, thread, now);
-                    }
-
+                    Waiting(thread, slotWaiting);
                     continue;
                 }
 
@@ -875,17 +993,12 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             }
             else if (full)
             {
-                waitingFor = $"Waiting for a free slot ({held.Count} of {slotCap} busy).";
+                waitingFor = slotWaiting;
             }
 
             if (waitingFor is not null)
             {
-                if (thread.StateReason != waitingFor)
-                {
-                    thread.StateReason = waitingFor;
-                    Touch(db, thread, now);
-                }
-
+                Waiting(thread, waitingFor);
                 continue;
             }
 
@@ -1044,6 +1157,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         AddMessage(
             db, thread, MessageAuthor.Factory, null, command.MessageKind, command.Message, now,
             decisionId: command.DecisionId, payloadJson: command.MessagePayloadJson);
+        await DropHeldSteersAsync(db, thread, next, now, ct);
         Touch(db, thread, now);
         await write.CommitAsync(ct);
     }

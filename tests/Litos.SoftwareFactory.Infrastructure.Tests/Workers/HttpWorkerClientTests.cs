@@ -241,30 +241,47 @@ public class HttpWorkerClientTests
     }
 
     [Fact]
-    public async Task SteerAsync_PostsTheMessageToTheRunningTurn()
+    public async Task SteerAsync_PostsTheMessageToTheSteerOnlyRoute_AndSaysItWasTaken()
     {
         var (client, handler) = Create();
         handler.Enqueue(HttpStatusCode.Accepted);
 
-        await client.SteerAsync("s", "Also handle empty results.", default);
+        Assert.True(await client.SteerAsync("s", "Also handle empty results.", default));
 
         var request = Assert.Single(handler.Requests);
-        Assert.Equal("/sessions/s/turns", request.Uri.AbsolutePath);
+        Assert.Equal("/sessions/s/steer", request.Uri.AbsolutePath);
         Assert.Equal("Also handle empty results.", JsonDocument.Parse(request.Body!).RootElement.GetProperty("input").GetString());
     }
 
-    /// <summary>With no turn running, the worker would start a turn from the steering text.
-    /// That is not steering, so it is stopped at once.</summary>
+    /// <summary>With no turn running the steer-only route refuses: nothing is started, so
+    /// nothing has to be cancelled.</summary>
     [Fact]
-    public async Task SteerAsync_NoTurnWasRunning_CancelsTheTurnItAccidentallyStarted()
+    public async Task SteerAsync_NoTurnWasRunning_SaysSo_AndSendsNothingElse()
     {
         var (client, handler) = Create();
-        handler.Enqueue(HttpStatusCode.OK, Sse(Text), "text/event-stream");
-        handler.Enqueue(HttpStatusCode.OK);
+        handler.Enqueue(HttpStatusCode.Conflict);
 
-        await client.SteerAsync("s", "message", default);
+        Assert.False(await client.SteerAsync("s", "message", default));
+        Assert.Single(handler.Requests);
+    }
 
-        Assert.Equal("/sessions/s/cancel", handler.Requests[1].Uri.AbsolutePath);
+    [Fact]
+    public async Task SteerAsync_AnyOtherFailure_Throws_ForTheCallerToHold()
+    {
+        var (client, handler) = Create();
+        handler.Enqueue(HttpStatusCode.InternalServerError);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.SteerAsync("s", "message", default));
+    }
+
+    [Fact]
+    public async Task TakeUndeliveredSteering_ReadsWhatTheLastTurnLeftUnread()
+    {
+        var (client, handler) = Create();
+        handler.Enqueue(HttpStatusCode.OK, """["Use PageSize.","Keep it small."]""", "application/json");
+
+        Assert.Equal(["Use PageSize.", "Keep it small."], await client.TakeUndeliveredSteeringAsync("s", default));
+        Assert.Equal("/sessions/s/steer/undelivered", Assert.Single(handler.Requests).Uri.AbsolutePath);
     }
 
     [Theory]

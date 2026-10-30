@@ -216,12 +216,42 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
     }
 
     [SkippableFact]
-    public async Task Dispatch_AfterHandoff_StartsAReworkRunOnTheSameThread()
+    public async Task Dispatch_AfterHandoff_IsRefused_AndDoesNotHandTheTaskBack()
+    {
+        var running = await RunningAsync();
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
+        var before = (await Store.GetThreadAsync(running.Thread.Id, default))!.Messages.Count;
+
+        var result = await Store.DispatchAsync(running.Thread.Id, Admin, "msg-2", "Continue", T0, default);
+
+        Assert.Equal(DispatchOutcome.Rejected, result.Outcome);
+        Assert.Equal(EfFactoryStore.HandBackRefusal, result.Reason);
+        Assert.Equal(LifecycleState.AwaitingHumanTesting, (await ThreadAsync(running.Thread.Id)).State);
+        Assert.Equal(before, (await Store.GetThreadAsync(running.Thread.Id, default))!.Messages.Count);
+        await using var db = Contexts.CreateDbContext();
+        Assert.Equal(1, await db.Runs.CountAsync());
+    }
+
+    [SkippableTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RequestChanges_AnywhereButAHandoff_IsRefused(bool running)
+    {
+        var thread = running ? (await RunningAsync()).Thread : await AddThreadAsync(await AddProjectAsync());
+
+        var result = await Store.RequestChangesAsync(thread.Id, Admin, "msg-2", "Fix it.", 0.5, T0, default);
+
+        Assert.Equal(DispatchOutcome.Rejected, result.Outcome);
+        Assert.Equal(EfFactoryStore.NothingToChange, result.Reason);
+    }
+
+    [SkippableFact]
+    public async Task RequestChanges_AfterHandoff_StartsAReworkRunOnTheSameThread()
     {
         var running = await RunningAsync();
         await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
 
-        var result = await Store.DispatchAsync(running.Thread.Id, Admin, "msg-2", "CSV values containing commas are wrong.", T0, default);
+        var result = await Store.RequestChangesAsync(running.Thread.Id, Admin, "msg-2", "CSV values containing commas are wrong.", 0, T0, default);
 
         Assert.Equal(DispatchOutcome.Queued, result.Outcome);
         Assert.NotEqual(running.Run.Id, result.RunId);
@@ -250,7 +280,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         var running = await RunningAsync();
         await Store.SetRunCapabilitiesAsync(running.Run.Id, """{"shellTimeoutSeconds":900}""", default);
         await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0, default);
-        var rework = (await Store.DispatchAsync(running.Thread.Id, Admin, "msg-2", "Fix the commas.", T0.AddMinutes(5), default)).RunId!.Value;
+        var rework = (await Store.RequestChangesAsync(running.Thread.Id, Admin, "msg-2", "Fix the commas.", 0, T0.AddMinutes(5), default)).RunId!.Value;
         var other = await QueuedAsync("other-repo");
 
         var found = await Store.LatestCapabilitiesAsync(running.Thread.Id, rework, default);
@@ -282,7 +312,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
     {
         var handedOff = await HandedOffAsync(cap: 600_000);
 
-        var result = await Store.DispatchAsync(handedOff.Thread.Id, Admin, "msg-2", "Handle a failed compaction.", T0, default, reworkTopUpShare: 0.5);
+        var result = await Store.RequestChangesAsync(handedOff.Thread.Id, Admin, "msg-2", "Handle a failed compaction.", 0.5, T0, default);
 
         Assert.Equal(DispatchOutcome.Queued, result.Outcome);
         var details = (await Store.GetThreadAsync(handedOff.Thread.Id, default))!;
@@ -300,7 +330,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         var handedOff = await HandedOffAsync(cap: 600_000);
         await Store.SetBudgetCapAsync(handedOff.Thread.Id, 1_000_000, Admin, T0, default);
 
-        await Store.DispatchAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", T0, default, reworkTopUpShare: 0.5);
+        await Store.RequestChangesAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", 0.5, T0, default);
 
         Assert.Equal(1_300_000, (await ThreadAsync(handedOff.Thread.Id)).BudgetCap);
     }
@@ -310,7 +340,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
     {
         var handedOff = await HandedOffAsync(cap: 600_000);
 
-        await Store.DispatchAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", T0, default);
+        await Store.RequestChangesAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", 0, T0, default);
 
         Assert.Equal(600_000, (await ThreadAsync(handedOff.Thread.Id)).BudgetCap);
     }
@@ -320,7 +350,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
     {
         var handedOff = await HandedOffAsync(cap: null);
 
-        await Store.DispatchAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", T0, default, reworkTopUpShare: 0.5);
+        await Store.RequestChangesAsync(handedOff.Thread.Id, Admin, "msg-2", "Fix it.", 0.5, T0, default);
 
         Assert.Null((await ThreadAsync(handedOff.Thread.Id)).BudgetCap);
         Assert.DoesNotContain((await Store.GetThreadAsync(handedOff.Thread.Id, default))!.Messages, m => m.Text.Contains("to the budget"));
@@ -331,7 +361,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
     {
         var running = await RunningAsync(cap: 600_000);
 
-        await Store.DispatchAsync(running.Thread.Id, Admin, "msg-2", "Also handle empty results.", T0, default, reworkTopUpShare: 0.5);
+        await Store.DispatchAsync(running.Thread.Id, Admin, "msg-2", "Also handle empty results.", T0, default);
 
         Assert.Equal(600_000, (await ThreadAsync(running.Thread.Id)).BudgetCap);
     }
@@ -1333,7 +1363,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
             PullRequestNumber = 12, PullRequestUrl = "https://github.com/acme/salesapp/pull/12", EvidenceJson = "{}", CreatedAt = T0,
         }, default);
         await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff, "Ready for human testing.") with { Stage = Stage.Handoff, MessageKind = MessageKind.Handoff }, T0, default);
-        var rework = await Store.DispatchAsync(running.Thread.Id, Admin, Guid.NewGuid().ToString(), "How do I set up manual tests?", T0.AddMinutes(1), default);
+        var rework = await Store.RequestChangesAsync(running.Thread.Id, Admin, Guid.NewGuid().ToString(), "How do I set up manual tests?", 0, T0.AddMinutes(1), default);
         Assert.Equal(DispatchOutcome.Queued, rework.Outcome);
         return (running, rework.RunId!.Value);
     }
@@ -1376,7 +1406,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         var (first, _) = await ReworkQueuedAsync();
         await Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(2), default);
 
-        var again = await Store.DispatchAsync(first.Thread.Id, Admin, Guid.NewGuid().ToString(), "Quote fields with commas.", T0.AddMinutes(3), default);
+        var again = await Store.RequestChangesAsync(first.Thread.Id, Admin, Guid.NewGuid().ToString(), "Quote fields with commas.", 0, T0.AddMinutes(3), default);
         Assert.Equal(DispatchOutcome.Queued, again.Outcome);
         await Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(4), default);
 
@@ -1926,7 +1956,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         var run = (await Store.ClaimNextRunAsync(slotCap: 5, T0.AddMinutes(1), default))!;
         await Store.StopRunAsync(Stop(run.Run.Id, LifecycleTrigger.Handoff, StopReason.HandedOff) with { Stage = Stage.Handoff }, T0.AddMinutes(2), default);
 
-        await Store.DispatchAsync(thread.Id, Admin, Guid.NewGuid().ToString(), "Quote the fields.", T0.AddMinutes(3), default);
+        await Store.RequestChangesAsync(thread.Id, Admin, Guid.NewGuid().ToString(), "Quote the fields.", 0, T0.AddMinutes(3), default);
 
         var details = (await Store.GetThreadAsync(thread.Id, default))!;
         Assert.Equal((RunKind.Rework, (int?)1), (details.LatestRun!.Kind, details.LatestRun.SpecificationRevision));
@@ -1988,35 +2018,50 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         Assert.Equal(DispatchOutcome.Chat, (await ChatAsync(running.Thread.Id)).Outcome);
     }
 
-    /// <summary>To a working task a plain message is guidance, as an @factory follow-up is.</summary>
+    /// <summary>A plain message is a question in every state (m2-architecture.md §5.2): to a working
+    /// task it is answered beside the work and never reaches its agent.</summary>
     [SkippableFact]
-    public async Task Chat_ToAQueuedOrRunningTask_IsAFollowUp_AndStartsNoChat()
+    public async Task Chat_ToAQueuedOrRunningTask_QueuesAChatRun_AndLeavesTheWorkAlone()
     {
         var (_, thread, runId) = await QueuedAsync();
 
-        var result = await ChatAsync(thread.Id, "Also handle an empty result.");
+        var result = await ChatAsync(thread.Id, "What are you doing right now?");
 
-        Assert.Equal((DispatchOutcome.FollowUp, (Guid?)runId), (result.Outcome, result.RunId));
+        Assert.Equal(DispatchOutcome.Chat, result.Outcome);
+        Assert.NotEqual(runId, result.RunId);
         var details = (await Store.GetThreadAsync(thread.Id, default))!;
-        Assert.Null(details.ChatRun);
+        Assert.Equal(result.RunId, details.ChatRun!.Id);
+        Assert.Equal((runId, LifecycleState.Queued), (details.LatestRun!.Id, details.Thread.State));
         Assert.True(IsPlain(details.Messages.OrderBy(m => m.Sequence).Last().PayloadJson));
     }
 
+    [SkippableFact]
+    public async Task AChatBesideARunningTask_IsNeverTheRunAFollowUpGoesTo()
+    {
+        var running = await RunningAsync();
+        await ChatAsync(running.Thread.Id);
+
+        var followUp = await Store.DispatchAsync(running.Thread.Id, Admin, "steer", "Use PageSize.", T0, default);
+
+        Assert.Equal((DispatchOutcome.FollowUp, (Guid?)running.Run.Id), (followUp.Outcome, followUp.RunId));
+    }
+
     [SkippableTheory]
-    [InlineData(LifecycleTrigger.RequestDecision, "waiting for a decision")]
-    [InlineData(LifecycleTrigger.Pause, "paused")]
-    [InlineData(LifecycleTrigger.Block, "blocked")]
-    public async Task Chat_ToATaskStoppedInTheMiddle_IsRejected_AndNothingIsRecorded(LifecycleTrigger stop, string reason)
+    [InlineData(LifecycleTrigger.RequestDecision)]
+    [InlineData(LifecycleTrigger.Pause)]
+    [InlineData(LifecycleTrigger.Block)]
+    [InlineData(LifecycleTrigger.ExhaustBudget)]
+    [InlineData(LifecycleTrigger.Cancel)]
+    public async Task Chat_ToATaskStoppedInTheMiddle_IsAnswered_AndTheTaskStaysWhereItIs(LifecycleTrigger stop)
     {
         var running = await RunningAsync();
         await Store.StopRunAsync(Stop(running.Run.Id, stop, StopReason.PausedByUser), T0, default);
-        var before = (await Store.GetThreadAsync(running.Thread.Id, default))!.Messages.Count;
+        var state = (await ThreadAsync(running.Thread.Id)).State;
 
-        var result = await ChatAsync(running.Thread.Id);
+        var result = await ChatAsync(running.Thread.Id, "Why did it stop?");
 
-        Assert.Equal(DispatchOutcome.Rejected, result.Outcome);
-        Assert.Contains(reason, result.Reason);
-        Assert.Equal(before, (await Store.GetThreadAsync(running.Thread.Id, default))!.Messages.Count);
+        Assert.Equal(DispatchOutcome.Chat, result.Outcome);
+        Assert.Equal(state, (await ThreadAsync(running.Thread.Id)).State);
     }
 
     [SkippableFact]
@@ -2085,15 +2130,205 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         Assert.Empty(await db.Leases.ToListAsync());
     }
 
+    /// <summary>Chats have slots of their own: a question is answered while every task slot is busy.</summary>
     [SkippableFact]
-    public async Task Claim_AChatRun_WaitsForAFreeSlot_AndIgnoresAHeldRepository()
+    public async Task Claim_AChatRun_UsesAChatSlot_NotATaskSlot_AndIgnoresAHeldRepository()
     {
         var holder = await RunningAsync();
         var other = await AddThreadAsync(holder.Project, "Another task");
         var chat = await ChatAsync(other.Id);
 
-        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 1, T0, default));
-        Assert.Equal(chat.RunId, (await Store.ClaimNextRunAsync(slotCap: 2, T0, default))!.Run.Id);
+        Assert.Equal(chat.RunId, (await Store.ClaimNextRunAsync(slotCap: 1, T0, default, chatSlotCap: 1))!.Run.Id);
+    }
+
+    [SkippableFact]
+    public async Task Claim_AChatRun_WaitsWhenEveryChatSlotIsBusy_AndTakesNoTaskSlot()
+    {
+        var first = await AddThreadAsync(await AddProjectAsync());
+        var second = await AddThreadAsync(await AddProjectAsync("other-repo"), "Another task");
+        await ChatAsync(first.Id);
+        await Store.ClaimNextRunAsync(slotCap: 1, T0, default, chatSlotCap: 1);
+        var waiting = await ChatAsync(second.Id);
+
+        Assert.Null(await Store.ClaimNextRunAsync(slotCap: 1, T0, default, chatSlotCap: 1));
+        Assert.Equal(waiting.RunId, (await Store.ClaimNextRunAsync(slotCap: 1, T0, default, chatSlotCap: 2))!.Run.Id);
+
+        // Two chats running take no task slot: a task still starts with one.
+        var (_, _, runId) = await QueuedAsync("third-repo");
+        Assert.Equal(runId, (await Store.ClaimNextRunAsync(slotCap: 1, T0, default, chatSlotCap: 2))!.Run.Id);
+    }
+
+    // ---- Held @factory messages (m2-architecture.md §5.4) ----
+
+    private static SteerStatus? Steer(ThreadMessage message) => SteerPayload.Read(message.PayloadJson);
+
+    private async Task<ThreadMessage> MessageAsync(Guid threadId, Guid messageId) =>
+        (await Store.GetThreadAsync(threadId, default))!.Messages.Single(m => m.Id == messageId);
+
+    [SkippableFact]
+    public async Task AFollowUp_IsRecordedHeld_WithItsMessageId()
+    {
+        var (_, thread, _) = await QueuedAsync();
+
+        var result = await Store.DispatchAsync(thread.Id, Admin, "steer", "Use PageSize.", T0, default);
+
+        Assert.Equal(SteerStatus.Held, Steer(await MessageAsync(thread.Id, result.MessageId!.Value)));
+    }
+
+    [SkippableFact]
+    public async Task TakingHeldSteers_ReturnsThemInOrder_MarksThemDelivered_AndTellsTheThread()
+    {
+        var (_, thread, _) = await QueuedAsync();
+        var first = await Store.DispatchAsync(thread.Id, Admin, "s-1", "Use PageSize.", T0, default);
+        var second = await Store.DispatchAsync(thread.Id, Admin, "s-2", "Keep it small.", T0, default);
+        var since = await Store.LastEventSequenceAsync(thread.Id, default);
+
+        var taken = await Store.TakeHeldSteersAsync(thread.Id, T0, default);
+
+        Assert.Equal([new HeldSteer(first.MessageId!.Value, "Use PageSize."), new HeldSteer(second.MessageId!.Value, "Keep it small.")], taken);
+        Assert.Equal(SteerStatus.Delivered, Steer(await MessageAsync(thread.Id, first.MessageId.Value)));
+        Assert.Empty(await Store.TakeHeldSteersAsync(thread.Id, T0, default));
+        var events = await Store.ReadEventsAsync(thread.Id, since, 10, default);
+        Assert.Equal(2, events.Count(e => e.Type == EventTypes.MessageChanged));
+    }
+
+    [SkippableFact]
+    public async Task ASteerTheWorkerDidNotRead_IsHeldAgain_ButADroppedOneStaysDropped()
+    {
+        var running = await RunningAsync();
+        var steer = await Store.DispatchAsync(running.Thread.Id, Admin, "s-1", "Use PageSize.", T0, default);
+        await Store.SetSteerStatusAsync(running.Thread.Id, [steer.MessageId!.Value], SteerStatus.Delivered, T0, default);
+
+        await Store.SetSteerStatusAsync(running.Thread.Id, [steer.MessageId.Value], SteerStatus.Held, T0, default);
+        Assert.Equal(SteerStatus.Held, Steer(await MessageAsync(running.Thread.Id, steer.MessageId.Value)));
+
+        await Store.StopRunAsync(Stop(running.Run.Id, LifecycleTrigger.Cancel, StopReason.Cancelled), T0, default);
+        await Store.SetSteerStatusAsync(running.Thread.Id, [steer.MessageId.Value], SteerStatus.Held, T0, default);
+        Assert.Equal(SteerStatus.Dropped, Steer(await MessageAsync(running.Thread.Id, steer.MessageId.Value)));
+    }
+
+    [SkippableTheory]
+    [InlineData(LifecycleTrigger.Pause)]
+    [InlineData(LifecycleTrigger.RequestDecision)]
+    [InlineData(LifecycleTrigger.ExhaustBudget)]
+    public async Task AHeldSteer_IsKept_WhenTheSameRunWillContinue(LifecycleTrigger stop)
+    {
+        var running = await RunningAsync();
+        var steer = await Store.DispatchAsync(running.Thread.Id, Admin, "s-1", "Use PageSize.", T0, default);
+
+        await Store.StopRunAsync(Stop(running.Run.Id, stop, StopReason.PausedByUser), T0, default);
+
+        Assert.Equal(SteerStatus.Held, Steer(await MessageAsync(running.Thread.Id, steer.MessageId!.Value)));
+    }
+
+    [SkippableTheory]
+    [InlineData(LifecycleTrigger.Handoff, "arrived after the work finished")]
+    [InlineData(LifecycleTrigger.Block, "blocked")]
+    [InlineData(LifecycleTrigger.Cancel, "cancelled")]
+    public async Task AHeldSteer_IsDropped_WhenNoTurnOfTheWorkWillRunAgain_AndTheThreadSaysSo(LifecycleTrigger stop, string reason)
+    {
+        var running = await RunningAsync();
+        var steer = await Store.DispatchAsync(running.Thread.Id, Admin, "s-1", "Use PageSize.", T0, default);
+
+        await Store.StopRunAsync(Stop(running.Run.Id, stop, StopReason.TurnFaulted) with { Stage = Stage.Handoff }, T0, default);
+
+        var details = (await Store.GetThreadAsync(running.Thread.Id, default))!;
+        var message = details.Messages.Single(m => m.Id == steer.MessageId);
+        Assert.Equal(SteerStatus.Dropped, Steer(message));
+        Assert.Contains(reason, JsonDocument.Parse(message.PayloadJson!).RootElement.GetProperty("reason").GetString());
+        var note = details.Messages.OrderBy(m => m.Sequence).Last();
+        Assert.Equal(MessageKind.Status, note.Kind);
+        Assert.StartsWith("An @factory message did not reach the agent:", note.Text);
+        Assert.Empty(await Store.TakeHeldSteersAsync(running.Thread.Id, T0, default));
+    }
+
+    [SkippableFact]
+    public async Task WithdrawingAChangeRequest_DropsItsHeldSteers_SayingWhy()
+    {
+        var (first, _) = await ReworkQueuedAsync();
+        var steer = await Store.DispatchAsync(first.Thread.Id, Admin, "s-1", "Use PageSize.", T0.AddMinutes(2), default);
+
+        await Store.WithdrawChangesAsync(first.Thread.Id, Admin, T0.AddMinutes(3), default);
+
+        var details = (await Store.GetThreadAsync(first.Thread.Id, default))!;
+        var message = details.Messages.Single(m => m.Id == steer.MessageId);
+        Assert.Equal(SteerStatus.Dropped, Steer(message));
+        Assert.Equal("The change request was withdrawn.", JsonDocument.Parse(message.PayloadJson!).RootElement.GetProperty("reason").GetString());
+        Assert.Contains(details.Messages, m => m.Kind == MessageKind.Status && m.Text == "An @factory message did not reach the agent: The change request was withdrawn.");
+    }
+
+    [SkippableFact]
+    public async Task TakingASteer_DeliversItOnce_AndNeverOneAlreadyTakenOrDropped()
+    {
+        var (_, thread, _) = await QueuedAsync();
+        var steer = await Store.DispatchAsync(thread.Id, Admin, "s-1", "Use PageSize.", T0, default);
+
+        Assert.True(await Store.TakeSteerAsync(thread.Id, steer.MessageId!.Value, T0, default));
+        Assert.Equal(SteerStatus.Delivered, Steer(await MessageAsync(thread.Id, steer.MessageId.Value)));
+        Assert.False(await Store.TakeSteerAsync(thread.Id, steer.MessageId.Value, T0, default));
+
+        // Taken by a work turn's brief first, then asked for by the API: it is not sent again.
+        var second = await Store.DispatchAsync(thread.Id, Admin, "s-2", "Keep it small.", T0, default);
+        await Store.TakeHeldSteersAsync(thread.Id, T0, default);
+        Assert.False(await Store.TakeSteerAsync(thread.Id, second.MessageId!.Value, T0, default));
+        Assert.False(await Store.TakeSteerAsync(thread.Id, Guid.NewGuid(), T0, default));
+    }
+
+    [SkippableFact]
+    public async Task SetSteerStatus_TouchesOnlyThisThreadsSteers_AndWritesNoEventForNoChange()
+    {
+        var (_, thread, _) = await QueuedAsync();
+        var (_, other, _) = await QueuedAsync("other-repo");
+        var steer = await Store.DispatchAsync(thread.Id, Admin, "s-1", "Use PageSize.", T0, default);
+        var elsewhere = await Store.DispatchAsync(other.Id, Admin, "s-2", "Elsewhere.", T0, default);
+        var question = await Store.ChatAsync(thread.Id, Admin, "q-1", "Why?", ChatCap, T0, default);
+        var since = await Store.LastEventSequenceAsync(thread.Id, default);
+
+        await Store.SetSteerStatusAsync(thread.Id, [], SteerStatus.Delivered, T0, default);
+        await Store.SetSteerStatusAsync(thread.Id, [steer.MessageId!.Value], SteerStatus.Held, T0, default); // already held
+        await Store.SetSteerStatusAsync(thread.Id, [elsewhere.MessageId!.Value, question.MessageId!.Value], SteerStatus.Delivered, T0, default);
+
+        Assert.Empty(await Store.ReadEventsAsync(thread.Id, since, 10, default));
+        Assert.Equal(SteerStatus.Held, Steer(await MessageAsync(other.Id, elsewhere.MessageId.Value)));
+        Assert.Null(Steer(await MessageAsync(thread.Id, question.MessageId.Value)));
+    }
+
+    [SkippableFact]
+    public async Task AtFactory_WhileASpecificationIsBeingWritten_IsRefused_AndHeldNowhere()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync());
+        await Store.RequestSpecAsync(thread.Id, Admin, "spec", "Specify the CSV export.", T0, default);
+        await Store.ClaimNextRunAsync(slotCap: 5, T0, default);
+        var before = (await Store.GetThreadAsync(thread.Id, default))!.Messages.Count;
+
+        var result = await Store.DispatchAsync(thread.Id, Admin, "s-1", "Include cancelled orders.", T0, default);
+
+        Assert.Equal(DispatchOutcome.Rejected, result.Outcome);
+        Assert.Equal(EfFactoryStore.SpecBeingWritten, result.Reason);
+        Assert.Equal(before, (await Store.GetThreadAsync(thread.Id, default))!.Messages.Count);
+    }
+
+    [SkippableFact]
+    public async Task AChangeRequest_IsMarkedAsOne()
+    {
+        var handedOff = await HandedOffAsync(cap: null);
+
+        var result = await Store.RequestChangesAsync(handedOff.Thread.Id, Admin, "c-1", "Quote fields.", 0, T0, default);
+
+        // Compared by meaning: PostgreSQL stores the payload as jsonb, in its own spacing.
+        var payload = JsonDocument.Parse((await MessageAsync(handedOff.Thread.Id, result.MessageId!.Value)).PayloadJson!).RootElement;
+        Assert.True(payload.GetProperty("changeRequest").GetBoolean());
+    }
+
+    [SkippableFact]
+    public async Task CancellingAQueuedTask_DropsItsHeldSteers()
+    {
+        var (_, thread, _) = await QueuedAsync();
+        var steer = await Store.DispatchAsync(thread.Id, Admin, "s-1", "Use PageSize.", T0, default);
+
+        await Store.ApplyUserActionAsync(thread.Id, Admin, LifecycleTrigger.Cancel, T0, default);
+
+        Assert.Equal(SteerStatus.Dropped, Steer(await MessageAsync(thread.Id, steer.MessageId!.Value)));
     }
 
     [SkippableFact]
@@ -3214,7 +3449,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
     {
         var handedOff = await HandedOffAsync(cap: 600_000);
 
-        await Store.DispatchAsync(handedOff.Thread.Id, Ben, "msg-2", "Handle a failed compaction.", T0, default, reworkTopUpShare: 0.5);
+        await Store.RequestChangesAsync(handedOff.Thread.Id, Ben, "msg-2", "Handle a failed compaction.", 0.5, T0, default);
 
         var row = Assert.Single(await RowsAsync(AuditActions.ThreadChangeRequest));
         Assert.Equal(Ben, row.ActorId);
@@ -3375,7 +3610,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         {
             RunId = handedOff.Run.Id, ThreadId = handedOff.Thread.Id, Branch = "factory/x", CommitSha = "abc", EvidenceJson = "{}", CreatedAt = T0,
         }, default);
-        await Store.DispatchAsync(handedOff.Thread.Id, Ben, "rework", "Change it.", T0, default);
+        await Store.RequestChangesAsync(handedOff.Thread.Id, Ben, "rework", "Change it.", 0, T0, default);
 
         await Store.WithdrawChangesAsync(handedOff.Thread.Id, Ben, T0.AddMinutes(1), default);
 

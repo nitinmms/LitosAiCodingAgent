@@ -119,6 +119,23 @@ public sealed class WorkerIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode); // reached the endpoint: nothing to cancel
     }
 
+    /// <summary>The steer-only route (m2-architecture.md §5.4): with no turn running it refuses,
+    /// and starts nothing; what a turn left unread is an empty list.</summary>
+    [Fact]
+    public async Task Steer_WithNoTurnRunning_Is409_AndStartsNothing_AndNothingIsLeftUnread()
+    {
+        await StartWorkerAsync();
+
+        using var steer = await _client.PostAsJsonAsync("sessions/s/steer", new { input = "Use PageSize." });
+        using var undelivered = await _client.PostAsync("sessions/s/steer/undelivered", null);
+
+        Assert.Equal(HttpStatusCode.Conflict, steer.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, undelivered.StatusCode);
+        Assert.Equal("[]", await undelivered.Content.ReadAsStringAsync());
+        using var cancel = await _client.PostAsync("sessions/s/cancel", null);
+        Assert.Equal(HttpStatusCode.NotFound, cancel.StatusCode); // no turn was started from the steer
+    }
+
     /// <summary>Even with the right secret, a request addressed to a name that is not loopback
     /// is refused: that is what a DNS-rebinding page in a local browser would send.</summary>
     [Fact]

@@ -937,7 +937,8 @@ public class BriefComposerTests
         // m2.4: work submitted with no change is sent back once to check its edits were written.
         // m2.5: project lessons leave the run brief for every session's system prompt.
         // m2.6: the lesson reflection brief; m2.7: briefs carry the thread's attachments; m2.8: the scan's too; m2.9: review sees decisions and attachments.
-        Assert.Equal("m2.9", BriefComposer.Revision);
+        // m2.10: chat is told where the task stands and never reaches the agent; held @factory messages reach the next work turn.
+        Assert.Equal("m2.10", BriefComposer.Revision);
     }
 
     [Theory]
@@ -1085,6 +1086,37 @@ public class BriefComposerTests
         var brief = BriefComposer.Chat(Chat(question: "First line.\nSecond line."));
 
         Assert.Contains("> First line.\n> Second line.", brief);
+    }
+
+    [Fact]
+    public void Chat_WithASnapshot_CarriesItBeforeTheThread_AsOfTheStartOfTheAnswer()
+    {
+        var brief = BriefComposer.Chat(Chat([new ChatLine("Person", "Hello.")]) with { Snapshot = "**State:** running." });
+
+        var snapshot = brief.IndexOf("## Where the task stands (as of the start of this answer)\n\n**State:** running.", StringComparison.Ordinal);
+        var thread = brief.IndexOf("## The thread so far", StringComparison.Ordinal);
+        Assert.True(snapshot >= 0 && thread > snapshot, brief);
+    }
+
+    [Fact]
+    public void Chat_WithoutASnapshot_HasNoStateSection()
+    {
+        var brief = BriefComposer.Chat(Chat());
+
+        Assert.DoesNotContain("## Where the task stands", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void Chat_SaysItsAnswerNeverReachesTheAgent_AndHowThePersonActsInstead()
+    {
+        var brief = BriefComposer.Chat(Chat());
+
+        Assert.Contains("your answer never reaches the agent", brief);
+        Assert.Contains("Never say you have done, changed, paused or passed on anything", brief);
+        Assert.Contains("`@factory <guidance>`", brief);
+        Assert.Contains("Request changes on the handoff card", brief);
+        Assert.Contains("an `@factory` message does not hand the task back", brief);
     }
 
     // ---- Spec (m2-architecture.md §5) ----

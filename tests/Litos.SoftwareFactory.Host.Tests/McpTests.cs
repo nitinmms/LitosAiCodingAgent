@@ -322,7 +322,7 @@ public sealed class McpTests : IAsyncLifetime
             // An Admin changes the settings after the handoff.
             await SaveToolsAsync(new ToolSettings { ShellTimeoutSeconds = 1_200 });
             await SaveMcpAsync();
-            await _host.DelegateAsync(threadId, "@factory CSV values containing commas are wrong.");
+            await _host.RequestChangesAsync(threadId, "@factory CSV values containing commas are wrong.");
 
             var rework = await WaitForWorkerAsync(2);
             Assert.Equal(600, rework.Launch.ShellTimeoutSeconds);

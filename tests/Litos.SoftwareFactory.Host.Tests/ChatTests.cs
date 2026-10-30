@@ -285,7 +285,7 @@ public sealed class ChatTests
         await host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
         var turns = host.Workers.Turns.Count;
 
-        await host.DelegateAsync(threadId, "@factory Quote fields that contain commas.");
+        await host.RequestChangesAsync(threadId, "@factory Quote fields that contain commas.");
         await host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
         // The rework's review is told what the task was for: the delegation, not the question.
@@ -404,14 +404,17 @@ public sealed class ChatTests
 
     // ---- What a plain message is in other states ----
 
+    /// <summary>A plain message is a question in every state (m2-architecture.md §5.2): to a working
+    /// task it is answered beside the work, told what the run is doing, and never reaches its agent.</summary>
     [Fact]
-    public async Task WhileTheTaskIsRunning_APlainMessageIsAFollowUp_ForTheTasksAgent()
+    public async Task WhileTheTaskIsRunning_APlainMessageIsAnswered_BesideTheWork_AndNeverReachesItsAgent()
     {
         var (host, _, threadId) = await StartAsync();
         await using var _ = host;
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         host.Workers.Script.Enqueue(async call =>
         {
+            call.OnProgress?.Invoke(new TurnProgress(TurnProgressKind.ToolCall, "read_file", JsonSerializer.SerializeToElement(new { path = "src/Orders.cs" })));
             started.SetResult();
             await Task.Delay(Timeout.Infinite, call.Token);
             return FakeWorkerLauncher.Done();
@@ -419,16 +422,32 @@ public sealed class ChatTests
         await host.DelegateAsync(threadId);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
-        var result = await SayAsync(host, threadId, "Use semicolons, not commas.");
+        var result = await SayAsync(host, threadId, "What are you doing right now?");
 
-        Assert.Equal("FollowUp", result.GetProperty("outcome").GetString());
-        Assert.Contains("Use semicolons, not commas.", Assert.Single(Assert.Single(host.Workers.Workers).Steered));
-        Assert.Null((await host.ThreadAsync(threadId)).ChatRun);
+        Assert.Equal("Chat", result.GetProperty("outcome").GetString());
+        // The task's own run keeps its slot, so wait for the chat alone.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        ThreadDetails details;
+        while ((details = await host.ThreadAsync(threadId)).ChatRun is not null || details.Messages.OrderBy(m => m.Sequence).Last().Author != MessageAuthor.Factory)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "No answer.");
+            await Task.Delay(40);
+        }
+
+        Assert.Equal(TestHost.DefaultChatReply, details.Messages.OrderBy(m => m.Sequence).Last().Text);
+        Assert.Equal(LifecycleState.Running, details.Thread.State);
+        Assert.Empty(host.Workers.Workers.SelectMany(w => w.Steered));
+        var chat = host.Workers.Turns.Single(t => t.Kind == TurnKind.Chat);
+        Assert.Contains("## Where the task stands", chat.Brief);
+        Assert.Contains("**State:** running", chat.Brief);
+        Assert.Contains("**Right now:** the Implement turn", chat.Brief);
+        Assert.Contains("src/Orders.cs", chat.Brief);
+        Assert.Contains("have not been pushed", chat.Brief);
         await host.PostAsync($"api/threads/{threadId}/cancel", null, HttpStatusCode.Accepted);
     }
 
     [Fact]
-    public async Task WhenTheTaskIsPaused_APlainMessageIs409()
+    public async Task WhenTheTaskIsPaused_APlainMessageIsAnswered_AndTheTaskStaysPaused()
     {
         var (host, _, threadId) = await StartAsync();
         await using var _ = host;
@@ -444,9 +463,83 @@ public sealed class ChatTests
         await host.PostAsync($"api/threads/{threadId}/pause", null, HttpStatusCode.Accepted);
         await host.WaitForStateAsync(threadId, LifecycleState.PausedUser);
 
-        await SayAsync(host, threadId, expected: HttpStatusCode.Conflict);
+        Assert.Equal("Chat", (await SayAsync(host, threadId, "Why did it stop?")).GetProperty("outcome").GetString());
 
-        Assert.Null((await host.ThreadAsync(threadId)).ChatRun);
+        var (details, _) = await AnswerAsync(host, threadId);
+        Assert.Equal(LifecycleState.PausedUser, details.Thread.State);
+        Assert.Contains("**State:** paused", host.Workers.Turns.Single(t => t.Kind == TurnKind.Chat).Brief);
+    }
+
+    [Fact]
+    public async Task RequestChanges_BeforeAHandoff_IsRefused()
+    {
+        var (host, _, threadId) = await StartAsync();
+        await using var _ = host;
+
+        var refused = await host.RequestChangesAsync(threadId, "Quote fields.", expected: HttpStatusCode.Conflict);
+
+        Assert.Contains("not waiting for testing", refused.GetProperty("error").GetString());
+        Assert.Equal(LifecycleState.Draft, (await host.ThreadAsync(threadId)).Thread.State);
+    }
+
+    [Theory]
+    [InlineData("@factory")]
+    [InlineData("  ")]
+    public async Task RequestChanges_WithNothingToChange_IsABadRequest_AndStartsNothing(string text)
+    {
+        var (host, _, threadId) = await StartAsync();
+        await using var _ = host;
+        await host.DelegateAsync(threadId);
+        await host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        await host.RequestChangesAsync(threadId, text, expected: HttpStatusCode.BadRequest);
+
+        Assert.Equal(LifecycleState.AwaitingHumanTesting, (await host.ThreadAsync(threadId)).Thread.State);
+    }
+
+    [Fact]
+    public async Task RequestChanges_DropsALeadingAtFactory_FromTheRequest()
+    {
+        var (host, _, threadId) = await StartAsync();
+        await using var _ = host;
+        await host.DelegateAsync(threadId);
+        await host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        await host.RequestChangesAsync(threadId, "@factory Quote fields that contain commas.");
+
+        Assert.Equal("Quote fields that contain commas.", (await host.ThreadAsync(threadId)).LatestRun!.Request);
+    }
+
+    [Fact]
+    public async Task AfterAHandoff_TheThreadSaysWhatRequestChangesWouldAdd_AndItAddsThat()
+    {
+        await using var host = await TestHost.StartAsync(o => o.Budget = o.Budget with { ReworkTopUpShare = 0.25 });
+        var threadId = await host.CreateThreadAsync(await host.RegisterProjectAsync(), budgetCap: 600_000);
+        await host.DelegateAsync(threadId);
+        await host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        using var response = await host.Client.GetAsync($"api/threads/{threadId}");
+        var view = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(150_000, view.GetProperty("reworkTopUp").GetInt64());
+
+        await host.RequestChangesAsync(threadId, "Quote fields that contain commas.");
+        Assert.Equal(750_000, (await host.ThreadAsync(threadId)).Thread.BudgetCap);
+    }
+
+    [Fact]
+    public async Task AfterAHandoff_AtFactoryMessage_IsRefused_AndDoesNotHandTheTaskBack()
+    {
+        var (host, _, threadId) = await StartAsync();
+        await using var _ = host;
+        await host.DelegateAsync(threadId);
+        await host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+        var turns = host.Workers.Turns.Count;
+
+        var refused = await host.DelegateAsync(threadId, "@factory Continue", expected: HttpStatusCode.Conflict);
+
+        Assert.Contains("Request changes", refused.GetProperty("error").GetString());
+        Assert.Equal(LifecycleState.AwaitingHumanTesting, (await host.ThreadAsync(threadId)).Thread.State);
+        Assert.Equal(turns, host.Workers.Turns.Count);
     }
 
     // ---- Its own budget ----

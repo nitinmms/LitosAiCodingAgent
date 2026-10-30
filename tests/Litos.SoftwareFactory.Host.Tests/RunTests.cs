@@ -636,7 +636,7 @@ public sealed class RunTests : IAsyncLifetime
         var (projectId, threadId) = await DelegatedAsync();
         var first = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
-        await _host.DelegateAsync(threadId, "@factory CSV values containing commas are incorrect. Fix this.");
+        await _host.RequestChangesAsync(threadId, "@factory CSV values containing commas are incorrect. Fix this.");
         var second = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
 
         Assert.Equal([TurnKind.Implement, TurnKind.Review, TurnKind.Rework, TurnKind.Review], TurnKinds);

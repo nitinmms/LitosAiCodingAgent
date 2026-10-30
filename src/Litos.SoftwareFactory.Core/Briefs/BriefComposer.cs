@@ -77,8 +77,10 @@ public sealed record ReflectionContext(
 /// <param name="Kind">HumanCorrection, Decision, ReviewFinding or Evidence.</param>
 public sealed record ReflectionSource(string Kind, Guid Id, string Text);
 
+/// <param name="Snapshot">Where the task stands now (<see cref="ChatSnapshot"/>); null leaves the section out.</param>
 public sealed record ChatContext(
-    string Project, string Branch, string Title, string? Request, IReadOnlyList<ChatLine> Conversation, string Question);
+    string Project, string Branch, string Title, string? Request, IReadOnlyList<ChatLine> Conversation, string Question,
+    string? Snapshot = null);
 
 /// <summary>
 /// Renders each turn's prompt from a versioned template. The templates are embedded resources,
@@ -99,8 +101,11 @@ public static partial class BriefComposer
     /// m2.6: the lesson reflection brief;
     /// m2.7: run, rework, spec and chat briefs carry the thread's attachments;
     /// m2.8: so does the decision scan's;
-    /// m2.9: the review brief lists the task's decisions, and review turns get the attachments).</summary>
-    public const string Revision = "m2.9";
+    /// m2.9: the review brief lists the task's decisions, and review turns get the attachments;
+    /// m2.10: chat is told where the task stands, may be asked in any state, and never reaches the
+    /// agent; and an @factory message held while no work turn could take it is added to the next
+    /// work turn's brief).</summary>
+    public const string Revision = "m2.10";
 
     private const int CharsPerToken = 4;
 
@@ -197,11 +202,11 @@ public static partial class BriefComposer
         ["existing"] = context.ExistingLessons.Count == 0 ? "None yet." : string.Join("\n", context.ExistingLessons.Select(l => "- " + OneLine(l))),
     });
 
-    /// <summary>A source as one bullet: its first 600 characters, on one line.</summary>
-    private static string OneLine(string text)
+    /// <summary>A source as one bullet: its first <paramref name="max"/> characters, on one line.</summary>
+    internal static string OneLine(string text, int max = 600)
     {
         var line = string.Join(' ', text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()));
-        return line.Length > 600 ? line[..600] + "…" : line;
+        return line.Length > max ? line[..max] + "…" : line;
     }
 
     public static string Chat(ChatContext context)
@@ -214,6 +219,9 @@ public static partial class BriefComposer
             ["branch"] = context.Branch,
             ["title"] = context.Title.Trim(),
             ["request"] = OrNone(context.Request),
+            ["snapshot"] = context.Snapshot is { Length: > 0 } snapshot
+                ? Section("Where the task stands (as of the start of this answer)", snapshot)
+                : "",
             ["conversation"] = conversation,
             ["question"] = Quote(context.Question),
         });

@@ -796,6 +796,10 @@ public static class AuditActions
 public static class EventTypes
 {
     public const string MessageAdded = "message";
+
+    /// <summary>A message's payload changed: an @factory message's delivery (<see cref="SteerPayload"/>). Never on the board's stream.</summary>
+    public const string MessageChanged = "message-changed";
+
     public const string StateChanged = "state";
     public const string UsageChanged = "usage";
 

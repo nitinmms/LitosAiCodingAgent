@@ -55,8 +55,12 @@ public interface IRunControl
     /// <summary>Asks the thread's running turn to stop. False when nothing is running for it.</summary>
     bool RequestStop(Guid threadId, StopRequest request);
 
-    /// <summary>Delivers a follow-up instruction to the thread's running turn.</summary>
-    Task SteerAsync(Guid threadId, string text, CancellationToken ct);
+    /// <summary>
+    /// Passes a person's @factory message to the thread's work turn in progress, and records it
+    /// delivered. False when no work turn could take it now: it stays held, and the next work turn's
+    /// brief carries it (m2-architecture.md §5.4).
+    /// </summary>
+    Task<bool> SteerAsync(Guid threadId, Guid messageId, string text, CancellationToken ct);
 }
 
 /// <summary>
@@ -337,7 +341,7 @@ public static class FactoryApi
             }
         });
 
-        threadRoutes.MapGet("", async (Guid id, IFactoryStore store, UserManager<FactoryUser> users, CancellationToken ct) =>
+        threadRoutes.MapGet("", async (Guid id, IFactoryStore store, UserManager<FactoryUser> users, FactorySettings settings, CancellationToken ct) =>
         {
             // Read before the thread itself: anything written in between is then replayed by the
             // event stream, never missed.
@@ -353,7 +357,12 @@ public static class FactoryApi
             var names = users.Users.Where(u => authors.Contains(u.Id)).ToList()
                 .ToDictionary(u => u.Id, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.UserName : u.DisplayName);
             var attachments = await store.ListAttachmentsAsync(id, includeUnsent: false, ct);
-            return Results.Ok(DetailsView(details, cursor, names, attachments));
+            // What Request changes would add to the budget, as the store will add it, for its confirm.
+            var thread = details.Thread;
+            long? reworkTopUp = thread.State == LifecycleState.AwaitingHumanTesting && thread.BudgetCap is not null
+                ? BudgetLedger.ReworkTopUp(thread.InitialBudgetCap ?? thread.BudgetCap, settings.Budgets.ReworkTopUpShare)
+                : null;
+            return Results.Ok(DetailsView(details, cursor, names, attachments, reworkTopUp));
         });
 
         // Renaming a thread, or filing it under another type: its owner or an Admin.
@@ -415,8 +424,8 @@ public static class FactoryApi
             if (string.IsNullOrWhiteSpace(request.Text))
                 return Problem("The message is empty.");
 
-            // @factory assigns the work; anything else is chat (m2-architecture.md §5), or a
-            // follow-up while the task is working.
+            // @factory starts or steers the work; anything else is a question, in every state, and
+            // never reaches the agent (m2-architecture.md §5.2).
             var mentioned = FactoryMention.TryParse(request.Text, out var text);
             if (!mentioned)
                 text = request.Text.Trim();
@@ -428,57 +437,31 @@ public static class FactoryApi
             if (asksForSpec && specRequest.Length == 0)
                 return Problem("Say what the specification is for after @factory spec.");
 
-            // Files go before the message, so a run the message starts finds them; a message the
-            // thread then refuses takes them back. Not to a running task: steering carries text only.
-            var attachmentIds = request.AttachmentIds ?? [];
-            if (attachmentIds.Count > 0)
-            {
-                if (attachmentIds.Count > settings.Attachments.MaxFilesPerMessage)
-                    return Problem($"A message can carry at most {settings.Attachments.MaxFilesPerMessage} files.");
-                if ((await store.GetThreadAsync(id, ct))?.Thread.State == LifecycleState.Running)
-                    return Results.Conflict(new { error = "Files cannot be sent to a task while it is working. Pause it first, or send them once it hands off." });
-                try
-                {
-                    await store.SendAttachmentsAsync(id, user.UserId(), request.MessageId, attachmentIds, clock.UtcNow, ct);
-                }
-                catch (StoreConflictException ex)
-                {
-                    return Results.Conflict(new { error = ex.Message });
-                }
-            }
-
-            DispatchResult result;
-            try
-            {
-                result = asksForSpec
-                    ? await store.RequestSpecAsync(id, user.UserId(), request.MessageId, specRequest, clock.UtcNow, ct)
+            return await PostAsync(id, request, user, store, runs, signals, clock, settings, text, ct, () =>
+                asksForSpec
+                    ? store.RequestSpecAsync(id, user.UserId(), request.MessageId, specRequest, clock.UtcNow, ct)
                     : mentioned
-                        ? await store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct, settings.Budgets.ReworkTopUpShare)
-                        : await store.ChatAsync(id, user.UserId(), request.MessageId, text, options.ChatTurnCap, clock.UtcNow, ct);
-            }
-            catch (StoreNotFoundException)
-            {
-                return Results.NotFound();
-            }
+                        ? store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct)
+                        : store.ChatAsync(id, user.UserId(), request.MessageId, text, options.ChatTurnCap, clock.UtcNow, ct));
+        });
 
-            if (result.Outcome == DispatchOutcome.Rejected && attachmentIds.Count > 0)
-                await store.UnsendAttachmentsAsync(id, request.MessageId, CancellationToken.None);
+        // After a handoff, the one way to hand the task back: a rework run on the same branch, its
+        // budget topped up (m2-architecture.md §5.1). An @factory message never does this.
+        threadRoutes.MapPost("/request-changes", async (
+            Guid id, PostMessageRequest request, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals,
+            IClock clock, FactorySettings settings, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.MessageId))
+                return Problem("messageId is required: it makes a retried request safe.");
 
-            signals.EventsWritten();
-            switch (result.Outcome)
-            {
-                case DispatchOutcome.Rejected:
-                    return Results.Conflict(new { error = result.Reason, thread = ThreadView(result.Thread) });
-                case DispatchOutcome.Queued or DispatchOutcome.Chat:
-                    signals.WorkQueued();
-                    break;
-                case DispatchOutcome.FollowUp:
-                    // Steering reaches the agent at a safe tool boundary; the message is already recorded.
-                    await runs.SteerAsync(id, text, ct);
-                    break;
-            }
+            // The text is the request itself; a habitual leading @factory is not part of it, and a
+            // bare one says nothing.
+            var text = FactoryMention.TryParse(request.Text, out var mentioned) ? mentioned : request.Text?.Trim() ?? "";
+            if (text.Length == 0 || text.Equals("@factory", StringComparison.OrdinalIgnoreCase))
+                return Problem("Say what should change.");
 
-            return Results.Accepted(value: new { outcome = result.Outcome.ToString(), result.RunId, thread = ThreadView(result.Thread) });
+            return await PostAsync(id, request, user, store, runs, signals, clock, settings, text, ct, () =>
+                store.RequestChangesAsync(id, user.UserId(), request.MessageId, text, settings.Budgets.ReworkTopUpShare, clock.UtcNow, ct));
         });
 
         // Approves a specification revision; the revision in the path is the one the person read.
@@ -815,6 +798,64 @@ public static class FactoryApi
         return (profile, null);
     }
 
+    /// <summary>
+    /// Records a message and what it starts. Files go first, so a run the message starts finds
+    /// them, and a message the thread then refuses takes them back. Not to a running task: steering
+    /// carries text only (attachments-architecture.md §3).
+    /// </summary>
+    private static async Task<IResult> PostAsync(
+        Guid id, PostMessageRequest request, ClaimsPrincipal user, IFactoryStore store, IRunControl runs, FactorySignals signals,
+        IClock clock, FactorySettings settings, string text, CancellationToken ct, Func<Task<DispatchResult>> post)
+    {
+        var attachmentIds = request.AttachmentIds ?? [];
+        if (attachmentIds.Count > 0)
+        {
+            if (attachmentIds.Count > settings.Attachments.MaxFilesPerMessage)
+                return Problem($"A message can carry at most {settings.Attachments.MaxFilesPerMessage} files.");
+            if ((await store.FindThreadAsync(id, ct))?.State == LifecycleState.Running)
+                return Results.Conflict(new { error = "Files cannot be sent to a task while it is working. Pause it first, or send them once it hands off." });
+            try
+            {
+                await store.SendAttachmentsAsync(id, user.UserId(), request.MessageId, attachmentIds, clock.UtcNow, ct);
+            }
+            catch (StoreConflictException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+        }
+
+        DispatchResult result;
+        try
+        {
+            result = await post();
+        }
+        catch (StoreNotFoundException)
+        {
+            return Results.NotFound();
+        }
+
+        if (result.Outcome == DispatchOutcome.Rejected && attachmentIds.Count > 0)
+            await store.UnsendAttachmentsAsync(id, request.MessageId, CancellationToken.None);
+
+        signals.EventsWritten();
+        bool? delivered = null;
+        switch (result.Outcome)
+        {
+            case DispatchOutcome.Rejected:
+                return Results.Conflict(new { error = result.Reason, thread = ThreadView(result.Thread) });
+            case DispatchOutcome.Queued or DispatchOutcome.Chat:
+                signals.WorkQueued();
+                break;
+            case DispatchOutcome.FollowUp when result.MessageId is { } messageId:
+                // Recorded held: a work turn in progress takes it at its next safe point, else the
+                // next work turn's brief carries it (m2-architecture.md §5.4).
+                delivered = await runs.SteerAsync(id, messageId, text, ct);
+                break;
+        }
+
+        return Results.Accepted(value: new { outcome = result.Outcome.ToString(), result.RunId, delivered, thread = ThreadView(result.Thread) });
+    }
+
     internal static object ThreadView(TaskThread thread) => new
     {
         thread.Id,
@@ -867,10 +908,13 @@ public static class FactoryApi
     };
 
     private static object DetailsView(
-        ThreadDetails details, long eventCursor, IReadOnlyDictionary<Guid, string?> authorNames, IReadOnlyList<ThreadAttachment> attachments) => new
+        ThreadDetails details, long eventCursor, IReadOnlyDictionary<Guid, string?> authorNames, IReadOnlyList<ThreadAttachment> attachments,
+        long? reworkTopUp = null) => new
     {
         // Pass to GET .../events?after= to hear everything that happened after this snapshot.
         EventCursor = eventCursor,
+        // After a handoff: the tokens Request changes adds to the cap; null with no cap or before a handoff.
+        ReworkTopUp = reworkTopUp,
         Thread = ThreadView(details.Thread),
         Project = ProjectView(details.Project),
         // A plain message is being answered: the composer waits for the reply.

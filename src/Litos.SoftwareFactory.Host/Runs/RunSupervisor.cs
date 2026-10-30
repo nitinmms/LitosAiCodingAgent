@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Litos.SoftwareFactory.Core.Briefs;
 using Litos.SoftwareFactory.Core.Orchestration;
+using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Host.Api;
 
@@ -15,7 +16,7 @@ namespace Litos.SoftwareFactory.Host.Runs;
 /// </summary>
 public sealed class RunSupervisor(
     RunRegistry registry, RunExecutor executor, ChatExecutor chat, SpecExecutor spec, ReflectionExecutor reflection, FactorySignals signals,
-    ILogger<RunSupervisor> logger)
+    IFactoryStore store, IClock clock, ILogger<RunSupervisor> logger)
     : IRunControl
 {
     private readonly ConcurrentDictionary<ActiveRun, Task> _running = new();
@@ -75,20 +76,37 @@ public sealed class RunSupervisor(
         return true;
     }
 
-    public async Task SteerAsync(Guid threadId, string text, CancellationToken ct)
+    public async Task<bool> SteerAsync(Guid threadId, Guid messageId, string text, CancellationToken ct)
     {
-        if (registry.FindByThread(threadId) is { Client: { } client, SessionId: { } sessionId } active)
+        if (registry.FindByThread(threadId) is not { TakesSteering: true, Client: { } client, SessionId: { } sessionId } active)
+            return false;
+
+        // Taken from the store first: a work turn starting this moment may have put it in its brief.
+        if (!await store.TakeSteerAsync(threadId, messageId, clock.UtcNow, CancellationToken.None))
+            return true;
+        signals.EventsWritten();
+
+        var steer = BriefComposer.FollowUp(text);
+        // Counted first: the agent may answer and end its turn before the call returns.
+        active.NoteSteer(messageId, steer);
+        bool delivered;
+        try
         {
-            try
-            {
-                // Counted first: the agent may answer and end its turn before the call returns.
-                active.NoteFollowUp();
-                await client.SteerAsync(sessionId, BriefComposer.FollowUp(text), ct);
-            }
-            catch (HttpRequestException ex)
-            {
-                logger.LogWarning(ex, "A follow-up for thread {ThreadId} could not be delivered to its worker.", threadId);
-            }
+            delivered = await client.SteerAsync(sessionId, steer, ct);
         }
+        catch (HttpRequestException ex)
+        {
+            logger.LogWarning(ex, "A follow-up for thread {ThreadId} could not be delivered to its worker; it is held for the next turn.", threadId);
+            delivered = false;
+        }
+
+        if (delivered)
+            return true;
+
+        // No turn took it after all: held again, for the next work turn.
+        active.ForgetSteer(messageId);
+        await store.SetSteerStatusAsync(threadId, [messageId], SteerStatus.Held, clock.UtcNow, CancellationToken.None);
+        signals.EventsWritten();
+        return false;
     }
 }

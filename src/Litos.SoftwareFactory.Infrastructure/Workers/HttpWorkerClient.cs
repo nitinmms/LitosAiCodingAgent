@@ -183,14 +183,22 @@ public sealed class HttpWorkerClient : IWorkerClient
         return false;
     }
 
-    public async Task SteerAsync(string sessionId, string message, CancellationToken ct)
+    public async Task<bool> SteerAsync(string sessionId, string message, CancellationToken ct)
     {
-        using var response = await _http.PostAsJsonAsync(TurnsPath(sessionId), new { input = message }, ct);
+        // The steer-only route: with no turn running it refuses rather than starting one from the
+        // steering text, which could swallow the brief of the next real turn.
+        using var response = await _http.PostAsJsonAsync($"{SessionPath(sessionId)}/steer", new { input = message }, ct);
+        if (response.StatusCode == HttpStatusCode.Conflict)
+            return false;
+        response.EnsureSuccessStatusCode();
+        return true;
+    }
 
-        // With no turn running the worker would start one from the steering text and answer with
-        // an event stream; that is not what steering means, so stop it straight away.
-        if (response.StatusCode != HttpStatusCode.Accepted)
-            await CancelAsync(sessionId, ct);
+    public async Task<IReadOnlyList<string>> TakeUndeliveredSteeringAsync(string sessionId, CancellationToken ct)
+    {
+        using var response = await _http.PostAsync($"{SessionPath(sessionId)}/steer/undelivered", content: null, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<List<string>>(ct) ?? [];
     }
 
     public async Task<bool> CancelAsync(string sessionId, CancellationToken ct)
@@ -220,5 +228,7 @@ public sealed class HttpWorkerClient : IWorkerClient
         }
     }
 
-    private static string TurnsPath(string sessionId) => $"sessions/{Uri.EscapeDataString(sessionId)}/turns";
+    private static string SessionPath(string sessionId) => $"sessions/{Uri.EscapeDataString(sessionId)}";
+
+    private static string TurnsPath(string sessionId) => $"{SessionPath(sessionId)}/turns";
 }

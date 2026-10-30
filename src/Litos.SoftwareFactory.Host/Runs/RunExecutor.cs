@@ -398,6 +398,48 @@ public sealed class RunExecutor(
 
     // ---- Agent turns ----
 
+    /// <summary>Only a work turn in the thread's own session takes a person's @factory messages
+    /// (<see cref="ActiveRun.IsWorkTurn"/>); a review or a scan has a session of its own.</summary>
+    private static bool TakesSteering(RunState state, string sessionId, RunData data) =>
+        ActiveRun.IsWorkTurn(state.WorkTurn) && sessionId == data.Thread.SessionId;
+
+    /// <summary>The brief, with every held @factory message after it, each as a follow-up the turn
+    /// counts as one, so an answer to it still reaches the thread.</summary>
+    private async Task<string> WithHeldSteersAsync(RunData data, ActiveRun active, string brief)
+    {
+        var held = await store.TakeHeldSteersAsync(data.Thread.Id, clock.UtcNow, CancellationToken.None);
+        if (held.Count == 0)
+            return brief;
+
+        foreach (var _ in held)
+            active.NoteFollowUp();
+        signals.EventsWritten();
+        return brief + string.Concat(held.Select(h => "\n\n" + BriefComposer.FollowUp(h.Text)));
+    }
+
+    /// <summary>
+    /// A message the worker took while the turn was ending, after its last look for one, never
+    /// reached the agent: it is held again for the next work turn.
+    /// </summary>
+    private async Task HoldUnreadSteersAsync(RunData data, ActiveRun active, IWorkerClient client, string sessionId)
+    {
+        try
+        {
+            var unread = active.UnreadSteers(await client.TakeUndeliveredSteeringAsync(sessionId, CancellationToken.None));
+            if (unread.Count == 0)
+                return;
+            // Never read, so never answered: the turn's last words are not a reply to them.
+            foreach (var messageId in unread)
+                active.ForgetSteer(messageId);
+            await store.SetSteerStatusAsync(data.Thread.Id, unread, SteerStatus.Held, clock.UtcNow, CancellationToken.None);
+            signals.EventsWritten();
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogWarning(ex, "Run {RunId}: could not ask the worker for steering its turn left unread.", data.Run.Id);
+        }
+    }
+
     /// <param name="ct">For the work before the turn (starting the worker, compaction, the brief),
     /// which a person's stop cuts short. The turn itself is stopped through
     /// <see cref="ActiveRun.BeginTurn"/>, and reports the stop as its end.</param>
@@ -450,13 +492,20 @@ public sealed class RunExecutor(
         var hadDecision = state.Decisions.Count > 0 || state.DecisionsAsked > 0
             || (await store.GetThreadAsync(data.Thread.Id, ct))?.Decisions.Count > 0;
         var turnToken = active.BeginTurn(
-            step.Kind, state.WorkTurn, sessionId, linked.Token, phase, allowance, askAboutBreakingLimitations: !hadDecision);
+            step.Kind, state.WorkTurn, sessionId, linked.Token, phase, allowance, askAboutBreakingLimitations: !hadDecision, startedAt: clock.UtcNow);
+
+        // A person's @factory messages that no turn could take when they were sent go to the next
+        // work turn, never to a review or a scan (m2-architecture.md §5.4).
+        var takesSteering = TakesSteering(state, sessionId, data);
+        if (takesSteering)
+            brief = await WithHeldSteersAsync(data, active, brief);
 
         TurnStreamResult? result = null;
         try
         {
             result = await client.RunTurnAsync(
-                sessionId, step.Kind, brief, allowance?.MaxToolCalls ?? data.Limits.MaxToolCallsPerTurn, turnToken, images: given.Images);
+                sessionId, step.Kind, brief, allowance?.MaxToolCalls ?? data.Limits.MaxToolCallsPerTurn, turnToken,
+                onProgress: progress => active.TrackProgress(progress, clock.UtcNow), images: given.Images);
         }
         catch (OperationCanceledException) when (!hostStopping.IsCancellationRequested)
         {
@@ -476,6 +525,10 @@ public sealed class RunExecutor(
             logger.LogWarning(ex, "The worker for run {RunId} stopped while a turn was running.", data.Run.Id);
             result = new TurnStreamResult(false, 0, "The worker process stopped unexpectedly while the turn was running. The edits made so far are kept; resuming starts a new worker.");
         }
+
+        active.EndTurn();
+        if (takesSteering && !hostStopping.IsCancellationRequested)
+            await HoldUnreadSteersAsync(data, active, client, sessionId);
 
         // A turn that failed while the host was stopping failed because it was: the gateway and
         // the worker's callbacks go with the host. That is not the task's failure, so the run is

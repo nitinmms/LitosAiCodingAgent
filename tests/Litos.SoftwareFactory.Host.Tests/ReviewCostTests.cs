@@ -113,11 +113,14 @@ public sealed class GatewayAllowanceTests : IAsyncLifetime
             IReadOnlyList<TurnImage>? images = null) =>
             throw new NotSupportedException();
 
-        public Task SteerAsync(string sessionId, string message, CancellationToken ct)
+        public Task<bool> SteerAsync(string sessionId, string message, CancellationToken ct)
         {
             Steered.Enqueue((sessionId, message));
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
+
+        public Task<IReadOnlyList<string>> TakeUndeliveredSteeringAsync(string sessionId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<string>>([]);
 
         public Task<bool> CancelAsync(string sessionId, CancellationToken ct) => Task.FromResult(true);
 

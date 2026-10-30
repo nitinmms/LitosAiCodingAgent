@@ -15,10 +15,11 @@ public sealed class StoreNotFoundException(string message) : Exception(message);
 
 public enum DispatchOutcome
 {
-    /// <summary>A run was created (or a rework run, after testing) and queued.</summary>
+    /// <summary>A run was created and queued: the first work, or a rework run asked for with Request changes.</summary>
     Queued,
 
-    /// <summary>A run is already active: the message is a follow-up instruction for it.</summary>
+    /// <summary>The task is queued or running: the @factory message is a follow-up for its agent,
+    /// recorded held until a work turn takes it (m2-architecture.md §5.4).</summary>
     FollowUp,
 
     /// <summary>This message id was dispatched before; nothing was done again.</summary>
@@ -31,7 +32,11 @@ public enum DispatchOutcome
     Chat,
 }
 
-public sealed record DispatchResult(DispatchOutcome Outcome, TaskThread Thread, Guid? RunId, string? Reason = null);
+public sealed record DispatchResult(DispatchOutcome Outcome, TaskThread Thread, Guid? RunId, string? Reason = null)
+{
+    /// <summary>The message recorded, when one was; for a follow-up, its delivery is tracked by it.</summary>
+    public Guid? MessageId { get; init; }
+}
 
 public sealed record ClaimedRun(TaskRun Run, TaskThread Thread, Project Project);
 
@@ -166,17 +171,44 @@ public interface IFactoryStore
 
     /// <summary>
     /// Records an @factory message and what it starts. The message id is the idempotency key, so
-    /// a double-click or a network retry creates one assignment. One active run per thread: a
-    /// mention during execution becomes a follow-up instruction, not a second run.
+    /// a double-click or a network retry creates one assignment. From Draft it delegates the work;
+    /// while the task is queued or running it is a follow-up for the agent, recorded as held until
+    /// a turn takes it (<see cref="SteerPayload"/>). A handed-off task is refused: only
+    /// <see cref="RequestChangesAsync"/> hands it back (m2-architecture.md §5.1).
     /// </summary>
-    /// <param name="reworkTopUpShare">For a change request after a handoff, the share of the task's
-    /// original cap added to its budget (<see cref="Budget.BudgetPolicy.ReworkTopUpShare"/>).</param>
-    Task<DispatchResult> DispatchAsync(
-        Guid threadId, Guid userId, string dispatchKey, string text, DateTimeOffset now, CancellationToken ct, double reworkTopUpShare = 0);
+    Task<DispatchResult> DispatchAsync(Guid threadId, Guid userId, string dispatchKey, string text, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// The tester asks for changes after a handoff: a rework run on the same branch, with the
+    /// task's budget topped up. Rejected unless the task is awaiting human testing. The dispatch
+    /// key makes a retried request safe.
+    /// </summary>
+    /// <param name="reworkTopUpShare">The share of the task's original cap added to its budget
+    /// (<see cref="Budget.BudgetPolicy.ReworkTopUpShare"/>).</param>
+    Task<DispatchResult> RequestChangesAsync(
+        Guid threadId, Guid userId, string dispatchKey, string text, double reworkTopUpShare, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// Marks the thread's held @factory messages delivered and returns them, oldest first: what
+    /// the next work turn's brief carries (m2-architecture.md §5.4).
+    /// </summary>
+    Task<IReadOnlyList<HeldSteer>> TakeHeldSteersAsync(Guid threadId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// Takes one held @factory message for delivery to the turn in progress: marks it delivered and
+    /// returns true only if it was still held. False when a work turn's brief already took it, or it
+    /// was dropped, so a message never reaches the agent twice.
+    /// </summary>
+    Task<bool> TakeSteerAsync(Guid threadId, Guid messageId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Records where @factory messages have got to. Each must be one of the thread's
+    /// follow-ups; one that was dropped stays dropped.</summary>
+    Task SetSteerStatusAsync(Guid threadId, IReadOnlyCollection<Guid> messageIds, SteerStatus status, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>Accept, pause, resume, cancel, raise-and-resume, resolve a blocker or recover:
     /// a transition a person asked for. Throws <see cref="StoreConflictException"/> when it is
-    /// not legal from the thread's state.</summary>
+    /// not legal from the thread's state. A cancel drops held @factory messages, with a note
+    /// (m2-architecture.md §5.4); a pause keeps them.</summary>
     /// <param name="reflectionAllowance">For an Accept: what a lesson reflection may spend; 0 creates none
     /// (m4-architecture.md §5.1). The reflection is created in the same transaction and can never undo the acceptance.</param>
     Task<TaskThread> ApplyUserActionAsync(
@@ -188,6 +220,7 @@ public interface IFactoryStore
     /// <see cref="StoreConflictException"/> when the run is executing, when the thread's run is
     /// not a rework run, or when there is no handoff to return to. The repository lease, if the
     /// thread holds one, is kept so the caller can clean the working copy before releasing it.
+    /// Held @factory messages for the withdrawn run are dropped, with a note.
     /// </summary>
     Task<WithdrawResult> WithdrawChangesAsync(Guid threadId, Guid userId, DateTimeOffset now, CancellationToken ct);
 
@@ -198,11 +231,10 @@ public interface IFactoryStore
     Task<TaskThread> SetBudgetCapAsync(Guid threadId, long? cap, Guid userId, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>
-    /// A plain message, with no @factory (m2-architecture.md §5). In Draft, after a handoff or
-    /// after acceptance it queues a read-only chat run to answer it, with a budget of
-    /// <paramref name="chatTurnCap"/>; while the task is queued or running it is a follow-up for
-    /// the agent; in any other state it is rejected, as is a second message while one is still
-    /// being answered. The dispatch key makes a retried message safe, as for @factory.
+    /// A plain message, with no @factory (m2-architecture.md §5). In every state it queues a
+    /// read-only chat run to answer it, with a budget of <paramref name="chatTurnCap"/>, and leaves
+    /// the task and its work alone: it never reaches the agent. A second message while one is
+    /// still being answered is rejected. The dispatch key makes a retried message safe.
     /// </summary>
     Task<DispatchResult> ChatAsync(
         Guid threadId, Guid userId, string dispatchKey, string text, long chatTurnCap, DateTimeOffset now, CancellationToken ct);
@@ -349,8 +381,10 @@ public interface IFactoryStore
     /// counts the runs marked Running instead.</param>
     /// <param name="pausedReason">Set while dispatch is paused (m4-architecture.md §8.1): nothing is
     /// claimed, and each queued task is given this as its waiting reason.</param>
+    /// <param name="chatSlotCap">How many chat answers may run at once. Chats have slots of their
+    /// own, so a question is answered even while every task slot is busy (m2-architecture.md §5.3).</param>
     Task<ClaimedRun?> ClaimNextRunAsync(
-        int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null, string? pausedReason = null);
+        int slotCap, DateTimeOffset now, CancellationToken ct, IReadOnlySet<Guid>? heldRuns = null, string? pausedReason = null, int chatSlotCap = 2);
 
     /// <summary>Saves the orchestrator's state after a step, with the stage the task is now in,
     /// and the working copy as it is now (null keeps the last one).</summary>
@@ -370,6 +404,11 @@ public interface IFactoryStore
 
     Task SetThreadBranchAsync(Guid threadId, string branch, string baseCommit, CancellationToken ct);
 
+    /// <summary>
+    /// Records a run's stop and moves the task with it. A stop no later work turn of the run will
+    /// follow (a handoff, a cancel, a block) drops held @factory messages, with a note; one the same
+    /// run continues from (a pause, a decision, a paused budget) keeps them (m2-architecture.md §5.4).
+    /// </summary>
     Task StopRunAsync(StopRunCommand command, DateTimeOffset now, CancellationToken ct);
 
     Task<ThreadMessage> AddFactoryMessageAsync(
