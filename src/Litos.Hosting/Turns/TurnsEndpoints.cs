@@ -33,6 +33,18 @@ public static class TurnsEndpoints
                 ? Results.Ok()
                 : Results.NotFound("No turn is currently running for this session."));
 
+        // Steering only: 202 when the turn in progress took the message, 409 when none is running.
+        // Unlike /turns, it never starts a turn from what was meant as steering.
+        app.MapPost("/sessions/{id}/steer", (string id, TurnRequest request, AgentWorker worker) =>
+            worker.TrySteer(SessionOwner.Local, id, request.Input)
+                ? Results.Accepted()
+                : Results.Conflict("No turn is running for this session."));
+
+        // What reached a turn after it had stopped reading steering, taken once; a turn still
+        // ending is waited for first.
+        app.MapPost("/sessions/{id}/steer/undelivered", async (string id, AgentWorker worker, CancellationToken ct) =>
+            Results.Ok(await worker.TakeUndeliveredSteeringAsync(SessionOwner.Local, id, UndeliveredWait, ct)));
+
         app.MapPost("/sessions/{id}/approvals/{approvalId}/resolve", (
             string id, Guid approvalId, ResolveApprovalRequest request, PendingApprovalStore approvals) =>
         {
@@ -90,6 +102,9 @@ public static class TurnsEndpoints
 
         return app;
     }
+
+    /// <summary>How long /steer/undelivered waits for a turn that is still ending.</summary>
+    internal static readonly TimeSpan UndeliveredWait = TimeSpan.FromSeconds(10);
 
     internal static async ValueTask<TurnInput> ReadTurnRequestAsync(HttpRequest request, CancellationToken ct)
     {

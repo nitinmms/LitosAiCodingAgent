@@ -162,6 +162,42 @@ public sealed class AgentWorker : BackgroundService
     private static string RenderForSteering(IReadOnlyList<ContentBlock> content) =>
         string.Join("\n\n", content.OfType<TextBlock>().Select(t => t.Text));
 
+    /// <summary>
+    /// Steers the session's turn in progress, and never starts one: false when no turn is running
+    /// to take the message. Unlike <see cref="StartOrSteerTurn"/>, a caller that only means to
+    /// steer cannot start a stray turn from its message.
+    /// </summary>
+    public bool TrySteer(SessionOwner owner, string sessionId, string text)
+    {
+        lock (_turnsLock)
+            return _activeTurns.TryGetValue((owner, sessionId), out var turn)
+                && turn.Steering.Writer.TryWrite(new SteeringMessage(text, SteeringMode.Steer));
+    }
+
+    /// <summary>The most unread steering messages kept per session, oldest dropped first.</summary>
+    internal const int MaxUndelivered = 20;
+
+    private readonly Dictionary<(SessionOwner Owner, string SessionId), List<string>> _undelivered = [];
+
+    /// <summary>
+    /// The steering messages that reached a turn after it had stopped reading them, oldest first,
+    /// and forgets them. A turn checks for steering only between its tool calls, so a message can
+    /// arrive after its last check and before it ends; its caller can then deliver it another way.
+    /// </summary>
+    /// <remarks>A turn still ending (a cancel only asks it to stop) is waited for, up to
+    /// <paramref name="wait"/>, so what it leaves unread is collected first.</remarks>
+    public async Task<IReadOnlyList<string>> TakeUndeliveredSteeringAsync(SessionOwner owner, string sessionId, TimeSpan wait, CancellationToken ct)
+    {
+        Task? ending;
+        lock (_turnsLock)
+            ending = _activeTurns.TryGetValue((owner, sessionId), out var turn) ? turn.Run : null;
+        if (ending is not null)
+            await Task.WhenAny(ending, Task.Delay(wait, ct));
+
+        lock (_turnsLock)
+            return _undelivered.Remove((owner, sessionId), out var texts) ? texts : [];
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var registration = stoppingToken.Register(_stopping.Cancel);
@@ -256,16 +292,34 @@ public sealed class AgentWorker : BackgroundService
         }
         finally
         {
-            events.TryComplete();
-            steering.Writer.TryComplete();
             // Remove-then-dispose under the same lock CancelTurn takes, so a concurrent CancelTurn
             // either observes the turn (and calls .Cancel() before this Dispose() can run) or
             // doesn't find it at all — never a window where it's found but already disposed.
+            // Closing the steering channel under that lock too means no steer is written after
+            // the unread ones are collected; collecting them before the event stream ends means a
+            // caller that has seen the stream end will find them.
             lock (_turnsLock)
             {
                 _activeTurns.Remove((owner, sessionId));
+                steering.Writer.TryComplete();
+                CollectUndelivered((owner, sessionId), steering.Reader);
                 explicitCancel.Dispose();
             }
+
+            events.TryComplete();
+        }
+    }
+
+    /// <summary>Keeps what a finished turn left unread in its steering channel. Called under the turns lock.</summary>
+    private void CollectUndelivered((SessionOwner Owner, string SessionId) key, ChannelReader<SteeringMessage> reader)
+    {
+        while (reader.TryRead(out var message))
+        {
+            if (!_undelivered.TryGetValue(key, out var texts))
+                _undelivered[key] = texts = [];
+            texts.Add(message.Text);
+            if (texts.Count > MaxUndelivered)
+                texts.RemoveAt(0);
         }
     }
 

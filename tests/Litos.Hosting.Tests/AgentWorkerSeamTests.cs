@@ -224,6 +224,90 @@ public class AgentWorkerSeamTests
         Assert.Equal(first, Assert.Single(secondResolver.Seen)); // it was shown what the first run recorded
         Assert.Contains(second, systemPrompt.WorkingDirectories);
     }
+
+    // ---- Steering only (the software factory's held @factory messages) ----
+
+    [Fact]
+    public void TrySteer_WithNoTurnRunning_IsRefused_AndStartsNothing()
+    {
+        var h = Create();
+
+        Assert.False(h.Worker.TrySteer(SessionOwner.Local, "session-1", "Use PageSize."));
+        Assert.Empty(h.Policy.Calls);
+        Assert.Empty(h.Provider.ReceivedMessageLists);
+    }
+
+    [Fact]
+    public async Task TrySteer_DuringATurn_ReachesTheModel_AndLeavesNothingUndelivered()
+    {
+        var h = Create();
+        var gate = new TaskCompletionSource();
+        h.Provider.EnqueueAwaiting(gate.Task, new TextDelta("done"), new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(1, 1)));
+        var events = h.Worker.StartOrSteerTurn(SessionOwner.Local, "session-1", [new TextBlock("go")], CancellationToken.None, out _);
+
+        Assert.True(h.Worker.TrySteer(SessionOwner.Local, "session-1", "Use PageSize."));
+        gate.SetResult();
+        await DrainAsync(events!);
+
+        // The steer arrived before the turn's last check, so the model got it as a further message.
+        Assert.Contains(h.Provider.ReceivedMessageLists.Last(), m => m.Content.OfType<TextBlock>().Any(t => t.Text == "Use PageSize."));
+        Assert.Empty(await h.Worker.TakeUndeliveredSteeringAsync(SessionOwner.Local, "session-1", TimeSpan.FromSeconds(5), default));
+        Assert.False(h.Worker.TrySteer(SessionOwner.Local, "session-1", "Too late."));
+    }
+
+    [Fact]
+    public async Task UnreadSteering_KeepsOnlyTheNewest()
+    {
+        var h = Create();
+        var gate = new TaskCompletionSource();
+        h.Provider.EnqueueAwaiting(gate.Task, new TextDelta("never"));
+        var events = h.Worker.StartOrSteerTurn(SessionOwner.Local, "session-1", [new TextBlock("go")], CancellationToken.None, out _);
+        for (var i = 1; i <= AgentWorker.MaxUndelivered + 1; i++)
+            Assert.True(h.Worker.TrySteer(SessionOwner.Local, "session-1", $"steer {i}"));
+
+        h.Worker.CancelTurn(SessionOwner.Local, "session-1");
+        await DrainAsync(events!);
+
+        var unread = await h.Worker.TakeUndeliveredSteeringAsync(SessionOwner.Local, "session-1", TimeSpan.FromSeconds(5), default);
+        Assert.Equal(AgentWorker.MaxUndelivered, unread.Count);
+        Assert.Equal("steer 2", unread[0]);
+    }
+
+    /// <summary>Taken while the turn is still ending (a cancel only asks it to stop): what it
+    /// leaves unread is waited for, not missed.</summary>
+    [Fact]
+    public async Task UnreadSteering_TakenWhileTheTurnIsEnding_WaitsForIt()
+    {
+        var h = Create();
+        var gate = new TaskCompletionSource();
+        h.Provider.EnqueueAwaiting(gate.Task, new TextDelta("never"));
+        var events = h.Worker.StartOrSteerTurn(SessionOwner.Local, "session-1", [new TextBlock("go")], CancellationToken.None, out _);
+        Assert.True(h.Worker.TrySteer(SessionOwner.Local, "session-1", "Use PageSize."));
+
+        h.Worker.CancelTurn(SessionOwner.Local, "session-1");
+        var unread = await h.Worker.TakeUndeliveredSteeringAsync(SessionOwner.Local, "session-1", TimeSpan.FromSeconds(5), default);
+
+        Assert.Equal(["Use PageSize."], unread);
+        await DrainAsync(events!);
+    }
+
+    [Fact]
+    public async Task ASteerTheTurnNeverRead_IsKept_AndTakenOnce()
+    {
+        var h = Create();
+        var gate = new TaskCompletionSource();
+        h.Provider.EnqueueAwaiting(gate.Task, new TextDelta("never"));
+        var events = h.Worker.StartOrSteerTurn(SessionOwner.Local, "session-1", [new TextBlock("go")], CancellationToken.None, out _);
+        Assert.True(h.Worker.TrySteer(SessionOwner.Local, "session-1", "Use PageSize."));
+
+        // The turn ends without another check for steering.
+        Assert.True(h.Worker.CancelTurn(SessionOwner.Local, "session-1"));
+        await DrainAsync(events!);
+
+        Assert.Equal(["Use PageSize."], await h.Worker.TakeUndeliveredSteeringAsync(SessionOwner.Local, "session-1", TimeSpan.FromSeconds(5), default));
+        Assert.Empty(await h.Worker.TakeUndeliveredSteeringAsync(SessionOwner.Local, "session-1", TimeSpan.FromSeconds(5), default));
+        Assert.Empty(await h.Worker.TakeUndeliveredSteeringAsync(SessionOwner.Local, "another-session", TimeSpan.FromSeconds(5), default));
+    }
 }
 
 /// <summary>
