@@ -95,10 +95,13 @@ export function subscribeToThread(
     }
   };
 
-  source.addEventListener('message', (event) => {
-    const sequence = fresh(event);
-    if (sequence !== null) onEvent({ type: 'message', sequence });
-  });
+  // A new message, or a change to one (an @factory message's delivery): either way the thread is read again.
+  for (const type of ['message', 'message-changed'] as const) {
+    source.addEventListener(type, (event) => {
+      const sequence = fresh(event);
+      if (sequence !== null) onEvent({ type: 'message', sequence });
+    });
+  }
   for (const type of ['state', 'usage'] as const) {
     source.addEventListener(type, (event) => {
       const change = changeOf(event);

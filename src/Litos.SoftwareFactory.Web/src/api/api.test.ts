@@ -168,6 +168,13 @@ describe('the event stream', () => {
     expect(events).toEqual([{ type: 'message', sequence: 50 }]);
   });
 
+  it('delivers a change to a message (an @factory message delivered or dropped) as a prompt to reload, once', () => {
+    const { source, events } = open();
+    source.emit('message-changed', { id: 'm-1', payload: '{"steer":"delivered"}' }, 51);
+    source.emit('message-changed', { id: 'm-1', payload: '{"steer":"delivered"}' }, 51); // replayed after a reconnect
+    expect(events).toEqual([{ type: 'message', sequence: 51 }]);
+  });
+
   it('delivers what a chat answer is doing, and skips a report it cannot read', () => {
     const { source, events } = open();
     const progress = { runId: 'r', startedAt: '2026-10-08T09:00:00Z', modelCalls: 2, toolCalls: 1, activity: 'Read src/Orders.cs' };

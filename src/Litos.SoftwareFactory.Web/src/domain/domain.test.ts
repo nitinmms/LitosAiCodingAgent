@@ -6,9 +6,9 @@ import {
   applyChange,
   awaitsYou,
   canCancel,
-  canChat,
   canMessage,
   canPause,
+  canRequestChanges,
   canResume,
   canWithdraw,
   chatWork,
@@ -16,6 +16,7 @@ import {
   finishedLabel,
   firstThread,
   isBareMention,
+  isChangeRequest,
   isClosed,
   isPlainMessage,
   liveOrder,
@@ -24,6 +25,7 @@ import {
   parseSpec,
   pullRequestLabel,
   stateName,
+  steerOf,
   taskLabel,
   threadGroup,
   turnLabel,
@@ -105,8 +107,22 @@ describe('a chat answer in progress', () => {
 });
 
 describe('chat mirrors the host (m2-architecture.md §5)', () => {
-  it('a plain message is answered as chat before delegating, after a handoff and after acceptance only', () => {
-    expect(ALL_STATES.filter(canChat).sort()).toEqual(['Accepted', 'AwaitingHumanTesting', 'Draft']);
+  it('only a handed-off task takes Request changes', () => {
+    expect(ALL_STATES.filter(canRequestChanges)).toEqual(['AwaitingHumanTesting']);
+  });
+
+  it('reads where an @factory message to a working task has got to', () => {
+    expect(steerOf({ payload: { steer: 'held' } })).toEqual({ status: 'held', reason: null });
+    expect(steerOf({ payload: { steer: 'dropped', reason: 'The task was cancelled.' } })).toEqual({ status: 'dropped', reason: 'The task was cancelled.' });
+    expect(steerOf({ payload: { steer: 'sideways' } })).toBeNull();
+    expect(steerOf({ payload: { plain: true } })).toBeNull();
+    expect(steerOf({ payload: null })).toBeNull();
+  });
+
+  it('a change request is marked by the host', () => {
+    expect(isChangeRequest({ payload: { changeRequest: true } })).toBe(true);
+    expect(isChangeRequest({ payload: { plain: true } })).toBe(false);
+    expect(isChangeRequest({ payload: null })).toBe(false);
   });
 
   it('a message the host marked plain is one; anything else is not', () => {
@@ -196,8 +212,8 @@ describe('what each state allows matches the host', () => {
   it('pause: running or queued', () => expect(allowed(canPause)).toEqual(['Queued', 'Running']));
   it('resume: the four stopped states', () =>
     expect(allowed(canResume)).toEqual(['PausedBudget', 'PausedUser', 'Blocked', 'Interrupted']));
-  it('message: draft, queued, running, and after a handoff', () =>
-    expect(allowed(canMessage)).toEqual(['Draft', 'Queued', 'Running', 'AwaitingHumanTesting']));
+  it('@factory: a draft, or a queued or running task; never a handed-off one', () =>
+    expect(allowed(canMessage)).toEqual(['Draft', 'Queued', 'Running']));
   it('cancel: anything not closed, a draft included', () =>
     expect(allowed(canCancel)).toEqual([
       'Draft',

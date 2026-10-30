@@ -401,14 +401,24 @@ describe('delegating', () => {
     expect(ids[0]).toBe(ids[1]);
   });
 
-  it('a message to a running task is a follow-up for the agent', async () => {
+  it('an @factory message to a running task goes to its agent, and says it was delivered', async () => {
     const { host, thread, user } = await withThread({ state: 'Running', stage: 'Implement' });
 
     await user.type(composer(), '@factory also cover empty orders{Enter}');
 
-    expect(await screen.findByRole('status')).toHaveTextContent('It reads the message at its next safe point.');
+    expect(await screen.findByRole('status')).toHaveTextContent('It reads the message when its current tool call ends.');
     expect(await screen.findByText('also cover empty orders')).toBeInTheDocument();
+    expect(screen.getByText('Delivered to the agent')).toBeInTheDocument();
     expect(host.details(thread.id).thread.state).toBe('Running');
+  });
+
+  it('an @factory message to a queued task is held for its first work turn, and says so', async () => {
+    const { user } = await withThread({ state: 'Queued', stage: 'Implement' });
+
+    await user.type(composer(), '@factory also cover empty orders{Enter}');
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Held for the agent: no turn is running now.');
+    expect(await screen.findByText('Waiting for the agent')).toBeInTheDocument();
   });
 });
 
@@ -659,16 +669,17 @@ describe('a decision', () => {
     expect(host.sent('POST', `/api/decisions/${decision.id}/answer`)[0]!.body).toEqual({ answer: 'Keep reading them' });
   });
 
-  it('answers in the user’s own words from the composer, with no @factory needed', async () => {
-    const { host, decision, card, user } = await awaitingDecision();
-    expect(composer()).toHaveAttribute('placeholder', expect.stringContaining('Answer the decision'));
+  /** Typing in the composer used to answer an open decision, and resume the work on it, unasked. */
+  it('the composer asks a question while a decision is open: only the card answers it', async () => {
+    const { host, thread, decision, user } = await awaitingDecision();
+    expect(screen.getByText(/Answer the decision on its card/)).toBeInTheDocument();
 
-    await user.type(composer(), 'Only the ones cancelled this year');
-    await user.click(screen.getByRole('button', { name: 'Answer' }));
+    await user.type(composer(), 'Why does this need deciding?');
+    await user.click(screen.getByRole('button', { name: 'Ask' }));
 
-    expect(await card.findByText('Only the ones cancelled this year')).toBeInTheDocument();
-    expect(host.sent('POST', `/api/decisions/${decision.id}/answer`)[0]!.body).toEqual({ answer: 'Only the ones cancelled this year' });
-    expect(host.sent('POST', '/messages')).toHaveLength(0);
+    await waitFor(() => expect(host.sent('POST', '/messages')).toHaveLength(1));
+    expect(host.sent('POST', `/api/decisions/${decision.id}/answer`)).toHaveLength(0);
+    expect(host.details(thread.id).thread.state).toBe('AwaitingDecision');
   });
 });
 
@@ -896,7 +907,7 @@ describe('a handoff', () => {
     expect(host.details(thread.id).thread.state).toBe('Accepted');
     expect(card.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
     // Closed to work, but it can still be asked about (Chat.test.tsx).
-    expect(composer()).toHaveAttribute('placeholder', 'Ask a question about the code');
+    expect(composer()).toHaveAttribute('placeholder', 'Ask a question about the task or its code');
     expect(screen.getByRole('button', { name: '@factory' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Cancel task' })).not.toBeInTheDocument();
     expect(screen.getByText(/This task is closed; the branch is yours to merge/)).toBeInTheDocument();
@@ -908,11 +919,14 @@ describe('a handoff', () => {
     const { host, thread, card, user } = await handedOff();
 
     await user.click(card.getByRole('button', { name: 'Request changes' }));
-    expect(composer()).toHaveValue('@factory ');
+    expect(composer()).toHaveValue('');
     expect(composer()).toHaveFocus();
+    expect(screen.getByRole('group', { name: 'Request changes' })).toHaveTextContent('Request changes hands the task back.');
     await user.type(composer(), 'Quote fields that contain commas{Enter}');
 
     expect(await screen.findByText('Quote fields that contain commas')).toBeInTheDocument();
+    expect(host.sent('POST', `/api/threads/${thread.id}/request-changes`)).toHaveLength(1);
+    expect(screen.getByText('Change request')).toBeInTheDocument();
     expect(host.details(thread.id).thread.state).toBe('Queued');
     expect(card.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
 
@@ -934,7 +948,7 @@ describe('a handoff', () => {
   });
 });
 
-describe('after a handoff, @factory is a change request', () => {
+describe('after a handoff, only Request changes hands the task back', () => {
   async function handedOff() {
     const context = await withThread();
     await context.user.type(composer(), '@factory Add CSV export for Orders{Enter}');
@@ -943,6 +957,13 @@ describe('after a handoff, @factory is a change request', () => {
     act(() => void context.host.handOff(context.thread.id));
     await screen.findByRole('group', { name: 'Handoff' });
     return context;
+  }
+
+  /** Request changes, as a person does it: the button, the request, then send. */
+  async function requestChanges(user: ReturnType<typeof userEvent.setup>, text: string) {
+    await user.click(screen.getAllByRole('button', { name: 'Request changes' })[0]!);
+    await user.type(composer(), text);
+    await user.click(screen.getByRole('button', { name: 'Send change request' }));
   }
 
   /**
@@ -956,20 +977,47 @@ describe('after a handoff, @factory is a change request', () => {
     return button;
   }
 
-  /** The first real task's mistake: a question, sent with @factory, became a rework run. */
-  it('says so before anything is sent, and a question without @factory is asked instead', async () => {
-    const { user } = await handedOff();
+  /** Change requests made by mistake: "Continue", or a question sent with @factory, became rework runs. */
+  it('an @factory message is refused before it is sent, and a plain one is a question', async () => {
+    const { host, user } = await handedOff();
 
-    expect(screen.getByText(/asks for changes: it starts a rework run on this branch/)).toBeInTheDocument();
-    expect(screen.getByText(/Without it, Litos answers questions about the branch/)).toBeInTheDocument();
+    expect(screen.getByText(/To change the code, use Request changes/)).toBeInTheDocument();
 
-    await user.type(composer(), '@factory Quote the fields');
-    expect(screen.getByRole('button', { name: 'Send change request' })).toBeEnabled();
+    await user.type(composer(), '@factory Continue');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByText(/@factory does not hand the task back; use Request changes/)).toBeInTheDocument();
 
     await user.clear(composer());
-    await user.type(composer(), 'Why are the fields not quoted?');
+    await user.type(composer(), 'Continue');
     expect(screen.getByRole('button', { name: 'Ask' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Send change request' })).not.toBeInTheDocument();
+    expect(host.sent('POST', '/request-changes')).toHaveLength(0);
+  });
+
+  it('pressed over a bare @factory, Request changes starts from an empty request', async () => {
+    const { user } = await handedOff();
+    await user.type(composer(), '@factory');
+
+    await user.click(screen.getAllByRole('button', { name: 'Request changes' })[0]!);
+
+    expect(composer()).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Send change request' })).toBeDisabled();
+  });
+
+  it('Request changes shows what it starts and adds, and can be backed out of', async () => {
+    const { host, thread, user } = await handedOff();
+    // The host works the figure out; a state event makes the page read it.
+    host.details(thread.id).reworkTopUp = 150_000;
+    act(() => void host.change(thread.id, { stateReason: null }));
+
+    await user.click(screen.getAllByRole('button', { name: 'Request changes' })[0]!);
+
+    const strip = screen.getByRole('group', { name: 'Request changes' });
+    await waitFor(() => expect(strip).toHaveTextContent('A rework run starts on factory/add-csv-export-1a2b and adds 150,000 tokens to its budget'));
+    expect(screen.getByRole('button', { name: 'Send change request' })).toBeDisabled();
+    await user.click(within(strip).getByRole('button', { name: 'Never mind' }));
+    expect(screen.queryByRole('group', { name: 'Request changes' })).not.toBeInTheDocument();
+    expect(host.sent('POST', '/request-changes')).toHaveLength(0);
   });
 
   it('a draft does not talk about change requests', async () => {
@@ -983,8 +1031,7 @@ describe('after a handoff, @factory is a change request', () => {
     const { host, thread, user } = await handedOff();
     expect(screen.queryByRole('button', { name: 'Withdraw change request' })).not.toBeInTheDocument();
 
-    await user.type(composer(), '@factory How do I set up manual tests?');
-    await user.click(screen.getByRole('button', { name: 'Send change request' }));
+    await requestChanges(user, 'How do I set up manual tests?');
     expect(await screen.findByRole('status')).toHaveTextContent('You can withdraw it if that is not what you meant.');
     expect(screen.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
 
@@ -1000,7 +1047,7 @@ describe('after a handoff, @factory is a change request', () => {
 
   it.each(['Blocked', 'PausedBudget', 'PausedUser', 'Interrupted'] as const)('can be withdrawn while the rework is %s', async (state) => {
     const { host, thread, user } = await handedOff();
-    await user.type(composer(), '@factory How do I set up manual tests?{Enter}');
+    await requestChanges(user, 'How do I set up manual tests?');
     await screen.findByRole('button', { name: 'Withdraw change request' });
     act(() => void host.change(thread.id, { state: 'Running' }));
     act(() => void host.change(thread.id, { state, stateReason: 'Stopped.' }));
@@ -1013,7 +1060,7 @@ describe('after a handoff, @factory is a change request', () => {
 
   it('a change request that is being worked on must be paused first, and the screen says so', async () => {
     const { host, thread, user } = await handedOff();
-    await user.type(composer(), '@factory How do I set up manual tests?{Enter}');
+    await requestChanges(user, 'How do I set up manual tests?');
     await screen.findByRole('button', { name: 'Withdraw change request' });
 
     act(() => void host.change(thread.id, { state: 'Running' }));
@@ -1037,7 +1084,7 @@ describe('after a handoff, @factory is a change request', () => {
 
   it("shows the host's reason when the withdrawal is refused", async () => {
     const { host, thread, user } = await handedOff();
-    await user.type(composer(), '@factory How do I set up manual tests?{Enter}');
+    await requestChanges(user, 'How do I set up manual tests?');
     const button = await withdrawButton();
     // The agent picked it up a moment ago and this tab has not heard yet, so the host refuses. The
     // refusal is the host's own answer: changing the task's state here instead would race the
@@ -1136,8 +1183,9 @@ describe('stopping and restarting', () => {
     expect(screen.queryByText('Pausing…')).not.toBeInTheDocument();
 
     expect(await screen.findByRole('button', { name: 'Resume' })).toBeInTheDocument();
-    expect(composer()).toBeDisabled();
-    expect(composer()).toHaveAttribute('placeholder', 'Resume the task before sending it anything');
+    // A paused task can still be asked why, without resuming it.
+    expect(composer()).toBeEnabled();
+    expect(composer()).toHaveAttribute('placeholder', 'Ask a question about the task or its code');
   });
 
   it('cancelling asks first, and can be backed out of', async () => {
@@ -1153,7 +1201,8 @@ describe('stopping and restarting', () => {
 
     expect(await screen.findByText('Cancelled. This task is closed.')).toBeInTheDocument();
     expect(host.details(thread.id).thread.state).toBe('Cancelled');
-    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    // Closed to work, but it can still be asked about.
+    expect(composer()).toHaveAttribute('placeholder', 'Ask a question about the task or its code');
     expect(screen.queryByRole('button', { name: 'Cancel task' })).not.toBeInTheDocument();
   });
 
@@ -1195,7 +1244,7 @@ describe('stopping and restarting', () => {
     expect(await screen.findByText('Cancelled. This task is closed.')).toBeInTheDocument();
     expect(host.details(thread.id).thread.state).toBe('Cancelled');
     expect(screen.getByText('Cancelled before it was delegated.')).toBeInTheDocument();
-    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '@factory' })).toBeDisabled();
   });
 
   it.each([

@@ -4,19 +4,20 @@ import type { ChatProgress, CurrentUser, Message, PullRequestState, Settings, Th
 import { elapsed, initials } from '../domain/format';
 import {
   canCancel,
-  canChat,
   canMessage,
   canPause,
+  canRequestChanges,
   canResume,
   canWithdraw,
   chatWork,
   isBareMention,
-  isClosed,
+  isChangeRequest,
   isPlainMessage,
   parseMention,
   parseSpec,
   pullRequestLabel,
   stateName,
+  steerOf,
   withMention,
 } from '../domain/task';
 import { MessageAttachments, PendingFiles, usePendingFiles } from './Attachments';
@@ -61,6 +62,8 @@ export function ThreadMain({
   const [stopping, setStopping] = useState<'pause' | 'cancel' | null>(null);
   const [editing, setEditing] = useState(false);
   const [editingSkills, setEditingSkills] = useState(false);
+  // Request changes: the composer's text becomes the change request, once confirmed by sending.
+  const [changing, setChanging] = useState(false);
   // Renaming or re-filing a thread is its owner's, or an admin's.
   const canEdit = thread.ownerId === user.id || user.roles.includes('Admin');
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -80,6 +83,7 @@ export function ThreadMain({
   useEffect(() => {
     setConfirmingCancel(false);
     setStopping(null);
+    setChanging(false);
   }, [thread.state]);
   // The state event can arrive before the 202 itself, so it counts only while still running.
   const stoppingNow = thread.state === 'Running' ? stopping : null;
@@ -112,36 +116,33 @@ export function ThreadMain({
 
   const openDecision = thread.state === 'AwaitingDecision' ? decisions.find((d) => d.status === 'Open') : undefined;
   const lastHandoff = [...messages].reverse().find((m) => m.kind === 'Handoff');
-  const answering = !!openDecision;
-  const chatting = canChat(thread.state);
   const working = thread.state === 'Queued' || thread.state === 'Running';
-  // An accepted task takes no more work, but can still be asked about.
-  const closed = isClosed(thread.state) && !chatting;
-  const acceptsText = answering || canMessage(thread.state) || chatting;
-  const request = parseMention(draft);
+  // After a handoff, Request changes turns the composer into the change request (m2-architecture.md §5.1).
+  const requestingChanges = changing && canRequestChanges(thread.state);
+  const request = requestingChanges ? null : parseMention(draft);
   // "@factory spec ...": a specification, not the work (m2-architecture.md §5).
   const specRequest = request === null ? null : parseSpec(request);
   const asksForSpec = specRequest !== null;
   const specWaiting = thread.state === 'Draft' && details.spec !== null && !details.spec.approved;
   const specApproved = thread.state === 'Draft' && details.spec?.approved === true;
-  // Without @factory, a message is a question (or, to a working task, guidance for its agent).
-  const asking = !answering && request === null && draft.trim().length > 0 && !isBareMention(draft);
-  const waitingForAnswer = details.chatPending && chatting;
-  const sendable = answering
+  // Without @factory, a message is a question, in every state, and never reaches the agent (§5.2).
+  const asking = !requestingChanges && request === null && draft.trim().length > 0 && !isBareMention(draft);
+  const waitingForAnswer = details.chatPending;
+  // @factory never hands a handed-off task back: Request changes does.
+  const handingBack = request !== null && !asksForSpec && thread.state === 'AwaitingHumanTesting';
+  const sendable = requestingChanges
     ? draft.trim().length > 0
     : asksForSpec
       ? thread.state === 'Draft' && specRequest.length > 0
       : request !== null
         ? canMessage(thread.state) && !specWaiting
-        : asking && (working || (chatting && !waitingForAnswer));
-  // After a handoff an @factory message is a change request: it starts a rework run.
-  const requestingChanges = !answering && thread.state === 'AwaitingHumanTesting' && request !== null && !asksForSpec;
+        : asking && !waitingForAnswer;
   // A rework run that has not produced its own handoff yet can be taken back.
   const reworkUnderWay = run?.kind === 'Rework' && run.status !== 'Finished' && handoff !== null;
-  // Files go with a message, not a decision's answer, and not to a task while it works: steering
-  // carries text only (attachments-architecture.md §3).
+  // Files go with a message, not to a task while it works: steering carries text only
+  // (attachments-architecture.md §3).
   const attachmentsOn = settings?.attachments?.enabled === true;
-  const canAttach = attachmentsOn && !answering && acceptsText && thread.state !== 'Running';
+  const canAttach = attachmentsOn && thread.state !== 'Running';
   // Unknown (the model is no longer offered to this person): no warning either way.
   const seesImages = settings?.providers.find((p) => p.name === thread.provider)?.models.find((m) => m.id === thread.model)?.seesImages;
   const filesWaiting = files.pending.length > 0;
@@ -169,24 +170,29 @@ export function ThreadMain({
     if (!sendable || busy) return;
     const text = draft.trim();
 
-    if (openDecision) {
-      if (await act(() => api.answerDecision(openDecision.id, text))) setDraft('');
-      return;
-    }
-
     if (filesWaiting && (files.uploading || !canAttach)) return;
     if (sending.current?.text !== text) sending.current = { text, id: newMessageId() };
     const { id } = sending.current;
     const sent = await act(async () => {
-      const result = await api.postMessage(thread.id, id, text, files.readyIds);
-      if (result.outcome === 'FollowUp') onNotice('Sent to the agent. It reads the message at its next safe point.');
-      else if (result.outcome === 'Chat') onNotice('Litos is reading the code to answer. Nothing is changed.');
-      else if (requestingChanges && result.outcome === 'Queued')
+      if (requestingChanges) {
+        await api.requestChanges(thread.id, id, text, files.readyIds);
         onNotice('Change request sent: a rework run starts on the same branch. You can withdraw it if that is not what you meant.');
+        return;
+      }
+
+      const result = await api.postMessage(thread.id, id, text, files.readyIds);
+      if (result.outcome === 'FollowUp')
+        onNotice(
+          result.delivered === false
+            ? 'Held for the agent: no turn is running now. It goes to the agent when its next work turn starts.'
+            : 'Sent to the agent. It reads the message when its current tool call ends.',
+        );
+      else if (result.outcome === 'Chat') onNotice('Litos is reading to answer. The work is not affected.');
     });
     if (sent) {
       sending.current = null;
       setDraft('');
+      setChanging(false);
       files.clear();
     }
   };
@@ -200,6 +206,14 @@ export function ThreadMain({
 
   const startRequest = () => {
     setDraft((current) => withMention(current));
+    textarea.current?.focus();
+  };
+
+  /** After a handoff: what is typed next is the change request, sent once its cost is shown. */
+  const beginChangeRequest = () => {
+    setChanging(true);
+    // A leading @factory is the old way of asking; the change request is the words after it.
+    setDraft((current) => (isBareMention(current) ? '' : (parseMention(current) ?? current)));
     textarea.current?.focus();
   };
 
@@ -253,7 +267,7 @@ export function ThreadMain({
             pullRequestState={pullRequestState}
             busy={busy}
             onAccept={() => void act(() => api.accept(thread.id), 'Accepted. The branch is yours to merge.')}
-            onRequestChanges={startRequest}
+            onRequestChanges={beginChangeRequest}
           />
         );
       case 'Status':
@@ -292,8 +306,9 @@ export function ThreadMain({
             </div>
             <div className="bubble">
               {/* The host stores a request without its leading mention, and marks a plain message. */}
-              {m.kind === 'Text' && !isPlainMessage(m) ? <span className="mention">@factory </span> : null}
+              {m.kind === 'Text' && !isPlainMessage(m) && !isChangeRequest(m) ? <span className="mention">@factory </span> : null}
               <Rich text={m.text} />
+              {m.kind === 'Text' ? <MessageRoute message={m} /> : null}
               <MessageAttachments attachments={m.attachments} />
             </div>
           </div>
@@ -441,8 +456,8 @@ export function ThreadMain({
               {thread.state === 'Interrupted' ? 'Recover and resume' : 'Resume'}
             </button>
           ) : null}
-          {thread.state === 'AwaitingHumanTesting' ? (
-            <button className="btn" onClick={startRequest} disabled={busy}>
+          {canRequestChanges(thread.state) && !requestingChanges ? (
+            <button className="btn" onClick={beginChangeRequest} disabled={busy}>
               Request changes
             </button>
           ) : null}
@@ -493,8 +508,25 @@ export function ThreadMain({
           )}
         </div>
 
-        {closed ? null : (
-          <>
+            {requestingChanges ? (
+              <div className="confirm-strip" role="group" aria-label="Request changes">
+                <p>
+                  <b>Request changes hands the task back.</b> A <b>rework run</b> starts on{' '}
+                  <span className="mono">{thread.branch}</span>
+                  {details.reworkTopUp ? (
+                    <>
+                      {' '}
+                      and adds <b>{details.reworkTopUp.toLocaleString('en-US')}</b> tokens to its budget (the cap becomes{' '}
+                      {((thread.budgetCap ?? 0) + details.reworkTopUp).toLocaleString('en-US')})
+                    </>
+                  ) : null}
+                  . Describe the change below; files can go with it.
+                </p>
+                <button className="btn ghost small" onClick={() => setChanging(false)}>
+                  Never mind
+                </button>
+              </div>
+            ) : null}
             <PendingFiles files={files.pending} onRemove={files.remove} />
             <div
               className={`compose-box${dropping ? ' dropping' : ''}`}
@@ -512,7 +544,7 @@ export function ThreadMain({
               }}
             >
               <span className="compose-tools">
-                <button className="btn ghost" title="Delegate to the factory" onClick={startRequest} disabled={answering || !canMessage(thread.state)}>
+                <button className="btn ghost" title="Start or guide the work" onClick={startRequest} disabled={requestingChanges || !canMessage(thread.state)}>
                   <span className="mention">@factory</span>
                 </button>
                 {attachmentsOn ? (
@@ -545,17 +577,14 @@ export function ThreadMain({
                 rows={2}
                 aria-label="Message"
                 value={draft}
-                disabled={!acceptsText}
                 placeholder={
-                  answering
-                    ? 'Answer the decision in your own words, or pick an option above'
+                  requestingChanges
+                    ? 'Describe the changes you want'
                     : working
-                      ? 'Guidance for the agent, with or without @factory'
-                      : chatting && !canMessage(thread.state)
-                        ? 'Ask a question about the code'
-                        : acceptsText
-                          ? 'Ask a question, or start with @factory to say what you want done'
-                          : 'Resume the task before sending it anything'
+                      ? 'Ask a question. Start with @factory to guide the agent.'
+                      : thread.state === 'Draft'
+                        ? 'Ask a question, or start with @factory to say what you want done'
+                        : 'Ask a question about the task or its code'
                 }
                 onChange={(e) => setDraft(e.target.value)}
                 onPaste={(e) => {
@@ -576,24 +605,26 @@ export function ThreadMain({
                 onClick={() => void send()}
                 disabled={!sendable || busy || (filesWaiting && (files.uploading || !canAttach))}
               >
-                {answering ? 'Answer' : asksForSpec ? 'Ask for a spec' : requestingChanges ? 'Send change request' : asking && chatting ? 'Ask' : 'Send'}
+                {requestingChanges ? 'Send change request' : asksForSpec ? 'Ask for a spec' : asking ? 'Ask' : 'Send'}
               </button>
             </div>
             <p className="compose-hint">
-              {!answering && isBareMention(draft) ? <span className="warn">Say what you want done after @factory. </span> : null}
-              {!answering && asksForSpec && !specRequest && thread.state === 'Draft' ? (
+              {isBareMention(draft) && !requestingChanges ? <span className="warn">Say what you want done after @factory. </span> : null}
+              {asksForSpec && !specRequest && thread.state === 'Draft' ? (
                 <span className="warn">Say what the specification is for after @factory spec. </span>
               ) : null}
-              {!answering && asksForSpec && thread.state !== 'Draft' ? (
+              {asksForSpec && thread.state !== 'Draft' ? (
                 <span className="warn">A specification is written before the work starts; this task has been delegated. </span>
               ) : null}
-              {!answering && request !== null && !asksForSpec && specWaiting ? (
+              {request !== null && !asksForSpec && specWaiting ? (
                 <span className="warn">
                   Approve specification revision {details.spec?.revision}, or ask for changes with @factory spec, before delegating.{' '}
                 </span>
               ) : null}
-              {!answering && request !== null && !asksForSpec && !canMessage(thread.state) ? (
-                <span className="warn">This task is closed to new work; ask without @factory. </span>
+              {handingBack ? (
+                <span className="warn">After a handoff, @factory does not hand the task back; use Request changes. </span>
+              ) : request !== null && !asksForSpec && !canMessage(thread.state) ? (
+                <span className="warn">This task takes no @factory messages now; ask without @factory. </span>
               ) : null}
               {specApproved && !draft.trim() ? (
                 <span>
@@ -604,34 +635,60 @@ export function ThreadMain({
               {filesWaiting && thread.state === 'Running' ? (
                 <span className="warn">Files cannot be sent while the task is working. Pause it, or send them after it hands off. </span>
               ) : null}
-              {filesWaiting && answering ? <span className="warn">Answer the decision first; files go with a message. </span> : null}
               {files.hasImage && seesImages === false ? (
                 <span className="warn">This task&apos;s model does not read images: Litos gets the file, not what it shows. </span>
               ) : null}
-              {working ? (
-                <>Anything you send now reaches the agent at its next safe point. </>
+              {requestingChanges ? (
+                <>This message starts the rework run when sent. </>
+              ) : working ? (
+                <>Plain messages are questions and never reach the agent. <b>@factory</b> messages do, at its next safe point. </>
+              ) : openDecision ? (
+                <>Answer the decision on its card. This box asks Litos questions; nothing you type here reaches the agent. </>
               ) : thread.state === 'AwaitingHumanTesting' ? (
-                <>
-                  After a handoff, <b>@factory</b> asks for changes: it starts a rework run on this branch. Without it, Litos
-                  answers questions about the branch and changes nothing.{' '}
-                </>
-              ) : chatting && !canMessage(thread.state) ? (
-                <>Litos answers questions about the code. Nothing is changed. </>
-              ) : (
+                <>Plain messages are questions about the task and its branch. To change the code, use Request changes. </>
+              ) : thread.state === 'Draft' ? (
                 <>
                   <b>@factory</b> delegates within the task budget; <b>@factory spec</b> asks for a specification first. Without
                   it, Litos answers questions about the code and changes nothing.{' '}
                 </>
+              ) : (
+                <>Litos answers questions about the task and its code. Nothing is changed. </>
               )}
               Model: <span className="mono">{thread.model}</span> on{' '}
               {thread.provider}
               {thread.ptcEnabled === null ? '' : `. PTC ${thread.ptcEnabled ? 'on' : 'off'}`}.
             </p>
-          </>
-        )}
       </div>
     </div>
   );
+}
+
+/**
+ * Which way a person's message went, so a question is never mistaken for an instruction
+ * (m2-architecture.md §5.2): a question, an @factory message on its way to the agent, or a change request.
+ */
+function MessageRoute({ message }: { message: Message }) {
+  if (isPlainMessage(message))
+    return (
+      <span className="tag route" title="Answered beside the work; it never reaches the agent">
+        Question
+      </span>
+    );
+  if (isChangeRequest(message)) return <span className="tag route">Change request</span>;
+  const steer = steerOf(message);
+  if (!steer) return null;
+  switch (steer.status) {
+    case 'held':
+      return (
+        <span className="tag route" title="No agent turn is running; it goes to the agent when its next work turn starts">
+          Waiting for the agent
+        </span>
+      );
+    case 'delivered':
+      return <span className="tag route">Delivered to the agent</span>;
+    default:
+      return <span className="tag route warn">Not delivered{steer.reason ? `: ${steer.reason}` : ''}</span>;
+  }
 }
 
 /**
@@ -666,7 +723,7 @@ function ChatWaiting({ progress }: { progress: ChatProgress | null }) {
 function StateHint({ state, branch }: { state: ThreadDetails['thread']['state']; branch: string | null }) {
   switch (state) {
     case 'Running':
-      return <span className="small muted">Litos is working. Messages you send now reach it at its next safe point.</span>;
+      return <span className="small muted">Litos is working. Ask questions any time; @factory messages reach the agent.</span>;
     case 'Queued':
       return <span className="small muted">Queued. It starts when a run slot is free.</span>;
     case 'PausedUser':

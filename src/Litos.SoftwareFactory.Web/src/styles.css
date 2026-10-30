@@ -455,3 +455,10 @@ button.sort:focus-visible{outline:2px solid var(--focus)}
 .cmd .btn{flex:none;min-width:64px;justify-content:center}
 .tryit-none{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);padding:10px 12px;display:grid;gap:6px;justify-items:start}
 .tryit-setup{background:var(--amber-soft);border-radius:var(--r-sm);padding:6px 10px}
+
+/* which way a person's message went (m2-architecture.md §5.2) */
+.tag.route{margin-left:8px;vertical-align:1px;white-space:nowrap}
+.tag.route.warn{color:var(--amber);border-color:var(--amber)}
+/* Request changes: what sending will start, before it is sent */
+.confirm-strip{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;background:var(--amber-soft);border:1px solid var(--amber);border-radius:var(--r-md);padding:8px 12px;margin-bottom:8px}
+.confirm-strip p{flex:1 1 280px;min-width:0}

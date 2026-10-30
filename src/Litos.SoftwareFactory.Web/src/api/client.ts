@@ -102,6 +102,8 @@ export interface FactoryApi {
   usage(id: string): Promise<UsageCall[]>;
   /** Sends a message; attachmentIds are files already uploaded to the thread, sent with it. */
   postMessage(id: string, messageId: string, text: string, attachmentIds?: string[]): Promise<DispatchResult>;
+  /** After a handoff, the one way to hand the task back: a rework run on the same branch. */
+  requestChanges(id: string, messageId: string, text: string, attachmentIds?: string[]): Promise<DispatchResult>;
   /** Changes the signed-in account's password; answers the account as it now stands. */
   changePassword(currentPassword: string, newPassword: string): Promise<CurrentUser>;
   /** Uploads one file to the thread, unsent until a message names it. */
@@ -276,6 +278,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     usage: (id) => send<UsageCall[]>('GET', `${thread(id)}/usage`),
     postMessage: (id, messageId, text, attachmentIds) =>
       send<DispatchResult>('POST', `${thread(id)}/messages`, attachmentIds?.length ? { messageId, text, attachmentIds } : { messageId, text }),
+    requestChanges: (id, messageId, text, attachmentIds) =>
+      send<DispatchResult>('POST', `${thread(id)}/request-changes`, attachmentIds?.length ? { messageId, text, attachmentIds } : { messageId, text }),
     uploadAttachment: (threadId, file) => {
       const form = new FormData();
       form.append('file', file, file.name);

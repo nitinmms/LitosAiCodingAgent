@@ -52,7 +52,8 @@ The tests run the whole app against `src/test/fakeHost.ts`, an in-memory host wi
 
 ## Things to know
 
-- After a handoff, an `@factory` message is a **change request** and starts a rework run; the composer says so and its button reads "Send change request". The factory cannot answer questions in M1. A change request can be taken back with "Withdraw change request" whenever its run is not executing.
+- Each kind of message means one thing in every state (docs/software-factory/m2-architecture.md §5.1–5.4). A plain message is a question Litos answers beside the work; it never reaches the agent. `@factory` delegates a draft or guides a queued or running task's agent, and is refused elsewhere. After a handoff only **Request changes** hands the task back: it turns the composer into the change request and shows what it starts and adds before it is sent. A change request can be taken back with "Withdraw change request" whenever its run is not executing. An open decision is answered on its card, never from the composer.
+- Each person's message shows which way it went: Question, Change request, or an `@factory` message's delivery (Waiting for the agent, Delivered to the agent, Not delivered). A `message-changed` event moves the delivery.
 - Routes live in the URL fragment (`#/threads/<id>`, `#/projects`, `#/people`, `#/invite/<token>`), so the host only ever serves `index.html`. An invitation's token stays in the fragment, which the browser never sends; the app sends it to the host in a request body.
 - A member sees only the projects they belong to: the host filters every list and answers 404 for anything else, so the app needs no rule of its own.
 - The session is an HTTP-only, same-site cookie; the app holds no token. Every state-changing request sends the `X-Factory-Request` header the host requires.

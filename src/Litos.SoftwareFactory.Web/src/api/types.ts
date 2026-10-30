@@ -403,6 +403,8 @@ export interface ThreadDetails {
   chatProgress: ChatProgress | null;
   /** The newest specification revision; null when none was proposed. */
   spec: SpecStatus | null;
+  /** After a handoff, the tokens Request changes adds to the cap; null with no cap, absent from an older host. */
+  reworkTopUp?: number | null;
 }
 
 /** What a chat answer in progress has done so far (the host's ChatProgress). */
@@ -456,6 +458,8 @@ export type DispatchOutcome = 'Queued' | 'FollowUp' | 'Chat' | 'Duplicate' | 'Re
 export interface DispatchResult {
   outcome: DispatchOutcome;
   runId: string | null;
+  /** For an @factory message to a working task: whether a turn took it now (else it is held for the next). */
+  delivered?: boolean | null;
   thread: Thread;
 }
 

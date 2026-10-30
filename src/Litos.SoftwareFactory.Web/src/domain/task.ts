@@ -106,18 +106,13 @@ export const canPause = (state: LifecycleState): boolean => state === 'Running' 
 
 /**
  * The states in which an @factory message does something (the host's DispatchAsync): it
- * delegates a draft, asks for changes after a handoff, or steers a queued or running task.
+ * delegates a draft, or guides the agent of a queued or running task. It never hands a
+ * handed-off task back: Request changes does (m2-architecture.md §5.1).
  */
-export const canMessage = (state: LifecycleState): boolean =>
-  state === 'Draft' || state === 'AwaitingHumanTesting' || state === 'Queued' || state === 'Running';
+export const canMessage = (state: LifecycleState): boolean => state === 'Draft' || state === 'Queued' || state === 'Running';
 
-/**
- * The states in which a plain message, without @factory, is answered as chat (the host's
- * ChatAsync): before delegating, after a handoff and after acceptance. While the task is queued
- * or running a plain message is a follow-up for its agent instead.
- */
-export const canChat = (state: LifecycleState): boolean =>
-  state === 'Draft' || state === 'AwaitingHumanTesting' || state === 'Accepted';
+/** Only a handed-off task takes Request changes (the host's RequestChangesAsync). */
+export const canRequestChanges = (state: LifecycleState): boolean => state === 'AwaitingHumanTesting';
 
 /** What a chat answer has done so far, in a few words: "2 lookups, 3 model calls". Empty before it has done anything. */
 export function chatWork(progress: { modelCalls: number; toolCalls: number } | null): string {
@@ -127,6 +122,21 @@ export function chatWork(progress: { modelCalls: number; toolCalls: number } | n
   if (progress.modelCalls > 0) parts.push(`${progress.modelCalls} model ${progress.modelCalls === 1 ? 'call' : 'calls'}`);
   return parts.join(', ');
 }
+
+/** Where an @factory message to a working task has got to (the host's SteerPayload); null for any other message. */
+export type SteerStatus = 'held' | 'delivered' | 'dropped';
+
+export function steerOf(message: { payload: unknown }): { status: SteerStatus; reason: string | null } | null {
+  const payload = message.payload as { steer?: unknown; reason?: unknown } | null;
+  if (typeof payload !== 'object' || payload === null) return null;
+  const status = payload.steer;
+  if (status !== 'held' && status !== 'delivered' && status !== 'dropped') return null;
+  return { status, reason: typeof payload.reason === 'string' ? payload.reason : null };
+}
+
+/** Whether a message was a change request after a handoff: the host marks it, as it does a plain message. */
+export const isChangeRequest = (message: { payload: unknown }): boolean =>
+  typeof message.payload === 'object' && message.payload !== null && (message.payload as { changeRequest?: unknown }).changeRequest === true;
 
 /** Whether a message was sent without @factory: the host marks it, since it stores a delegation without its mention. */
 export const isPlainMessage = (message: { payload: unknown }): boolean =>

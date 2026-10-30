@@ -887,7 +887,8 @@ export class FakeHost {
       }
       case 'GET usage':
         return [200, this.usage.get(id) ?? []];
-      case 'POST messages': {
+      case 'POST messages':
+      case 'POST request-changes': {
         // As FactoryApi.cs: the files are sent before the message, and taken back if it is refused.
         const ids = Array.isArray(data.attachmentIds) ? (data.attachmentIds as string[]) : [];
         const messageId = String(data.messageId ?? '');
@@ -898,7 +899,10 @@ export class FakeHost {
         const files = ids.map((f) => this.uploads.get(f));
         if (files.some((f) => !f)) return [409, { error: 'One of the files is not attached to this thread. Attach it again.' }];
         const before = details.messages.length;
-        const result = this.dispatch(id, messageId, String(data.text ?? ''));
+        const result =
+          route[2] === 'request-changes'
+            ? this.requestChanges(id, messageId, String(data.text ?? ''))
+            : this.dispatch(id, messageId, String(data.text ?? ''));
         if (result[0] < 300 && ids.length) {
           const sent = files.map((f) => ({ ...f!, sentAt: NOW, messageKey: messageId }));
           sent.forEach((f) => this.uploads.set(f.id, f));
@@ -1652,43 +1656,64 @@ export class FakeHost {
       return [409, { error: `Specification revision ${details.spec.revision} is waiting for approval. Approve it, or ask for changes with @factory spec, before delegating the work.` }];
 
     const state = details.thread.state;
-    const queues = state === 'Draft' || state === 'AwaitingHumanTesting';
-    if (!queues && state !== 'Queued' && state !== 'Running')
+    // After a handoff @factory never hands the task back: Request changes does (m2-architecture.md §5.1).
+    if (state === 'AwaitingHumanTesting')
+      return [409, { error: 'After a handoff, @factory does not hand the task back. Use Request changes on the handoff card.', thread: details.thread }];
+    if (state !== 'Draft' && state !== 'Queued' && state !== 'Running')
       return [409, { error: `A task that is ${state} cannot take new work.`, thread: details.thread }];
 
     this.dispatched.add(messageId);
-    // A draft starts the original work; after a handoff the same message is a change request.
-    if (queues) {
-      details.run = {
-        id: this.nextId('r'),
-        kind: state === 'Draft' ? 'Implement' : 'Rework',
-        status: 'Queued',
-        stopReason: null,
-        baselineCommit: null,
-        headCommit: null,
-        promptRevision: this.settings.promptRevision,
-      };
+    if (state === 'Draft') {
+      details.run = this.newRun('Implement');
+      this.say(threadId, { author: 'User', kind: 'Text', text: match[1]!.trim() });
+      return [202, { outcome: 'Queued', runId: details.run.id, thread: this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: null }) }];
     }
-    this.say(threadId, { author: 'User', kind: 'Text', text: match[1]!.trim() });
-    const thread = queues ? this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: null }) : details.thread;
-    return [202, { outcome: queues ? 'Queued' : 'FollowUp', runId: 'r-1', thread }];
+
+    // To a working task: delivered to a running turn, held while it waits for one (§5.4).
+    const delivered = state === 'Running';
+    this.say(threadId, { author: 'User', kind: 'Text', text: match[1]!.trim(), payload: { steer: delivered ? 'delivered' : 'held' } });
+    return [202, { outcome: 'FollowUp', runId: details.run?.id ?? 'r-1', delivered, thread: details.thread }];
   }
 
-  /** A plain message, as the host's ChatAsync takes it. The test answers it with answerChat. */
+  /** Request changes, as the host's RequestChangesAsync takes it: only after a handoff. */
+  private requestChanges(threadId: string, messageId: string, text: string): [number, unknown] {
+    if (!messageId) return [400, { error: 'messageId is required: it makes a retried request safe.' }];
+    const request = text.replace(/^\s*@factory\s+/i, '').trim();
+    if (!request) return [400, { error: 'Say what should change.' }];
+    const details = this.details(threadId);
+    if (this.dispatched.has(messageId)) return [202, { outcome: 'Duplicate', runId: null, thread: details.thread }];
+    if (details.thread.state !== 'AwaitingHumanTesting')
+      return [409, { error: 'This task is not waiting for testing, so there are no changes to request.', thread: details.thread }];
+
+    this.dispatched.add(messageId);
+    details.run = this.newRun('Rework');
+    this.say(threadId, { author: 'User', kind: 'Text', text: request, payload: { changeRequest: true } });
+    return [202, { outcome: 'Queued', runId: details.run.id, thread: this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: null }) }];
+  }
+
+  private newRun(kind: 'Implement' | 'Rework') {
+    return {
+      id: this.nextId('r'),
+      kind,
+      status: 'Queued' as const,
+      stopReason: null,
+      baselineCommit: null,
+      headCommit: null,
+      promptRevision: this.settings.promptRevision,
+    };
+  }
+
+  /** A plain message, as the host's ChatAsync takes it: a question in every state, never to the agent. The test answers it with answerChat. */
   private chat(threadId: string, messageId: string, text: string): [number, unknown] {
     const details = this.details(threadId);
-    const state = details.thread.state;
-    const working = state === 'Queued' || state === 'Running';
-    const chats = state === 'Draft' || state === 'AwaitingHumanTesting' || state === 'Accepted';
-    if (!working && !chats) return [409, { error: `A task that is ${state} cannot take new work.`, thread: details.thread }];
-    if (chats && details.chatPending)
+    if (details.chatPending)
       return [409, { error: 'Litos is still answering your last message. Wait for the reply, then send this.', thread: details.thread }];
 
     this.dispatched.add(messageId);
     this.chatsSent.push(text);
-    if (chats) details.chatPending = true;
+    details.chatPending = true;
     this.say(threadId, { author: 'User', kind: 'Text', text, payload: { plain: true } });
-    return [202, { outcome: working ? 'FollowUp' : 'Chat', runId: working ? 'r-1' : this.nextId('r'), thread: details.thread }];
+    return [202, { outcome: 'Chat', runId: this.nextId('r'), thread: details.thread }];
   }
 
   /** "@factory spec ...", as the host's RequestSpecAsync takes it. The test proposes with proposeSpec. */

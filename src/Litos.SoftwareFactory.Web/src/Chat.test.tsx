@@ -5,7 +5,7 @@ import { createApi } from './api/client';
 import { App } from './App';
 import { FakeHost } from './test/fakeHost';
 
-/** Chat before @factory (m2-architecture.md §5): a plain message is a question Litos answers without starting work. */
+/** Chat (m2-architecture.md §5.2): a plain message is a question Litos answers, in every state, without touching the work. */
 
 async function withThread(overrides: Parameters<FakeHost['addThread']>[1] = {}, setUp?: (host: FakeHost, threadId: string) => void) {
   const host = new FakeHost();
@@ -33,7 +33,7 @@ describe('asking a question', () => {
 
     await waitFor(() => expect(composer()).toHaveValue(''));
     expect(host.sent('POST', `/api/threads/${thread.id}/messages`)[0]!.body).toMatchObject({ text: 'Where are orders exported?' });
-    expect(await screen.findByText('Litos is reading the code to answer. Nothing is changed.')).toBeInTheDocument();
+    expect(await screen.findByText('Litos is reading to answer. The work is not affected.')).toBeInTheDocument();
     expect(await conversation().findByText('Reading the code to answer...')).toBeInTheDocument();
 
     act(() => void host.answerChat(thread.id, 'In `src/Orders/Export.cs`.'));
@@ -55,7 +55,8 @@ describe('asking a question', () => {
     await conversation().findByText('Add CSV export');
 
     const bubbles = [...document.querySelectorAll('.m.user .bubble')];
-    expect(bubbles.map((b) => b.textContent)).toEqual(['Is there an export already?', '@factory Add CSV export']);
+    // A question is labelled as one, so it is never taken for an instruction.
+    expect(bubbles.map((b) => b.textContent)).toEqual(['Is there an export already?Question', '@factory Add CSV export']);
   });
 
   it('holds a second question until the first is answered', async () => {
@@ -153,14 +154,17 @@ describe('asking a question', () => {
 });
 
 describe('in other states', () => {
-  it('to a running task, a plain message is guidance for its agent', async () => {
+  /** A plain message used to steer a working task's agent; now it is a question beside the work. */
+  it('to a running task, a plain message is a question, and never reaches its agent', async () => {
     const { host, thread, user } = await withThread({ state: 'Running', stage: 'Implement' });
 
-    expect(composer()).toHaveAttribute('placeholder', 'Guidance for the agent, with or without @factory');
-    await user.type(composer(), 'Use semicolons{Enter}');
+    expect(composer()).toHaveAttribute('placeholder', 'Ask a question. Start with @factory to guide the agent.');
+    expect(screen.getByText(/Plain messages are questions and never reach the agent/)).toBeInTheDocument();
+    await user.type(composer(), 'What are you doing right now?{Enter}');
 
-    expect(await screen.findByText('Sent to the agent. It reads the message at its next safe point.')).toBeInTheDocument();
-    expect(conversation().queryByText('Reading the code to answer...')).not.toBeInTheDocument();
+    expect(await screen.findByText('Litos is reading to answer. The work is not affected.')).toBeInTheDocument();
+    expect(await conversation().findByText('Reading the code to answer...')).toBeInTheDocument();
+    expect(host.chatsSent).toEqual(['What are you doing right now?']);
     expect(host.details(thread.id).thread.state).toBe('Running');
   });
 
@@ -170,7 +174,7 @@ describe('in other states', () => {
     expect(screen.getByRole('button', { name: '@factory' })).toBeDisabled();
     await user.type(composer(), '@factory one more thing');
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
-    expect(screen.getByText(/This task is closed to new work; ask without @factory/)).toBeInTheDocument();
+    expect(screen.getByText(/This task takes no @factory messages now; ask without @factory/)).toBeInTheDocument();
 
     await user.clear(composer());
     await user.type(composer(), 'Which tests cover this?{Enter}');
@@ -179,15 +183,33 @@ describe('in other states', () => {
     expect(host.details(thread.id).thread.state).toBe('Accepted');
   });
 
-  it('a paused task takes nothing until it is resumed', async () => {
-    await withThread({ state: 'PausedUser', stage: 'Implement' });
+  it.each(['PausedUser', 'PausedBudget', 'Blocked', 'Interrupted', 'Cancelled'] as const)(
+    'a task that is %s can be asked why, and stays as it is',
+    async (state) => {
+      const { host, thread, user } = await withThread({ state, stage: 'Implement', stateReason: 'Stopped.' });
 
-    expect(composer()).toBeDisabled();
-  });
+      await user.type(composer(), 'Why did it stop?{Enter}');
 
-  it('a cancelled task has no composer', async () => {
-    await withThread({ state: 'Cancelled', stage: 'Implement' });
+      await waitFor(() => expect(host.chatsSent).toEqual(['Why did it stop?']));
+      expect(host.details(thread.id).thread.state).toBe(state);
+      expect(host.sent('POST', '/resume')).toHaveLength(0);
+    },
+  );
 
-    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+  it('labels each message by where it went: a question, or an @factory message never delivered and why', async () => {
+    await withThread({ state: 'AwaitingHumanTesting', stage: 'Handoff' }, (host, threadId) => {
+      host.say(threadId, { author: 'User', kind: 'Text', text: 'Which tests cover this?', payload: { plain: true } });
+      host.say(threadId, {
+        author: 'User',
+        kind: 'Text',
+        text: 'also cover empty orders',
+        payload: { steer: 'dropped', reason: 'It arrived after the work finished. Use Request changes to ask for more.' },
+      });
+      host.say(threadId, { author: 'User', kind: 'Text', text: 'one more', payload: { steer: 'dropped' } });
+    });
+
+    expect(screen.getByText('Question')).toBeInTheDocument();
+    expect(screen.getByText('Not delivered: It arrived after the work finished. Use Request changes to ask for more.')).toHaveClass('warn');
+    expect(screen.getByText('Not delivered')).toBeInTheDocument();
   });
 });
