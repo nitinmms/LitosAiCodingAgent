@@ -172,7 +172,7 @@ Differences from the plan above:
 **Chat.**
 - A message without a leading `@factory` is a chat message. It is stored with its dispatch key and queues a `Chat` run with one turn on the thread's session.
 - The reply is a Factory text message, which the app already renders.
-- Chat is allowed in Draft, AwaitingHumanTesting and Accepted. In other states the composer either steers the running task (Queued, Running) or says why it cannot chat.
+- Chat is allowed in Draft, AwaitingHumanTesting and Accepted. In other states the composer either steers the running task (Queued, Running) or says why it cannot chat. *Replaced on 2026-10-30: chat is allowed in every state and never steers (§5.2).*
 - **Metering:** the usage rows of a chat turn have phase `Chat` and the author as user. They are shown separately and not charged to the task budget (blueprint §5). Each chat turn is bounded by `FACTORY_CHAT_TURN_CAP`. Per-user quotas arrive with the M3 limits; until then chat usage is recorded per user but not refused.
 
 **Step 4 (chat) was completed on 2026-10-08** in these commits:
@@ -224,6 +224,67 @@ Differences from the plan above, and choices the plan left open:
 - **The handoff's criteria check** lists each approved criterion the work did not report on under known limitations ("Approved criterion not reported on: ..."), matching words without regard to case, spacing or a closing full stop; the run's brief asks it to report on each in exactly the approved words. The handoff also records the revision it built.
 - **The decision scan needed no change:** its brief already shows the approved specification and criteria, now that the run's context carries them.
 - **The task's request** given to a change request's review is now its first implement run's request. It had been the thread's first message, which since chat could be a question.
+
+### 5.1–5.4 Chat in every state, Request changes, and held messages (2026-10-30)
+
+Two problems were reported. After a handoff, typing "Continue" set the agent working: `@factory Continue` was taken as a change request, and plain "Continue" started a chat run. And a person could not ask the factory about its state while it worked, was paused or was blocked. Each kind of message now means one thing in every state. Message routing is unchanged in shape: still by `@factory` and by state, in the API and the store.
+
+| State | Plain text | `@factory <text>` | Explicit action |
+| --- | --- | --- | --- |
+| Draft | Question | Delegates (Implement run) | |
+| Queued, Running | Question | Steers the agent (§5.4) | Pause, Cancel |
+| AwaitingDecision | Question | Refused | The decision card answers |
+| PausedBudget, PausedUser, Blocked, Interrupted | Question | Refused | Resume, Recover |
+| AwaitingHumanTesting | Question | **Refused** | **Request changes** (§5.1), Accept |
+| Accepted, Cancelled | Question | Refused | |
+
+**5.1 Request changes.** After a handoff, the one way back is `POST /api/threads/{id}/request-changes` (`messageId`, `text`, `attachmentIds`), which calls `IFactoryStore.RequestChangesAsync`. That method does what `@factory` at a handoff used to do: a Rework run on the same branch, the budget top-up, the audit entry and the note. `DispatchAsync` now refuses at a handoff with "After a handoff, @factory does not hand the task back. Use Request changes on the handoff card." `RequestChangesAsync` is refused in any other state.
+- **Marking:** the change request's message carries `{"changeRequest":true}`.
+- **The page:** the Request changes button turns the composer into the request. A confirm strip names the rework run, the branch and the exact tokens it adds. The thread details carry `reworkTopUp`, worked out with `BudgetLedger.ReworkTopUp` as the store will, so the page does not repeat the sum.
+- **Text:** a leading `@factory` in the request text is dropped.
+
+**5.2 Chat in every state.**
+- **The store:** `ChatAsync` no longer has a state gate and never returns `FollowUp`. One answer at a time per thread still holds.
+- **The composer:** it is always a question box, including for Accepted and Cancelled tasks. An open decision is answered on its card (options or "Other…"), never from the composer: typing there used to answer the decision and resume the work.
+- **Badges:** each person's message shows which way it went: Question, Change request, or an `@factory` message's delivery (§5.4).
+
+**5.3 What a chat is told.** `ChatSnapshot.Describe` (Core, pure) writes where the task stands into the chat brief, under "Where the task stands (as of the start of this answer)". It covers:
+- the state and its reason, the stage, and a sentence saying what the state means;
+- the latest run and why it stopped;
+- what the run is doing right now: the turn, its start time, its model calls and tokens, and its last 5 tool calls;
+- the budget: used, reserved, cap and left;
+- the open decision in full, and the last 3 answered;
+- the specification's revision and whether it is approved, the latest verification, and the open findings (blocking first, at most 8);
+- the last handoff and its evidence, and how many `@factory` messages are still held;
+- the last 8 factory notes, which the chat's conversation leaves out;
+- whether the code the chat can read includes the run's work;
+- what the person can do now.
+
+How it is built and run:
+- **Live progress:** it comes from the host's memory (`ActiveRun.Activity`). Work turns now pass the progress callback chat turns already had, so no migration is needed.
+- **Unpushed work:** work is pushed only at a handoff, so the brief says when the run's edits are not in the reading copy.
+- **Brief rules:** answer state questions from the snapshot; never claim to have done or passed on anything; say how to act instead.
+- **Prompt revision:** `m2.10`.
+- **Slots:** chats have slots of their own, `FACTORY_CHAT_SLOTS` (default 2). A question is answered while every task slot is busy. While dispatch is paused for a backup, chats still wait.
+
+**5.4 Held `@factory` messages.** A steer reaches an agent only while a work turn is in progress. One sent while the task was queued, or between turns (the factory building or testing, or a review or scan), used to be saved in the thread and never seen: work briefs carry no thread messages.
+- **Held:** the store now records each follow-up with `{"steer":"held"}`.
+- **Delivered:** `RunSupervisor.SteerAsync` passes it to an implement, rework or repair turn in progress and marks it `delivered`. Otherwise it stays held, and the next work turn's brief carries it as a follow-up (`TakeHeldSteersAsync`).
+- **Kept or dropped:** a held steer is kept through Pause, a decision, a paused budget or an interruption, because the same run continues. It is dropped, with a note in the thread, on Cancel, Blocked, a withdrawn change request or a handoff. Its payload then carries the reason the page shows (`{"steer":"dropped","reason":...}`). At a handoff the note points to Request changes.
+- **Delivered once:** the API takes a held message from the store (`TakeSteerAsync`) before sending it, so a work turn starting at the same moment cannot put it in its brief as well. One the worker then refuses is held again. A steer that never reached a turn does not count as one the turn answered.
+- **Not to a spec run:** while a specification is being written, `@factory` is refused: the specification is changed with `@factory spec` once proposed.
+- **Live updates:** a `message-changed` event moves the badge.
+
+Two races in the shared worker engine (`Litos.Hosting.AgentWorker`) were closed with it:
+- **No stray turns.** Steering used `/turns`, which starts a turn when none is running. The host cancelled it at once, but the text could land in the session, or take the next real turn's brief. The new `POST /sessions/{id}/steer` route returns 202 or 409 and never starts a turn.
+- **No lost steers.** A steer that reached a turn after its last look for one was reported delivered and never read. A finished turn now keeps such messages; `POST /sessions/{id}/steer/undelivered` hands them back once, and the host holds them again.
+
+These changes are additive, and VsCodeHost gets the second fix too.
+
+**Not done, by choice:**
+- No queued follow-up or text "interrupt" mode: Pause, Resume and Request changes cover them.
+- No guard against a vague `@factory` request in a Draft.
+- A chat still starts a worker and checks out the code even for a state-only question. A snapshot-only answer could come later.
 
 ## 6. Board, whose-turn labels and task types (build step 3)
 

@@ -128,7 +128,7 @@ User: `All filtered rows.`
 
 Factory: `Ready for human testing. Branch factory/7f3a-csv-export pushed (commit 1c9e2b4), draft PR #212. Build passed. 18 unit tests passed (4 new). Changed-line coverage 91% (threshold 80%). Agent review: 1 finding fixed. Please check administrator export, non-administrator access, filters and an empty result.`
 
-User: `@factory CSV values containing commas are incorrect. Fix this.`
+User: **Request changes**: `CSV values containing commas are incorrect. Fix this.`
 
 The factory reopens the same task with the remaining cumulative budget and adds a commit to the same branch.
 
@@ -145,8 +145,8 @@ User: **Accept** (structured action). A normal chat message is never treated as 
 - A unique message ID is the dispatch idempotency key. Double-clicks or network retries create one assignment.
 - Starting a run snapshots the request, approved spec and accepted corrections into a versioned task specification.
 - One active run per thread. A mention during execution becomes a follow-up instruction, not a second run.
-- Steering messages enter an inbox and are incorporated at a safe tool boundary. Pause and cancel go directly to the host.
-- A reply to a specific open decision resumes it when unambiguous. Other paused states need an explicit Resume or `@factory`.
+- Steering messages enter an inbox and are incorporated at a safe tool boundary. Pause and cancel go directly to the host. One that no work turn can take yet is held for the next work turn (docs/software-factory/m2-architecture.md §5.4).
+- **Each kind of message means one thing in every state (decided 2026-10-30, m2-architecture.md §5.1–5.4).** A plain message is always a question, answered beside the work, and never reaches the agent. `@factory` delegates a draft or steers a queued or running task, and is refused elsewhere. After a handoff, only **Request changes** hands the task back: an `@factory` message is refused there. An open decision is answered on its card, never from the composer. Other paused states need an explicit Resume.
 - Budget exhaustion cannot be bypassed by posting `@factory` again. The cap must be raised or a separate task started.
 - A thread's project is fixed. Work on a different repository needs a new thread.
 
@@ -249,7 +249,7 @@ stateDiagram-v2
 ```
 
 - Pause and cancel also apply to waiting states.
-- **Withdrawing a change request.** After a handoff, an `@factory` message is a change request and starts a rework run. Until that run produces its own handoff, the tester can withdraw it from any state in which it is not executing (a running one is paused first): the rework run ends as `Withdrawn`, its uncommitted edits are discarded from the working copy, and the task returns to `AwaitingHumanTesting` on its last handoff. The original run cannot be withdrawn, only cancelled.
+- **Withdrawing a change request.** After a handoff, Request changes starts a rework run (until 2026-10-30, an `@factory` message did). Until that run produces its own handoff, the tester can withdraw it from any state in which it is not executing (a running one is paused first): the rework run ends as `Withdrawn`, its uncommitted edits are discarded from the working copy, and the task returns to `AwaitingHumanTesting` on its last handoff. The original run cannot be withdrawn, only cancelled.
 - Cancellation preserves edits, branches and evidence; it never reverts files or deletes branches.
 - Acceptance never merges.
 - Verification is tracked separately from lifecycle:
