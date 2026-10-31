@@ -95,6 +95,73 @@ describe('newlyAwaiting', () => {
   });
 });
 
+describe('a page the person has not touched since it loaded', () => {
+  /** Web Audio as a browser gives it before any interaction: suspended, until a click lets it resume. */
+  function fakeAudio() {
+    const audio = { state: 'suspended', tones: 0, resumes: 0 };
+    const node = () => ({
+      gain: { setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn() },
+      frequency: { value: 0 },
+      connect: (next: unknown) => next,
+      start: () => void audio.tones++,
+      stop: vi.fn(),
+    });
+    class FakeContext {
+      currentTime = 0;
+      destination = {};
+      get state() {
+        return audio.state;
+      }
+      createOscillator = node;
+      createGain = node;
+      resume() {
+        audio.resumes++;
+        return Promise.resolve();
+      }
+    }
+    vi.stubGlobal('AudioContext', FakeContext);
+    return audio;
+  }
+
+  /** sound.ts keeps its context for the page's life, so each test starts as a new page. */
+  async function freshPage() {
+    vi.resetModules();
+    return (await import('./domain/sound')).playMealReady;
+  }
+
+  it('holds the ring, once however many tasks wait, and resumes at the first interaction', async () => {
+    const audio = fakeAudio();
+    const playMealReady = await freshPage();
+
+    playMealReady();
+    playMealReady();
+    expect(audio.tones).toBe(3);
+    const atRing = audio.resumes;
+
+    window.dispatchEvent(new KeyboardEvent('keydown'));
+    expect(audio.resumes).toBe(atRing + 1);
+
+    // One interaction is enough: the listener is gone.
+    window.dispatchEvent(new KeyboardEvent('keydown'));
+    expect(audio.resumes).toBe(atRing + 1);
+    vi.unstubAllGlobals();
+  });
+
+  it('rings straight away, with nothing left waiting, once the page has been used', async () => {
+    const audio = fakeAudio();
+    audio.state = 'running';
+    const playMealReady = await freshPage();
+
+    playMealReady();
+    playMealReady();
+    window.dispatchEvent(new KeyboardEvent('keydown'));
+
+    expect(audio.tones).toBe(6);
+    expect(audio.resumes).toBe(0);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('the sound setting', () => {
   it('is on by default, and survives storage that throws', () => {
     expect(soundEnabled()).toBe(true);

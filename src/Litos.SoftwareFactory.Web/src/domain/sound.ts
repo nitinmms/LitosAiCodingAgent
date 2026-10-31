@@ -3,7 +3,8 @@
  * microwave that has finished. Made with the Web Audio API, so there is no sound file to ship.
  *
  * Browsers start audio only after the person has interacted with the page; signing in counts. A
- * page reopened with a session already signed in stays silent until its first click.
+ * page reopened with a session already signed in cannot ring until its first click or key press,
+ * so a ring that comes before then is kept, once, and plays at that moment.
  */
 
 const STORAGE_KEY = 'litos.factory.sound';
@@ -40,15 +41,35 @@ const PITCH_HZ = 1_400;
 const VOLUME = 0.18;
 
 let context: AudioContext | null = null;
+/** A ring is waiting for the page's first interaction; more rings until then would only pile up on it. */
+let held = false;
 
-/** Plays the three beeps. Does nothing where the browser has no Web Audio, or will not start it yet. */
+/** What counts as interacting with the page, to a browser. */
+const INTERACTIONS = ['pointerdown', 'pointerup', 'keydown'] as const;
+
+/** Resumes the audio at the next interaction, which starts the beeps already scheduled on it. */
+function resumeOnInteraction(audio: AudioContext): void {
+  const resume = () => {
+    held = false;
+    for (const type of INTERACTIONS) window.removeEventListener(type, resume, true);
+    void audio.resume().catch(() => undefined);
+  };
+  for (const type of INTERACTIONS) window.addEventListener(type, resume, true);
+}
+
+/** Plays the three beeps, or holds them until the page's first interaction. Does nothing where the browser has no Web Audio. */
 export function playMealReady(): void {
   const Context = typeof window === 'undefined' ? undefined : (window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
   if (!Context) return;
   try {
     context ??= new Context();
     // Suspended until the page has been interacted with; resuming then succeeds.
-    if (context.state === 'suspended') void context.resume().catch(() => undefined);
+    if (context.state === 'suspended') {
+      if (held) return;
+      held = true;
+      void context.resume().catch(() => undefined);
+      resumeOnInteraction(context);
+    }
     const now = context.currentTime;
     for (const offset of BEEPS) beep(context, now + offset);
   } catch {
