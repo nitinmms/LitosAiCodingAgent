@@ -54,6 +54,8 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<RunSkillLoad> RunSkillLoads => Set<RunSkillLoad>();
     public DbSet<ReflectionJob> ReflectionJobs => Set<ReflectionJob>();
     public DbSet<ThreadAttachment> Attachments => Set<ThreadAttachment>();
+    public DbSet<ThreadArtifact> Artifacts => Set<ThreadArtifact>();
+    public DbSet<ThreadArtifactVersion> ArtifactVersions => Set<ThreadArtifactVersion>();
 
     /// <summary>Set by the store once this context's transaction holds the outbox lock.</summary>
     internal bool HoldsOutboxLock { get; set; }
@@ -304,6 +306,24 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(a => a.MessageKey).HasMaxLength(200);
             e.HasIndex(a => new { a.ThreadId, a.MessageKey });
             e.HasOne<TaskThread>().WithMany().HasForeignKey(a => a.ThreadId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Pages a chat answer published (ReadMe_ArtifactsFeature.md §11.5): small text, so kept in
+        // the database itself and covered by its backups, with no files to keep in step.
+        model.Entity<ThreadArtifact>(e =>
+        {
+            e.ToTable("thread_artifacts");
+            e.Property(a => a.Title).HasMaxLength(ThreadArtifact.MaxTitleLength);
+            e.HasIndex(a => a.ThreadId);
+            e.HasOne<TaskThread>().WithMany().HasForeignKey(a => a.ThreadId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        model.Entity<ThreadArtifactVersion>(e =>
+        {
+            e.ToTable("thread_artifact_versions");
+            e.HasKey(v => new { v.ArtifactId, v.Version });
+            e.HasIndex(v => v.RunId);
+            e.HasOne<ThreadArtifact>().WithMany().HasForeignKey(v => v.ArtifactId).OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<RepositorySkill>(e =>

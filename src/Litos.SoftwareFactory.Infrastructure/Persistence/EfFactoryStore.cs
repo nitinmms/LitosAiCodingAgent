@@ -652,10 +652,13 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         run.EndedAt = now;
         run.WorkerProcessId = null;
         run.WorkerStartTime = null;
+        // The pages this answer published are shown with it — on the failure note too, if it
+        // failed after publishing, so a page is never on the thread with nothing pointing to it.
+        var published = await PublishedArtifactsPayloadAsync(db, runId, ct);
         if (!string.IsNullOrWhiteSpace(reply))
-            AddMessage(db, thread, MessageAuthor.Factory, null, MessageKind.Text, reply.Trim(), now);
+            AddMessage(db, thread, MessageAuthor.Factory, null, MessageKind.Text, reply.Trim(), now, payloadJson: published);
         else
-            AddMessage(db, thread, MessageAuthor.Factory, null, MessageKind.Status, failure ?? "Litos could not answer. Send the message again.", now);
+            AddMessage(db, thread, MessageAuthor.Factory, null, MessageKind.Status, failure ?? "Litos could not answer. Send the message again.", now, payloadJson: published);
         await write.CommitAsync(ct);
     }
 
@@ -1680,6 +1683,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             ProjectScoped.Project => await db.Projects.Where(p => p.Id == id).Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct),
             ProjectScoped.Lesson => await db.Lessons.Where(l => l.Id == id).Select(l => (Guid?)l.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Attachment => await db.Attachments.Where(a => a.Id == id).Select(a => (Guid?)a.ProjectId).FirstOrDefaultAsync(ct),
+            ProjectScoped.Artifact => await db.Artifacts.Where(a => a.Id == id).Select(a => (Guid?)a.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Run => await (
                 from r in db.Runs join t in db.Threads on r.ThreadId equals t.Id where r.Id == id select (Guid?)t.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Finding => await (

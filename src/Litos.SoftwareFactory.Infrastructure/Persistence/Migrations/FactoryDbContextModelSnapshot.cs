@@ -1088,6 +1088,70 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.ToTable("task_threads", (string)null);
                 });
 
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ThreadArtifact", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CurrentVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ThreadId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ThreadId");
+
+                    b.ToTable("thread_artifacts", (string)null);
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ThreadArtifactVersion", b =>
+                {
+                    b.Property<Guid>("ArtifactId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Html")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ArtifactId", "Version");
+
+                    b.HasIndex("RunId");
+
+                    b.ToTable("thread_artifact_versions", (string)null);
+                });
+
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ThreadAttachment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1727,6 +1791,24 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ThreadArtifact", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.TaskThread", null)
+                        .WithMany()
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ThreadArtifactVersion", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.ThreadArtifact", null)
+                        .WithMany()
+                        .HasForeignKey("ArtifactId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

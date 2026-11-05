@@ -55,6 +55,9 @@ public enum ProjectScoped
 
     /// <summary>A file attached to a thread, for downloading it.</summary>
     Attachment,
+
+    /// <summary>A page a chat answer published on a thread, for opening it (ReadMe_ArtifactsFeature.md §11).</summary>
+    Artifact,
 }
 
 /// <summary>Everything needed to stop a run, applied in one transaction.</summary>
@@ -436,6 +439,26 @@ public interface IFactoryStore
     /// one other than itself (a router's); null when none has.
     /// </summary>
     Task<string?> LastServedByAsync(Guid threadId, CancellationToken ct);
+
+    // ---- Artifacts (ReadMe_ArtifactsFeature.md §11.5) ----
+
+    /// <summary>
+    /// Stores a page a run published on its thread: a new artifact, or — with
+    /// <paramref name="artifactId"/> — the next version of one already on that thread. The run's
+    /// requester is recorded as the artifact's creator.
+    /// </summary>
+    /// <exception cref="StoreNotFoundException">The run, or an artifact by that id on the run's thread, does not exist.</exception>
+    /// <exception cref="StoreConflictException">The thread's pages would come to more than <paramref name="maxBytesPerThread"/>.</exception>
+    Task<(ThreadArtifact Artifact, bool Created)> PublishArtifactAsync(
+        Guid runId, Guid? artifactId, string title, string html, long maxBytesPerThread, DateTimeOffset now, CancellationToken ct);
+
+    Task<ThreadArtifact?> GetArtifactAsync(Guid artifactId, CancellationToken ct);
+
+    /// <summary>One version of an artifact (the latest when <paramref name="version"/> is null); null when there is none.</summary>
+    Task<ThreadArtifactVersion?> GetArtifactVersionAsync(Guid artifactId, int? version, CancellationToken ct);
+
+    /// <summary>A thread's artifacts, oldest first.</summary>
+    Task<IReadOnlyList<ThreadArtifact>> ListArtifactsAsync(Guid threadId, CancellationToken ct);
 
     // ---- Attachments (attachments-architecture.md §3) ----
 

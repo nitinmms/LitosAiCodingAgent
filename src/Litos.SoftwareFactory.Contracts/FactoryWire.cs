@@ -48,6 +48,13 @@ public static class FactoryWire
     /// <summary>Where a worker says it loaded a skill, so the skill report can count it (m4-architecture.md §12.5).</summary>
     public static string SkillLoadsPath(string runId) => $"/internal/runs/{Uri.EscapeDataString(runId)}/skill-loads";
 
+    /// <summary>Where a chat run publishes (POST), lists (GET) and reads (GET <c>/{id}</c>) the pages on
+    /// its thread (ReadMe_ArtifactsFeature.md §11.4).</summary>
+    public static string ArtifactsPath(string runId) => $"/internal/runs/{Uri.EscapeDataString(runId)}/artifacts";
+
+    public static string ArtifactPath(string runId, Guid artifactId, int? version) =>
+        $"{ArtifactsPath(runId)}/{artifactId:N}" + (version is { } v ? $"?version={v}" : "");
+
     /// <summary>The worker's own extra endpoints, beside Litos.Hosting's turn endpoints.</summary>
     public static string CompactPath(string sessionId) => $"/sessions/{Uri.EscapeDataString(sessionId)}/compact";
 

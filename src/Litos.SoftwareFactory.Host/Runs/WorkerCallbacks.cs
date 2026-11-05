@@ -145,7 +145,7 @@ public static class WorkerCallbacks
         return app;
     }
 
-    private static ActiveRun? Authenticate(string runId, HttpRequest request, RunRegistry registry) =>
+    internal static ActiveRun? Authenticate(string runId, HttpRequest request, RunRegistry registry) =>
         Guid.TryParseExact(runId, "N", out var id)
         && registry.Find(id) is { } active
         && active.HasSecret(request.Headers[FactoryWire.SecretHeader].ToString())

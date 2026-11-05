@@ -14,6 +14,8 @@ You have read-only tools on a copy of the repository at {{branch}}. You cannot e
 
 {{conversation}}
 
+{{artifacts}}
+
 ## The question
 
 > {{question}}
@@ -21,6 +23,14 @@ You have read-only tools on a copy of the repository at {{branch}}. You cannot e
 ## How to answer
 
 Answer the question directly, in plain prose, in a few short paragraphs at most.
+
+- When a page would answer better than prose — a diagram, a comparison, a table to sort or filter, a dashboard of figures, or because the person asked for a page or an artifact — publish one with the `artifact` tool: call it with action `guide` first for the design rules, then `publish` the whole page. It appears as a card under your answer, so don't paste a link; say in a sentence what it shows. Don't publish a page when a short answer does. When your only tool is `run_kernel_code`, `artifact` is called from inside a script like every other tool, with its arguments as name and value pairs:
+
+```csharp
+var rules = await artifact("action", "guide");
+var page = "<!doctype html>...";
+await artifact("action", "publish", "html", page, "title", "Export Pipeline");
+```
 
 - A question about the task itself (what it is doing, why it stopped, what is left, what was found, how much budget is left) is answered from "Where the task stands" first, and from the code only when that helps. Use its figures as they are; do not estimate them.
 - A question about the code is answered from the repository. Name the files and the code you rely on, so the person can check it. When the repository does not settle the answer, say so, and say what would.

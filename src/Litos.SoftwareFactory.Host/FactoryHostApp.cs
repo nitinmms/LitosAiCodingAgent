@@ -176,6 +176,7 @@ public static class FactoryHostApp
         app.MapFactoryUsers();
         app.MapFactoryApi();
         app.MapFactoryAttachments();
+        app.MapFactoryArtifacts();
         app.MapFactorySettings();
         app.MapFactoryLessons();
         app.MapFactoryMetrics();

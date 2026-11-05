@@ -54,6 +54,27 @@ public sealed class FactoryHostClient
         response.EnsureSuccessStatusCode();
     }
 
+    /// <summary>Publishes a page on the chat run's thread (ReadMe_ArtifactsFeature.md §11.4); the host says why when it won't.</summary>
+    /// <exception cref="HttpRequestException">The host could not be reached or answered with an error.</exception>
+    public async Task<ArtifactPublishResponse> PublishArtifactAsync(ArtifactPublishRequest request, CancellationToken ct)
+    {
+        using var response = await Http.PostAsJsonAsync(FactoryWire.ArtifactsPath(RunId), request, FactoryWire.Json, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ArtifactPublishResponse>(FactoryWire.Json, ct)
+            ?? throw new HttpRequestException("The factory host returned an empty response to a publish.");
+    }
+
+    /// <summary>The pages on the chat run's thread.</summary>
+    /// <exception cref="HttpRequestException">The host could not be reached or answered with an error.</exception>
+    public async Task<IReadOnlyList<ArtifactSummary>> ListArtifactsAsync(CancellationToken ct) =>
+        await Http.GetFromJsonAsync<List<ArtifactSummary>>(FactoryWire.ArtifactsPath(RunId), FactoryWire.Json, ct) ?? [];
+
+    /// <summary>One version of a page on the chat run's thread (the latest when <paramref name="version"/> is null).</summary>
+    /// <exception cref="HttpRequestException">The host could not be reached or answered with an error.</exception>
+    public async Task<ArtifactReadResponse> ReadArtifactAsync(Guid artifactId, int? version, CancellationToken ct) =>
+        await Http.GetFromJsonAsync<ArtifactReadResponse>(FactoryWire.ArtifactPath(RunId, artifactId, version), FactoryWire.Json, ct)
+            ?? throw new HttpRequestException("The factory host returned an empty response to a read.");
+
     public async Task ReadyAsync(WorkerReady ready, CancellationToken ct)
     {
         using var response = await Http.PostAsJsonAsync(FactoryWire.ReadyPath(RunId), ready, FactoryWire.Json, ct);

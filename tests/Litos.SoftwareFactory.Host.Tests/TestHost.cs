@@ -389,6 +389,10 @@ public sealed class FakeWorker(WorkerLaunch launch, FakeWorkerLauncher owner) : 
 
     public WorkerLaunch Launch => launch;
 
+    /// <summary>The host, as this worker reaches it: its base address and its run's secret on every
+    /// request — for callbacks with no helper here, such as the artifact tool's.</summary>
+    public HttpClient HostHttp => _http;
+
     public int ProcessId { get; } = Random.Shared.Next(100_000, 900_000);
 
     public DateTimeOffset StartTime { get; } = DateTimeOffset.UtcNow;

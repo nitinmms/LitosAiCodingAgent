@@ -14,7 +14,7 @@ namespace Litos.SoftwareFactory.Worker;
 /// - a review turn can only read, and finishes with submit_review;
 /// - a spec turn can only read, and finishes with submit_spec;
 /// - a decision scan can only read, and finishes with submit_plan;
-/// - a chat turn can only read;
+/// - a chat turn can only read, and may publish pages on its thread with the artifact tool;
 /// - web_search joins the implement, repair and rework turns when it is on, and the read-only
 ///   turns too when the Admin allows it there;
 /// - the run's MCP tools join the implement, repair and rework turns only (m3-architecture.md §7.2);
@@ -114,7 +114,9 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
         TurnKind.Review => new ToolRegistry([.. ReadOnly(sessionId), new SubmitReviewTool(_host, sessionId)]),
         TurnKind.Spec => new ToolRegistry([.. ReadOnly(sessionId), new SubmitSpecTool(_host, sessionId)]),
         TurnKind.Scan => new ToolRegistry([.. ReadOnly(sessionId), new SubmitPlanTool(_host, sessionId)]),
-        TurnKind.Chat => new ToolRegistry(ReadOnly(sessionId)),
+        // A chat answer may also publish pages on its thread (ReadMe_ArtifactsFeature.md §11): it
+        // writes nothing in the repository, only through the host to the thread.
+        TurnKind.Chat => new ToolRegistry([.. ReadOnly(sessionId), new FactoryArtifactTool(_host)]),
         // A reflection reads only what its brief carries: the one tool it has records its proposals.
         TurnKind.Reflection => new ToolRegistry([new SubmitLessonsTool(_host, sessionId)]),
         _ => throw new InvalidOperationException($"No tool set is defined for a {kind} turn."),

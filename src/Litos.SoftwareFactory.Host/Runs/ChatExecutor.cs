@@ -55,8 +55,10 @@ public sealed class ChatExecutor(
             var given = await attachments.PrepareAsync(thread, workspace.Path, newSince: null, ct);
             // Where the task stands, read now: what the question is most often about (§5.3).
             var snapshot = ChatSnapshot.Describe(details, registry.FindByThread(thread.Id)?.Activity, clock.UtcNow);
+            // The pages earlier answers published, so a follow-up updates one by id (ReadMe_ArtifactsFeature.md §11.7).
+            var artifacts = (await store.ListArtifactsAsync(thread.Id, ct)).Select(a => new ArtifactSummary(a.Id, a.Title, a.CurrentVersion)).ToList();
             var brief = given.AppendTo(BriefComposer.Chat(new ChatContext(
-                project.Name, branch, thread.Title, details.TaskRequest, Conversation(details, run), run.Request, snapshot)));
+                project.Name, branch, thread.Title, details.TaskRequest, Conversation(details, run), run.Request, snapshot, artifacts)));
             var turnToken = active.BeginTurn(TurnKind.Chat, TurnKind.Chat, sessionId, ct, phase: "Chat");
             progress.Set(ChatProgressTracker.Thinking);
             var result = await worker.Client.RunTurnAsync(sessionId, TurnKind.Chat, brief, options.ChatMaxToolCalls, turnToken, progress.Apply, given.Images);

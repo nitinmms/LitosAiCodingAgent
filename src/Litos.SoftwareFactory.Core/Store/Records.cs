@@ -177,6 +177,46 @@ public sealed class ThreadAttachment
     public const int MaxFileNameLength = 255;
 }
 
+/// <summary>
+/// A page a chat answer published on a thread (ReadMe_ArtifactsFeature.md §11.5). Its versions are
+/// <see cref="ThreadArtifactVersion"/> rows; it stays with the thread and goes with it.
+/// </summary>
+public sealed class ThreadArtifact
+{
+    public Guid Id { get; set; }
+    public Guid ThreadId { get; set; }
+    public Guid ProjectId { get; set; }
+    public required string Title { get; set; }
+    public int CurrentVersion { get; set; }
+
+    /// <summary>Who asked the question whose answer first published it.</summary>
+    public Guid CreatedBy { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+
+    public const int MaxTitleLength = 200;
+}
+
+/// <summary>The payload of a chat answer that published pages: which versions it published.</summary>
+public sealed record MessageArtifacts(IReadOnlyList<PublishedArtifact> Artifacts);
+
+public sealed record PublishedArtifact(Guid Id, int Version);
+
+/// <summary>One published version of a <see cref="ThreadArtifact"/>, the page whole.</summary>
+public sealed class ThreadArtifactVersion
+{
+    public Guid ArtifactId { get; set; }
+    public int Version { get; set; }
+    public required string Html { get; set; }
+
+    /// <summary>UTF-8 bytes of <see cref="Html"/>, counted against the thread's limit.</summary>
+    public long SizeBytes { get; set; }
+
+    /// <summary>The chat run that published it, so its answer can show it.</summary>
+    public Guid RunId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
 public sealed class Specification
 {
     public Guid Id { get; set; }

@@ -938,7 +938,8 @@ public class BriefComposerTests
         // m2.5: project lessons leave the run brief for every session's system prompt.
         // m2.6: the lesson reflection brief; m2.7: briefs carry the thread's attachments; m2.8: the scan's too; m2.9: review sees decisions and attachments.
         // m2.10: chat is told where the task stands and never reaches the agent; held @factory messages reach the next work turn.
-        Assert.Equal("m2.10", BriefComposer.Revision);
+        // m2.11: chat may publish pages with the artifact tool, and is told the pages already on the thread.
+        Assert.Equal("m2.11", BriefComposer.Revision);
     }
 
     [Theory]
@@ -1117,6 +1118,52 @@ public class BriefComposerTests
         Assert.Contains("`@factory <guidance>`", brief);
         Assert.Contains("Request changes on the handoff card", brief);
         Assert.Contains("an `@factory` message does not hand the task back", brief);
+    }
+
+    // ---- Chat pages (ReadMe_ArtifactsFeature.md §11.7) ----
+
+    [Fact]
+    public void Chat_SaysWhenToPublishAPage_AndToFetchTheGuideFirst()
+    {
+        var brief = BriefComposer.Chat(Chat());
+
+        Assert.Contains("publish one with the `artifact` tool", brief);
+        Assert.Contains("action `guide` first", brief);
+        Assert.Contains("appears as a card under your answer", brief);
+        Assert.Contains("Don't publish a page when a short answer does", brief);
+    }
+
+    /// <summary>Found live: in a kernel session the model called `artifact` directly, was told it was
+    /// unknown, and gave up. The brief shows the in-script form, as it does for the completion tools.</summary>
+    [Fact]
+    public void Chat_ShowsHowToCallTheArtifactToolFromKernelCode()
+    {
+        var brief = BriefComposer.Chat(Chat());
+
+        Assert.Contains("When your only tool is `run_kernel_code`, `artifact` is called from inside a script", brief);
+        Assert.Contains("await artifact(\"action\", \"guide\");", brief);
+        Assert.Contains("await artifact(\"action\", \"publish\", \"html\", page, \"title\", \"Export Pipeline\");", brief);
+    }
+
+    [Fact]
+    public void Chat_WithPagesOnTheThread_ListsThem_SoAFollowUpUpdatesOneById()
+    {
+        var pipeline = new ArtifactSummary(Guid.Parse("11111111-2222-3333-4444-555555555555"), "Export Pipeline", 3);
+        var brief = BriefComposer.Chat(Chat([new ChatLine("Person", "Draw it.")]) with { Artifacts = [pipeline] });
+
+        var pages = brief.IndexOf("## Pages published on this thread", StringComparison.Ordinal);
+        var question = brief.IndexOf("## The question", StringComparison.Ordinal);
+        Assert.True(pages >= 0 && question > pages, brief);
+        Assert.Contains("- `11111111-2222-3333-4444-555555555555`: \"Export Pipeline\", version 3", brief);
+        Assert.Contains("`publish` the whole new page with its `id`", brief);
+        Assert.Contains("rather than another page.\n\n- ", brief);
+    }
+
+    [Fact]
+    public void Chat_WithNoPagesOnTheThread_HasNoPagesSection()
+    {
+        Assert.DoesNotContain("## Pages published on this thread", BriefComposer.Chat(Chat()));
+        Assert.DoesNotContain("## Pages published on this thread", BriefComposer.Chat(Chat() with { Artifacts = [] }));
     }
 
     // ---- Spec (m2-architecture.md §5) ----

@@ -78,9 +78,11 @@ public sealed record ReflectionContext(
 public sealed record ReflectionSource(string Kind, Guid Id, string Text);
 
 /// <param name="Snapshot">Where the task stands now (<see cref="ChatSnapshot"/>); null leaves the section out.</param>
+/// <param name="Artifacts">The pages earlier answers published on the thread (ReadMe_ArtifactsFeature.md §11.7);
+/// null or empty leaves the section out.</param>
 public sealed record ChatContext(
     string Project, string Branch, string Title, string? Request, IReadOnlyList<ChatLine> Conversation, string Question,
-    string? Snapshot = null);
+    string? Snapshot = null, IReadOnlyList<ArtifactSummary>? Artifacts = null);
 
 /// <summary>
 /// Renders each turn's prompt from a versioned template. The templates are embedded resources,
@@ -104,8 +106,9 @@ public static partial class BriefComposer
     /// m2.9: the review brief lists the task's decisions, and review turns get the attachments;
     /// m2.10: chat is told where the task stands, may be asked in any state, and never reaches the
     /// agent; and an @factory message held while no work turn could take it is added to the next
-    /// work turn's brief).</summary>
-    public const string Revision = "m2.10";
+    /// work turn's brief;
+    /// m2.11: chat may publish pages with the artifact tool, and is told the pages already on the thread).</summary>
+    public const string Revision = "m2.11";
 
     private const int CharsPerToken = 4;
 
@@ -223,9 +226,20 @@ public static partial class BriefComposer
                 ? Section("Where the task stands (as of the start of this answer)", snapshot)
                 : "",
             ["conversation"] = conversation,
+            ["artifacts"] = Artifacts(context.Artifacts),
             ["question"] = Quote(context.Question),
         });
     }
+
+    /// <summary>The thread's pages, so a follow-up updates one rather than publishing it again.</summary>
+    private static string Artifacts(IReadOnlyList<ArtifactSummary>? artifacts) =>
+        artifacts is not { Count: > 0 }
+            ? ""
+            : Section(
+                "Pages published on this thread",
+                "Earlier answers published these with the `artifact` tool. To change one, `read` it and `publish` the whole new page "
+                + "with its `id`: that adds a version to the same page rather than another page.\n\n"
+                + Bullets(artifacts.Select(a => $"`{a.Id}`: \"{a.Title}\", version {a.LatestVersion}")));
 
     private static string Run(RunContext context, RunState state) => Render("run", new()
     {

@@ -884,9 +884,29 @@ public class FactoryToolSetPolicyTests
     }
 
     [Fact]
-    public void ChatTurn_IsReadOnly_WithNoCompletionTool()
+    public void ChatTurn_IsReadOnly_WithNoCompletionTool_ButMayPublishPages()
     {
-        Assert.Equal(["read_file", "list_directory", "search_code"], Names(Policy().Create("s", "Chat")));
+        Assert.Equal(["read_file", "list_directory", "search_code", "artifact"], Names(Policy().Create("s", "Chat")));
+    }
+
+    /// <summary>Only a chat answer publishes pages (ReadMe_ArtifactsFeature.md §11.1), directly or from kernel code.</summary>
+    [Theory]
+    [InlineData("Implement", false)]
+    [InlineData("Repair", false)]
+    [InlineData("Rework", false)]
+    [InlineData("Review", false)]
+    [InlineData("Spec", false)]
+    [InlineData("Scan", false)]
+    [InlineData("Reflection", false)]
+    [InlineData("Chat", true)]
+    public void TheArtifactTool_JoinsOnlyChatTurns_DirectlyAndThroughTheBridge(string turnKind, bool expected)
+    {
+        var policy = Policy();
+
+        var direct = Names(policy.Create("thread", turnKind));
+
+        Assert.Equal(expected, direct.Contains("artifact"));
+        Assert.Equal(expected, Names(policy.CreateForBridge("thread")).Contains("artifact"));
     }
 
     /// <summary>A run given no skills and no web search gets neither, whatever the engine registers.</summary>
@@ -1116,7 +1136,8 @@ public class FactoryToolSetPolicyTests
         policy.Create("thread", "Implement");
         policy.Create("thread", "Chat");
 
-        Assert.Equal(["read_file", "list_directory", "search_code"], Names(policy.CreateForBridge("thread")));
+        // The chat turn's own set: no write tools or shell carried over from the work turn.
+        Assert.Equal(["read_file", "list_directory", "search_code", "artifact"], Names(policy.CreateForBridge("thread")));
     }
 
     [Fact]

@@ -357,12 +357,13 @@ public static class FactoryApi
             var names = users.Users.Where(u => authors.Contains(u.Id)).ToList()
                 .ToDictionary(u => u.Id, u => string.IsNullOrWhiteSpace(u.DisplayName) ? u.UserName : u.DisplayName);
             var attachments = await store.ListAttachmentsAsync(id, includeUnsent: false, ct);
+            var artifacts = (await store.ListArtifactsAsync(id, ct)).ToDictionary(a => a.Id);
             // What Request changes would add to the budget, as the store will add it, for its confirm.
             var thread = details.Thread;
             long? reworkTopUp = thread.State == LifecycleState.AwaitingHumanTesting && thread.BudgetCap is not null
                 ? BudgetLedger.ReworkTopUp(thread.InitialBudgetCap ?? thread.BudgetCap, settings.Budgets.ReworkTopUpShare)
                 : null;
-            return Results.Ok(DetailsView(details, cursor, names, attachments, reworkTopUp));
+            return Results.Ok(DetailsView(details, cursor, names, attachments, artifacts, reworkTopUp));
         });
 
         // Renaming a thread, or filing it under another type: its owner or an Admin.
@@ -909,7 +910,7 @@ public static class FactoryApi
 
     private static object DetailsView(
         ThreadDetails details, long eventCursor, IReadOnlyDictionary<Guid, string?> authorNames, IReadOnlyList<ThreadAttachment> attachments,
-        long? reworkTopUp = null) => new
+        IReadOnlyDictionary<Guid, ThreadArtifact> artifacts, long? reworkTopUp = null) => new
     {
         // Pass to GET .../events?after= to hear everything that happened after this snapshot.
         EventCursor = eventCursor,
@@ -939,6 +940,8 @@ public static class FactoryApi
             Attachments = m.DispatchKey is { } key
                 ? attachments.Where(a => a.MessageKey == key).Select(AttachmentsApi.View)
                 : [],
+            // The pages a chat answer published (ReadMe_ArtifactsFeature.md §11.6).
+            Artifacts = ArtifactsApi.LinksFor(m.PayloadJson, artifacts),
         }),
         Decisions = details.Decisions.Select(d => new
         {
