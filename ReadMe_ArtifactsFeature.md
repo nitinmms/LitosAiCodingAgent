@@ -249,8 +249,110 @@ Changed
 
 - **Litos.Gui:** reuse `Litos.Artifacts` unchanged; Gui needs a small loopback Kestrel to serve
   the route (it has none) or `Avalonia.Controls.WebView` 12.1.x (licence to verify).
-- **Software Factory:** a Postgres-backed store modelled on attachments (`ThreadArtifact` +
-  `ArtifactVersion`, `ProjectScoped.Artifact`, backup coverage), a non-terminal worker callback
-  `/internal/runs/{runId}/artifacts`, an Artifact card + sandboxed-iframe viewer route, reusing
-  `ArtifactContentPolicy` and the skill text. Sharing = project membership; comments = thread chat.
+- **Software Factory:** side chats are built (§11). Work runs (Implement/Repair/Review…), an
+  in-app viewer, deleting, an Admin switch and the `@factory` path are not.
 - Approach B (dedicated artifact origin), runtime capabilities, Markdown artifacts.
+
+## 11. Software Factory side chats (v1)
+
+A person's plain message on a task thread — the side chat, never `@factory` (m2-architecture.md
+§5) — can now be answered with a page as well as prose.
+
+### 11.1 Decisions (agreed 2026-11-05)
+
+| Question | Decision |
+|---|---|
+| Which runs | Chat runs only (`TurnKind.Chat`). Work, review, spec, scan and reflection turns don't get the tool |
+| Viewer | A new browser tab, from a card under the answer. No in-app viewer |
+| Design guidance | On demand: the tool's `guide` action returns the design rules. Not in the system prompt |
+| Delete | None in v1: artifacts stay with the thread (and go with it) |
+| Setting | None: always on, no Admin switch |
+| Storage | Postgres (mine, not asked): pages are small text, so they ride the existing database backups with no files, sweeper or backup change |
+
+### 11.2 What a person sees
+
+1. They ask in the thread: "Draw me a diagram of how the export pipeline fits together."
+2. The chat answer is posted as usual, and under it a card per page it published:
+   **"Export Pipeline" · version 1 · Open ↗**. Open goes to a new tab.
+3. A follow-up ("make the boxes for failed steps red") is a new chat run. Its brief lists the
+   thread's pages, so the agent reads the current version and publishes version 2 of the same
+   artifact. The new answer's card shows version 2; the earlier answer's card still opens
+   version 1 and says a newer one exists.
+4. Anyone who can see the thread can open its pages; no one else can (404, as for every
+   project-scoped thing).
+
+### 11.3 The tool (worker, chat turns only)
+
+`artifact`, actions:
+
+| action | arguments | result |
+|---|---|---|
+| `guide` | — | The design rules (§5's skill without its file workflow). The description says to call it once before writing a page |
+| `publish` | `html` (required), `title`, `id` | Stores a version. With `id`, a new version of that artifact on this thread; without, a new artifact |
+| `read` | `id` (required), `version` | The stored HTML, truncated past 100,000 characters |
+| `list` | — | The thread's artifacts: id, title, latest version |
+
+Unlike VS Code, the page is passed inline: chat turns have no `write_file`. Title precedence is
+the same (argument, then `<title>`, then "Untitled page"). The model is told the page appears as a
+card under its answer, so it needn't paste a link.
+
+### 11.4 Worker → host
+
+`POST /internal/runs/{runId}/artifacts` (publish), `GET …/artifacts` (list) and
+`GET …/artifacts/{id}?version=` (read), authenticated by the run secret like every callback, and
+refused unless the run is a **chat run** — a non-terminal call, outside the submission path. The
+host scopes everything to the run's own thread: an `id` from another thread is "not found".
+Limits: 1 MB of UTF-8 per version, 20 MB of versions per thread.
+
+### 11.5 Store
+
+- `thread_artifacts`: Id, ThreadId, ProjectId, Title, CurrentVersion, CreatedBy (the asker),
+  CreatedAt, UpdatedAt. Cascade-deleted with the thread.
+- `thread_artifact_versions`: (ArtifactId, Version) key, Html, SizeBytes, RunId, CreatedAt.
+- `ProjectScoped.Artifact` → the artifact's project, for the access filter.
+- `FinishChatRunAsync` records the versions that run published on the answer it posts (or on the
+  failure note, if the answer failed after publishing): payload `{"artifacts":[{"id","version"}]}`.
+
+### 11.6 Browser API
+
+- `GET /api/artifacts/{id}` and `GET /api/artifacts/{id}/v/{version}` serve the page with the
+  shared `ArtifactContentPolicy` headers, behind `RequireProjectAccess(ProjectScoped.Artifact)`.
+- The thread view's messages carry `artifacts: [{ id, title, version, latestVersion, url, latestUrl }]`.
+
+**Security.** The factory UI and API share one origin with the `factory.session` cookie
+(SameSite=Strict, HttpOnly). The CSP `sandbox` (no `allow-same-origin`) gives the page an opaque
+origin, so a request from it is cross-site: the cookie isn't sent, and `connect-src 'none'` blocks
+it anyway. State-changing API calls also need the `X-Factory-Request` header, which an opaque
+origin can't send without a preflight the host never grants. Tray access tokens can't read
+`/api/artifacts` (they are limited to an allowlist of read routes).
+
+### 11.7 Brief
+
+The chat brief (revision m2.11) gains "Pages published on this thread": each artifact's id,
+title and latest version, and one line on updating one by id rather than creating another.
+
+**Kernel sessions (found in the first live test, 2026-11-05).** A thread with PTC on gives the
+model `run_kernel_code` alone; every other tool, `artifact` included, is called from inside a
+script. On claude-haiku-5-5 the model read "call it with action `guide`" in the brief, called
+`artifact` directly, got "Unknown tool 'artifact'" and answered in prose instead. Two fixes:
+- the brief and the tool's `guide` show the in-script form, as the completion tools' briefs
+  already do: `await artifact("action", "publish", "html", page, "title", "…")`;
+- `ToolRegistry` (Litos.Agent, every face): an unknown tool in a kernel-only registry now says
+  "this session's only tool is run_kernel_code … call it from inside a script, with its
+  arguments as name and value pairs", instead of a bare "Unknown tool".
+Re-asked on the same thread, the answer called `guide` then `publish` from kernel code and
+published "Version Constant Planner" (5.4 KB: four-step checklist, live semver preview, dark
+theme, no network or storage).
+
+### 11.8 Tests
+
+- Core: the chat brief lists the thread's artifacts, and omits the section when there are none.
+- Infrastructure (SQLite + Postgres store contract): publish new / new version / unknown or
+  other-thread id refused; size caps; read latest/specific/missing version; list; the chat
+  answer's payload names that run's versions; `FindProjectIdAsync(ProjectScoped.Artifact)`.
+- Host: callbacks refuse a non-chat run, a wrong secret and an oversized page; the browser route
+  serves with the policy headers, 404s for a non-member and an unknown version, and refuses a
+  tray token; the thread view carries the artifact links.
+- Worker: the tool's actions against a fake host, and that only chat turns get it.
+- Web (vitest): the cards render under an answer, open in a new tab, and point to the newest
+  version when a newer one exists.

@@ -286,6 +286,10 @@ These changes are additive, and VsCodeHost gets the second fix too.
 - No guard against a vague `@factory` request in a Draft.
 - A chat still starts a worker and checks out the code even for a state-only question. A snapshot-only answer could come later.
 
+### 5.5 Pages from a chat answer (2026-11-05)
+
+A chat answer may also publish a page, a self-contained HTML document, with the `artifact` tool. Only chat turns get the tool. The page is shown as a card under the answer, opens in a new tab, is served sandboxed from `GET /api/artifacts/{id}[/v/{n}]` to the thread's people only, and is kept in the `thread_artifacts` and `thread_artifact_versions` tables (migration `ThreadArtifacts`). A follow-up chat is told the thread's pages and adds a version rather than a copy. Chat brief revision `m2.11`. The design, security model and tests are in `ReadMe_ArtifactsFeature.md` §11. Chat is still read-only on the repository: a page is written to the thread through the host, never to the working copy.
+
 ## 6. Board, whose-turn labels and task types (build step 3)
 
 - **Turn label in Core.** `TurnLabels.For(state, specPending)` implements blueprint §7.1. Draft is "Not started", or "Awaiting you" when a spec awaits approval. The API sends the label with each thread, so the app no longer keeps its own copy.
