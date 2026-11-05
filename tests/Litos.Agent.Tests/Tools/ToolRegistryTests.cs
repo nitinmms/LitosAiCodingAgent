@@ -45,6 +45,30 @@ public class ToolRegistryTests
         Assert.Equal("Unknown tool 'write_file'.", ex.Message);
     }
 
+    /// <summary>In kernel mode every other tool is reached from inside a script; a model that calls one
+    /// directly is told how, rather than left to conclude the tool does not exist.</summary>
+    [Fact]
+    public void Resolve_InAKernelOnlyRegistry_SaysToCallTheToolFromInsideAScript()
+    {
+        var registry = new ToolRegistry([new FakeTool(ReservedToolNames.KernelCode)]);
+
+        var ex = Assert.Throws<ToolInvocationException>(() => registry.Resolve("artifact"));
+
+        Assert.StartsWith("Unknown tool 'artifact': this session's only tool is run_kernel_code.", ex.Message);
+        Assert.Contains("call it from inside a script, with its arguments as name and value pairs", ex.Message);
+        Assert.Contains("await artifact(\"argument\", value);", ex.Message);
+    }
+
+    [Fact]
+    public void Resolve_KernelCodeBesideOtherTools_KeepsThePlainMessage()
+    {
+        var registry = new ToolRegistry([new FakeTool(ReservedToolNames.KernelCode), new FakeTool("read_file")]);
+
+        var ex = Assert.Throws<ToolInvocationException>(() => registry.Resolve("artifact"));
+
+        Assert.Equal("Unknown tool 'artifact'.", ex.Message);
+    }
+
     [Fact]
     public void Resolve_Throws_ForUnknownTool_WhenRegistryIsEmpty()
     {

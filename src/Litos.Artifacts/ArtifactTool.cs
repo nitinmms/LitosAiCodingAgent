@@ -1,8 +1,6 @@
 using System.Globalization;
-using System.Net;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Litos.Agent.Tools;
 
 namespace Litos.Artifacts;
@@ -21,7 +19,7 @@ namespace Litos.Artifacts;
 /// </summary>
 /// <param name="baseUrl">Read on every call, never at construction: the host's port is only known
 /// after it starts listening, which is after DI registration (see Litos.VsCodeHost's Program.cs).</param>
-public sealed partial class ArtifactTool(ArtifactStore store, Func<string> baseUrl) : ITool
+public sealed class ArtifactTool(ArtifactStore store, Func<string> baseUrl) : ITool
 {
     public const string ToolName = "artifact";
 
@@ -29,8 +27,6 @@ public sealed partial class ArtifactTool(ArtifactStore store, Func<string> baseU
 
     /// <summary>A read returns at most this much of a page, so one large artifact can't flood the context.</summary>
     public const int MaxReadChars = 100_000;
-
-    private const int MaxTitleChars = 200;
 
     public string Name => ToolName;
 
@@ -60,12 +56,6 @@ public sealed partial class ArtifactTool(ArtifactStore store, Func<string> baseU
             version = new { type = "integer", description = "read: a specific version. Defaults to the latest." },
         },
     });
-
-    [GeneratedRegex("<title[^>]*>(.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
-    private static partial Regex TitlePattern();
-
-    [GeneratedRegex(@"\s+")]
-    private static partial Regex Whitespace();
 
     public Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct) =>
         (arguments.GetStringOrNull("action") ?? "publish") switch
@@ -97,7 +87,7 @@ public sealed partial class ArtifactTool(ArtifactStore store, Func<string> baseU
             return ToolResult.Error($"{path} is {size / (1024 * 1024)}MB, which exceeds the {MaxHtmlBytes / (1024 * 1024)}MB artifact limit.");
 
         var html = await File.ReadAllTextAsync(path, Encoding.UTF8, ct);
-        var title = Clean(arguments.GetStringOrNull("title")) ?? TitleOf(html) ?? Path.GetFileNameWithoutExtension(path);
+        var title = ArtifactTitles.Clean(arguments.GetStringOrNull("title")) ?? ArtifactTitles.FromHtml(html) ?? Path.GetFileNameWithoutExtension(path);
 
         var id = arguments.GetStringOrNull("id");
         var published = await store.PublishAsync(html, title, path, id, ct);
@@ -161,15 +151,4 @@ public sealed partial class ArtifactTool(ArtifactStore store, Func<string> baseU
     }
 
     private string UrlOf(string id) => $"{baseUrl().TrimEnd('/')}/artifacts/{id}";
-
-    private static string? TitleOf(string html) =>
-        TitlePattern().Match(html) is { Success: true } match ? Clean(WebUtility.HtmlDecode(match.Groups[1].Value)) : null;
-
-    private static string? Clean(string? title)
-    {
-        if (string.IsNullOrWhiteSpace(title))
-            return null;
-        var oneLine = Whitespace().Replace(title, " ").Trim();
-        return oneLine.Length <= MaxTitleChars ? oneLine : oneLine[..MaxTitleChars];
-    }
 }

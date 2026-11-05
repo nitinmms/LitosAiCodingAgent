@@ -27,6 +27,24 @@ public static class ArtifactSkills
     /// <summary>The embedded SKILL.md, frontmatter included.</summary>
     public static string EmbeddedSkillMarkdown { get; } = ReadEmbedded();
 
+    private const string DesignRulesStart = "## Where the page runs";
+
+    /// <summary>
+    /// The skill's design rules alone — what the sandbox allows, external resources, the page
+    /// contract and design effort — without its frontmatter, introduction or file-based workflow.
+    /// For a face whose agent publishes differently (the software factory's chat passes the page
+    /// inline and has no write tools), which states its own workflow and appends these.
+    /// </summary>
+    public static string DesignRules { get; } = ExtractDesignRules(EmbeddedSkillMarkdown);
+
+    internal static string ExtractDesignRules(string skillMarkdown)
+    {
+        var start = skillMarkdown.IndexOf(DesignRulesStart, StringComparison.Ordinal);
+        if (start < 0)
+            throw new InvalidOperationException($"The artifact-design skill has no '{DesignRulesStart}' section to take the design rules from.");
+        return skillMarkdown[start..].Replace("\r\n", "\n").Trim();
+    }
+
     /// <summary>
     /// Writes the embedded skill under <paramref name="builtInRoot"/> unless an identical copy is
     /// already there, so a newer host binary refreshes the text and an unchanged one doesn't touch

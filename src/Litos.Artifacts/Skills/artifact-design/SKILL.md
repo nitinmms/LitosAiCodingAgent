@@ -50,7 +50,8 @@ The page is served with a strict sandbox. Design within it — these fail silent
 - Images: inline SVG, `data:` URIs, or those CDNs. Not arbitrary image URLs — they are blocked.
 - **Pin an exact version** in every URL (`chart.js@4.4.1`, never `chart.js` or `chart.js@4`), using
   a version you know has existed for a while.
-- Everything else goes inline. Keep the page under 10 MB.
+- Everything else goes inline. Keep the page as small as it can be; publishing refuses a page over
+  its size limit, and says what the limit is.
 
 ## Page contract
 
