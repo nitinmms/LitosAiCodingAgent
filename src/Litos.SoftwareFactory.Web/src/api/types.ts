@@ -183,6 +183,21 @@ export interface Message {
   createdAt: string;
   /** The files sent with it (attachments-architecture.md §3); absent from an older host. */
   attachments?: Attachment[];
+  /** The pages a chat answer published (ReadMe_ArtifactsFeature.md §11.6); absent from an older host. */
+  artifacts?: ArtifactLink[];
+}
+
+/** A page a chat answer published, at the version that answer published. */
+export interface ArtifactLink {
+  id: string;
+  title: string;
+  version: number;
+  /** The newest version on the thread; greater than `version` once a later answer updated it. */
+  latestVersion: number;
+  /** This version's page. */
+  url: string;
+  /** The newest version's page. */
+  latestUrl: string;
 }
 
 export type AttachmentKind = 'Image' | 'Document' | 'Text';

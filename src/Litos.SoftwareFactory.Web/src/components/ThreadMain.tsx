@@ -21,6 +21,7 @@ import {
   withMention,
 } from '../domain/task';
 import { MessageAttachments, PendingFiles, usePendingFiles } from './Attachments';
+import { MessageArtifacts } from './Artifacts';
 import { ErrorNote, Rail, Rich, SafeLink, TurnPill } from './bits';
 import { DecisionCard, HandoffCard, SpecCard, StopPanel } from './cards';
 import { ReflectionPanel } from './ReflectionPanel';
@@ -276,6 +277,8 @@ export function ThreadMain({
           <div key={m.id} className={`ev ${m.author === 'User' ? 'sys' : ''}`}>
             <div className="ev-text">
               <Rich text={m.text} />
+              {/* A chat answer that failed after publishing a page still shows the page. */}
+              <MessageArtifacts artifacts={m.artifacts} />
             </div>
             <span />
           </div>
@@ -289,6 +292,7 @@ export function ThreadMain({
               </div>
               <div className="bubble">
                 <Rich text={m.text} />
+                <MessageArtifacts artifacts={m.artifacts} />
               </div>
             </div>
           );
