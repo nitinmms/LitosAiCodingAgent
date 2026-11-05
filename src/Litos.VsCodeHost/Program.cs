@@ -1,4 +1,5 @@
 using Litos.Agent.Tools;
+using Litos.Artifacts;
 using Litos.Host;
 using Litos.Hosting;
 using Litos.Hosting.Turns;
@@ -48,6 +49,12 @@ builder.Services.AddSingleton(loopbackBaseUrl);
 builder.Services.AddSingleton<SharedFileStore>();
 builder.Services.AddSingleton<ITool>(sp => new ShareFileTool(sp.GetRequiredService<SharedFileStore>(), loopbackBaseUrl));
 
+// Agent-published HTML pages, opened in the user's browser from the tool result's link, plus the
+// built-in artifact-design skill (ReadMe_ArtifactsFeature.md). Same lazy base-URL reasoning as
+// ShareFileTool above. Must follow AddLitosAgent: it replaces that ISkillDiscovery with one that
+// also searches the built-in skill root.
+builder.Services.AddLitosArtifacts(() => loopbackBaseUrl.Value);
+
 // AgentWorker's constructor throws if no provider is configured (it resolves a default
 // provider/model eagerly) — only construct/register it, and only map the turns endpoints, once
 // there's actually at least one usable provider. When unconfigured, /config/status and
@@ -79,6 +86,7 @@ static Litos.Kernel.KernelSessionManager? BuildKernelSessionManager(IServiceProv
 var app = builder.Build();
 app.MapConfigEndpoints();
 app.MapFilesEndpoints();
+app.MapArtifactEndpoints();
 app.MapSkillsEndpoints();
 app.MapAttachEndpoints();
 app.MapMcpEndpoints();

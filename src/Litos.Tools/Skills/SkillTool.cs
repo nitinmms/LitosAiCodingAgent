@@ -5,7 +5,9 @@ namespace Litos.Tools.Skills;
 
 public sealed class SkillTool(ISkillDiscovery discovery) : ITool
 {
-    public string Name => "skill";
+    // Shared with Litos.Agent's RetainedSkills, which recognizes this tool's calls in a transcript
+    // to keep loaded skills alive across compaction.
+    public string Name => Litos.Agent.Session.RetainedSkills.SkillToolName;
 
     public string Description =>
         "Load a skill's full instructions by name. Call this before acting on a task " +

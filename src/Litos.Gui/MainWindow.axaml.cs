@@ -2208,7 +2208,8 @@ public sealed partial class MainWindow : Window
                         case Litos.Agent.Messages.ToolResultBlock:
                             break; // already folded into its ToolUseBlock's row above
                         case Litos.Agent.Messages.CompactionSummaryBlock summary:
-                            TranscriptPanel.Children.Add(NewToolTextBlock($"⚏ [history compacted: {summary.Summary}]"));
+                            // Re-attached skill bodies are context for the model, not part of the recap the user reads.
+                            TranscriptPanel.Children.Add(NewToolTextBlock($"⚏ [history compacted: {Litos.Agent.Session.RetainedSkills.StripSection(summary.Summary)}]"));
                             break;
                     }
                 }

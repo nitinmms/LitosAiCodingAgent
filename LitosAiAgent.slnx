@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Litos.Agent/Litos.Agent.csproj" />
+    <Project Path="src/Litos.Artifacts/Litos.Artifacts.csproj" />
     <Project Path="src/Litos.Api/Litos.Api.csproj" />
     <Project Path="src/Litos.Console/Litos.Console.csproj" />
     <Project Path="src/Litos.Gui/Litos.Gui.csproj" />
@@ -30,6 +31,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Litos.Agent.Tests/Litos.Agent.Tests.csproj" />
     <Project Path="tests/Litos.Api.Tests/Litos.Api.Tests.csproj" />
+    <Project Path="tests/Litos.Artifacts.Tests/Litos.Artifacts.Tests.csproj" />
     <Project Path="tests/Litos.Console.Tests/Litos.Console.Tests.csproj" />
     <Project Path="tests/Litos.Gui.Tests/Litos.Gui.Tests.csproj" />
     <Project Path="tests/Litos.Host.Tests/Litos.Host.Tests.csproj" />

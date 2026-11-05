@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Litos.Artifacts;
 using Litos.Tools.Skills;
 
 namespace Litos.VsCodeHost.Skills;
@@ -12,7 +13,9 @@ namespace Litos.VsCodeHost.Skills;
 /// reasoning Litos.Gui's own MainWindow.axaml.cs gives for constructing `new
 /// SkillDiscovery(_transcript.WorkingDirectory)` itself rather than resolving the container's copy:
 /// project-local skills (.litos/skills/) are scoped to whichever session's working directory is
-/// asking, not a single process-wide default.
+/// asking, not a single process-wide default. Both routes include the built-in skill root
+/// (ArtifactSkills.UserRoots), matching the DI-registered discovery AddLitosArtifacts installs, so
+/// the /skills list shows the same artifact-design skill the model sees.
 /// </summary>
 public static class SkillsEndpoints
 {
@@ -20,14 +23,14 @@ public static class SkillsEndpoints
     {
         app.MapGet("/skills", async (string cwd, CancellationToken ct) =>
         {
-            var discovery = new SkillDiscovery(cwd);
+            var discovery = new SkillDiscovery(cwd, ArtifactSkills.UserRoots());
             var skills = await discovery.DiscoverAsync(ct);
             return Results.Ok(skills.Select(s => new { s.Name, s.Description }));
         });
 
         app.MapGet("/skills/{name}", async (string name, string cwd, CancellationToken ct) =>
         {
-            var discovery = new SkillDiscovery(cwd);
+            var discovery = new SkillDiscovery(cwd, ArtifactSkills.UserRoots());
             // Frontmatter-stripped body only, via SkillTool.InvokeAsync itself — the same public
             // seam the model uses when it calls the skill tool (SkillFrontmatter.Parse, the type
             // that actually strips it, is internal to Litos.Tools; this reuses the tool's own

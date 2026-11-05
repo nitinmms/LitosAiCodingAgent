@@ -9,6 +9,7 @@ import { getWebviewHtml } from "./webviewContent";
 import { getMcpPanelHtml } from "./mcpPanelContent";
 import { getContextPanelHtml } from "./contextPanelContent";
 import { extractMentionPaths, expandMentionCandidates } from "./mentionParser";
+import { rewriteStaleHostLink } from "./shareLinks";
 
 /**
  * One Litos.VsCodeHost process is shared by every chat panel opened in this extension activation
@@ -104,30 +105,6 @@ const ATTACHMENT_ICON_KIND_BY_EXTENSION: Record<string, string> = {
 function attachmentIconKind(fileName: string): string {
     const ext = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
     return ATTACHMENT_ICON_KIND_BY_EXTENSION[ext] || "generic";
-}
-
-// share_file (ShareFileTool.cs) always emits "http://127.0.0.1:{port}/files/{token}", where token
-// is RandomNumberGenerator.GetHexString(16, lowercase: true) — a stable file on disk under
-// ~/.litos/shared-files, valid 24h regardless of which process minted it — but the port is only
-// valid for the Litos.VsCodeHost.exe process that was running at share-time. Closing/reloading the
-// VS Code window kills that process (deactivate()) and the next panel-open spawns a new one on a
-// new OS-assigned port (Program.cs binds port 0), so a link persisted into an old session's
-// transcript embeds a port nothing is listening on anymore even though the token/file are still
-// good. Since the token itself carries all the information needed to resolve the file, any link
-// matching this shape is rewritten to whichever host:port the *currently running* shared host
-// actually reports, rather than trusting whatever host:port happened to be embedded when the link
-// was generated.
-const SHARE_LINK_PATH_PATTERN = /\/files\/[0-9a-f]{16,}$/;
-
-function rewriteStaleShareLink(url: string): string {
-    if (!sharedHost) return url;
-    try {
-        const parsed = new URL(url);
-        if (!SHARE_LINK_PATH_PATTERN.test(parsed.pathname)) return url;
-        return `${sharedHost.baseUrl}${parsed.pathname}`;
-    } catch {
-        return url;
-    }
 }
 
 async function refreshContextUsage(state: PanelState): Promise<void> {
@@ -576,7 +553,7 @@ async function handlePanelMessage(context: vscode.ExtensionContext, state: Panel
         // for why this is routed through the extension instead of a plain <a target="_blank">.
         // openExternal hands off to the OS the same way every time, including a real Save-As
         // dialog for a Content-Disposition: attachment response like share_file's own.
-        vscode.env.openExternal(vscode.Uri.parse(rewriteStaleShareLink(message.url)));
+        vscode.env.openExternal(vscode.Uri.parse(rewriteStaleHostLink(message.url, sharedHost?.baseUrl)));
         return;
     }
 

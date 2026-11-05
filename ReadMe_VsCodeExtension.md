@@ -577,6 +577,11 @@ file, so the stored host:port is simply discarded and replaced at click-time. A 
 resolves correctly as long as the token is still within its 24h window, independent of how many
 times the host process has restarted since the link was generated.
 
+The rewrite now lives in `src/Litos.VsCode/src/shareLinks.ts` (`rewriteStaleHostLink`, unit-tested in
+`__tests__/shareLinks.test.ts`), covers artifact links (`/artifacts/{id}` and `/artifacts/{id}/v/{n}`) as
+well as `/files/{token}`, and only re-points loopback (`127.0.0.1`/`localhost`) URLs — a model-written
+link to another site with the same path shape is left alone. See `ReadMe_ArtifactsFeature.md`.
+
 ## 8. API keys — /keys and the first-run UX — implemented
 
 `ConfigEndpoints.cs` (`GET /config/status`, `POST /config/keys`) exposes the same persistence
@@ -717,19 +722,21 @@ environment), or accept the real-env-var side effect deliberately, never acciden
 | `src/Litos.VsCodeHost/Files/ShareFileTool.cs` | `share_file` tool, local copy of `Litos.Api`'s, using `LoopbackBaseUrl` instead of `PUBLIC_BASE_URL` (§7.9). |
 | `src/Litos.VsCodeHost/Files/{SharedFileStore,SharedFileMeta}.cs` | Local copies of `Litos.Api`'s, unchanged. |
 | `src/Litos.VsCodeHost/Files/FilesEndpoints.cs` | `GET /files/{token}` — unauthenticated, token-as-credential, local copy of `Litos.Api`'s. |
+| `src/Litos.Artifacts/*` (shared project) | The `artifact` tool, versioned `ArtifactStore` (`~/.litos/artifacts`), `GET /artifacts/{id}[/v/{n}]` with the sandboxing CSP, and the built-in `artifact-design` skill — wired in `Program.cs` via `AddLitosArtifacts` + `MapArtifactEndpoints`. See `ReadMe_ArtifactsFeature.md`. |
 | `src/Litos.VsCodeHost/Turns/AgentSettingsEndpoints.cs` | `/settings`, `/settings/models`, `/settings/provider`, `/settings/model` — `/provider`/`/model` parity. |
 | `src/Litos.VsCodeHost/Turns/AgentSettingsEndpoints.cs` (`SessionActionsEndpoints`, `ReflectEndpoints`) | `/sessions/{id}/branch-points`, `/sessions/{id}/branch`, `/sessions/{id}/compact`, `/sessions/{id}/reflect`. |
 | `src/Litos.VsCodeHost/Turns/AttachEndpoints.cs` | `POST /attachments/from-path` (file picker), `POST /attachments/from-bytes` (clipboard paste) — `/attach` + paste-to-attach parity. |
 | `src/Litos.VsCodeHost/Turns/{ImageMedia,UntrustedContent}.cs` | Local copies (face-local convention), needed by `AttachEndpoints.cs`. |
-| `src/Litos.VsCodeHost/Skills/SkillsEndpoints.cs` | `GET /skills`, `GET /skills/{name}` — workspace-scoped, reuses `SkillTool.InvokeAsync` itself rather than the `internal` frontmatter parser directly. |
+| `src/Litos.VsCodeHost/Skills/SkillsEndpoints.cs` | `GET /skills`, `GET /skills/{name}` — workspace-scoped, reuses `SkillTool.InvokeAsync` itself rather than the `internal` frontmatter parser directly; searches `ArtifactSkills.UserRoots()` so the built-in `artifact-design` skill is listed. |
 | `src/Litos.VsCodeHost/Mcp/McpEndpoints.cs` | `GET/POST/DELETE /mcp/servers`, `POST /mcp/refresh` — `/mcp` parity. |
-| `tests/Litos.VsCodeHost.Tests/` | `AgentWorkerTests.cs` (incl. provider/model-switching, 7 new), `AutoApprovalGateTests.cs`, `Approvals/PendingApprovalRelayTests.cs`, `Approvals/McpAwareApprovalGateWiringTests.cs`, `Files/ShareFileToolTests.cs`, local `Fakes/` — 31 passing. |
+| `tests/Litos.VsCodeHost.Tests/` | `AgentWorkerTests.cs` (incl. provider/model-switching, 7 new), `AutoApprovalGateTests.cs`, `Approvals/PendingApprovalRelayTests.cs`, `Approvals/McpAwareApprovalGateWiringTests.cs`, `Files/ShareFileToolTests.cs`, local `Fakes/` — 72 passing as of 2026-11-05. Artifact tests live in `tests/Litos.Artifacts.Tests/`. |
 | `src/Litos.VsCode/src/hostProcess.ts` | Spawns the bundled binary, scans stdout for the port handshake, defensively re-chmods on non-Windows. |
 | `src/Litos.VsCode/src/agentEvents.ts` | SSE client + event classifier, ported from `AngularChat/app.js`; `LitosClient` methods for every endpoint above. |
 | `src/Litos.VsCode/src/extension.ts` | Activation, shared-host lifecycle across multiple panels (§5), first-run gate, `runSlashCommand`/`handlePickerSelection` dispatch, native `vscode.diff` for `/reflect` (§7.5), MCP panel lifecycle. |
 | `src/Litos.VsCode/src/webviewContent.ts` | Styled HTML/CSS transcript; command-menu (`/`-trigger dropdown), generic picker modal (reused by `/resume`/`/provider`/`/model`/`/branch`/`/skills`), pending-attachment chips, clipboard-paste listener, `linkify()` for clickable links (§7.9). |
 | `src/Litos.VsCode/src/mcpPanelContent.ts` | `/mcp`'s own dedicated webview panel — server list, live status, add/enable-disable/remove form. |
-| `src/Litos.VsCode/src/__tests__/` | `agentEvents.test.ts`, `litosClientCommands.test.ts`, `hostProcess.test.ts`, `webviewMarkdown.test.ts` (vitest, 47 passing) — the `vscode`-free, unit-testable modules, plus the generated-`<script>`-text extraction tests for Markdown rendering. |
+| `src/Litos.VsCode/src/shareLinks.ts` | `rewriteStaleHostLink` — re-points stale-port `/files/` and `/artifacts/` links at the running host (§7.9). |
+| `src/Litos.VsCode/src/__tests__/` | `agentEvents.test.ts`, `litosClientCommands.test.ts`, `hostProcess.test.ts`, `webviewMarkdown.test.ts`, `shareLinks.test.ts` and others (vitest, 174 passing as of 2026-11-05) — the `vscode`-free, unit-testable modules, plus the generated-`<script>`-text extraction tests for Markdown rendering. |
 | `src/Litos.VsCode/media/marked.min.js` | Vendored `marked` v12.0.2 (MIT), inlined verbatim into the webview's `<script>` — see §7.7. |
 | `deploy/publish-vscodehost-{windows,linux,macos}.{ps1,sh}` | Per-platform publish scripts, mirroring the now-shelved `Litos.Console`'s own (§11) — only Windows has been run/tested so far. |
 

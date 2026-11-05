@@ -79,11 +79,33 @@ public sealed class Compactor(CompactionSettings settings)
         // since the latter silently drops the trailing-messages estimate. Not carried forward as
         // the transcript's new baseline usage: see ApplyCompaction's remarks for why that's unsafe.
         var tokensBefore = CompactionPlanner.EstimatedTokensUsed(transcript) ?? 0;
-        var summary = await SummarizeAsync(toSummarize, provider, model, additionalInstruction, ct);
+        var summary = await SummarizeAsync(WithoutRetainedSkills(toSummarize), provider, model, additionalInstruction, ct);
+
+        // Skills loaded before the cut would otherwise vanish with the messages that carried them
+        // (see RetainedSkills). One loaded again after the cut is still in the kept tail, verbatim,
+        // so it isn't carried twice.
+        var reloadedAfterCut = RetainedSkills.Collect(transcript.Messages.Skip(cutPoint.Index)).Select(s => s.Name).ToHashSet();
+        var retained = RetainedSkills.Collect(toSummarize).Where(s => !reloadedAfterCut.Contains(s.Name)).ToList();
+        summary = RetainedSkills.Append(summary, retained, RetainedSkills.CharBudgetFor(effectiveSettings));
 
         transcript.ApplyCompaction(cutPoint.Index, ChatMessage.CompactionSummary(summary, tokensBefore));
         return true;
     }
+
+    /// <summary>
+    /// The messages as the summarizer should see them: an earlier compaction's re-attached skill
+    /// bodies are carried forward verbatim by RetainedSkills, so they are left out of what the
+    /// LLM is asked to summarize rather than paraphrased into the new summary as well.
+    /// </summary>
+    private static List<ChatMessage> WithoutRetainedSkills(IReadOnlyList<ChatMessage> messages) =>
+        [.. messages.Select(message => message.Content.Any(b => b is CompactionSummaryBlock)
+            ? message with
+            {
+                Content = [.. message.Content.Select(b => b is CompactionSummaryBlock c
+                    ? c with { Summary = RetainedSkills.StripSection(c.Summary) }
+                    : b)],
+            }
+            : message)];
 
     private static async Task<string> SummarizeAsync(
         IReadOnlyList<ChatMessage> messages, IChatProvider provider, string model, string? additionalInstruction, CancellationToken ct)

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Agent-published HTML pages ("artifacts"): the versioned store, the artifact tool, the
+       hardened serving route and the built-in artifact-design skill. A class library like
+       Litos.Hosting — it maps its route onto whichever host references it, and is shared so
+       Litos.Gui/Litos.Api can adopt it later without another per-face copy (unlike share_file).
+       See ReadMe_ArtifactsFeature.md. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.Agent\Litos.Agent.csproj" />
+    <ProjectReference Include="..\Litos.Tools\Litos.Tools.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <!-- Embedded rather than copied loose: Litos.VsCodeHost publishes as a compressed single-file
+       exe, so the skill ships inside the binary and ArtifactSkills writes it to disk at startup. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Skills\artifact-design\SKILL.md" LogicalName="Litos.Artifacts.Skills.artifact-design.SKILL.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.Artifacts.Tests" />
+  </ItemGroup>
+
+</Project>
