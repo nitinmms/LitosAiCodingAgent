@@ -21,6 +21,9 @@ public sealed class GitHubFromSettings(FactorySettings settings) : IGitHub
     public Task<PullRequestState> GetPullRequestStateAsync(string owner, string repository, int number, CancellationToken ct) =>
         Client().GetPullRequestStateAsync(owner, repository, number, ct);
 
+    public Task<PullRequestDetails> GetPullRequestDetailsAsync(string owner, string repository, int number, CancellationToken ct) =>
+        Client().GetPullRequestDetailsAsync(owner, repository, number, ct);
+
     /// <summary>A client for the token set now; the same one while the token does not change.</summary>
     private GitHubClient Client()
     {

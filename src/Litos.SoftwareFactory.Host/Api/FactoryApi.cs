@@ -30,9 +30,13 @@ public sealed record UpdateProfileRequest(string? Preset = null, string? Profile
 /// <param name="Model">Null for the provider's default model.</param>
 /// <param name="PtcEnabled">Null for the factory's default (m3-architecture.md §6).</param>
 /// <param name="Skills">The library skills chosen for the task (m3-architecture.md §13); null takes its type's defaults.</param>
+/// <param name="RunFirst">An Admin's "Run first": first in its project's queue once delegated (run-order-architecture.md).</param>
+/// <param name="RunAfterThreadId">"Run after": straight after that queued task once delegated.</param>
+/// <param name="BlockedBy">"Blocked by": tasks of the project whose merge it waits for before it starts.</param>
 public sealed record CreateThreadRequest(
     Guid ProjectId, string Title, string TypeLabel = "feature", long? BudgetCap = null, string? Provider = null, string? Model = null,
-    bool? PtcEnabled = null, IReadOnlyList<string>? Skills = null);
+    bool? PtcEnabled = null, IReadOnlyList<string>? Skills = null,
+    bool RunFirst = false, Guid? RunAfterThreadId = null, IReadOnlyList<Guid>? BlockedBy = null);
 
 public sealed record SetThreadSkillsRequest(IReadOnlyList<string>? Skills);
 
@@ -312,6 +316,17 @@ public static class FactoryApi
                 request.Skills ?? TaskSkillSelection.DefaultsFor(skillSettings, request.TypeLabel), skillSettings, out var skillsRefused);
             if (skillsRefused is not null)
                 return Problem(skillsRefused);
+            if (request.RunFirst && !ProjectAccess.IsAdmin(user))
+                return Results.Json(new { error = EfFactoryStore.MembersSwapOwnTasks }, statusCode: StatusCodes.Status403Forbidden);
+            if (request.RunFirst && request.RunAfterThreadId is not null)
+                return Problem("Choose Run first or Run after, not both.");
+            // Checked now, so a thread is never created with a link that cannot be made.
+            var blockedBy = request.BlockedBy?.Distinct().ToList() ?? [];
+            foreach (var related in blockedBy.Append(request.RunAfterThreadId ?? Guid.Empty).Where(g => g != Guid.Empty))
+            {
+                if ((await store.GetThreadAsync(related, ct))?.Thread is not { } other || other.ProjectId != request.ProjectId)
+                    return Problem("Run after and Blocked by name tasks of the same project.");
+            }
 
             try
             {
@@ -329,15 +344,24 @@ public static class FactoryApi
                     ContextLength = model.ContextLength,
                     PtcEnabled = ptc,
                     SkillsJson = TaskSkillSelection.Serialize(skills),
+                    RunFirst = request.RunFirst,
+                    RunAfterThreadId = request.RunAfterThreadId,
                     CreatedAt = now,
                     UpdatedAt = now,
                 }, ct);
+                foreach (var blocker in blockedBy)
+                    thread = await store.AddBlockerAsync(thread.Id, blocker, user.UserId(), ProjectAccess.IsAdmin(user), now, ct);
                 signals.EventsWritten(); // boards showing the project hear of the new thread
                 return Results.Created($"/api/threads/{thread.Id}", ThreadView(thread));
             }
             catch (StoreNotFoundException ex)
             {
                 return Results.NotFound(new { error = ex.Message });
+            }
+            catch (StoreConflictException ex)
+            {
+                // A blocker cancelled or merged since the dialog was opened. The thread stands; the link is not made.
+                return Results.Conflict(new { error = ex.Message });
             }
         });
 
@@ -707,6 +731,10 @@ public static class FactoryApi
         {
             return Results.Conflict(new { error = ex.Message });
         }
+        catch (StoreForbiddenException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+        }
     }
 
     /// <summary>The threads of the projects the user may see; of one project when one is given.</summary>
@@ -865,7 +893,7 @@ public static class FactoryApi
         thread.Title,
         thread.TypeLabel,
         // Whose move it is (§7.1): computed here so every client agrees.
-        Turn = TurnLabels.For(thread.State, thread.Stage).ToString(),
+        Turn = TurnLabels.For(thread.State, thread.Stage, thread.BlockerNeedsYou).ToString(),
         Stage = thread.Stage.ToString(),
         State = thread.State.ToString(),
         thread.StateReason,
@@ -875,6 +903,13 @@ public static class FactoryApi
         thread.Branch,
         thread.PullRequestNumber,
         thread.PullRequestUrl,
+        // Run order and "Blocked by" (run-order-architecture.md).
+        thread.PullRequestMergedAt,
+        thread.PullRequestClosedAt,
+        thread.QueueRank,
+        thread.RunFirst,
+        thread.RunAfterThreadId,
+        thread.BlockerNeedsYou,
         thread.Provider,
         thread.Model,
         // Whether the provider honours the output cap and reports usage (m3-architecture.md §4.2).

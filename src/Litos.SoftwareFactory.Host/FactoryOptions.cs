@@ -117,6 +117,14 @@ public sealed class FactoryOptions
     /// <summary>How often the coordinator looks for queued work when nothing has signalled it.</summary>
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>How often GitHub is asked whether the pull requests other tasks wait for are
+    /// merged (run-order-architecture.md). Only those are asked about, so it is cheap.</summary>
+    public TimeSpan MergeCheckInterval { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>How long a task waits for another before that task's owner is reminded, and how
+    /// often after that.</summary>
+    public TimeSpan BlockerReminderAfter { get; set; } = TimeSpan.FromDays(2);
+
     /// <summary>How long an invitation's link works.</summary>
     public TimeSpan InvitationLifetime { get; set; } = TimeSpan.FromDays(7);
 

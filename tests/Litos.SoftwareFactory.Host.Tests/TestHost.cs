@@ -356,6 +356,24 @@ public sealed class FakeGitHub : IGitHub
         StateRequests.Add($"{owner}/{repository}#{number}");
         return FailState is null ? Task.FromResult(State) : Task.FromException<PullRequestState>(FailState);
     }
+
+    /// <summary>The branch each pull request targets, by number; "main" for one not named.</summary>
+    public Dictionary<int, string?> BaseBranches { get; } = [];
+
+    /// <summary>A state per pull request, by number, where one differs from <see cref="State"/>.</summary>
+    public Dictionary<int, PullRequestState> States { get; } = [];
+
+    /// <summary>Pull requests GitHub will not describe.</summary>
+    public HashSet<int> Unreadable { get; } = [];
+
+    public Task<PullRequestDetails> GetPullRequestDetailsAsync(string owner, string repository, int number, CancellationToken ct)
+    {
+        StateRequests.Add($"{owner}/{repository}#{number}");
+        if (FailState is not null || Unreadable.Contains(number))
+            return Task.FromException<PullRequestDetails>(FailState ?? new InvalidOperationException("GitHub did not answer."));
+        return Task.FromResult(new PullRequestDetails(
+            States.TryGetValue(number, out var state) ? state : State, BaseBranches.TryGetValue(number, out var branch) ? branch : "main"));
+    }
 }
 
 public sealed class FakeUserDirectory : IUserDirectory

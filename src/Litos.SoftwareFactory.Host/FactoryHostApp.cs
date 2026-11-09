@@ -124,6 +124,11 @@ public static class FactoryHostApp
         services.AddSingleton<Litos.Tools.Attachments.IAttachmentConverter, Litos.Tools.Attachments.MarkItDownAttachmentConverter>();
         services.AddSingleton<RunAttachments>();
         services.AddHostedService<Api.AttachmentSweeper>();
+        // The pull requests tasks wait for (run-order-architecture.md).
+        services.AddSingleton<MergeWatcher>(sp => new MergeWatcher(
+            sp.GetRequiredService<IFactoryStore>(), sp.GetRequiredService<FactorySignals>(), sp.GetRequiredService<IClock>(), options,
+            sp.GetRequiredService<ILogger<MergeWatcher>>(), sp.GetService<IGitHub>()));
+        services.AddHostedService(sp => sp.GetRequiredService<MergeWatcher>());
 
         configureServices?.Invoke(services);
 
@@ -175,6 +180,7 @@ public static class FactoryHostApp
         app.MapFactoryAccessTokens();
         app.MapFactoryUsers();
         app.MapFactoryApi();
+        app.MapFactoryRunOrder();
         app.MapFactoryAttachments();
         app.MapFactoryArtifacts();
         app.MapFactorySettings();
