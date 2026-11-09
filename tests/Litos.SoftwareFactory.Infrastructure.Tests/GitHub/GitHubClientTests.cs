@@ -222,6 +222,32 @@ public class GitHubClientTests
         Assert.Equal("/repos/acme/salesapp/pulls/1", request.Uri.AbsolutePath);
     }
 
+    /// <summary>The branch a merged pull request went into decides whether the tasks waiting on it start (run-order-architecture.md).</summary>
+    [Theory]
+    [InlineData("""{"number":1,"state":"closed","merged":true,"base":{"ref":"main","sha":"abc"}}""", PullRequestState.Merged, "main")]
+    [InlineData("""{"number":1,"state":"closed","merged":true,"base":{"ref":"release/1.2"}}""", PullRequestState.Merged, "release/1.2")]
+    [InlineData("""{"number":1,"state":"open","draft":true,"base":{"ref":"main"}}""", PullRequestState.Draft, "main")]
+    [InlineData("""{"number":1,"state":"closed","merged":true}""", PullRequestState.Merged, null)]
+    public async Task GetPullRequestDetails_ReadsTheStateAndTheBranchItTargets(string response, PullRequestState state, string? baseBranch)
+    {
+        var (client, handler) = Create();
+        handler.Enqueue(HttpStatusCode.OK, response);
+
+        Assert.Equal(new PullRequestDetails(state, baseBranch), await client.GetPullRequestDetailsAsync("acme", "salesapp", 1, default));
+        Assert.Equal("/repos/acme/salesapp/pulls/1", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task GetPullRequestDetails_IsRetriedLikeTheState()
+    {
+        var (client, handler) = CreateRetrying();
+        handler.EnqueueFailure();
+        handler.Enqueue(HttpStatusCode.OK, """{"number":3,"state":"closed","merged":true,"base":{"ref":"main"}}""");
+
+        Assert.Equal(new PullRequestDetails(PullRequestState.Merged, "main"), await client.GetPullRequestDetailsAsync("acme", "salesapp", 3, default));
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
     [Fact]
     public async Task GetPullRequestState_GitHubRefuses_SaysWhy()
     {

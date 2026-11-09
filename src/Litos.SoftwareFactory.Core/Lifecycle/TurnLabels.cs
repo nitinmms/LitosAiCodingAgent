@@ -28,10 +28,12 @@ public enum TurnLabel
 /// </summary>
 public static class TurnLabels
 {
-    public static TurnLabel For(LifecycleState state, Stage stage) => state switch
+    /// <param name="blockerNeedsYou">A task it waits for had its pull request closed without
+    /// merging, so a person decides: release the task or cancel it (run-order-architecture.md).</param>
+    public static TurnLabel For(LifecycleState state, Stage stage, bool blockerNeedsYou = false) => state switch
     {
         LifecycleState.Draft => stage == Stage.Spec ? TurnLabel.AwaitingYou : TurnLabel.NotStarted,
-        LifecycleState.Queued => TurnLabel.AwaitingAgent,
+        LifecycleState.Queued => blockerNeedsYou ? TurnLabel.AwaitingYou : TurnLabel.AwaitingAgent,
         LifecycleState.Running => TurnLabel.AgentWorking,
         LifecycleState.PausedUser => TurnLabel.Paused,
         LifecycleState.Accepted or LifecycleState.Cancelled => TurnLabel.Done,

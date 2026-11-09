@@ -863,6 +863,54 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.ToTable("specifications", (string)null);
                 });
 
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.TaskBlocker", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BlockerThreadId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReleaseReason")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset?>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReleasedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("RemindedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ThreadId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BlockerThreadId");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("ThreadId", "BlockerThreadId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_task_blockers_one_open_per_pair")
+                        .HasFilter("\"ReleasedAt\" IS NULL");
+
+                    b.ToTable("task_blockers", (string)null);
+                });
+
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.TaskRun", b =>
                 {
                     b.Property<Guid>("Id")
@@ -981,6 +1029,9 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.Property<string>("BaseCommit")
                         .HasColumnType("text");
 
+                    b.Property<bool>("BlockerNeedsYou")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Branch")
                         .HasMaxLength(250)
                         .HasColumnType("character varying(250)");
@@ -1025,14 +1076,29 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.Property<bool?>("PtcEnabled")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTimeOffset?>("PullRequestClosedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("PullRequestMergedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int?>("PullRequestNumber")
                         .HasColumnType("integer");
 
                     b.Property<string>("PullRequestUrl")
                         .HasColumnType("text");
 
+                    b.Property<double?>("QueueRank")
+                        .HasColumnType("double precision");
+
                     b.Property<int>("Revision")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("RunAfterThreadId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("RunFirst")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("SessionId")
                         .IsRequired()
@@ -1769,6 +1835,21 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.Specification", b =>
                 {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.TaskThread", null)
+                        .WithMany()
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.TaskBlocker", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.TaskThread", null)
+                        .WithMany()
+                        .HasForeignKey("BlockerThreadId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("Litos.SoftwareFactory.Core.Store.TaskThread", null)
                         .WithMany()
                         .HasForeignKey("ThreadId")

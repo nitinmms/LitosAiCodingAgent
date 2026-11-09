@@ -140,10 +140,13 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
         return ToRef(await createResponse.Content.ReadFromJsonAsync<PullRequestResponse>(JsonOptions, ct));
     }
 
-    public Task<PullRequestState> GetPullRequestStateAsync(string owner, string repository, int number, CancellationToken ct) =>
-        WithRetryAsync(() => GetPullRequestStateOnceAsync(owner, repository, number, ct), ct);
+    public async Task<PullRequestState> GetPullRequestStateAsync(string owner, string repository, int number, CancellationToken ct) =>
+        (await GetPullRequestDetailsAsync(owner, repository, number, ct)).State;
 
-    private async Task<PullRequestState> GetPullRequestStateOnceAsync(string owner, string repository, int number, CancellationToken ct)
+    public Task<PullRequestDetails> GetPullRequestDetailsAsync(string owner, string repository, int number, CancellationToken ct) =>
+        WithRetryAsync(() => GetPullRequestOnceAsync(owner, repository, number, ct), ct);
+
+    private async Task<PullRequestDetails> GetPullRequestOnceAsync(string owner, string repository, int number, CancellationToken ct)
     {
         using var response = await http.GetAsync(
             $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repository)}/pulls/{number}", ct);
@@ -152,11 +155,11 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
             ?? throw new GitHubException("GitHub's response did not describe a pull request.");
 
         // GitHub's "state" is only open or closed; merged and draft are separate flags.
-        if (pull.Merged == true)
-            return PullRequestState.Merged;
-        if (pull.State == "closed")
-            return PullRequestState.Closed;
-        return pull.Draft == true ? PullRequestState.Draft : PullRequestState.Open;
+        var state = pull.Merged == true ? PullRequestState.Merged
+            : pull.State == "closed" ? PullRequestState.Closed
+            : pull.Draft == true ? PullRequestState.Draft
+            : PullRequestState.Open;
+        return new PullRequestDetails(state, pull.Base?.Ref);
     }
 
     private static PullRequestRef ToRef(PullRequestResponse? response) =>
@@ -189,7 +192,9 @@ public sealed class GitHubClient(HttpClient http) : IGitHub
 
     private sealed record UpdatePullRequest(string Title, string Body);
 
-    private sealed record PullRequestResponse(int Number, string? HtmlUrl, string? State = null, bool? Draft = null, bool? Merged = null);
+    private sealed record PullRequestResponse(int Number, string? HtmlUrl, string? State = null, bool? Draft = null, bool? Merged = null, BranchRef? Base = null);
+
+    private sealed record BranchRef(string? Ref);
 
     private sealed record ErrorResponse(string? Message);
 }

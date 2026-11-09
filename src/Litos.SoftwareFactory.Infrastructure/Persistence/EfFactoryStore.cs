@@ -5,6 +5,7 @@ using Litos.SoftwareFactory.Core.Briefs;
 using Litos.SoftwareFactory.Core.Budget;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
+using Litos.SoftwareFactory.Core.Queue;
 using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Microsoft.EntityFrameworkCore;
@@ -245,12 +246,16 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
                 runId = AddRun(db, thread, userId, RunKind.Implement, text, now);
                 outcome = DispatchOutcome.Queued;
                 action = AuditActions.ThreadDelegate;
+                // The place the draft asked for, or the end of the queue (run-order-architecture.md).
+                await PlaceInQueueAsync(db, thread, await DraftPlacementAsync(db, thread, ct), ct);
                 break;
 
             case LifecycleState.AwaitingHumanTesting:
                 // The tester asks for changes: a new run on the same branch, with its own limits.
                 thread.State = TaskLifecycle.Apply(thread.State, LifecycleTrigger.RequestChanges);
                 runId = AddRun(db, thread, userId, RunKind.Rework, text, now);
+                // Work already handed off and coming back: it goes ahead of new work.
+                await PlaceInQueueAsync(db, thread, Placement.First, ct);
                 outcome = DispatchOutcome.Queued;
                 action = AuditActions.ThreadChangeRequest;
                 payload = ChangeRequestPayload;
@@ -344,6 +349,67 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         Enqueue(run, now);
         db.Runs.Add(run);
         return run.Id;
+    }
+
+    /// <summary>The project's queue of work, in order, without <paramref name="except"/>.</summary>
+    private static async Task<List<TaskThread>> QueueOfAsync(FactoryDbContext db, Guid projectId, Guid except, CancellationToken ct) =>
+        await db.Threads.Where(t => t.ProjectId == projectId && t.State == LifecycleState.Queued && t.QueueRank != null && t.Id != except)
+            .OrderBy(t => t.QueueRank).ThenBy(t => t.CreatedAt).ToListAsync(ct);
+
+    /// <summary>
+    /// Gives <paramref name="thread"/> its rank in its project's queue, and returns the other tasks
+    /// whose rank changed with it: the partner of a swap, or everyone in the rare renumbering.
+    /// </summary>
+    private static async Task<List<TaskThread>> PlaceInQueueAsync(FactoryDbContext db, TaskThread thread, Placement placement, CancellationToken ct)
+    {
+        var others = await QueueOfAsync(db, thread.ProjectId, thread.Id, ct);
+        var queue = others.Select(t => new QueuedTask(t.Id, t.QueueRank!.Value)).ToList();
+        if (thread.QueueRank is { } own)
+            queue = [.. queue.Append(new QueuedTask(thread.Id, own)).OrderBy(t => t.Rank)];
+
+        var moved = new List<TaskThread>();
+        foreach (var (id, rank) in RunOrder.Place(queue, thread.Id, placement))
+        {
+            if (id == thread.Id)
+            {
+                thread.QueueRank = rank;
+                continue;
+            }
+
+            var other = others.First(t => t.Id == id);
+            if (other.QueueRank != rank)
+            {
+                other.QueueRank = rank;
+                moved.Add(other);
+            }
+        }
+
+        return moved;
+    }
+
+    /// <summary>
+    /// Where a draft goes when it is delegated: what it asked for when it was created, else the end.
+    /// A task it asked to follow that has left the queue has started, or finished, ahead of it, so
+    /// it goes first; one still a draft has not, so it goes to the end.
+    /// </summary>
+    private static async Task<Placement> DraftPlacementAsync(FactoryDbContext db, TaskThread thread, CancellationToken ct)
+    {
+        var placement = thread.RunFirst ? Placement.First : Placement.End;
+        if (!thread.RunFirst && thread.RunAfterThreadId is { } afterId)
+        {
+            var after = await db.Threads.AsNoTracking().Where(t => t.Id == afterId && t.ProjectId == thread.ProjectId)
+                .Select(t => new { t.State, t.QueueRank }).FirstOrDefaultAsync(ct);
+            placement = after switch
+            {
+                { State: LifecycleState.Queued, QueueRank: not null } => Placement.After(afterId),
+                null or { State: LifecycleState.Draft } => Placement.End,
+                _ => Placement.First,
+            };
+        }
+
+        thread.RunFirst = false;
+        thread.RunAfterThreadId = null;
+        return placement;
     }
 
     /// <summary>Puts a run in the queue. The claim takes runs in the order they last entered it.</summary>
@@ -701,6 +767,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
 
                 await ReleaseLeaseAsync(db, threadId, ct);
                 await CloseOpenDecisionsAsync(db, d => d.ThreadId == threadId, CancelledAnswer, userId, now, ct);
+                await OnCancelledAsync(db, thread, now, ct);
                 // A draft has no work to keep; a chat being answered is left to finish.
                 note = thread.State == LifecycleState.Draft
                     ? "Cancelled before it was delegated."
@@ -770,6 +837,8 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         thread.State = next;
         thread.Stage = Stage.Handoff;
         thread.StateReason = null;
+        // Back at its handoff: no longer in the queue.
+        thread.QueueRank = null;
 
         var heldLease = await db.Leases.AnyAsync(l => l.ThreadId == threadId, ct);
         var project = await db.Projects.AsNoTracking().FirstAsync(p => p.Id == thread.ProjectId, ct);
@@ -923,8 +992,21 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         }
 
         // Even when every slot is busy the queue is scanned, so each waiting thread says why.
-        var queued = await db.Runs.Where(r => r.Status == RunStatus.Queued)
+        var arrived = await db.Runs.Where(r => r.Status == RunStatus.Queued)
             .OrderBy(r => r.QueuedAt).ThenBy(r => r.CreatedAt).ThenBy(r => r.Id).ToListAsync(ct);
+
+        // A project's task work is taken in its run order; its turn among projects is still when
+        // its work arrived (run-order-architecture.md). A spec run is not ordered, but it does
+        // wait for its blockers, like the work it specifies.
+        var threadIds = arrived.Select(r => r.ThreadId).Distinct().ToList();
+        var places = await db.Threads.AsNoTracking().Where(t => threadIds.Contains(t.Id))
+            .Select(t => new { t.Id, t.ProjectId, t.QueueRank }).ToDictionaryAsync(t => t.Id, ct);
+        var queued = RunOrder.Arrange(
+            arrived,
+            r => r.Kind is RunKind.Implement or RunKind.Rework ? places[r.ThreadId].ProjectId : null,
+            r => places[r.ThreadId].QueueRank);
+        var blockedBy = await OpenBlockersAsync(db, threadIds, ct);
+
         foreach (var run in queued)
         {
             // Resumed while its previous executor is still tearing down: it starts once that is done.
@@ -960,6 +1042,14 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
 
             if (thread.State != LifecycleState.Queued)
                 continue;
+
+            // Waiting for another task's merge is the most specific reason of all: it would wait
+            // even with the repository free and a slot to spare.
+            if (blockedBy.TryGetValue(thread.Id, out var blocker))
+            {
+                Waiting(thread, RunOrder.WaitingReason(blocker));
+                continue;
+            }
 
             var project = await db.Projects.FirstAsync(p => p.Id == thread.ProjectId, ct);
             if (run.Kind == RunKind.Spec)
@@ -1027,6 +1117,8 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
 
             thread.State = TaskLifecycle.Apply(thread.State, LifecycleTrigger.Claim);
             thread.StateReason = null;
+            // Out of the queue: its place is free, and a rework later gets one of its own.
+            thread.QueueRank = null;
             run.Status = RunStatus.Running;
             run.StartedAt ??= now;
             run.HeartbeatAt = now;
@@ -1039,6 +1131,30 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         // Nothing could start, but the waiting reasons recorded above are still worth keeping.
         await write.CommitAsync(ct);
         return null;
+    }
+
+    /// <summary>
+    /// For each of <paramref name="threadIds"/> that waits for another task, the first such task
+    /// (oldest link first), as its waiting reason needs it. A thread absent from the result waits
+    /// for nothing.
+    /// </summary>
+    private static async Task<Dictionary<Guid, OpenBlocker>> OpenBlockersAsync(FactoryDbContext db, IReadOnlyCollection<Guid> threadIds, CancellationToken ct)
+    {
+        if (threadIds.Count == 0)
+            return [];
+
+        var open = await (
+            from link in db.Blockers.AsNoTracking()
+            where link.ReleasedAt == null && threadIds.Contains(link.ThreadId)
+            join blocker in db.Threads.AsNoTracking() on link.BlockerThreadId equals blocker.Id
+            orderby link.CreatedAt, link.Id
+            select new { link.ThreadId, blocker.Title, blocker.State, blocker.PullRequestNumber, Closed = blocker.PullRequestClosedAt != null })
+            .ToListAsync(ct);
+
+        // A closed pull request is the one a person must act on, so it is the one to name.
+        return open.GroupBy(o => o.ThreadId).ToDictionary(
+            g => g.Key,
+            g => g.OrderByDescending(o => o.Closed).Select(o => new OpenBlocker(o.Title, o.State, o.PullRequestNumber, o.Closed)).First());
     }
 
     /// <summary>In clone mode the lock identity is the project (§6.3).</summary>
@@ -1155,7 +1271,10 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         if (command.ReleaseLease || finished)
             await ReleaseLeaseAsync(db, thread.Id, ct);
         if (command.Trigger == LifecycleTrigger.Cancel)
+        {
             await CloseOpenDecisionsAsync(db, d => d.ThreadId == thread.Id, CancelledAnswer, null, now, ct);
+            await OnCancelledAsync(db, thread, now, ct);
+        }
 
         AddMessage(
             db, thread, MessageAuthor.Factory, null, command.MessageKind, command.Message, now,
@@ -1643,7 +1762,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
                     State = thread.State.ToString(),
                     Stage = thread.Stage.ToString(),
                     // Whose move it is, and what the thread is called, so a client never derives them.
-                    Turn = TurnLabels.For(thread.State, thread.Stage).ToString(),
+                    Turn = TurnLabels.For(thread.State, thread.Stage, thread.BlockerNeedsYou).ToString(),
                     thread.Title,
                     thread.TypeLabel,
                     Reason = thread.StateReason,

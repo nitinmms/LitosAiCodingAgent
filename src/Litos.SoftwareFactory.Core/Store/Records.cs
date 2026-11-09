@@ -64,6 +64,27 @@ public sealed class TaskThread
     public int? PullRequestNumber { get; set; }
     public string? PullRequestUrl { get; set; }
 
+    /// <summary>When its pull request was found merged into the default branch, or a person marked
+    /// it merged (run-order-architecture.md); what releases the tasks that wait for it.</summary>
+    public DateTimeOffset? PullRequestMergedAt { get; set; }
+
+    /// <summary>When its pull request was found closed without being merged.</summary>
+    public DateTimeOffset? PullRequestClosedAt { get; set; }
+
+    /// <summary>Its place in its project's queue while it is queued for work, lowest first
+    /// (<see cref="Queue.RunOrder"/>); null otherwise.</summary>
+    public double? QueueRank { get; set; }
+
+    /// <summary>The place a draft asked for, taken when it is delegated: first in line, or after
+    /// <see cref="RunAfterThreadId"/>; neither means the end of the queue.</summary>
+    public bool RunFirst { get; set; }
+
+    public Guid? RunAfterThreadId { get; set; }
+
+    /// <summary>A task it waits for had its pull request closed without merging, so the next move
+    /// is a person's: release it or cancel it. Kept with the links it follows from.</summary>
+    public bool BlockerNeedsYou { get; set; }
+
     /// <summary>The thread's one Litos session, for the whole of its life (§5).</summary>
     public required string SessionId { get; set; }
     public required string Provider { get; set; }
@@ -93,6 +114,46 @@ public sealed class TaskThread
     public int Revision { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+}
+
+/// <summary>Why a task stopped waiting for another.</summary>
+public enum BlockerRelease
+{
+    /// <summary>The other task's pull request was merged, or marked merged.</summary>
+    Merged,
+
+    /// <summary>A person chose to run it without that work ("Release now").</summary>
+    Manual,
+
+    /// <summary>The other task was cancelled.</summary>
+    BlockerCancelled,
+
+    /// <summary>The waiting task itself was cancelled.</summary>
+    ThreadCancelled,
+}
+
+/// <summary>
+/// "<see cref="ThreadId"/> waits for <see cref="BlockerThreadId"/>": the task is not started, nor
+/// its specification written, until the other task's pull request is merged into the project's
+/// default branch, so it starts with that work (run-order-architecture.md). Both tasks are in the
+/// same project. A released link is kept, so the thread can show what it waited for.
+/// </summary>
+public sealed class TaskBlocker
+{
+    public Guid Id { get; set; }
+    public Guid ProjectId { get; set; }
+    public Guid ThreadId { get; set; }
+    public Guid BlockerThreadId { get; set; }
+    public Guid CreatedBy { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ReleasedAt { get; set; }
+
+    /// <summary>The person who released it; null when a merge or a cancellation did.</summary>
+    public Guid? ReleasedBy { get; set; }
+    public BlockerRelease? ReleaseReason { get; set; }
+
+    /// <summary>When the blocking task's owner was last reminded that this task waits.</summary>
+    public DateTimeOffset? RemindedAt { get; set; }
 }
 
 public enum MessageAuthor
@@ -799,6 +860,14 @@ public static class AuditActions
     /// <summary>Back into the queue: a resume, a recovery, a resolved blocker or a raised budget.</summary>
     public const string ThreadResume = "thread.resume";
     public const string ThreadWithdraw = "thread.withdraw";
+
+    /// <summary>A queued task was moved in its project's run order (run-order-architecture.md).</summary>
+    public const string ThreadQueueMove = "thread.queue_move";
+    public const string ThreadBlockerAdd = "thread.blocker_add";
+    public const string ThreadBlockerRelease = "thread.blocker_release";
+
+    /// <summary>A person said an accepted task's work is merged.</summary>
+    public const string ThreadMarkMerged = "thread.mark_merged";
     public const string ThreadBudget = "thread.budget";
 
     /// <summary>The skills chosen for a task changed (m3-architecture.md §13).</summary>

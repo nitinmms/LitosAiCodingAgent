@@ -96,7 +96,11 @@ public sealed class MigrationTests : IAsyncLifetime
             """);
         // The thread is written with today's model, whose columns added since M2Chat this schema
         // lacks: they are there for the insert only.
-        await ExecuteAsync("""ALTER TABLE task_threads ADD COLUMN "ContextLength" integer, ADD COLUMN "PtcEnabled" boolean, ADD COLUMN "SkillsJson" jsonb NOT NULL DEFAULT '[]', ADD COLUMN "ManualLessonsJson" jsonb NOT NULL DEFAULT '[]';""");
+        await ExecuteAsync("""
+            ALTER TABLE task_threads ADD COLUMN "ContextLength" integer, ADD COLUMN "PtcEnabled" boolean, ADD COLUMN "SkillsJson" jsonb NOT NULL DEFAULT '[]', ADD COLUMN "ManualLessonsJson" jsonb NOT NULL DEFAULT '[]',
+                ADD COLUMN "BlockerNeedsYou" boolean NOT NULL DEFAULT false, ADD COLUMN "PullRequestClosedAt" timestamptz, ADD COLUMN "PullRequestMergedAt" timestamptz,
+                ADD COLUMN "QueueRank" double precision, ADD COLUMN "RunAfterThreadId" uuid, ADD COLUMN "RunFirst" boolean NOT NULL DEFAULT false;
+            """);
         await using (var before = Context())
         {
             before.Threads.Add(new Core.Store.TaskThread
@@ -106,7 +110,11 @@ public sealed class MigrationTests : IAsyncLifetime
             await before.SaveChangesAsync();
         }
 
-        await ExecuteAsync("""ALTER TABLE task_threads DROP COLUMN "ContextLength", DROP COLUMN "PtcEnabled", DROP COLUMN "SkillsJson", DROP COLUMN "ManualLessonsJson";""");
+        await ExecuteAsync("""
+            ALTER TABLE task_threads DROP COLUMN "ContextLength", DROP COLUMN "PtcEnabled", DROP COLUMN "SkillsJson", DROP COLUMN "ManualLessonsJson",
+                DROP COLUMN "BlockerNeedsYou", DROP COLUMN "PullRequestClosedAt", DROP COLUMN "PullRequestMergedAt",
+                DROP COLUMN "QueueRank", DROP COLUMN "RunAfterThreadId", DROP COLUMN "RunFirst";
+            """);
 
         await ExecuteAsync($$"""
             INSERT INTO specifications ("Id", "ThreadId", "Revision", "Summary", "AcceptanceCriteriaJson", "CreatedAt")
@@ -120,6 +128,36 @@ public sealed class MigrationTests : IAsyncLifetime
         Assert.Equal(("[]", "[]", "", (Guid?)null), (spec.AffectedAreasJson.Replace(" ", ""), spec.OpenQuestionsJson.Replace(" ", ""), spec.TestPlan, spec.RunId));
         // Only the column M2Spec added: today's model has run columns this schema does not.
         Assert.Null(await db.Runs.Select(r => r.SpecificationRevision).FirstOrDefaultAsync());
+    }
+
+    /// <summary>
+    /// A thread from before run order (run-order-architecture.md) has no rank, waits for nothing and
+    /// needs nobody: the claim takes it first, first in, first out, as before.
+    /// </summary>
+    [SkippableFact]
+    public async Task RunOrderAndBlockers_LeavesEarlierThreadsUnrankedAndUnblocked()
+    {
+        Skip.If(_database is null, $"Set {PostgresFactoryStoreTests.Variable} to run the migration tests against PostgreSQL.");
+        await MigrateToAsync("20261105072437_ThreadArtifacts");
+        var project = Guid.NewGuid();
+        var thread = Guid.NewGuid();
+        await ExecuteAsync($$"""
+            INSERT INTO projects ("Id", "Name", "GitHubOwner", "GitHubRepository", "DefaultBranch", "Mode", "PullRequestEnabled",
+                                  "VerificationProfileJson", "ProfileRevision", "CreatedBy", "CreatedAt")
+            VALUES ('{{project}}', 'salesapp', 'acme', 'salesapp', 'main', 'Clone', true, '{"profileVersion":2,"steps":[]}', 1, '{{Guid.NewGuid()}}', '2026-10-01T09:00:00Z');
+            INSERT INTO task_threads ("Id", "ProjectId", "OwnerId", "Title", "TypeLabel", "Stage", "State", "TokensUsed", "TokensReserved", "SessionId",
+                                      "Provider", "Model", "NextMessageSequence", "Revision", "CreatedAt", "UpdatedAt")
+            VALUES ('{{thread}}', '{{project}}', '{{Guid.NewGuid()}}', 'Export', 'feature', 'Implement', 'Queued', 0, 0, 's',
+                    'openrouter', 'm', 1, 0, '2026-10-01T09:00:00Z', '2026-10-01T09:00:00Z');
+            """);
+
+        await MigrateToAsync("RunOrderAndBlockers");
+
+        await using var db = Context();
+        var migrated = await db.Threads.SingleAsync();
+        Assert.Equal(((double?)null, false, (Guid?)null, false, (DateTimeOffset?)null, (DateTimeOffset?)null),
+            (migrated.QueueRank, migrated.RunFirst, migrated.RunAfterThreadId, migrated.BlockerNeedsYou, migrated.PullRequestMergedAt, migrated.PullRequestClosedAt));
+        Assert.Empty(await db.Blockers.ToListAsync());
     }
 
     // ---- The schema check (m4-architecture.md §8.4) ----

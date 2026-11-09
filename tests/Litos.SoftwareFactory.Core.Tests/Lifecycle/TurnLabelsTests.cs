@@ -48,6 +48,22 @@ public class TurnLabelsTests
     public void AtTheSpecStage_OtherStatesKeepTheirLabel(LifecycleState state, TurnLabel expected) =>
         Assert.Equal(expected, TurnLabels.For(state, Stage.Spec));
 
+    /// <summary>A task it waits for had its PR closed unmerged: only a person can release or cancel it (run-order-architecture.md).</summary>
+    [Fact]
+    public void AQueuedTaskWhoseBlockerNeedsYou_IsAwaitingYou()
+    {
+        Assert.Equal(TurnLabel.AwaitingYou, TurnLabels.For(LifecycleState.Queued, Stage.Implement, blockerNeedsYou: true));
+        Assert.Equal(TurnLabel.AwaitingAgent, TurnLabels.For(LifecycleState.Queued, Stage.Implement, blockerNeedsYou: false));
+    }
+
+    /// <summary>The flag only matters while the task waits in the queue.</summary>
+    [Theory]
+    [InlineData(LifecycleState.Draft, TurnLabel.NotStarted)]
+    [InlineData(LifecycleState.Running, TurnLabel.AgentWorking)]
+    [InlineData(LifecycleState.Cancelled, TurnLabel.Done)]
+    public void BlockerNeedsYou_LeavesOtherStatesAlone(LifecycleState state, TurnLabel expected) =>
+        Assert.Equal(expected, TurnLabels.For(state, Stage.Discuss, blockerNeedsYou: true));
+
     [Fact]
     public void TaskTypes_AreTheFourOfTheBlueprint_AndNothingElseIsKnown()
     {

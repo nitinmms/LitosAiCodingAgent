@@ -29,6 +29,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
 {
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<TaskThread> Threads => Set<TaskThread>();
+    public DbSet<TaskBlocker> Blockers => Set<TaskBlocker>();
     public DbSet<ThreadMessage> Messages => Set<ThreadMessage>();
     public DbSet<Specification> Specifications => Set<Specification>();
     public DbSet<TaskRun> Runs => Set<TaskRun>();
@@ -126,6 +127,18 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.HasIndex(t => t.State);
             // The board's owner filter and "awaiting you".
             e.HasIndex(t => t.OwnerId);
+        });
+
+        // "Blocked by" links (run-order-architecture.md): one open link per pair; the claim asks
+        // a thread's open links, and a merge or cancellation looks up who waits for a thread.
+        model.Entity<TaskBlocker>(e =>
+        {
+            e.ToTable("task_blockers");
+            e.HasOne<TaskThread>().WithMany().HasForeignKey(b => b.ThreadId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<TaskThread>().WithMany().HasForeignKey(b => b.BlockerThreadId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(b => new { b.ThreadId, b.BlockerThreadId }).IsUnique().HasFilter("\"ReleasedAt\" IS NULL").HasDatabaseName("ix_task_blockers_one_open_per_pair");
+            e.HasIndex(b => b.BlockerThreadId);
+            e.HasIndex(b => b.ProjectId);
         });
 
         model.Entity<ThreadMessage>(e =>

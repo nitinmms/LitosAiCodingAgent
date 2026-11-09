@@ -13,6 +13,32 @@ public sealed class StoreConflictException(string message) : Exception(message);
 
 public sealed class StoreNotFoundException(string message) : Exception(message);
 
+/// <summary>The acting person may not do this to the thing, though they can see it.</summary>
+public sealed class StoreForbiddenException(string message) : Exception(message);
+
+/// <summary>A link from a task, with the task at its other end.</summary>
+public sealed record BlockerLink(TaskBlocker Link, TaskThread Other);
+
+/// <summary>What a task waits for (open links first, then the released ones), and the tasks that wait for it.</summary>
+public sealed record ThreadLinks(IReadOnlyList<BlockerLink> WaitsFor, IReadOnlyList<BlockerLink> WaitedOnBy);
+
+/// <summary>A task in its project's queue, with its open links and how many tasks wait for it.</summary>
+public sealed record RunOrderEntry(TaskThread Thread, IReadOnlyList<BlockerLink> WaitsFor, int WaitedOnBy, bool IsRework);
+
+/// <summary>A project's run order: the task holding the project, if any, and the queue in order.</summary>
+public sealed record ProjectRunOrder(TaskThread? Holder, IReadOnlyList<RunOrderEntry> Queue);
+
+/// <summary>An accepted task's pull request that other tasks wait to see merged.</summary>
+public sealed record AwaitedPullRequest(Guid ThreadId, string Owner, string Repository, string DefaultBranch, int Number);
+
+public enum PullRequestOutcome
+{
+    Merged,
+
+    /// <summary>Closed without being merged.</summary>
+    Closed,
+}
+
 public enum DispatchOutcome
 {
     /// <summary>A run was created and queued: the first work, or a rework run asked for with Request changes.</summary>
@@ -369,6 +395,45 @@ public interface IFactoryStore
 
     /// <summary>Records the answer and re-queues the run so the same work continues with it.</summary>
     Task<TaskThread> AnswerDecisionAsync(Guid decisionId, Guid userId, string answer, DateTimeOffset now, CancellationToken ct);
+
+    // ---- Run order and "Blocked by" (docs/software-factory/run-order-architecture.md). Seeing the
+    // project is the API's check; who may arrange what is checked here: <c>canArrangeAny</c> is an
+    // Admin, anyone else arranges only their own tasks. ----
+
+    /// <summary>The project's run order: what holds it, and its queue of work in order.</summary>
+    Task<ProjectRunOrder> GetRunOrderAsync(Guid projectId, CancellationToken ct);
+
+    /// <summary>A task's links both ways.</summary>
+    Task<ThreadLinks> GetThreadLinksAsync(Guid threadId, CancellationToken ct);
+
+    /// <summary>Moves a queued task. A Member moves only their own, by swapping it with another of
+    /// their own, so nobody else's task changes place. <paramref name="revision"/>, when given, is
+    /// the one the person saw; a different one is a conflict.</summary>
+    Task<TaskThread> MoveInQueueAsync(
+        Guid threadId, Guid actorId, bool canArrangeAny, Queue.Placement placement, int? revision, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Makes <paramref name="threadId"/> wait for <paramref name="blockerThreadId"/>'s merge.
+    /// Both are in one project; the waiting task has not started; a loop is refused.</summary>
+    Task<TaskThread> AddBlockerAsync(Guid threadId, Guid blockerThreadId, Guid actorId, bool canArrangeAny, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>"Release now": the task stops waiting for that one task, and runs without its work.</summary>
+    Task<TaskThread> ReleaseBlockerAsync(Guid threadId, Guid blockerThreadId, Guid actorId, bool canArrangeAny, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>A person says an accepted task's work is merged, where the factory cannot see it:
+    /// releases every task that waits for it.</summary>
+    Task<TaskThread> MarkMergedAsync(Guid threadId, Guid actorId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>The accepted tasks' pull requests that some task still waits to see merged.</summary>
+    Task<IReadOnlyList<AwaitedPullRequest>> ListAwaitedPullRequestsAsync(CancellationToken ct);
+
+    /// <summary>What GitHub says became of an awaited pull request. Merged releases the waiting
+    /// tasks; closed asks their owners what to do. Saying it again changes nothing.</summary>
+    Task RecordPullRequestOutcomeAsync(Guid threadId, PullRequestOutcome outcome, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Reminds each task's owner, on its thread, of the tasks that have waited for it
+    /// longer than <paramref name="after"/>, at most once per that interval. Returns how many
+    /// threads were reminded.</summary>
+    Task<int> RemindOfLongWaitsAsync(TimeSpan after, DateTimeOffset now, CancellationToken ct);
 
     // ---- The coordinator ----
 

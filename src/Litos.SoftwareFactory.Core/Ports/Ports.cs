@@ -135,7 +135,15 @@ public interface IGitHub
     /// <summary>Where a pull request stands on GitHub now. People merge and close there, not in
     /// the factory, so this is asked rather than remembered.</summary>
     Task<PullRequestState> GetPullRequestStateAsync(string owner, string repository, int number, CancellationToken ct);
+
+    /// <summary>Its state and the branch it targets, which is the branch it was merged into once
+    /// merged (run-order-architecture.md: only a merge into the default branch releases a task).
+    /// A GitHub that cannot say which branch gives null for it.</summary>
+    async Task<PullRequestDetails> GetPullRequestDetailsAsync(string owner, string repository, int number, CancellationToken ct) =>
+        new(await GetPullRequestStateAsync(owner, repository, number, ct), BaseBranch: null);
 }
+
+public sealed record PullRequestDetails(PullRequestState State, string? BaseBranch);
 
 public enum PullRequestState
 {
