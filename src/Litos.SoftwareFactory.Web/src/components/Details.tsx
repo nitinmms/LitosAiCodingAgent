@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { Finding, FindingVerdict, RunCapabilities, ThreadDetails, UsageCall } from '../api/types';
 import { fmt, pct, shortSha, toneOf, words } from '../domain/format';
 import { RunLessonsBox, type RunLessonsActions } from './RunLessons';
@@ -78,7 +79,10 @@ export function Details({
   cachedInputWeight,
   onVerdict,
   lessonActions,
+  children,
 }: {
+  /** Boxes shown first, above the budget: what the task waits for. */
+  children?: ReactNode;
   details: ThreadDetails;
   usage: UsageCall[];
   /** The fraction of a cached input token that counts against the budget; unknown until settings load. */
@@ -119,6 +123,7 @@ export function Details({
 
   return (
     <aside className="details" aria-label="Task details">
+      {children}
       <section className="box" aria-label="Budget">
         <h3>Budget</h3>
         {cap !== null ? (

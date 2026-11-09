@@ -148,10 +148,65 @@ export interface Thread {
   skills?: string[];
   /** Approved lessons a person picked for the task's runs. */
   manualLessons?: string[];
+  /** Its place in its project's queue while queued for work, lowest first (run-order-architecture.md); absent from an older host. */
+  queueRank?: number | null;
+  /** What a draft asked for its place once delegated: first, or after another task. */
+  runFirst?: boolean;
+  runAfterThreadId?: string | null;
+  /** A task it waits for had its pull request closed unmerged: a person releases it or cancels it. */
+  blockerNeedsYou?: boolean;
+  /** When its pull request was found merged into the default branch, or marked merged. */
+  pullRequestMergedAt?: string | null;
+  pullRequestClosedAt?: string | null;
   revision: number;
   createdAt: string;
   updatedAt: string;
 }
+
+/** Why a task stopped waiting for another. */
+export type BlockerRelease = 'Merged' | 'Manual' | 'BlockerCancelled' | 'ThreadCancelled';
+
+/** A "Blocked by" link seen from the task at one end: the task at the other end, and where its merge stands. */
+export interface BlockerLink {
+  threadId: string;
+  title: string;
+  ownerId: string;
+  state: LifecycleState;
+  turn: Turn;
+  pullRequestNumber: number | null;
+  pullRequestUrl: string | null;
+  pullRequestMergedAt: string | null;
+  pullRequestClosedAt: string | null;
+  /** When the link was made. */
+  since: string;
+  releasedAt: string | null;
+  releaseReason: BlockerRelease | null;
+}
+
+export interface RunOrderEntry {
+  thread: Thread;
+  /** Its open links. */
+  waitsFor: BlockerLink[];
+  /** How many tasks wait for this one's merge. */
+  waitedOnBy: number;
+  /** A rework after Request changes: it goes ahead of new work. */
+  isRework: boolean;
+}
+
+/** A project's run order: the task holding the project, and its queue in order. */
+export interface RunOrder {
+  holder: Thread | null;
+  queue: RunOrderEntry[];
+}
+
+/** What a task waits for (open links first) and the tasks that wait for it. */
+export interface ThreadLinks {
+  waitsFor: BlockerLink[];
+  waitedOnBy: BlockerLink[];
+}
+
+/** Where a move puts a task. A Member moves only by swapping two of their own tasks. */
+export type QueuePlacement = 'first' | 'after' | 'end' | 'swap';
 
 export interface CreateThread {
   projectId: string;
@@ -165,6 +220,12 @@ export interface CreateThread {
   ptcEnabled?: boolean;
   /** Left out for the type's defaults; empty for none. */
   skills?: string[];
+  /** An Admin's "Run first", applied once delegated. */
+  runFirst?: boolean;
+  /** "Run after": straight after that queued task once delegated. */
+  runAfterThreadId?: string;
+  /** "Blocked by": tasks of the project whose merge it waits for. */
+  blockedBy?: string[];
 }
 
 export type MessageAuthor = 'User' | 'Factory';

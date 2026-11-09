@@ -33,6 +33,23 @@ describe('the API client', () => {
     ]);
   });
 
+  it('reads the run order and links, releases a blocker and marks a task merged at their routes', async () => {
+    const { fetcher, calls } = fetchReturning(200, {});
+    const api = createApi(fetcher);
+
+    await api.runOrder('p 1');
+    await api.threadLinks('t');
+    await api.releaseBlocker('t', 'b 1');
+    await api.markMerged('t');
+
+    expect(calls.map((c) => [c.init.method, c.path])).toEqual([
+      ['GET', '/api/projects/p%201/run-order'],
+      ['GET', '/api/threads/t/links'],
+      ['DELETE', '/api/threads/t/blockers/b%201'],
+      ['POST', '/api/threads/t/merged'],
+    ]);
+  });
+
   it('sends JSON bodies and the session cookie', async () => {
     const { fetcher, calls } = fetchReturning(202, { outcome: 'Queued' });
 
@@ -51,6 +68,10 @@ describe('the API client', () => {
     ['setFindingVerdict', (api: ReturnType<typeof createApi>) => api.setFindingVerdict('f 1', 'Wrong'), '/api/findings/f%201/verdict', { verdict: 'Wrong' }],
     ['setFindingVerdict (clear)', (api: ReturnType<typeof createApi>) => api.setFindingVerdict('f', null), '/api/findings/f/verdict', { verdict: null }],
     ['login', (api: ReturnType<typeof createApi>) => api.login('admin', 'pw'), '/api/auth/login', { userName: 'admin', password: 'pw' }],
+    // Run order and "Blocked by" (run-order-architecture.md).
+    ['moveInQueue', (api: ReturnType<typeof createApi>) => api.moveInQueue('t', 'after', 'u', 4), '/api/threads/t/queue-position', { placement: 'after', otherThreadId: 'u', revision: 4 }],
+    ['moveInQueue (first)', (api: ReturnType<typeof createApi>) => api.moveInQueue('t', 'first'), '/api/threads/t/queue-position', { placement: 'first' }],
+    ['addBlocker', (api: ReturnType<typeof createApi>) => api.addBlocker('t', 'b'), '/api/threads/t/blockers', { blockerThreadId: 'b' }],
   ])('%s posts to its route', async (_, call, path, body) => {
     const { fetcher, calls } = fetchReturning(200, {});
     await call(createApi(fetcher));

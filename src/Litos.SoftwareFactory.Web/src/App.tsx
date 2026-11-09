@@ -333,12 +333,15 @@ export function App({ createClient, openEvents, playAttentionSound = playMealRea
         <p className="note">Loading…</p>
       ) : route.view === 'board' ? (
         <BoardPage
+          api={api}
           threads={threads}
           projects={projects}
           names={names}
           userId={user.id}
+          isAdmin={user.roles.includes('Admin')}
           taskTypes={settings?.taskTypes ?? []}
           onOpen={(threadId) => navigate({ view: 'threads', threadId })}
+          onNotice={say}
         />
       ) : route.view === 'people' ? (
         user.roles.includes('Admin') ? (

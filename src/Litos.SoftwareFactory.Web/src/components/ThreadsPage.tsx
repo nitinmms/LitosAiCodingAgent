@@ -4,11 +4,13 @@ import type { EventSourceFactory } from '../api/events';
 import type { CurrentUser, Project, Settings, Thread } from '../api/types';
 import { pinnedChoices } from '../domain/catalog';
 import { fmt } from '../domain/format';
+import { blockerCandidates, queueOf } from '../domain/runOrder';
 import { FINISHED_SHOWN, firstThread, threadGroup } from '../domain/task';
 import { useThread } from '../useThread';
 import { ErrorNote, FinishedPill, TurnPill } from './bits';
 import { Details } from './Details';
 import { ModelChooser } from './ModelChooser';
+import { TaskLinks } from './TaskLinks';
 import { chosenSize, defaultsFor, TaskSkillsPicker } from './TaskSkillsPicker';
 import { ThreadMain } from './ThreadMain';
 
@@ -205,7 +207,17 @@ export function ThreadsPage({
                   }
                 },
               }}
-            />
+            >
+              <TaskLinks
+                api={api}
+                thread={view.details.thread}
+                threads={threads}
+                userId={user.id}
+                isAdmin={user.roles.includes('Admin')}
+                onChanged={() => void view.reload()}
+                onNotice={onNotice}
+              />
+            </Details>
           </>
         ) : (
           <div className="center">
@@ -219,6 +231,8 @@ export function ThreadsPage({
           api={api}
           settings={settings}
           projects={projects}
+          threads={threads}
+          isAdmin={user.roles.includes('Admin')}
           defaultProjectId={threads.find((t) => t.id === shownId)?.projectId ?? projects[0]?.id ?? ''}
           close={() => setCreating(false)}
           onCreated={(thread) => {
@@ -236,6 +250,8 @@ function NewThread({
   api,
   settings,
   projects,
+  threads = [],
+  isAdmin = false,
   defaultProjectId,
   close,
   onCreated,
@@ -243,10 +259,16 @@ function NewThread({
   api: FactoryApi;
   settings: Settings | null;
   projects: Project[];
+  /** What "Run after" and "Blocked by" offer, from the chosen project. */
+  threads?: Thread[];
+  isAdmin?: boolean;
   defaultProjectId: string;
   close: () => void;
   onCreated: (thread: Thread) => void;
 }) {
+  // "first", a task's id to run after, or "" for the end of the queue (run-order-architecture.md).
+  const [runAfter, setRunAfter] = useState('');
+  const [blockedBy, setBlockedBy] = useState('');
   const types = settings?.taskTypes ?? ['feature', 'bug', 'refactor', 'chore'];
   const [title, setTitle] = useState('');
   const [projectId, setProjectId] = useState(defaultProjectId);
@@ -311,6 +333,8 @@ function NewThread({
           ptcEnabled: settings && ptc !== settings.ptcEnabled ? ptc : undefined,
           // Sent whenever the host offers skills, so the dialog's choice is the one kept.
           skills: settings?.skills ? skills : undefined,
+          ...(runAfter === 'first' ? { runFirst: true } : runAfter ? { runAfterThreadId: runAfter } : {}),
+          ...(blockedBy ? { blockedBy: [blockedBy] } : {}),
         }),
       );
     } catch (failure) {
@@ -354,7 +378,16 @@ function NewThread({
         <div className="form-grid">
           <div className="field">
             <label htmlFor="nt-proj">Project</label>
-            <select id="nt-proj" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <select
+              id="nt-proj"
+              value={projectId}
+              onChange={(e) => {
+                setProjectId(e.target.value);
+                // Both name tasks of the project chosen before.
+                setRunAfter('');
+                setBlockedBy('');
+              }}
+            >
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -379,6 +412,33 @@ function NewThread({
               {settings?.defaultBudget ? `Left empty, it is ${fmt(settings.defaultBudget)}.` : 'Left empty, the task has no cap.'}
               {settings?.maximumBudget ? ` At most ${fmt(settings.maximumBudget)}.` : ''}
             </span>
+          </div>
+        </div>
+        <div className="form-grid">
+          <div className="field">
+            <label htmlFor="nt-after">Run after</label>
+            <select id="nt-after" value={runAfter} onChange={(e) => setRunAfter(e.target.value)}>
+              <option value="">End of the queue (first in, first out)</option>
+              {isAdmin ? <option value="first">Run first</option> : null}
+              {queueOf(threads, projectId).map((t, i) => (
+                <option key={t.id} value={t.id}>
+                  After #{i + 1} · {t.title}
+                </option>
+              ))}
+            </select>
+            <span className="hint">Only its place in line, taken when you delegate it. It does not get that task's changes.</span>
+          </div>
+          <div className="field">
+            <label htmlFor="nt-block">Blocked by</label>
+            <select id="nt-block" value={blockedBy} onChange={(e) => setBlockedBy(e.target.value)}>
+              <option value="">Nothing</option>
+              {blockerCandidates(threads, projectId, null).map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.title}
+                </option>
+              ))}
+            </select>
+            <span className="hint">It waits until that task's pull request is merged, so it starts with that work.</span>
           </div>
         </div>
         {offered.length ? (

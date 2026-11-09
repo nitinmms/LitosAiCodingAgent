@@ -11,6 +11,8 @@ import type {
   LessonRevision,
   RunLesson,
   AccountRole,
+  BlockerLink,
+  BlockerRelease,
   BudgetSettings,
   CatalogModel,
   KnownProvider,
@@ -810,21 +812,30 @@ export class FakeHost {
       const model = (data.model as string | undefined) ?? provider.defaultModel ?? '';
       if (!provider.models.some((m) => m.id === model))
         return [400, { error: `"${model}" is not a model you can choose on ${provider.displayName}.` }];
-      return [
-        201,
-        this.addThread(project, {
-          title: String(data.title),
-          typeLabel: String(data.typeLabel),
-          budgetCap: (data.budgetCap as number | undefined) ?? this.settings.defaultBudget,
-          provider: provider.name,
-          model,
-          budgetPrecision: provider.budgetPrecision,
-          ptcEnabled: (data.ptcEnabled as boolean | undefined) ?? this.settings.ptcEnabled,
-          skills:
-            (data.skills as string[] | undefined) ??
-            (this.settings.skills ?? []).filter((o) => o.defaultFor.includes(String(data.typeLabel))).map((o) => o.name),
-        }),
-      ];
+      // Run order and "Blocked by", as FactoryApi.cs checks them before creating anything.
+      if (data.runFirst === true && !this.user.roles.includes('Admin'))
+        return [403, { error: "Only an Admin can put a task ahead of other people's. Move it by swapping it with another of your own tasks." }];
+      const blockedBy = (data.blockedBy as string[] | undefined) ?? [];
+      const related = [...blockedBy, ...(data.runAfterThreadId ? [String(data.runAfterThreadId)] : [])];
+      if (related.some((r) => this.threads.get(r)?.thread.projectId !== project.id))
+        return [400, { error: 'Run after and Blocked by name tasks of the same project.' }];
+      const created = this.addThread(project, {
+        title: String(data.title),
+        typeLabel: String(data.typeLabel),
+        budgetCap: (data.budgetCap as number | undefined) ?? this.settings.defaultBudget,
+        provider: provider.name,
+        model,
+        budgetPrecision: provider.budgetPrecision,
+        ptcEnabled: (data.ptcEnabled as boolean | undefined) ?? this.settings.ptcEnabled,
+        skills:
+          (data.skills as string[] | undefined) ??
+          (this.settings.skills ?? []).filter((o) => o.defaultFor.includes(String(data.typeLabel))).map((o) => o.name),
+        runFirst: data.runFirst === true,
+        runAfterThreadId: (data.runAfterThreadId as string | undefined) ?? null,
+        queueRank: null,
+      });
+      for (const blocker of blockedBy) this.link(created.id, blocker);
+      return [201, this.details(created.id).thread];
     }
 
     if (path.split('?')[0] === '/api/metrics' && method === 'GET') return [200, this.metrics];
@@ -863,6 +874,9 @@ export class FakeHost {
 
     const approve = /^\/api\/threads\/([^/]+)\/spec\/(\d+)\/approve$/.exec(path);
     if (approve && method === 'POST') return this.approveSpec(approve[1]!, Number(approve[2]));
+
+    const runOrder = this.handleRunOrder(method, path, data);
+    if (runOrder) return runOrder;
 
     const route = /^\/api\/threads\/([^/?]+)(?:\/([\w-]+))?$/.exec(path);
     if (!route) return [404];
@@ -1666,7 +1680,18 @@ export class FakeHost {
     if (state === 'Draft') {
       details.run = this.newRun('Implement');
       this.say(threadId, { author: 'User', kind: 'Text', text: match[1]!.trim() });
-      return [202, { outcome: 'Queued', runId: details.run.id, thread: this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: null }) }];
+      // The place the draft asked for, or the end of the queue (EfFactoryStore.DraftPlacementAsync).
+      const t = details.thread;
+      const after = t.runAfterThreadId ? this.queueOf(t.projectId).findIndex((q) => q.id === t.runAfterThreadId) : -1;
+      const queueRank = t.runFirst ? this.rankAt(t.projectId, threadId, 0) : after >= 0 ? this.rankAt(t.projectId, threadId, after + 1) : this.rankAt(t.projectId, threadId, Infinity);
+      return [
+        202,
+        {
+          outcome: 'Queued',
+          runId: details.run.id,
+          thread: this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: this.waitingReason(threadId), queueRank, runFirst: false, runAfterThreadId: null }),
+        },
+      ];
     }
 
     // To a working task: delivered to a running turn, held while it waits for one (§5.4).
@@ -1688,7 +1713,183 @@ export class FakeHost {
     this.dispatched.add(messageId);
     details.run = this.newRun('Rework');
     this.say(threadId, { author: 'User', kind: 'Text', text: request, payload: { changeRequest: true } });
-    return [202, { outcome: 'Queued', runId: details.run.id, thread: this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: null }) }];
+    // Work coming back goes ahead of new work.
+    const queueRank = this.rankAt(details.thread.projectId, threadId, 0);
+    return [202, { outcome: 'Queued', runId: details.run.id, thread: this.change(threadId, { state: 'Queued', stage: 'Implement', stateReason: null, queueRank }) }];
+  }
+
+  // ---- run order and "Blocked by" (Host/Api/RunOrderApi.cs, EfFactoryStore.RunOrder.cs) ----
+
+  /** Every "Blocked by" link, open or released. */
+  readonly blockerLinks: { threadId: string; blockerId: string; since: string; releasedAt: string | null; releaseReason: BlockerRelease | null }[] = [];
+
+  /** A project's queue of work in order: no rank first, then lowest. */
+  queueOf(projectId: string): Thread[] {
+    return [...this.threads.values()]
+      .map((d) => d.thread)
+      .filter((t) => t.projectId === projectId && t.state === 'Queued' && t.stage !== 'Spec')
+      .sort((a, b) => (a.queueRank ?? -Infinity) - (b.queueRank ?? -Infinity));
+  }
+
+  /** The rank that puts `threadId` at `index` among the others of its project's queue (RunOrder.Place). */
+  private rankAt(projectId: string, threadId: string, index: number): number {
+    const others = this.queueOf(projectId).filter((t) => t.id !== threadId && t.queueRank != null);
+    const at = Math.min(index, others.length);
+    const previous = others[at - 1]?.queueRank;
+    const next = others[at]?.queueRank;
+    if (previous != null && next != null) return previous + (next - previous) / 2;
+    if (previous != null) return previous + 1000;
+    if (next != null) return next - 1000;
+    return 1000;
+  }
+
+  /** Makes `threadId` wait for `blockerId`, as a test's scene or the API would. */
+  link(threadId: string, blockerId: string, since = NOW): void {
+    this.blockerLinks.push({ threadId, blockerId, since, releasedAt: null, releaseReason: null });
+  }
+
+  private openLinksOf(threadId: string) {
+    return this.blockerLinks.filter((l) => l.threadId === threadId && !l.releasedAt);
+  }
+
+  /** What a queued task says while it waits, as RunOrder.WaitingReason; null when it waits for nothing. */
+  private waitingReason(threadId: string): string | null {
+    const first = this.openLinksOf(threadId)[0];
+    if (!first) return null;
+    const b = this.details(first.blockerId).thread;
+    if (b.pullRequestClosedAt)
+      return `"${b.title}"'s pull request${b.pullRequestNumber ? ` (PR #${b.pullRequestNumber})` : ''} was closed without merging. Release this task to run without that work, or cancel it.`;
+    if (b.state === 'Accepted') return b.pullRequestNumber ? `Waiting for "${b.title}" to be merged (PR #${b.pullRequestNumber}).` : `Waiting for "${b.title}" to be marked as merged.`;
+    return `Waiting for "${b.title}" to be finished and merged.`;
+  }
+
+  private linkView(threadId: string, link: (typeof this.blockerLinks)[number]): BlockerLink {
+    const other = this.details(threadId).thread;
+    return {
+      threadId: other.id,
+      title: other.title,
+      ownerId: other.ownerId,
+      state: other.state,
+      turn: other.turn,
+      pullRequestNumber: other.pullRequestNumber,
+      pullRequestUrl: other.pullRequestUrl,
+      pullRequestMergedAt: other.pullRequestMergedAt ?? null,
+      pullRequestClosedAt: other.pullRequestClosedAt ?? null,
+      since: link.since,
+      releasedAt: link.releasedAt,
+      releaseReason: link.releaseReason,
+    };
+  }
+
+  /** The tasks `blockerId` would close a loop through if `threadId` waited for it. */
+  private wouldLoop(threadId: string, blockerId: string): boolean {
+    const seen = new Set<string>();
+    const reaches = (id: string): boolean => {
+      if (id === threadId) return true;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return this.openLinksOf(id).some((l) => reaches(l.blockerId));
+    };
+    return reaches(blockerId);
+  }
+
+  private handleRunOrder(method: string, path: string, data: Record<string, unknown>): [number, unknown?] | null {
+    const order = /^\/api\/projects\/([^/]+)\/run-order$/.exec(path);
+    if (order && method === 'GET') {
+      const projectId = order[1]!;
+      if (!this.projects.some((p) => p.id === projectId)) return [404];
+      const holder = [...this.threads.values()].map((d) => d.thread).find((t) => t.projectId === projectId && t.state === 'Running') ?? null;
+      return [
+        200,
+        {
+          holder,
+          queue: this.queueOf(projectId).map((t) => ({
+            thread: t,
+            waitsFor: this.openLinksOf(t.id).map((l) => this.linkView(l.blockerId, l)),
+            waitedOnBy: this.blockerLinks.filter((l) => l.blockerId === t.id && !l.releasedAt).length,
+            isRework: this.details(t.id).run?.kind === 'Rework',
+          })),
+        },
+      ];
+    }
+
+    const linkRoute = /^\/api\/threads\/([^/]+)\/(links|queue-position|blockers|merged)(?:\/([^/]+))?$/.exec(path);
+    if (!linkRoute) return null;
+    const details = this.threads.get(linkRoute[1]!);
+    if (!details) return [404];
+    const t = details.thread;
+    const isAdmin = this.user.roles.includes('Admin');
+    const arranges = isAdmin || t.ownerId === this.user.id;
+    const ownerOrAdmin: [number, unknown] = [403, { error: "Only the task's owner or an Admin can change where it runs or what it waits for." }];
+    const membersSwap: [number, unknown] = [403, { error: "Only an Admin can put a task ahead of other people's. Move it by swapping it with another of your own tasks." }];
+
+    switch (`${method} ${linkRoute[2]}${linkRoute[3] ? '/' : ''}`) {
+      case 'GET links':
+        return [
+          200,
+          {
+            waitsFor: this.blockerLinks
+              .filter((l) => l.threadId === t.id)
+              .sort((a, b) => Number(!!a.releasedAt) - Number(!!b.releasedAt))
+              .map((l) => this.linkView(l.blockerId, l)),
+            waitedOnBy: this.blockerLinks.filter((l) => l.blockerId === t.id && !l.releasedAt).map((l) => this.linkView(l.threadId, l)),
+          },
+        ];
+      case 'POST queue-position': {
+        if (typeof data.revision === 'number' && data.revision !== t.revision)
+          return [409, { error: 'The task has changed since you last saw it. Look again, then try once more.' }];
+        if (t.state !== 'Queued' || t.queueRank == null) return [409, { error: 'Only a task waiting in the queue can be moved.' }];
+        if (!arranges) return ownerOrAdmin;
+        const placement = String(data.placement ?? '');
+        if (!isAdmin && placement !== 'swap') return membersSwap;
+        const queue = this.queueOf(t.projectId);
+        const other = data.otherThreadId ? queue.find((q) => q.id === data.otherThreadId) : undefined;
+        if ((placement === 'after' || placement === 'swap') && !other)
+          return [409, { error: "The task to place it against is no longer waiting in this project's queue." }];
+        if (placement === 'swap') {
+          if (!isAdmin && other!.ownerId !== this.user.id) return membersSwap;
+          const mine = t.queueRank;
+          this.change(other!.id, { queueRank: mine });
+          return [200, this.change(t.id, { queueRank: other!.queueRank })];
+        }
+        const others = queue.filter((q) => q.id !== t.id);
+        const index = placement === 'first' ? 0 : placement === 'end' ? Infinity : others.findIndex((q) => q.id === other!.id) + 1;
+        if (!['first', 'end', 'after'].includes(placement)) return [400, { error: 'placement must be one of: first, after, end, swap.' }];
+        return [200, this.change(t.id, { queueRank: this.rankAt(t.projectId, t.id, index) })];
+      }
+      case 'POST blockers': {
+        if (!arranges) return ownerOrAdmin;
+        if (t.state !== 'Draft' && !(t.state === 'Queued' && !t.branch)) return [409, { error: 'A task can wait for another only before it starts.' }];
+        const blockerId = String(data.blockerThreadId ?? '');
+        const blocker = this.threads.get(blockerId)?.thread;
+        if (!blocker || blocker.projectId !== t.projectId) return [409, { error: 'A task can wait only for another task of the same project.' }];
+        if (this.openLinksOf(t.id).some((l) => l.blockerId === blockerId)) return [409, { error: `This task already waits for "${blocker.title}".` }];
+        if (this.wouldLoop(t.id, blockerId)) return [409, { error: `Not linked: that would make a loop. "${t.title}" would wait for "${blocker.title}".` }];
+        this.link(t.id, blockerId, this.now.toISOString());
+        return [200, this.change(t.id, { stateReason: t.state === 'Queued' ? this.waitingReason(t.id) : t.stateReason })];
+      }
+      case 'DELETE blockers/': {
+        if (!arranges) return ownerOrAdmin;
+        const link = this.openLinksOf(t.id).find((l) => l.blockerId === linkRoute[3]);
+        if (!link) return [409, { error: 'This task no longer waits for that one.' }];
+        link.releasedAt = this.now.toISOString();
+        link.releaseReason = 'Manual';
+        const stillNeedsYou = this.openLinksOf(t.id).some((l) => this.details(l.blockerId).thread.pullRequestClosedAt);
+        return [200, this.change(t.id, { stateReason: null, blockerNeedsYou: stillNeedsYou })];
+      }
+      case 'POST merged': {
+        if (t.state !== 'Accepted') return [409, { error: 'Only an accepted task can be marked as merged.' }];
+        if (t.pullRequestMergedAt) return [409, { error: 'This task is already merged.' }];
+        for (const link of this.blockerLinks.filter((l) => l.blockerId === t.id && !l.releasedAt)) {
+          link.releasedAt = this.now.toISOString();
+          link.releaseReason = 'Merged';
+          this.change(link.threadId, { stateReason: null });
+        }
+        return [200, this.change(t.id, { pullRequestMergedAt: this.now.toISOString() })];
+      }
+      default:
+        return [404];
+    }
   }
 
   private newRun(kind: 'Implement' | 'Rework') {

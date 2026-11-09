@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
-import type { Project, Thread, Turn } from '../api/types';
+import type { FactoryApi } from '../api/client';
+import type { Project, RunOrder, Thread, Turn } from '../api/types';
 import { fmt } from '../domain/format';
+import { placesOf } from '../domain/runOrder';
 import { awaitsYou, closedOrder, FINISHED_SHOWN, isClosed, STAGES, turnLabel } from '../domain/task';
 import { FinishedPill, TurnPill } from './bits';
+import { RunOrderPanel } from './RunOrderPanel';
 
 /** Finished work has its own Closed column, so neither its turn nor the Done stage is offered. */
 const TURNS: Turn[] = ['AwaitingYou', 'AwaitingAgent', 'AgentWorking', 'Paused', 'NotStarted'];
@@ -24,24 +27,34 @@ const short = (tokens: number) => (tokens >= 1_000 ? `${fmt(Math.round(tokens / 
  * The board (§7.1, m2-architecture.md §6): every live task the user can see, in a column per stage,
  * each card saying whose move it is. Filters narrow it by project, type, owner and turn, and a
  * strip counts the live work. Finished tasks are hidden until asked for, then shown in one Closed
- * column rather than in the stage each stopped at (m3-architecture.md §11).
+ * column rather than in the stage each stopped at (m3-architecture.md §11). With one project
+ * chosen, its run order is shown above the columns and can be arranged (run-order-architecture.md):
+ * order only means something within a project.
  */
 export function BoardPage({
+  api,
   threads,
   projects,
   names,
   userId,
+  isAdmin = false,
   taskTypes,
   onOpen,
+  onNotice = () => {},
 }: {
+  /** Without it the run order is not shown. */
+  api?: FactoryApi;
   threads: Thread[];
   projects: Project[];
   /** Owner names by user id, from the host's directory. */
   names: Record<string, string>;
   userId: string;
+  isAdmin?: boolean;
   taskTypes: string[];
   onOpen: (threadId: string) => void;
+  onNotice?: (text: string) => void;
 }) {
+  const [order, setOrder] = useState<RunOrder | null>(null);
   const [project, setProject] = useState('');
   const [type, setType] = useState('');
   const [owner, setOwner] = useState('');
@@ -59,6 +72,9 @@ export function BoardPage({
   // Every turn offered is a live one, so a turn filter leaves nothing finished to show.
   const closed = turn ? [] : closedOrder(shown.filter((t) => isClosed(t.state)));
   const filtered = !!(project || type || owner || turn);
+  // Places in line, from the run order of the project chosen: with all projects, there is no one line.
+  // Until the newly chosen project's order is read, the last one's is not taken for it.
+  const places = project && order ? placesOf(order.queue.filter((e) => e.thread.projectId === project)) : {};
 
   // Counted within the project and type filters only: the owner and turn filters are what a count sets.
   const counts = STRIP.map((s) => ({
@@ -128,6 +144,21 @@ export function BoardPage({
         </div>
       </section>
 
+      {api && project ? (
+        <RunOrderPanel
+          key={project}
+          api={api}
+          projectId={project}
+          threads={threads}
+          userId={userId}
+          isAdmin={isAdmin}
+          names={names}
+          onOpen={onOpen}
+          onNotice={onNotice}
+          onOrder={setOrder}
+        />
+      ) : null}
+
       {threads.length === 0 ? (
         <p className="muted">No task yet. Create a thread to delegate work to the factory.</p>
       ) : (
@@ -150,11 +181,14 @@ export function BoardPage({
                     <span className="card-row">
                       <TurnPill turn={t.turn} state={t.state} />
                       <span className="tag">{t.typeLabel}</span>
+                      {places[t.id] ? <span className="small mono">#{places[t.id]} in line</span> : null}
                     </span>
                     <span className="small muted">
                       {projectName(t.projectId)} · {ownerName(t.ownerId)}
                     </span>
-                    {t.turn === 'AwaitingAgent' && t.stateReason ? <span className="small">{t.stateReason}</span> : null}
+                    {(t.turn === 'AwaitingAgent' || (t.state === 'Queued' && t.blockerNeedsYou)) && t.stateReason ? (
+                      <span className="small">{t.stateReason}</span>
+                    ) : null}
                     {t.budgetCap ? (
                       <span className="card-budget" title={`${fmt(t.tokensUsed)} of ${fmt(t.budgetCap)} tokens`}>
                         <span className="bar" aria-hidden="true">

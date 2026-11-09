@@ -37,7 +37,10 @@ import type {
   SpecStatus,
   Project,
   PullRequestInfo,
+  QueuePlacement,
   RegisterProject,
+  RunOrder,
+  ThreadLinks,
   Settings,
   SettingsSection,
   Thread,
@@ -148,6 +151,18 @@ export interface FactoryApi {
   withdraw(id: string): Promise<Thread>;
   pullRequest(id: string): Promise<PullRequestInfo>;
   answerDecision(decisionId: string, answer: string): Promise<Thread>;
+
+  // Run order and "Blocked by" (run-order-architecture.md).
+  /** The project's run order: what holds it, and its queue in order. */
+  runOrder(projectId: string): Promise<RunOrder>;
+  threadLinks(id: string): Promise<ThreadLinks>;
+  /** `revision` is the one the person saw; a different one is a 409. A Member only swaps two of their own tasks. */
+  moveInQueue(id: string, placement: QueuePlacement, otherThreadId?: string, revision?: number): Promise<Thread>;
+  addBlocker(id: string, blockerThreadId: string): Promise<Thread>;
+  /** "Release now": the task runs without that task's work. */
+  releaseBlocker(id: string, blockerThreadId: string): Promise<Thread>;
+  /** "Mark merged", for work the factory cannot see merged. */
+  markMerged(id: string): Promise<Thread>;
   /** Judges a review finding, or clears the judgement with null. */
   setFindingVerdict(findingId: string, verdict: FindingVerdict | null): Promise<Thread>;
 
@@ -322,6 +337,13 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
       send<Thread>('POST', `/api/decisions/${encodeURIComponent(decisionId)}/answer`, { answer }),
     setFindingVerdict: (findingId, verdict) =>
       send<Thread>('POST', `/api/findings/${encodeURIComponent(findingId)}/verdict`, { verdict }),
+    runOrder: (projectId) => send<RunOrder>('GET', `/api/projects/${encodeURIComponent(projectId)}/run-order`),
+    threadLinks: (id) => send<ThreadLinks>('GET', `${thread(id)}/links`),
+    moveInQueue: (id, placement, otherThreadId, revision) =>
+      send<Thread>('POST', `${thread(id)}/queue-position`, { placement, otherThreadId, revision }),
+    addBlocker: (id, blockerThreadId) => send<Thread>('POST', `${thread(id)}/blockers`, { blockerThreadId }),
+    releaseBlocker: (id, blockerThreadId) => send<Thread>('DELETE', `${thread(id)}/blockers/${encodeURIComponent(blockerThreadId)}`),
+    markMerged: (id) => send<Thread>('POST', `${thread(id)}/merged`),
     invitations: () => send<Invitation[]>('GET', '/api/invitations'),
     createInvitation: (request) => send<CreatedInvitation>('POST', '/api/invitations', request),
     revokeInvitation: async (id) => void (await send<unknown>('POST', `/api/invitations/${encodeURIComponent(id)}/revoke`)),
