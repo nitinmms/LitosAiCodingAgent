@@ -153,7 +153,42 @@ public class LocalChatProviderTests
         Assert.Null(httpClient.DefaultRequestHeaders.Authorization);
     }
 
+    [Fact]
+    public async Task StreamAsync_Request_SendsContentLength_NotChunked()
+    {
+        // Minimal servers (mlx_lm.server / Swift MLX, both Python BaseHTTP over HTTP/1.0) reject a
+        // chunked body with 411 Length Required. LM Studio, Ollama and vLLM accept either.
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(MinimalSseCompletion));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "model");
+
+        await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        var captured = handler.CapturedRequests[0];
+        Assert.NotNull(captured.ContentLength);
+        Assert.Equal(System.Text.Encoding.UTF8.GetByteCount(captured.Body!), captured.ContentLength);
+    }
+
     // ---- Streamed response parsing ----
+
+    [Fact]
+    public async Task StreamAsync_ReasoningField_StreamedAsReasoningDelta()
+    {
+        // mlx_lm.server / Swift MLX (and vLLM's newer releases) name the field "reasoning"
+        // rather than DeepSeek's "reasoning_content" — both must reach the UI the same way.
+        var (provider, handler) = CreateProvider();
+        var sse = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning\":\"We need\"}}]}\n\n" +
+                   "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n" +
+                   "data: [DONE]\n\n";
+        handler.Enqueue(FakeHttpMessageHandler.SseResponse(sse));
+        var request = new ChatRequest([ChatMessage.User("hi")], [], "model");
+
+        var events = await DrainAsync(provider.StreamAsync(request, CancellationToken.None));
+
+        Assert.Equal(["We need"], events.OfType<ReasoningDelta>().Select(r => r.Text));
+        var completed = Assert.Single(events.OfType<MessageCompleted>());
+        Assert.Equal("hi", Assert.IsType<TextBlock>(Assert.Single(completed.Message.Content)).Text);
+    }
 
     [Fact]
     public async Task StreamAsync_ParsesSseDeltas_IntoTextDeltaEvents()

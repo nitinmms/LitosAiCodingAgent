@@ -115,10 +115,13 @@ public sealed class LocalChatProvider(HttpClient httpClient) : IChatProvider
             // spec-compliant server, so this is safe to send unconditionally.
             StreamOptions: new LocalStreamOptions(IncludeUsage: true));
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "chat/completions")
-        {
-            Content = JsonContent.Create(payload, options: JsonOptions),
-        };
+        // Serialized up front rather than via JsonContent.Create, which streams the body chunked
+        // with no Content-Length. Minimal servers — mlx_lm.server and Swift MLX, both Python
+        // BaseHTTP over HTTP/1.0 — refuse a chunked body with 411 Length Required; a fixed-length
+        // body works there and everywhere else (LM Studio, Ollama, vLLM) alike.
+        var body = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions));
+        body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "chat/completions") { Content = body };
 
         using var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
@@ -193,8 +196,11 @@ public sealed class LocalChatProvider(HttpClient httpClient) : IChatProvider
             // assistant message, replayed back to the model on every future turn, and old
             // chain-of-thought has no business being replayed as if it were part of the
             // conversation.
-            if (!string.IsNullOrEmpty(delta.ReasoningContent))
-                yield return new ReasoningDelta(delta.ReasoningContent);
+            // DeepSeek's convention is reasoning_content; mlx_lm.server / Swift MLX (and newer
+            // vLLM) send the same thing as plain "reasoning".
+            var reasoning = string.IsNullOrEmpty(delta.ReasoningContent) ? delta.Reasoning : delta.ReasoningContent;
+            if (!string.IsNullOrEmpty(reasoning))
+                yield return new ReasoningDelta(reasoning);
 
             if (!string.IsNullOrEmpty(delta.Content))
             {
@@ -371,7 +377,7 @@ internal sealed record LocalStreamChunk(List<LocalStreamChoice>? Choices, LocalU
 
 internal sealed record LocalStreamChoice(LocalDelta? Delta);
 
-internal sealed record LocalDelta(string? Content, string? ReasoningContent, List<LocalToolCallDelta>? ToolCalls);
+internal sealed record LocalDelta(string? Content, string? ReasoningContent, string? Reasoning, List<LocalToolCallDelta>? ToolCalls);
 
 internal sealed record LocalToolCallDelta(int Index, string? Id, LocalFunctionCallDelta? Function);
 

@@ -23,8 +23,11 @@ public sealed class FakeHttpMessageHandler : HttpMessageHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
+        // Read before the body: buffering it below makes ContentLength report the buffer's size
+        // even for content that would really go out chunked (no Content-Length on the wire).
+        var contentLength = request.Content?.Headers.ContentLength;
         var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
-        CapturedRequests.Add(new CapturedRequest(request.Method, request.RequestUri, body));
+        CapturedRequests.Add(new CapturedRequest(request.Method, request.RequestUri, body, contentLength));
 
         if (_responses.Count == 0)
             throw new InvalidOperationException("FakeHttpMessageHandler received a request but has no queued response.");
@@ -43,4 +46,5 @@ public sealed class FakeHttpMessageHandler : HttpMessageHandler
     };
 }
 
-public sealed record CapturedRequest(HttpMethod Method, Uri? Uri, string? Body);
+/// <param name="ContentLength">The Content-Length the request would go out with, or null when it would be sent chunked.</param>
+public sealed record CapturedRequest(HttpMethod Method, Uri? Uri, string? Body, long? ContentLength = null);
