@@ -207,8 +207,8 @@ export interface Column {
   outlined?: boolean;
 }
 
-/** Vertical columns on one scale, each a stack of parts, with its total above and its label below. */
-export function Columns({ columns, label, caption }: { columns: Column[]; label: string; caption: string }) {
+/** Vertical columns on one scale, each a stack of parts, with its total above (in `format`) and its label below. */
+export function Columns({ columns, label, caption, format = String }: { columns: Column[]; label: string; caption: string; format?: (total: number) => string }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const height = 190;
   const top = 18;
@@ -241,7 +241,7 @@ export function Columns({ columns, label, caption }: { columns: Column[]; label:
               <rect className="hit" x={x} y={0} width={barW} height={height} />
               {marks}
               <text className="chart-value" x={x + barW / 2} y={y - 6} textAnchor="middle">
-                {totals[i]}
+                {format(totals[i]!)}
               </text>
               <text x={x + barW / 2} y={height - bottom + 16} textAnchor="middle">
                 {c.label}

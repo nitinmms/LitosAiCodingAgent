@@ -9,10 +9,12 @@ import {
   canRequestChanges,
   canResume,
   canWithdraw,
+  chatStopOf,
   chatWork,
   isBareMention,
   isChangeRequest,
   isPlainMessage,
+  isRetried,
   parseMention,
   parseSpec,
   pullRequestLabel,
@@ -23,7 +25,7 @@ import {
 import { MessageAttachments, PendingFiles, usePendingFiles } from './Attachments';
 import { MessageArtifacts } from './Artifacts';
 import { ErrorNote, Rail, Rich, SafeLink, TurnPill } from './bits';
-import { DecisionCard, HandoffCard, SpecCard, StopPanel } from './cards';
+import { ChatRetryPanel, DecisionCard, HandoffCard, SpecCard, StopPanel } from './cards';
 import { ReflectionPanel } from './ReflectionPanel';
 import { EditTaskSkills } from './TaskSkillsPicker';
 
@@ -271,7 +273,10 @@ export function ThreadMain({
             onRequestChanges={beginChangeRequest}
           />
         );
-      case 'Status':
+      case 'Status': {
+        // A chat answer its own allowance stopped, not yet asked again: offer to.
+        const stop = m.author === 'Factory' ? chatStopOf(m) : null;
+        const retryable = stop !== null && !isRetried(stop.runId, messages);
         return (
           // The marker is the row's ::before, which takes the grid's first column.
           <div key={m.id} className={`ev ${m.author === 'User' ? 'sys' : ''}`}>
@@ -279,10 +284,19 @@ export function ThreadMain({
               <Rich text={m.text} />
               {/* A chat answer that failed after publishing a page still shows the page. */}
               <MessageArtifacts artifacts={m.artifacts} />
+              {retryable ? (
+                <ChatRetryPanel
+                  stop={stop}
+                  busy={busy}
+                  disabled={waitingForAnswer}
+                  onRetry={(allowance) => void act(() => api.retryChat(thread.id, stop.runId, allowance))}
+                />
+              ) : null}
             </div>
             <span />
           </div>
         );
+      }
       default:
         if (m.author === 'Factory') {
           return (

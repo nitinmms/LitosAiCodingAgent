@@ -142,6 +142,31 @@ export const isChangeRequest = (message: { payload: unknown }): boolean =>
 export const isPlainMessage = (message: { payload: unknown }): boolean =>
   typeof message.payload === 'object' && message.payload !== null && (message.payload as { plain?: unknown }).plain === true;
 
+/** A chat answer its own allowance stopped, as its note's payload says (ChatAnswerPayload.ChatStop). */
+export interface ChatStop {
+  runId: string;
+  allowance: number;
+  used: number;
+}
+
+const payloadField = (message: { payload: unknown }, field: string): unknown =>
+  typeof message.payload === 'object' && message.payload !== null ? (message.payload as Record<string, unknown>)[field] : undefined;
+
+/** The stop a chat answer's failure note carries; null on any other message. */
+export const chatStopOf = (message: { payload: unknown }): ChatStop | null => {
+  const stop = payloadField(message, 'chatStop') as Partial<ChatStop> | undefined;
+  return stop && typeof stop.runId === 'string' && typeof stop.allowance === 'number'
+    ? { runId: stop.runId, allowance: stop.allowance, used: typeof stop.used === 'number' ? stop.used : 0 }
+    : null;
+};
+
+/** Whether someone already asked this stopped answer again: the host posts a note naming it (ChatRetry). */
+export const isRetried = (runId: string, messages: { payload: unknown }[]): boolean =>
+  messages.some((m) => payloadField(m, 'retryOf') === runId);
+
+/** What the retry form offers first: half as much again, rounded up to the next 10,000. */
+export const suggestedAllowance = (allowance: number): number => Math.ceil((allowance * 1.5) / 10_000) * 10_000;
+
 /** Anything not closed, a draft included: one that will not be delegated can be closed (TaskLifecycle.cs). */
 export const canCancel = (state: LifecycleState): boolean => !isClosed(state);
 

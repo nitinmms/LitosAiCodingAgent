@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
 import type { Counters, FlowMetrics, Project, TimeIn } from '../api/types';
 import { fmt } from '../domain/format';
-import { duration, label, percent, tokens } from '../domain/metrics';
+import { duration, label, percent, PROJECT_COLORS, tokens } from '../domain/metrics';
+import { ChatReport } from './ChatReport';
 import { navigate } from '../domain/route';
 import { ErrorNote } from './bits';
 import { Bullet, Columns, DotStrip, Key, Meter, RangeRows, Sparkline, TipLayer, type Segment } from './charts';
@@ -10,7 +11,7 @@ import { Guidance } from './Guidance';
 import { Operations } from './Operations';
 
 export const PERIODS = [7, 30, 90] as const;
-export type MetricsTab = 'flow' | 'guidance';
+export type MetricsTab = 'flow' | 'guidance' | 'chat';
 
 export { duration } from '../domain/metrics';
 
@@ -56,7 +57,7 @@ const PHASES: [string, string][] = [
   ['Spec', 'var(--s6)'],
 ];
 const phaseOf = (name: string) => (name === 'LightReview' || name === 'NoReview' ? 'Review' : PHASES.some(([p]) => p === name) ? name : 'Other');
-export const PROJECT_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)'];
+export { PROJECT_COLORS } from '../domain/metrics';
 
 const VIEW_KEY = 'litos-metrics-view';
 const readView = (): 'charts' | 'tables' => {
@@ -113,6 +114,9 @@ export function MetricsPage({
               <button type="button" aria-pressed={tab === 'guidance'} onClick={() => navigate({ view: 'metrics', tab: 'guidance' })}>
                 Skills &amp; lessons
               </button>
+              <button type="button" aria-pressed={tab === 'chat'} onClick={() => navigate({ view: 'metrics', tab: 'chat' })}>
+                Chat
+              </button>
             </nav>
             <select aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
               <option value="">All my projects</option>
@@ -139,13 +143,17 @@ export function MetricsPage({
           </nav>
           <p className="small muted">
             {tab === 'flow'
-              ? 'Tasks created in the period. Open decisions are those waiting now, on any task.'
-              : 'Lessons and skills given to runs in the period: what people said each lesson did, and how tasks with each skill fared.'}
+              ? 'Tasks created in the period. Open decisions are those waiting now, on any task. Tokens are task work only: chat has its own tab.'
+              : tab === 'chat'
+                ? "Every chat answer given in the period, plain or with an artifact, on any task. Chat is charged to its own allowance, never to a task's budget."
+                : 'Lessons and skills given to runs in the period: what people said each lesson did, and how tasks with each skill fared.'}
           </p>
         </section>
 
         {tab === 'flow' ? (
           <Flow api={api} projects={projects} projectId={projectId || null} days={days} isAdmin={isAdmin} onDispatchChanged={onDispatchChanged} />
+        ) : tab === 'chat' ? (
+          <ChatReport api={api} projects={projects} projectId={projectId || null} days={days} />
         ) : (
           <Guidance api={api} projects={projects} projectId={projectId || null} days={days} />
         )}

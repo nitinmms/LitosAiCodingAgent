@@ -7,6 +7,9 @@ export const duration = (hours: number): string =>
 /** A share as a whole percentage; "—" when there is nothing to share. */
 export const percent = (share: number | null): string => (share === null ? '—' : `${Math.round(share * 100)}%`);
 
+/** One colour per project, in the order the projects are listed, wherever a chart tells projects apart. */
+export const PROJECT_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)'];
+
 /** 412300 → "412k"; 1084000 → "1.08M"; 14620000 → "14.6M". */
 export const tokens = (n: number): string =>
   n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 1 : 2)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(Math.round(n));

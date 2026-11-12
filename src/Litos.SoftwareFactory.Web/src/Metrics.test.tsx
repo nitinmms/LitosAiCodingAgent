@@ -50,6 +50,8 @@ describe('metrics helpers', () => {
     expect(parseRoute('#/metrics/guidance')).toEqual({ view: 'metrics', tab: 'guidance' });
     expect(routeHash({ view: 'metrics' })).toBe('#/metrics');
     expect(routeHash({ view: 'metrics', tab: 'guidance' })).toBe('#/metrics/guidance');
+    expect(parseRoute('#/metrics/chat')).toEqual({ view: 'metrics', tab: 'chat' });
+    expect(routeHash({ view: 'metrics', tab: 'chat' })).toBe('#/metrics/chat');
     expect(parseRoute('#/lessons/p-1/L-12')).toEqual({ view: 'lessons', projectId: 'p-1', lesson: 12 });
     expect(parseRoute('#/lessons/p-1')).toEqual({ view: 'lessons', projectId: 'p-1' });
     expect(routeHash({ view: 'lessons', projectId: 'p-1', lesson: 12 })).toBe('#/lessons/p-1/L-12');

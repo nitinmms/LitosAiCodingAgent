@@ -254,6 +254,7 @@ a{color:var(--petrol)}
 .stack{display:grid;gap:10px}
 .raise{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
 .raise .field{flex:1 1 220px}
+.chat-retry{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
 .list-empty{padding:0 8px}
 .findings{margin:0;padding-left:18px;display:grid;gap:4px}
 .verdicts{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
@@ -447,6 +448,10 @@ button.link:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .hbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;font-size:.84rem}
 .hbar-track{grid-column:1/-1;height:8px;background:var(--grid);border-radius:4px;overflow:hidden}
 .hbar-track span{display:block;height:100%;background:var(--petrol);border-radius:4px}
+.hbar-track .hbar-split{display:flex;gap:2px;background:none}
+.hbar-track .hbar-split i{display:block;height:100%;min-width:2px}
+.hbar.tall .hbar-track{height:12px}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:baseline}
 .decision-oldest{display:grid;gap:6px;border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:var(--r-sm);padding:10px 12px;background:var(--surface-2)}
 .decision-oldest q{font-weight:600;quotes:none}
 .agebar{position:relative;height:8px;background:var(--grid);border-radius:4px}

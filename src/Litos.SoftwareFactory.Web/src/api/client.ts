@@ -13,6 +13,7 @@ import type {
   DirectoryEntry,
   DispatchResult,
   FindingVerdict,
+  ChatMetrics,
   FlowMetrics,
   LessonReport,
   SkillReport,
@@ -114,6 +115,8 @@ export interface FactoryApi {
   /** Approves the specification revision the person read; a newer one makes this a 409. */
   approveSpec(id: string, revision: number): Promise<SpecStatus>;
   setBudget(id: string, cap: number | null): Promise<Thread>;
+  /** Asks a chat answer its allowance stopped the same question again, with a larger allowance. */
+  retryChat(id: string, runId: string, allowance: number): Promise<DispatchResult>;
   /** The task's chosen skills; a working task takes them once it is paused and resumed. */
   setThreadSkills(id: string, skills: string[]): Promise<Thread>;
   /** A project's lessons, newest first (m4-architecture.md §3.3). */
@@ -132,6 +135,8 @@ export interface FactoryApi {
   skipReflection(threadId: string): Promise<unknown>;
   /** The flow metrics over one project, or all the person's, for the last 7, 30 or 90 days. */
   metrics(projectId: string | null, days: number): Promise<FlowMetrics>;
+  /** What chat spends, over the same scope and period as the metrics. */
+  chatMetrics(projectId: string | null, days: number): Promise<ChatMetrics>;
   /** How the project lessons are doing, over the same scope and period as the metrics. */
   lessonMetrics(projectId: string | null, days: number): Promise<LessonReport>;
   /** How the skills are doing, over the same scope and period. */
@@ -302,6 +307,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     },
     approveSpec: (id, revision) => send<SpecStatus>('POST', `${thread(id)}/spec/${revision}/approve`),
     setBudget: (id, cap) => send<Thread>('POST', `${thread(id)}/budget`, { cap }),
+    retryChat: (id, runId, allowance) => send<DispatchResult>('POST', `${thread(id)}/chat/${encodeURIComponent(runId)}/retry`, { allowance }),
     setThreadSkills: (id, skills) => send<Thread>('POST', `${thread(id)}/skills`, { skills }),
     lessons: (projectId) => send<Lesson[]>('GET', `/api/projects/${encodeURIComponent(projectId)}/lessons`),
     createLesson: (projectId, lesson) => send<Lesson>('POST', `/api/projects/${encodeURIComponent(projectId)}/lessons`, lesson),
@@ -321,6 +327,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     setDispatch: (paused, reason) => send<unknown>('POST', '/api/admin/dispatch', { paused, reason }),
     metrics: (projectId, days) =>
       send<FlowMetrics>('GET', `/api/metrics?days=${days}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`),
+    chatMetrics: (projectId, days) =>
+      send<ChatMetrics>('GET', `/api/metrics/chat?days=${days}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`),
     lessonMetrics: (projectId, days) =>
       send<LessonReport>('GET', `/api/metrics/lessons?days=${days}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`),
     skillMetrics: (projectId, days) =>

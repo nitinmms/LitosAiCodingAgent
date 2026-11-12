@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Decision, HandoffEvidence, Message, PullRequestState, SpecPayload, SpecStatus, Thread } from '../api/types';
 import { fmt, pct, shortSha, words } from '../domain/format';
-import { pullRequestLabel } from '../domain/task';
+import { pullRequestLabel, suggestedAllowance } from '../domain/task';
 import { tryItGuide } from '../domain/tryIt';
 import { SafeLink } from './bits';
 import { TryItYourself } from './TryIt';
@@ -481,6 +481,50 @@ export function HandoffCard({
 
       {guide ? null : answer}
     </div>
+  );
+}
+
+/**
+ * On the note of a chat answer its own allowance stopped. A chat answer cannot resume, so this
+ * asks the same question again with a larger allowance; anyone on the project may, with no ceiling.
+ * Gone once someone has: the host refuses a second retry of the same answer.
+ */
+export function ChatRetryPanel({
+  stop,
+  busy,
+  disabled = false,
+  onRetry,
+}: {
+  stop: { runId: string; allowance: number; used: number };
+  busy: boolean;
+  /** Another answer is running; the host would refuse until it is done. */
+  disabled?: boolean;
+  onRetry: (allowance: number) => void;
+}) {
+  const [allowance, setAllowance] = useState(() => String(suggestedAllowance(stop.allowance)));
+  const next = Number(allowance);
+  const valid = Number.isInteger(next) && next > stop.allowance;
+  const id = `retry-${stop.runId}`;
+  return (
+    <form
+      className="raise chat-retry"
+      aria-label="Try again with a larger allowance"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (valid) onRetry(next);
+      }}
+    >
+      <div className="field">
+        <label htmlFor={id}>New allowance for this answer</label>
+        <input id={id} type="number" min={stop.allowance + 1} value={allowance} onChange={(e) => setAllowance(e.target.value)} />
+        <span className="hint">
+          It used {fmt(stop.used)} of {fmt(stop.allowance)}. The answer starts again from the question; pages it published are kept.
+        </span>
+      </div>
+      <button className="btn attn" type="submit" disabled={busy || disabled || !valid}>
+        Try again
+      </button>
+    </form>
   );
 }
 

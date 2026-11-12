@@ -14,8 +14,8 @@ export type Route =
   /** A project's lessons (m4-architecture.md §3.4); the first project when none is named. `lesson` is
    * one lesson's number to bring into view, as the Metrics tab's improvements link to it. */
   | { view: 'lessons'; projectId: string | null; lesson?: number }
-  /** The flow metrics (m4-architecture.md §6), or how the skills and lessons are doing (§12). */
-  | { view: 'metrics'; tab?: 'guidance' }
+  /** The flow metrics (m4-architecture.md §6), how the skills and lessons are doing (§12), or what chat spends. */
+  | { view: 'metrics'; tab?: 'guidance' | 'chat' }
   /** The Admin's people screen: accounts, invitations and project membership. */
   | { view: 'people' }
   /** The Admin's factory settings, one tab per section. */
@@ -26,7 +26,7 @@ export type Route =
   | { view: 'invite'; token: string };
 
 /**
- * The app's routes live in the URL fragment (#/board, #/threads/<id>, #/projects, #/lessons/<id>[/L-<n>], #/metrics[/guidance], #/people, #/tray,
+ * The app's routes live in the URL fragment (#/board, #/threads/<id>, #/projects, #/lessons/<id>[/L-<n>], #/metrics[/guidance|/chat], #/people, #/tray,
  * #/settings/<tab>, #/invite/<token>), so the host only ever serves index.html and a reload lands
  * on the same screen. An invitation's token stays in the fragment, which the browser never sends
  * to the host.
@@ -39,7 +39,8 @@ export function parseRoute(hash: string): Route {
     const lesson = /^L-(\d+)$/.exec(parts[2] ?? '');
     return { view: 'lessons', projectId: parts[1] ? decodeURIComponent(parts[1]) : null, ...(lesson ? { lesson: Number(lesson[1]) } : {}) };
   }
-  if (parts[0] === 'metrics') return parts[1] === 'guidance' ? { view: 'metrics', tab: 'guidance' } : { view: 'metrics' };
+  if (parts[0] === 'metrics')
+    return parts[1] === 'guidance' || parts[1] === 'chat' ? { view: 'metrics', tab: parts[1] } : { view: 'metrics' };
   if (parts[0] === 'people') return { view: 'people' };
   if (parts[0] === 'tray') return { view: 'tray' };
   if (parts[0] === 'settings')
@@ -59,7 +60,7 @@ export const routeHash = (route: Route): string => {
         ? `#/lessons/${encodeURIComponent(route.projectId)}${route.lesson ? `/L-${route.lesson}` : ''}`
         : '#/lessons';
     case 'metrics':
-      return route.tab === 'guidance' ? '#/metrics/guidance' : '#/metrics';
+      return route.tab ? `#/metrics/${route.tab}` : '#/metrics';
     case 'people':
       return '#/people';
     case 'tray':

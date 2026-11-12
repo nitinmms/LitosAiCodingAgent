@@ -966,6 +966,31 @@ export interface FlowMetrics {
   series: { start: string; days: number; created: number; accepted: number; acceptedFirstTime: number }[];
 }
 
+/** What chat spends (Api/MetricsApi.cs, Core/Metrics/ChatMetrics.cs): every answer in the period, plain or with an artifact. */
+export interface ChatMetrics {
+  projectId: string | null;
+  days: number;
+  tokens: number;
+  artifactTokens: number;
+  plainTokens: number;
+  /** What task work was charged in the same period, for "chat beside task work". */
+  taskTokens: number;
+  /** Chat over all tokens spent in the period; null when nothing was spent. */
+  share: number | null;
+  answers: number;
+  artifactAnswers: number;
+  /** Over the answers that spent anything. */
+  perAnswer: Spread;
+  plainMedian: number;
+  artifactMedian: number;
+  /** Most first. */
+  byProject: { projectId: string; tokens: number; artifactTokens: number; answers: number; median: number; share: number }[];
+  /** The tasks with the most chat tokens, most first; at most ten. */
+  topTasks: { threadId: string; projectId: string; title: string; answers: number; artifactAnswers: number; tokens: number }[];
+  /** The period in the same stretches as the flow trend, oldest first. */
+  series: { start: string; days: number; tokens: number; artifactTokens: number; byProject: { projectId: string; tokens: number }[] }[];
+}
+
 /** Where a skill stands (Core/Metrics/SkillMetrics.cs). Skills get no verdicts; they are judged by outcomes. */
 export type SkillStanding = 'EarnsItsPlace' | 'NoClearEffect' | 'CostlyNoGain' | 'WorseWithIt' | 'NeverLoaded' | 'TooFewTasks';
 

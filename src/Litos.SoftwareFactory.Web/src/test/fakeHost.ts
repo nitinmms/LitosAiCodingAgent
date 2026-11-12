@@ -3,6 +3,7 @@ import type { EventSourceFactory, EventSourceLike } from '../api/events';
 import type {
   Attachment,
   AttachmentSettings,
+  ChatMetrics,
   Counters,
   FlowMetrics,
   LessonReport,
@@ -841,6 +842,7 @@ export class FakeHost {
     if (path.split('?')[0] === '/api/metrics' && method === 'GET') return [200, this.metrics];
     if (path.split('?')[0] === '/api/metrics/lessons' && method === 'GET') return [200, this.lessonReport];
     if (path.split('?')[0] === '/api/metrics/skills' && method === 'GET') return [200, this.skillReport];
+    if (path.split('?')[0] === '/api/metrics/chat' && method === 'GET') return [200, this.chatReport];
     if (path === '/api/admin/counters' && method === 'GET')
       return this.user.roles.includes('Admin') ? [200, { ...this.counters, dispatch: this.dispatchState }] : [403, { error: 'Forbidden.' }];
     if (path === '/api/dispatch' && method === 'GET')
@@ -874,6 +876,9 @@ export class FakeHost {
 
     const approve = /^\/api\/threads\/([^/]+)\/spec\/(\d+)\/approve$/.exec(path);
     if (approve && method === 'POST') return this.approveSpec(approve[1]!, Number(approve[2]));
+
+    const retry = /^\/api\/threads\/([^/]+)\/chat\/([^/]+)\/retry$/.exec(path);
+    if (retry && method === 'POST') return this.retryChat(retry[1]!, decodeURIComponent(retry[2]!), data.allowance as number);
 
     const runOrder = this.handleRunOrder(method, path, data);
     if (runOrder) return runOrder;
@@ -1312,6 +1317,25 @@ export class FakeHost {
       accepted: i === 9 ? 2 : i === 5 ? 1 : 0,
       acceptedFirstTime: i === 9 ? 1 : i === 5 ? 1 : 0,
     })),
+  };
+
+  /** What GET /api/metrics/chat answers: no chat until a test sets it; the query it was asked with is in sent(). */
+  chatReport: ChatMetrics = {
+    projectId: null,
+    days: 30,
+    tokens: 0,
+    artifactTokens: 0,
+    plainTokens: 0,
+    taskTokens: 0,
+    share: null,
+    answers: 0,
+    artifactAnswers: 0,
+    perAnswer: { count: 0, median: 0, p90: 0 },
+    plainMedian: 0,
+    artifactMedian: 0,
+    byProject: [],
+    topTasks: [],
+    series: [],
   };
 
   /** What GET /api/metrics/skills answers; the query it was asked with is in sent(). */
@@ -1971,6 +1995,45 @@ export class FakeHost {
     details.chatPending = false;
     details.chatProgress = null;
     return this.say(threadId, { author: 'Factory', kind, text: reply });
+  }
+
+  /** Litos's note when an answer's own allowance stopped it: the payload the host's ChatAnswerPayload carries. */
+  stopChat(threadId: string, runId = 'r-chat', allowance = 100_000, used = 96_000): Message {
+    const details = this.details(threadId);
+    details.chatPending = false;
+    details.chatProgress = null;
+    return this.say(threadId, {
+      author: 'Factory',
+      kind: 'Status',
+      text: "Litos stopped before answering: The next model call needs about 40,000 tokens, but this answer's allowance has 4,000 left. Try again with a larger allowance.",
+      payload: { artifacts: [], chatStop: { runId, allowance, used } },
+    });
+  }
+
+  /** Every retry asked for, as [runId, allowance]. */
+  readonly chatRetries: [string, number][] = [];
+
+  /** As the host's RetryChatAsync: once per stopped answer, above its allowance, not while another answers. */
+  private retryChat(threadId: string, runId: string, allowance: number): [number, unknown] {
+    const details = this.threads.get(threadId);
+    if (!details) return [404, null];
+    const note = details.messages.find((m) => (m.payload as { chatStop?: { runId?: string } } | null)?.chatStop?.runId === runId);
+    if (!note) return [404, null];
+    if (!(allowance > 0)) return [400, { error: 'allowance must be positive.' }];
+    const stop = (note.payload as { chatStop: { allowance: number } }).chatStop;
+    if (allowance <= stop.allowance) return [409, { error: `The new allowance must be above ${stop.allowance.toLocaleString('en-US')} tokens.` }];
+    if (details.messages.some((m) => (m.payload as { retryOf?: string } | null)?.retryOf === runId))
+      return [202, { outcome: 'Duplicate', runId: null, thread: details.thread }];
+    if (details.chatPending) return [409, { error: 'Litos is still answering your last message. Wait for the reply, then try again.', thread: details.thread }];
+    this.chatRetries.push([runId, allowance]);
+    details.chatPending = true;
+    this.say(threadId, {
+      author: 'User',
+      kind: 'Status',
+      text: `Tried again with an allowance of ${allowance.toLocaleString('en-US')} tokens.`,
+      payload: { retryOf: runId, allowance },
+    });
+    return [202, { outcome: 'Chat', runId: this.nextId('r'), thread: details.thread }];
   }
 
   /** What the answer in progress is doing, as the host's "chat" event says it. */
