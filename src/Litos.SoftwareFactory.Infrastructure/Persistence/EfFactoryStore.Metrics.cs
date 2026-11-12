@@ -31,11 +31,14 @@ public sealed partial class EfFactoryStore
             .OfType<FlowStateEvent>()
             .ToList();
 
-        var usage = await db.Usage.AsNoTracking()
-            .Where(u => ids.Contains(u.ThreadId))
-            .Select(u => new FlowUsage(u.ThreadId, u.Phase, u.Model, u.Charged))
-            .ToListAsync(ct);
         var runs = await db.Runs.AsNoTracking().Where(r => ids.Contains(r.ThreadId)).Select(r => new { r.Id, r.ThreadId, r.Kind }).ToListAsync(ct);
+        var kindOfRun = runs.ToDictionary(r => r.Id, r => r.Kind);
+        var usage = (await db.Usage.AsNoTracking()
+                .Where(u => ids.Contains(u.ThreadId))
+                .Select(u => new { u.ThreadId, u.Phase, u.Model, u.Charged, u.RunId })
+                .ToListAsync(ct))
+            .Select(u => new FlowUsage(u.ThreadId, u.Phase, u.Model, u.Charged, u.RunId is { } run && kindOfRun.TryGetValue(run, out var kind) ? kind : null))
+            .ToList();
         var runIds = runs.Select(r => r.Id).ToList();
         var lessons = await db.RunLessons.AsNoTracking()
             .Where(s => runIds.Contains(s.RunId))
@@ -57,6 +60,47 @@ public sealed partial class EfFactoryStore
             [.. runs.Select(r => new FlowRun(r.ThreadId, r.Kind))],
             [.. decisions.Select(d => new FlowDecision(d.ThreadId, titles[d.ThreadId], d.Question, d.CreatedAt, true))],
             [.. lessons.Select(l => new FlowLessonUse(runs.First(r => r.Id == l.RunId).ThreadId, l.Inclusion, l.Verdict))]);
+    }
+
+    public async Task<ChatData> GetChatMetricsDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var threads = await db.Threads.AsNoTracking()
+            .Where(t => projectIds == null || projectIds.Contains(t.ProjectId))
+            .Select(t => new { t.Id, t.ProjectId, t.Title })
+            .ToListAsync(ct);
+        var ids = threads.Select(t => t.Id).ToList();
+        var byId = threads.ToDictionary(t => t.Id);
+
+        // Dates filtered after reading, as in GetFlowDataAsync: SQLite cannot compare a DateTimeOffset in a query.
+        var chatRuns = await db.Runs.AsNoTracking()
+            .Where(r => ids.Contains(r.ThreadId) && r.Kind == RunKind.Chat)
+            .Select(r => new { r.Id, r.ThreadId, r.CreatedAt })
+            .ToListAsync(ct);
+        var chatIds = chatRuns.Select(r => r.Id).ToHashSet();
+        var usage = (await db.Usage.AsNoTracking()
+                .Where(u => ids.Contains(u.ThreadId))
+                .Select(u => new { u.RunId, u.Charged, u.CreatedAt })
+                .ToListAsync(ct))
+            .Where(u => u.CreatedAt >= since)
+            .ToList();
+        var charged = usage.Where(u => u.RunId is { } run && chatIds.Contains(run))
+            .GroupBy(u => u.RunId!.Value)
+            .ToDictionary(g => g.Key, g => g.Sum(u => u.Charged));
+        var inPeriod = chatRuns.Where(r => r.CreatedAt >= since).ToList();
+        var periodIds = inPeriod.Select(r => r.Id).ToList();
+        var published = (await db.ArtifactVersions.AsNoTracking()
+                .Where(v => periodIds.Contains(v.RunId))
+                .Select(v => v.RunId)
+                .Distinct()
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        return new ChatData(
+            [.. inPeriod.Select(r => new ChatAnswer(
+                r.Id, r.ThreadId, byId[r.ThreadId].ProjectId, byId[r.ThreadId].Title, r.CreatedAt,
+                charged.GetValueOrDefault(r.Id), published.Contains(r.Id)))],
+            usage.Where(u => u.RunId is not { } run || !chatIds.Contains(run)).Sum(u => u.Charged));
     }
 
     public async Task<LessonData> GetLessonMetricsDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct)

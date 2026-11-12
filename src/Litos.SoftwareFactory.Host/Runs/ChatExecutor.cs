@@ -10,7 +10,8 @@ namespace Litos.SoftwareFactory.Host.Runs;
 /// one read-only turn, on the project's reading copy, told where the task stands, whose last
 /// message is posted to the thread. It never reaches the task's agent. A chat run never
 /// changes the task's state, never takes the repository's lease, and is charged to its own
-/// budget, not the task's.
+/// allowance, not the task's budget. An answer that allowance stops cannot resume; its note
+/// offers to ask the same question again with a larger one (IFactoryStore.RetryChatAsync).
 /// </summary>
 public sealed class ChatExecutor(
     IFactoryStore store, FactoryOptions options, ReadingCopies readingCopies, IWorkerLauncher launcher,
@@ -31,6 +32,8 @@ public sealed class ChatExecutor(
         ReadingWorker? worker = null;
         string? reply = null;
         string? failure = null;
+        // Its own allowance ran out (not the quota): the note offers to ask again with a larger one.
+        var stoppedByAllowance = false;
         var progress = new ChatProgressTracker(run.Id, run.StartedAt ?? clock.UtcNow);
         using var stopReporting = new CancellationTokenSource();
         var reporting = ReportProgressAsync(progress, stopReporting.Token);
@@ -68,7 +71,10 @@ public sealed class ChatExecutor(
             else if (hostStopping.IsCancellationRequested)
                 failure = Stopped; // the turn's error is the host going, not the question
             else if (active.BudgetRefusal is { } refusal)
+            {
                 failure = $"Litos stopped before answering: {refusal}";
+                stoppedByAllowance = active.BudgetRefusalReason == Core.Budget.RefusalReason.ChatAllowance;
+            }
             else
                 failure = result.Error is { Length: > 0 } error ? $"Litos could not answer that: {error}" : NoAnswer;
         }
@@ -104,7 +110,7 @@ public sealed class ChatExecutor(
 
             try
             {
-                await store.FinishChatRunAsync(run.Id, reply, failure, clock.UtcNow, CancellationToken.None);
+                await store.FinishChatRunAsync(run.Id, reply, failure, clock.UtcNow, CancellationToken.None, stoppedByAllowance);
             }
             catch (Exception ex)
             {

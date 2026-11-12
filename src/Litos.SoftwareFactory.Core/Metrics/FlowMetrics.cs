@@ -11,7 +11,9 @@ public sealed record FlowThread(Guid Id, Guid ProjectId, string Title, Lifecycle
 /// <summary>A thread's state and stage as one of its "state" outbox events recorded them, with the waiting reason.</summary>
 public sealed record FlowStateEvent(Guid ThreadId, DateTimeOffset At, string State, string Stage, string? Reason);
 
-public sealed record FlowUsage(Guid ThreadId, string? Phase, string Model, long Charged);
+/// <param name="RunKind">The kind of run that made the call; null for a call no run made. A chat
+/// run's calls are charged to its own allowance, never the task's budget, so they are not task tokens.</param>
+public sealed record FlowUsage(Guid ThreadId, string? Phase, string Model, long Charged, RunKind? RunKind = null);
 
 public sealed record FlowRun(Guid ThreadId, RunKind Kind);
 
@@ -86,7 +88,8 @@ public static class FlowMetrics
         var rounds = accepted.Select(t => reworks.GetValueOrDefault(t.Id)).ToList();
 
         var (byState, byStage, repository, slot) = Times(threads, data.Events, now);
-        var usage = data.Usage.Where(u => ids.Contains(u.ThreadId)).ToList();
+        // Task tokens only: chat is charged to its own allowance and has its own report (ChatMetrics).
+        var usage = data.Usage.Where(u => ids.Contains(u.ThreadId) && u.RunKind != RunKind.Chat).ToList();
         var perTask = threads.Select(t => (double)usage.Where(u => u.ThreadId == t.Id).Sum(u => u.Charged)).Where(t => t > 0).ToList();
         var total = usage.Sum(u => u.Charged);
         var open = data.Decisions.Where(d => d.Open).ToList();
@@ -136,9 +139,7 @@ public static class FlowMetrics
     {
         if (days <= 0)
             return [];
-        var size = days <= 7 ? 1 : days <= 30 ? 3 : 7;
-        var count = (int)Math.Ceiling((double)days / size);
-        var start = now.AddDays(-count * size);
+        var (start, size, count) = Stretches(now, days);
         var ids = threads.Select(t => t.Id).ToHashSet();
         var acceptedAt = events
             .Where(e => ids.Contains(e.ThreadId) && e.State == nameof(LifecycleState.Accepted))
@@ -161,6 +162,17 @@ public static class FlowMetrics
         }
 
         return [.. buckets.Select((b, i) => new FlowBucket(start.AddDays(i * size), size, b.Created, b.Accepted, b.First))];
+    }
+
+    /// <summary>
+    /// The period in equal stretches, as every trend on the Metrics tab draws it: a day each over a
+    /// week, three days over a month, a week beyond. The first starts <c>count × size</c> days before now.
+    /// </summary>
+    public static (DateTimeOffset Start, int Size, int Count) Stretches(DateTimeOffset now, int days)
+    {
+        var size = days <= 7 ? 1 : days <= 30 ? 3 : 7;
+        var count = (int)Math.Ceiling((double)days / size);
+        return (now.AddDays(-count * size), size, count);
     }
 
     /// <summary>

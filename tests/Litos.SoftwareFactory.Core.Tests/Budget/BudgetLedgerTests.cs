@@ -129,6 +129,31 @@ public class BudgetLedgerTests
         Assert.Equal(expected, Assert.IsType<Admitted>(BudgetLedger.Admit(budget, 5_000, Real)).LimitedBy);
     }
 
+    /// <summary>A chat answer's snapshot holds its own allowance where a task's holds its cap: what
+    /// Admit calls the task's budget is, for a chat, the answer's allowance.</summary>
+    [Fact]
+    public void ForChat_NamesTheAnswersAllowance_WhereAdmitNamedTheTasksBudget()
+    {
+        var refused = Assert.IsType<Refused>(BudgetLedger.ForChat(new Refused(RefusalReason.TaskBudget, 20_000, 5_000)));
+        Assert.Equal(new Refused(RefusalReason.ChatAllowance, 20_000, 5_000), refused);
+
+        var limited = Assert.IsType<Admitted>(BudgetLedger.ForChat(new Admitted(30_000, 9_000, RefusalReason.TaskBudget)));
+        Assert.Equal(new Admitted(30_000, 9_000, RefusalReason.ChatAllowance), limited);
+    }
+
+    /// <summary>The quota is the person's whatever they asked for; an unlimited call stays unlimited.</summary>
+    [Fact]
+    public void ForChat_LeavesTheQuotaAndUnlimitedCallsAlone()
+    {
+        AdmissionDecision quota = new Refused(RefusalReason.UserQuota, 20_000, 5_000);
+        AdmissionDecision quotaLimited = new Admitted(30_000, 9_000, RefusalReason.UserQuota);
+        AdmissionDecision free = new Admitted(30_000, 32_768);
+
+        Assert.Same(quota, BudgetLedger.ForChat(quota));
+        Assert.Same(quotaLimited, BudgetLedger.ForChat(quotaLimited));
+        Assert.Same(free, BudgetLedger.ForChat(free));
+    }
+
     [Fact]
     public void Admit_NoCap_GetsTheWholeOutputAllowance()
     {

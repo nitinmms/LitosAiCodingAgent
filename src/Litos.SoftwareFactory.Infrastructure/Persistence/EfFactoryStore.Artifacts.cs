@@ -96,13 +96,16 @@ public sealed partial class EfFactoryStore
         return [.. rows.OrderBy(a => a.CreatedAt).ThenBy(a => a.Id)];
     }
 
-    /// <summary>The versions a run published, as the payload of the answer that shows them; null when it published none.</summary>
-    private static async Task<string?> PublishedArtifactsPayloadAsync(FactoryDbContext db, Guid runId, CancellationToken ct)
+    /// <summary>
+    /// The payload of a chat answer's note: the versions its run published, and why its allowance
+    /// stopped it when it did; null when there is neither.
+    /// </summary>
+    private static async Task<string?> ChatAnswerPayloadAsync(FactoryDbContext db, Guid runId, ChatStop? stop, CancellationToken ct)
     {
         var versions = await db.ArtifactVersions.Where(v => v.RunId == runId)
             .Select(v => new { v.ArtifactId, v.Version, v.CreatedAt })
             .ToListAsync(ct);
-        if (versions.Count == 0)
+        if (versions.Count == 0 && stop is null)
             return null;
 
         // In the order the answer first published each page (sorted here: SQLite cannot order by a
@@ -112,6 +115,6 @@ public sealed partial class EfFactoryStore
             .OrderBy(g => g.Min(v => v.CreatedAt)).ThenBy(g => g.Min(v => v.Version))
             .Select(g => new PublishedArtifact(g.Key, g.Max(v => v.Version)))
             .ToList();
-        return JsonSerializer.Serialize(new MessageArtifacts(published), FactoryWire.Json);
+        return JsonSerializer.Serialize(new ChatAnswerPayload(published, stop), FactoryWire.Json);
     }
 }

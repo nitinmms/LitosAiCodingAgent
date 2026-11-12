@@ -292,8 +292,23 @@ public interface IFactoryStore
     /// once the run has finished, so a late report never follows the reply.</summary>
     Task AnnounceChatProgressAsync(ChatProgress progress, DateTimeOffset now, CancellationToken ct);
 
-    /// <summary>Ends a chat run: posts its reply, or says why there is none.</summary>
-    Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct);
+    /// <summary>
+    /// Ends a chat run: posts its reply, or says why there is none. With
+    /// <paramref name="stoppedByAllowance"/> and no reply, the run is recorded as stopped by its
+    /// budget and its note carries a <see cref="ChatStop"/>, so the thread can offer a retry.
+    /// </summary>
+    Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct, bool stoppedByAllowance = false);
+
+    /// <summary>
+    /// Asks a chat answer its own allowance stopped the same question again, as a new chat run with
+    /// <paramref name="allowance"/>, which must be above the stopped run's. Anyone who can see the
+    /// thread may. Each stopped answer is retried at most once: asking again returns Duplicate. A
+    /// second answer while one is still running is rejected, as for any message. Throws
+    /// <see cref="StoreNotFoundException"/> for a run that is not a chat run on this thread, and
+    /// <see cref="StoreConflictException"/> for one that was not stopped by its allowance or an
+    /// allowance not above its own.
+    /// </summary>
+    Task<DispatchResult> RetryChatAsync(Guid threadId, Guid runId, Guid userId, long allowance, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>
     /// Changes the skills chosen for the task (m3-architecture.md §13), already checked against the
@@ -346,6 +361,13 @@ public interface IFactoryStore
     /// <summary>The rows the flow metrics are computed from (m4-architecture.md §6): the tasks created since
     /// <paramref name="since"/> in these projects (every project when null), and every open decision on their tasks.</summary>
     Task<Metrics.FlowData> GetFlowDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct);
+
+    /// <summary>
+    /// The rows the chat report is computed from: every chat answer asked since <paramref name="since"/>
+    /// on these projects' tasks (every project when null), whatever the task's age, with what it was
+    /// charged and whether it published an artifact; and what task work was charged in the same period.
+    /// </summary>
+    Task<Metrics.ChatData> GetChatMetricsDataAsync(IReadOnlyCollection<Guid>? projectIds, DateTimeOffset since, CancellationToken ct);
 
     /// <summary>
     /// What the lesson report is computed from (Metrics.LessonMetrics): every lesson in the projects

@@ -2426,6 +2426,28 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         Assert.Equal((Ben, "Chat"), (entry.UserId, entry.Phase)); // counted to the person who asked
     }
 
+    /// <summary>
+    /// A chat answer that does not fit is refused against its own allowance, and named so: the
+    /// person is never told to raise a task budget the chat does not use. The task has room.
+    /// </summary>
+    [SkippableFact]
+    public async Task AChatThatDoesNotFit_IsRefusedAgainstItsAllowance_NotTheTasksBudget()
+    {
+        var thread = await AddThreadAsync(await AddProjectAsync(), cap: 1_000_000);
+        var chat = (await ChatAsync(thread.Id)).RunId!.Value;
+        await Store.ReserveAsync(new ReserveCommand("chat-1", thread.Id, chat, Ben, "openrouter", "m", 10_000, 10_000), Real, T0, default);
+        await Store.SettleAsync("chat-1", new UsageInfo(80_000, 9_000), 89_000, T0, default);
+
+        // 11,000 left of the 100,000 allowance: enough input, too little for a reply.
+        var refused = Assert.IsType<Refused>(
+            (await Store.ReserveAsync(new ReserveCommand("chat-2", thread.Id, chat, Ben, "openrouter", "m", 10_000, 10_000), Real, T0, default)).Decision);
+        Assert.Equal(RefusalReason.ChatAllowance, refused.Reason);
+
+        // Room for the input and some output, not all of it: limited by the allowance.
+        var smaller = new ReserveCommand("chat-3", thread.Id, chat, Ben, "openrouter", "m", 1_000, 1_000);
+        Assert.Equal(RefusalReason.ChatAllowance, Assert.IsType<Admitted>((await Store.ReserveAsync(smaller, Real, T0, default)).Decision).LimitedBy);
+    }
+
     /// <summary>A chat is charged to its own budget, not the task's, but it is still the person's quota.</summary>
     [SkippableFact]
     public async Task AChatsModelCalls_CountAgainstThePersonsQuota()
@@ -3014,7 +3036,7 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
         Assert.All(data.Events, e => Assert.Equal(running.Thread.Id, e.ThreadId));
         Assert.Contains(data.Events, e => e.State == "Running");
         Assert.Contains(data.Events, e => e.State == "Queued");
-        Assert.Equal(1_100, Assert.Single(data.Usage).Charged);
+        Assert.Equal((1_100L, (RunKind?)RunKind.Implement), (Assert.Single(data.Usage).Charged, data.Usage[0].RunKind));
         Assert.Equal(RunKind.Implement, Assert.Single(data.Runs).Kind);
         var decision = Assert.Single(data.Decisions);
         Assert.Equal(("Old task", "Still open?"), (decision.Title, decision.Question));

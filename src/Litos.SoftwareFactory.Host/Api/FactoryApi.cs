@@ -51,6 +51,9 @@ public sealed record FindingVerdictRequest(string? Verdict);
 
 public sealed record SetBudgetRequest(long? Cap);
 
+/// <summary>The allowance to ask a stopped chat answer again with; above the one that stopped it.</summary>
+public sealed record RetryChatRequest(long Allowance);
+
 public sealed record EditThreadRequest(string? Title, string? TypeLabel);
 
 /// <summary>What the host can do to a run that is executing right now.</summary>
@@ -468,6 +471,37 @@ public static class FactoryApi
                     : mentioned
                         ? store.DispatchAsync(id, user.UserId(), request.MessageId, text, clock.UtcNow, ct)
                         : store.ChatAsync(id, user.UserId(), request.MessageId, text, options.ChatTurnCap, clock.UtcNow, ct));
+        });
+
+        // A chat answer its allowance stopped, asked again with a larger one: anyone on the project,
+        // as with a task's budget, and with no ceiling. Once per stopped answer.
+        threadRoutes.MapPost("/chat/{runId:guid}/retry", async (
+            Guid id, Guid runId, RetryChatRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals,
+            IClock clock, CancellationToken ct) =>
+        {
+            if (request.Allowance <= 0)
+                return Problem("allowance must be positive.");
+
+            DispatchResult result;
+            try
+            {
+                result = await store.RetryChatAsync(id, runId, user.UserId(), request.Allowance, clock.UtcNow, ct);
+            }
+            catch (StoreNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (StoreConflictException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+
+            signals.EventsWritten();
+            if (result.Outcome == DispatchOutcome.Rejected)
+                return Results.Conflict(new { error = result.Reason, thread = ThreadView(result.Thread) });
+            if (result.Outcome == DispatchOutcome.Chat)
+                signals.WorkQueued();
+            return Results.Accepted(value: new { outcome = result.Outcome.ToString(), result.RunId, thread = ThreadView(result.Thread) });
         });
 
         // After a handoff, the one way to hand the task back: a rework run on the same branch, its

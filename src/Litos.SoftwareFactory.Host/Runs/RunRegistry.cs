@@ -67,6 +67,10 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
     /// <summary>Why the gateway refused a call during this turn, if it did.</summary>
     public string? BudgetRefusal { get; private set; }
 
+    /// <summary>Whose limit <see cref="BudgetRefusal"/> was: a chat answer stopped by its own
+    /// allowance can be asked again with a larger one; one stopped by the quota cannot.</summary>
+    public Core.Budget.RefusalReason? BudgetRefusalReason { get; private set; }
+
     public Guid? DecisionId { get; set; }
 
     /// <summary>The worker serving this run, once it is started; steering goes through it.</summary>
@@ -138,6 +142,7 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             _breakingLimitationRaised = false;
             _submission = null;
             BudgetRefusal = null;
+            BudgetRefusalReason = null;
             DecisionId = null;
             _followUps = 0;
             _inTurn = true;
@@ -390,10 +395,13 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
         _ => "This submission",
     };
 
-    public void RefuseForBudget(string reason)
+    public void RefuseForBudget(string reason, Core.Budget.RefusalReason? limit = null)
     {
         lock (_lock)
+        {
             BudgetRefusal = reason;
+            BudgetRefusalReason = limit;
+        }
     }
 
     /// <summary>Asks the run to stop, for a pause or a cancel, in whatever step it is. A cancel

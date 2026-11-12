@@ -119,7 +119,7 @@ public sealed class ModelGateway(
             if (reservation.Decision is Refused refused)
             {
                 var reason = RefusalMessage(refused);
-                run.RefuseForBudget(reason);
+                run.RefuseForBudget(reason, refused.Reason);
                 await write(new GatewayError(
                     refused.Reason == RefusalReason.UserQuota ? GatewayErrorCodes.QuotaExhausted : GatewayErrorCodes.BudgetExhausted, reason));
                 return;
@@ -245,7 +245,7 @@ public sealed class ModelGateway(
                             if (limitedBy is { } reason)
                             {
                                 var message = BudgetCutOffMessage(reason, completed.Usage, chat.MaxOutputTokens!.Value);
-                                run.RefuseForBudget(message);
+                                run.RefuseForBudget(message, reason);
                                 await write(new GatewayError(
                                     reason == RefusalReason.UserQuota ? GatewayErrorCodes.QuotaExhausted : GatewayErrorCodes.BudgetExhausted, message));
                                 return null;
@@ -347,16 +347,30 @@ public sealed class ModelGateway(
     /// <summary>What a call whose output the budget cut short, and that produced no reply, is called in the thread.</summary>
     internal static string BudgetCutOffMessage(RefusalReason limitedBy, UsageInfo usage, int maxOutputTokens) =>
         string.Create(CultureInfo.InvariantCulture, $"The model spent the {maxOutputTokens:N0} output tokens ")
-        + (limitedBy == RefusalReason.UserQuota ? "your quota had left" : "the task's budget had left")
+        + limitedBy switch
+        {
+            RefusalReason.UserQuota => "your quota had left",
+            RefusalReason.ChatAllowance => "this answer's allowance had left",
+            _ => "the task's budget had left",
+        }
         + (usage.ReasoningTokens > 0 ? " on reasoning" : "")
         + " without producing a reply. "
-        + (limitedBy == RefusalReason.UserQuota
-            ? "Raise the quota, or wait for it to reset, then resume."
-            : "Raise the task's budget, then resume.");
+        + limitedBy switch
+        {
+            RefusalReason.UserQuota => "Raise the quota, or wait for it to reset, then resume.",
+            RefusalReason.ChatAllowance => ChatRetryHint,
+            _ => "Raise the task's budget, then resume.",
+        };
 
-    internal static string RefusalMessage(Refused refused) => refused.Reason == RefusalReason.UserQuota
-        ? string.Create(CultureInfo.InvariantCulture, $"The next model call needs about {refused.Needed:N0} tokens, but your quota has {refused.Remaining:N0} left.")
-        : string.Create(CultureInfo.InvariantCulture, $"The next model call needs about {refused.Needed:N0} tokens, but the task's budget has {refused.Remaining:N0} left.");
+    internal static string RefusalMessage(Refused refused) => refused.Reason switch
+    {
+        RefusalReason.UserQuota => string.Create(CultureInfo.InvariantCulture, $"The next model call needs about {refused.Needed:N0} tokens, but your quota has {refused.Remaining:N0} left."),
+        RefusalReason.ChatAllowance => string.Create(CultureInfo.InvariantCulture, $"The next model call needs about {refused.Needed:N0} tokens, but this answer's allowance has {refused.Remaining:N0} left. {ChatRetryHint}"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"The next model call needs about {refused.Needed:N0} tokens, but the task's budget has {refused.Remaining:N0} left."),
+    };
+
+    /// <summary>What a chat answer stopped by its allowance can do: it cannot resume, only be asked again.</summary>
+    internal const string ChatRetryHint = "Try again with a larger allowance.";
 
     /// <summary>What a turn asked to wrap up is called in the thread.</summary>
     internal static string AllowanceMessage(TurnKind workKind, int calls, long charged) =>

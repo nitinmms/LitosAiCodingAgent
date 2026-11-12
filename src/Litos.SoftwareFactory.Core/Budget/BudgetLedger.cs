@@ -52,6 +52,10 @@ public enum RefusalReason
 {
     TaskBudget,
     UserQuota,
+
+    /// <summary>A chat answer's own allowance (ChatBudgetCap): chat is never charged to the task's
+    /// budget, so its refusals must not tell the person to raise that.</summary>
+    ChatAllowance,
 }
 
 public abstract record AdmissionDecision;
@@ -174,6 +178,19 @@ public static class BudgetLedger
 
         return new Admitted(input + output, (int)output, limitedBy);
     }
+
+    /// <summary>
+    /// A decision made for a chat answer, named for what it was made against. A chat run's snapshot
+    /// carries the answer's own allowance where a task's carries its cap, so <see cref="Admit"/>
+    /// reports that allowance as <see cref="RefusalReason.TaskBudget"/>; it is the chat allowance.
+    /// The user's quota is the user's quota either way.
+    /// </summary>
+    public static AdmissionDecision ForChat(AdmissionDecision decision) => decision switch
+    {
+        Refused { Reason: RefusalReason.TaskBudget } refused => refused with { Reason = RefusalReason.ChatAllowance },
+        Admitted { LimitedBy: RefusalReason.TaskBudget } admitted => admitted with { LimitedBy = RefusalReason.ChatAllowance },
+        _ => decision,
+    };
 
     /// <summary>The snapshot once an admitted call's reservation is recorded.</summary>
     public static BudgetSnapshot Reserve(BudgetSnapshot budget, long reserved) => budget with

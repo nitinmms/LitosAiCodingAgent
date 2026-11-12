@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Lifecycle;
+using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Host.Runs;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -59,6 +60,60 @@ public sealed class MetricsApiTests : IAsyncLifetime
         Assert.Equal(1, JsonDocument.Parse(await all.Content.ReadAsStringAsync()).RootElement.GetProperty("tasks").GetInt32());
         Assert.Equal(HttpStatusCode.NotFound, theirs.StatusCode);
         Assert.Equal(2, (await _host.GetAsync("api/metrics")).GetProperty("tasks").GetInt32()); // an Admin sees every project
+    }
+
+    /// <summary>A chat answer's tokens are the Chat view's, never a task's: Flow leaves them out.</summary>
+    [Fact]
+    public async Task AChatAnswer_IsInTheChatReport_AndNotInTheFlowsTaskTokens()
+    {
+        // A draft: an accepted task's lesson reflection would take the scripted turn first.
+        var projectId = await _host.RegisterProjectAsync();
+        var threadId = await _host.CreateThreadAsync(projectId);
+        var flowBefore = (await _host.GetAsync($"api/metrics?projectId={projectId}&days=7")).GetProperty("tokensTotal").GetInt64();
+        _host.Workers.Script.Enqueue(async call =>
+        {
+            await call.Worker.CallModelAsync(call.SessionId, "what is in Orders.cs?");
+            return new TurnStreamResult(true, 1, null, "Read it.");
+        });
+        await _host.DelegateAsync(threadId, "Where are orders exported?");
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while ((await _host.ThreadAsync(threadId)).ChatRun is not null || !(await _host.ThreadAsync(threadId)).Messages.Any(m => m.Text == "Read it."))
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The question was not answered.");
+            await Task.Delay(40);
+        }
+
+        var chat = await _host.GetAsync($"api/metrics/chat?projectId={projectId}&days=7");
+        var flow = await _host.GetAsync($"api/metrics?projectId={projectId}&days=7");
+
+        Assert.Equal((1, 0, 7), (chat.GetProperty("answers").GetInt32(), chat.GetProperty("artifactAnswers").GetInt32(), chat.GetProperty("days").GetInt32()));
+        var tokens = chat.GetProperty("tokens").GetInt64();
+        Assert.True(tokens > 0);
+        Assert.Equal(tokens, chat.GetProperty("plainTokens").GetInt64());
+        Assert.Equal(flowBefore, chat.GetProperty("taskTokens").GetInt64());
+        Assert.Equal(flowBefore, flow.GetProperty("tokensTotal").GetInt64());
+        var project = Assert.Single(chat.GetProperty("byProject").EnumerateArray());
+        Assert.Equal((projectId, tokens), (project.GetProperty("projectId").GetGuid(), project.GetProperty("tokens").GetInt64()));
+        Assert.Equal(threadId, Assert.Single(chat.GetProperty("topTasks").EnumerateArray()).GetProperty("threadId").GetGuid());
+        Assert.Equal(7, chat.GetProperty("series").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task AMember_SeesTheChatReportOfTheirProjectsOnly()
+    {
+        var mine = await _host.RegisterProjectAsync();
+        var other = await _host.RegisterProjectAsync("billing");
+        await _host.CreateMemberAsync("maria", mine);
+        var maria = await _host.SignedInAsync("maria");
+
+        using var theirs = await maria.GetAsync($"api/metrics/chat?projectId={other}");
+        using var refused = await _host.Client.GetAsync("api/metrics/chat?days=12");
+        using var own = await maria.GetAsync($"api/metrics/chat?projectId={mine}");
+
+        Assert.Equal(HttpStatusCode.NotFound, theirs.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, own.StatusCode);
+        Assert.Equal(0, JsonDocument.Parse(await own.Content.ReadAsStringAsync()).RootElement.GetProperty("answers").GetInt32());
     }
 
     [Fact]

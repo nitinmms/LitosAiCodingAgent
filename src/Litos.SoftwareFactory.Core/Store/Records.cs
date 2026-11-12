@@ -263,6 +263,23 @@ public sealed record MessageArtifacts(IReadOnlyList<PublishedArtifact> Artifacts
 
 public sealed record PublishedArtifact(Guid Id, int Version);
 
+/// <summary>
+/// The payload of a chat answer's note: the pages it published, and, when its own allowance stopped
+/// it, what that allowance was. A chat run cannot resume, so the thread offers to ask the same
+/// question again with a larger allowance (<see cref="ChatRetry"/>).
+/// </summary>
+public sealed record ChatAnswerPayload(
+    IReadOnlyList<PublishedArtifact> Artifacts,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    ChatStop? ChatStop = null);
+
+/// <param name="Allowance">The answer's allowance (its ChatBudgetCap).</param>
+/// <param name="Used">What it had been charged when it stopped.</param>
+public sealed record ChatStop(Guid RunId, long Allowance, long Used);
+
+/// <summary>The payload of the note that asks a stopped chat answer again: which run, and with what allowance.</summary>
+public sealed record ChatRetry(Guid RetryOf, long Allowance);
+
 /// <summary>One published version of a <see cref="ThreadArtifact"/>, the page whole.</summary>
 public sealed class ThreadArtifactVersion
 {

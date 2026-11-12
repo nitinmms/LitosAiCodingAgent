@@ -586,6 +586,63 @@ public sealed class ChatTests
         Assert.Equal(LifecycleState.Draft, details.Thread.State);
     }
 
+    /// <summary>
+    /// The allowance, not the task's budget, stopped it: the note says so and carries the stop, and
+    /// asking again with a larger allowance answers the same question in a new run.
+    /// </summary>
+    [Fact]
+    public async Task AChatItsAllowanceStopped_SaysSo_AndCanBeAskedAgainWithALargerOne()
+    {
+        var (host, _, threadId) = await StartAsync(o => o.ChatTurnCap = 10);
+        await using var _ = host;
+        host.Workers.Script.Enqueue(async call =>
+        {
+            await call.Worker.CallModelAsync(call.SessionId);
+            return new TurnStreamResult(false, 0, "refused");
+        });
+        await SayAsync(host, threadId);
+        var (_, stoppedNote) = await AnswerAsync(host, threadId);
+
+        Assert.Contains("this answer's allowance", stoppedNote.Text);
+        Assert.Contains("Try again with a larger allowance.", stoppedNote.Text);
+        Assert.DoesNotContain("task's budget", stoppedNote.Text);
+        var stopped = await ChatRunAsync(host, threadId);
+        Assert.Equal(StopReason.BudgetExhausted, stopped.StopReason);
+        var stop = JsonSerializer.Deserialize<ChatAnswerPayload>(stoppedNote.PayloadJson!, FactoryWire.Json)!.ChatStop;
+        Assert.Equal(new ChatStop(stopped.Id, 10, 0), stop);
+
+        var retried = await host.PostAsync($"api/threads/{threadId}/chat/{stopped.Id}/retry", new { allowance = 1_000_000 }, HttpStatusCode.Accepted);
+
+        Assert.Equal("Chat", retried.GetProperty("outcome").GetString());
+        var (details, answer) = await AnswerAsync(host, threadId);
+        Assert.Equal((MessageAuthor.Factory, MessageKind.Text, TestHost.DefaultChatReply), (answer.Author, answer.Kind, answer.Text));
+        var retry = await ChatRunAsync(host, threadId);
+        Assert.Equal((Question, 1_000_000L, (StopReason?)null), (retry.Request, retry.ChatBudgetCap!.Value, retry.StopReason));
+        Assert.Contains($"> {Question}", host.Workers.Turns.Last().Brief);
+        Assert.Equal((0L, LifecycleState.Draft), (details.Thread.TokensUsed, details.Thread.State));
+    }
+
+    [Fact]
+    public async Task RetryingAChat_ThatWasNotStopped_OrWithTooSmallAnAllowance_IsRefused()
+    {
+        var (host, _, threadId) = await StartAsync(o => o.ChatTurnCap = 10);
+        await using var _ = host;
+        await host.PostAsync($"api/threads/{threadId}/chat/{Guid.NewGuid()}/retry", new { allowance = 50 }, HttpStatusCode.NotFound);
+
+        host.Workers.Script.Enqueue(async call =>
+        {
+            await call.Worker.CallModelAsync(call.SessionId);
+            return new TurnStreamResult(false, 0, "refused");
+        });
+        await SayAsync(host, threadId);
+        await AnswerAsync(host, threadId);
+        var stopped = await ChatRunAsync(host, threadId);
+
+        await host.PostAsync($"api/threads/{threadId}/chat/{stopped.Id}/retry", new { allowance = 0 }, HttpStatusCode.BadRequest);
+        var small = await host.PostAsync($"api/threads/{threadId}/chat/{stopped.Id}/retry", new { allowance = 10 }, HttpStatusCode.Conflict);
+        Assert.Contains("above 10 tokens", small.GetProperty("error").GetString());
+    }
+
     // ---- Liveness ----
 
     [Fact]

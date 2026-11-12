@@ -103,6 +103,37 @@ public static class MetricsApi
             });
         }).RequireAuthorization();
 
+        // What chat spends (the Chat view): every answer in the period, plain or with an artifact,
+        // charged to its own allowance and so left out of the flow metrics' task tokens.
+        app.MapGet("/api/metrics/chat", async (
+            Guid? projectId, int? days, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, IClock clock, CancellationToken ct) =>
+        {
+            var (scope, refused) = await ScopeAsync(projectId, days, user, access, ct);
+            if (refused is not null)
+                return refused;
+
+            var now = clock.UtcNow;
+            var report = ChatMetrics.Compute(await store.GetChatMetricsDataAsync(scope!.Projects, now.AddDays(-scope.Days), ct), now, scope.Days);
+            return Results.Ok(new
+            {
+                ProjectId = projectId,
+                scope.Days,
+                report.Tokens,
+                report.ArtifactTokens,
+                report.PlainTokens,
+                report.TaskTokens,
+                report.Share,
+                report.Answers,
+                report.ArtifactAnswers,
+                report.PerAnswer,
+                report.PlainMedian,
+                report.ArtifactMedian,
+                report.ByProject,
+                report.TopTasks,
+                report.Series,
+            });
+        }).RequireAuthorization();
+
         app.MapGet("/api/metrics/skills", async (
             Guid? projectId, int? days, ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, FactorySettings settings, IClock clock,
             CancellationToken ct) =>

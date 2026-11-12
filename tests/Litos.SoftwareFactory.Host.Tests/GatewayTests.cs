@@ -869,6 +869,18 @@ public sealed class GatewayTests : IAsyncLifetime
             ModelGateway.CutOffMessage(new UsageInfo(10, 32_768), 32_768));
     }
 
+    /// <summary>A chat answer has no task budget to raise and cannot resume: it is asked again with more.</summary>
+    [Fact]
+    public void AChatAnswersMessages_NameItsAllowance_NeverTheTasksBudget()
+    {
+        Assert.Equal(
+            "The next model call needs about 40,000 tokens, but this answer's allowance has 12,345 left. Try again with a larger allowance.",
+            ModelGateway.RefusalMessage(new Refused(RefusalReason.ChatAllowance, 40_000, 12_345)));
+        Assert.Equal(
+            "The model spent the 9,000 output tokens this answer's allowance had left on reasoning without producing a reply. Try again with a larger allowance.",
+            ModelGateway.BudgetCutOffMessage(RefusalReason.ChatAllowance, new UsageInfo(10, 9_000, ReasoningTokens: 9_000), 9_000));
+    }
+
     /// <summary>R4's thread said "needs about 1,22,616 tokens": the host machine's culture is en-IN.</summary>
     [Fact]
     public void ThreadMessages_FormatNumbersTheSameWhateverTheMachineCulture()

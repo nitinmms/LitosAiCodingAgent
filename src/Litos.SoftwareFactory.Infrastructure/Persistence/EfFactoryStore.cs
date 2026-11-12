@@ -579,6 +579,47 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         return new DispatchResult(DispatchOutcome.Chat, thread, runId) { MessageId = message.Id };
     }
 
+    public async Task<DispatchResult> RetryChatAsync(Guid threadId, Guid runId, Guid userId, long allowance, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var thread = await LockThreadAsync(db, threadId, ct);
+        var stopped = await db.Runs.AsNoTracking().FirstOrDefaultAsync(r => r.Id == runId && r.ThreadId == threadId && r.Kind == RunKind.Chat, ct)
+            ?? throw new StoreNotFoundException("The thread has no such chat answer.");
+
+        // One retry per stopped answer, whoever asks, however often the button is pressed.
+        var dispatchKey = $"retry:{runId:N}";
+        if (await db.Messages.AsNoTracking().AnyAsync(m => m.DispatchKey == dispatchKey, ct))
+            return new DispatchResult(DispatchOutcome.Duplicate, thread, null);
+
+        if (stopped.Status != RunStatus.Finished || stopped.StopReason != StopReason.BudgetExhausted)
+            throw new StoreConflictException("Only an answer its allowance stopped can be tried again with a larger one.");
+        if (allowance <= (stopped.ChatBudgetCap ?? 0))
+            throw new StoreConflictException(string.Create(
+                System.Globalization.CultureInfo.InvariantCulture, $"The new allowance must be above {stopped.ChatBudgetCap ?? 0:N0} tokens."));
+        if (await db.Runs.AnyAsync(r => r.ThreadId == threadId && r.Kind == RunKind.Chat && r.Status != RunStatus.Finished, ct))
+            return new DispatchResult(DispatchOutcome.Rejected, thread, null, "Litos is still answering your last message. Wait for the reply, then try again.");
+
+        // The same question: the brief finds it in the thread and leaves out everything after it,
+        // so the retry is told what the first attempt was told, plus the pages it did publish.
+        var retryId = AddRun(db, thread, userId, RunKind.Chat, stopped.Request, now);
+        db.Runs.Local.First(r => r.Id == retryId).ChatBudgetCap = allowance;
+        var message = AddMessage(
+            db, thread, MessageAuthor.User, userId, MessageKind.Status,
+            string.Create(System.Globalization.CultureInfo.InvariantCulture, $"Tried again with an allowance of {allowance:N0} tokens."),
+            now, dispatchKey: dispatchKey, payloadJson: JsonSerializer.Serialize(new ChatRetry(runId, allowance), FactoryWire.Json));
+        try
+        {
+            await write.CommitAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            return new DispatchResult(DispatchOutcome.Duplicate, thread, null);
+        }
+
+        return new DispatchResult(DispatchOutcome.Chat, thread, retryId) { MessageId = message.Id };
+    }
+
     public async Task<IReadOnlyList<HeldSteer>> TakeHeldSteersAsync(Guid threadId, DateTimeOffset now, CancellationToken ct)
     {
         await using var write = await BeginWriteAsync(ct);
@@ -704,7 +745,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         await write.CommitAsync(ct);
     }
 
-    public async Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct)
+    public async Task FinishChatRunAsync(Guid runId, string? reply, string? failure, DateTimeOffset now, CancellationToken ct, bool stoppedByAllowance = false)
     {
         await using var write = await BeginWriteAsync(ct);
         var db = write.Db;
@@ -718,9 +759,18 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         run.EndedAt = now;
         run.WorkerProcessId = null;
         run.WorkerStartTime = null;
+        // Stopped by its own allowance: a chat run cannot resume, so its note says what the allowance
+        // was and the thread offers to ask again with a larger one (RetryChatAsync).
+        ChatStop? stop = null;
+        if (stoppedByAllowance && string.IsNullOrWhiteSpace(reply))
+        {
+            run.StopReason = StopReason.BudgetExhausted;
+            stop = new ChatStop(run.Id, run.ChatBudgetCap ?? 0, run.ChatTokensUsed);
+        }
+
         // The pages this answer published are shown with it — on the failure note too, if it
         // failed after publishing, so a page is never on the thread with nothing pointing to it.
-        var published = await PublishedArtifactsPayloadAsync(db, runId, ct);
+        var published = await ChatAnswerPayloadAsync(db, runId, stop, ct);
         if (!string.IsNullOrWhiteSpace(reply))
             AddMessage(db, thread, MessageAuthor.Factory, null, MessageKind.Text, reply.Trim(), now, payloadJson: published);
         else
@@ -1461,6 +1511,8 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
         var budget = command.Quotas.Any ? await WithQuotaAsync(db, ledger.Snapshot, command.UserId, command.Quotas, now, ct) : ledger.Snapshot;
         var expectedInputCharge = BudgetLedger.ExpectedInputCharge(command.EstimatedInput, command.ExpectedCachedInput, policy.CachedInputWeight);
         var decision = BudgetLedger.Admit(budget, expectedInputCharge, policy);
+        if (ledger.IsChat)
+            decision = BudgetLedger.ForChat(decision);
         if (decision is not Admitted admitted)
             return new ReservationResult(decision, AlreadyKnown: false);
 

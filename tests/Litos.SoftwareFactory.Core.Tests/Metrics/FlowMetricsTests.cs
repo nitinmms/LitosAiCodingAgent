@@ -112,6 +112,33 @@ public class FlowMetricsTests
         Assert.Equal(["m1", "m2"], report.TokensByModel.Select(s => s.Name));
     }
 
+    /// <summary>
+    /// Chat answers are charged to their own allowance, never a task's budget: they are left out of
+    /// every task-token figure (they have the Chat tab). A reflection run is charged to the task, so it stays.
+    /// </summary>
+    [Fact]
+    public void Tokens_LeaveOutChat_WhichIsNeverChargedToTheTask()
+    {
+        var a = Thread(LifecycleState.Accepted, "A");
+        var chatOnly = Thread(LifecycleState.Draft, "Only asked about");
+        FlowUsage[] usage =
+        [
+            new(a.Id, "Implement", "m1", 600, RunKind.Implement),
+            new(a.Id, "Lessons", "m1", 50, RunKind.Reflection),
+            new(a.Id, "Chat", "m2", 5_000, RunKind.Chat),
+            new(chatOnly.Id, "Chat", "m3", 8_000, RunKind.Chat),
+            new(a.Id, "Implement", "m1", 50), // a call no run made still counts to the task
+        ];
+
+        var report = FlowMetrics.Compute(Data([a, chatOnly], usage: usage), T0);
+
+        Assert.Equal(700, report.TokensTotal);
+        Assert.Equal(new Spread(1, 700, 700), report.TokensPerTask);
+        Assert.DoesNotContain(report.TokensByPhase, s => s.Name == "Chat");
+        Assert.Equal(["m1"], report.TokensByModel.Select(s => s.Name));
+        Assert.Equal([("A", 700L), ("Only asked about", 0L)], report.PerTask.Select(t => (t.Title, t.Tokens)));
+    }
+
     [Fact]
     public void OpenDecisions_NameTheOldestWaiting()
     {
