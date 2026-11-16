@@ -140,6 +140,7 @@ export function SettingsPage({
           key={`skills-${settings.skills.revision}`}
           api={api}
           section={settings.skills}
+          builtIns={settings.builtInSkills ?? []}
           onSaved={(skills) => saved('skills', skills, 'The skills are saved.')}
           onNotice={onNotice}
           onReload={reload}

@@ -2,9 +2,9 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { createApi } from './api/client';
-import type { FoundRepositorySkill, LibrarySkill, SkillSettings } from './api/types';
+import type { BuiltInSkill, FoundRepositorySkill, LibrarySkill, SkillSettings } from './api/types';
 import { App } from './App';
-import { approvalRows, fromSkillForm, isSkillName, toSkillForm } from './components/SkillsTab';
+import { approvalRows, builtInStatus, fromSkillForm, isSkillName, missingBuiltIns, toSkillForm } from './components/SkillsTab';
 import { FakeHost } from './test/fakeHost';
 
 function start(host: FakeHost) {
@@ -273,5 +273,115 @@ describe('the skills a run started with', () => {
 
     const box = within(await screen.findByRole('region', { name: 'Run' }));
     expect(box.getAllByText('None')).toHaveLength(2);
+  });
+});
+
+const shippedTdd: BuiltInSkill = {
+  name: 'tdd',
+  version: 2,
+  description: 'Use in work turns, before writing production code.',
+  body: 'Applies to turns that end with `submit_work`. The brief comes first.\n\nWrite the test first.',
+  defaultFor: ['bug', 'feature'],
+};
+const shippedReview: BuiltInSkill = { ...shippedTdd, name: 'review-rubric', description: 'Use in review turns.', body: 'Applies to review turns.', defaultFor: ['bug'] };
+const asShipped = (b: BuiltInSkill): LibrarySkill => ({
+  name: b.name,
+  description: b.description,
+  body: b.body,
+  enabled: true,
+  defaultFor: b.defaultFor,
+  builtIn: b.name,
+  builtInVersion: b.version,
+  builtInHash: 'sha256:shipped',
+});
+
+describe('built-in skills on the Skills tab', () => {
+  it('marks a built-in as shipped, then modified once edited, and Reset to shipped brings the text back', async () => {
+    const host = new FakeHost();
+    host.builtInSkills = [shippedTdd];
+    host.skills = { revision: 4, settings: { repositoryPolicy: 'ApproveEach', library: [asShipped(shippedTdd)], offered: ['tdd'] } };
+    const user = await onSkills(host);
+
+    expect(card('tdd').getByText('Built in')).toBeInTheDocument();
+    expect(card('tdd').getByText('As shipped')).toBeInTheDocument();
+    expect(card('tdd').queryByRole('button', { name: 'Reset tdd to shipped' })).not.toBeInTheDocument();
+
+    await user.type(card('tdd').getByLabelText('Instructions'), ' Always.');
+    expect(card('tdd').getByText('Modified')).toBeInTheDocument();
+    expect(card('tdd').getByText('Read the shipped text (version 2)')).toBeInTheDocument();
+
+    await user.click(card('tdd').getByRole('button', { name: 'Reset tdd to shipped' }));
+    expect(card('tdd').getByLabelText('Instructions')).toHaveValue(shippedTdd.body);
+    expect(card('tdd').getByText('As shipped')).toBeInTheDocument();
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+  });
+
+  it('saves an edited built-in as that built-in, so the host keeps it marked', async () => {
+    const host = new FakeHost();
+    host.builtInSkills = [shippedTdd];
+    host.skills = { revision: 4, settings: { repositoryPolicy: 'ApproveEach', library: [asShipped(shippedTdd)], offered: ['tdd'] } };
+    const user = await onSkills(host);
+
+    await user.type(card('tdd').getByLabelText('Instructions'), ' Always.');
+    await user.click(screen.getByRole('button', { name: 'Save skills' }));
+
+    expect(await screen.findByText('The skills are saved.')).toBeInTheDocument();
+    const sent = host.sent('PUT', '/api/admin/settings/skills')[0]!.body as { settings: SkillSettings };
+    expect(sent.settings.library[0]).toMatchObject({ name: 'tdd', builtIn: 'tdd', body: `${shippedTdd.body} Always.` });
+  });
+
+  it('says a newer version is available for an older built-in, and resets to it', async () => {
+    const host = new FakeHost();
+    host.builtInSkills = [shippedTdd];
+    const old = { ...asShipped(shippedTdd), body: 'The version 1 text.', builtInVersion: 1 };
+    host.skills = { revision: 4, settings: { repositoryPolicy: 'ApproveEach', library: [old], offered: ['tdd'] } };
+    const user = await onSkills(host);
+
+    expect(card('tdd').getByText('Version 2 is available')).toBeInTheDocument();
+    await user.click(card('tdd').getByRole('button', { name: 'Reset tdd to shipped' }));
+    await user.click(screen.getByRole('button', { name: 'Save skills' }));
+
+    expect(await screen.findByText('The skills are saved.')).toBeInTheDocument();
+    expect(host.skills.settings.library[0]).toMatchObject({ body: shippedTdd.body, builtInVersion: 2 });
+  });
+
+  it('lists a removed built-in, and adds it back with its shipped text and defaults', async () => {
+    const host = new FakeHost();
+    host.builtInSkills = [shippedTdd, shippedReview];
+    host.skills = { revision: 4, settings: { repositoryPolicy: 'ApproveEach', library: [asShipped(shippedTdd)], offered: ['tdd', 'review-rubric'] } };
+    const user = await onSkills(host);
+
+    const missing = within(screen.getByRole('region', { name: 'Built-in skills not in the library' }));
+    expect(missing.getByText('review-rubric')).toBeInTheDocument();
+    await user.click(missing.getByRole('button', { name: 'Add back review-rubric' }));
+
+    expect(screen.queryByRole('region', { name: 'Built-in skills not in the library' })).not.toBeInTheDocument();
+    expect(card('review-rubric').getByText('As shipped')).toBeInTheDocument();
+    expect(card('review-rubric').getByLabelText('Bug')).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Save skills' }));
+    expect(await screen.findByText('The skills are saved.')).toBeInTheDocument();
+    expect(host.skills.settings.library.map((s) => s.builtIn)).toEqual(['tdd', 'review-rubric']);
+  });
+
+  it("shows an Admin's own skills as before, with no built-in marks", async () => {
+    const host = new FakeHost();
+    host.builtInSkills = [shippedTdd];
+    host.skills = { revision: 1, settings: { repositoryPolicy: 'ApproveEach', library: [releaseNotes, asShipped(shippedTdd)] } };
+    await onSkills(host);
+
+    expect(card('release-notes').queryByText('Built in')).not.toBeInTheDocument();
+    expect(screen.getByText(/The factory ships 1 built-in skills/)).toBeInTheDocument();
+  });
+
+  it("works out a skill's built-in status the way the host hashes it", () => {
+    const skill = asShipped(shippedTdd);
+    expect(builtInStatus(skill, [shippedTdd])).toBe('AsShipped');
+    expect(builtInStatus({ ...skill, body: `${skill.body.replace(/\n/g, '\r\n')}\r\n`, defaultFor: ['feature', 'bug'], name: 'renamed', enabled: false }, [shippedTdd])).toBe('AsShipped');
+    expect(builtInStatus({ ...skill, defaultFor: ['bug'] }, [shippedTdd])).toBe('Modified');
+    expect(builtInStatus({ ...skill, body: 'x', builtInVersion: 1 }, [shippedTdd])).toBe('NewerVersion');
+    expect(builtInStatus(releaseNotes, [shippedTdd])).toBeNull();
+    expect(builtInStatus({ ...skill, builtIn: 'gone' }, [shippedTdd])).toBeNull();
+    expect(missingBuiltIns([skill], [shippedTdd, shippedReview]).map((b) => b.name)).toEqual(['review-rubric']);
+    expect(fromSkillForm(toSkillForm(releaseNotes))).toEqual(releaseNotes);
   });
 });

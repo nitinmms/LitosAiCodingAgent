@@ -40,6 +40,7 @@ import type {
   Settings,
   SettingsSection,
   SkillSettings,
+  BuiltInSkill,
   SpecPayload,
   Stage,
   Thread,
@@ -257,6 +258,8 @@ export class FakeHost {
   mcp: SettingsSection<McpSettings> = { revision: 0, settings: { servers: [] } };
   /** The Skills tab as stored: an empty library, repository skills waiting for approval. */
   skills: SettingsSection<SkillSettings> = { revision: 0, settings: { repositoryPolicy: 'ApproveEach', library: [] } };
+  /** The built-in skills the host ships (Api/SettingsApi.cs): none unless a test gives some. */
+  builtInSkills: BuiltInSkill[] = [];
   /** The Presets tab as stored, seeded as the host's first start does; /api/settings lists their names. */
   presetSettings: SettingsSection<PresetSettings> = {
     revision: 1,
@@ -1114,7 +1117,7 @@ export class FakeHost {
     if (path === '/api/admin/settings' && method === 'GET')
       return [
         200,
-        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, attachments: this.attachmentSettings, mcp: this.mcp, skills: this.skills, presets: this.presetSettings, knownProviders: this.knownProviders, secrets: this.secrets },
+        { budgets: this.budgets, providers: this.providerSettings, tools: this.tools, attachments: this.attachmentSettings, mcp: this.mcp, skills: this.skills, presets: this.presetSettings, builtInSkills: this.builtInSkills, knownProviders: this.knownProviders, secrets: this.secrets },
       ];
     if (path === '/api/admin/settings/attachments' && method === 'PUT') {
       if (data.revision !== this.attachmentSettings.revision)
@@ -1163,7 +1166,14 @@ export class FakeHost {
         else if (!s.body.trim()) errors.push(`${s.name}: write its instructions.`);
       }
       if (errors.length) return [400, { error: errors.join(' '), errors }];
-      this.skills = { revision: this.skills.revision + 1, settings: skills };
+      // As BuiltInSkillSync.OnSave: a built-in that reads as shipped is stamped as the current version.
+      const library = skills.library.map((s) => {
+        const shipped = s.builtIn ? this.builtInSkills.find((b) => b.name === s.builtIn) : undefined;
+        return shipped && s.body.trim() === shipped.body.trim() && s.description.trim() === shipped.description.trim()
+          ? { ...s, builtInVersion: shipped.version }
+          : s;
+      });
+      this.skills = { revision: this.skills.revision + 1, settings: { ...skills, library } };
       return [200, this.skills];
     }
     if (path === '/api/admin/settings/presets' && method === 'PUT') {

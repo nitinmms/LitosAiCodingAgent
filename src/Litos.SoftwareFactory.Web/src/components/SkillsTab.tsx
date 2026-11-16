@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
-import type { FoundRepositorySkill, LibrarySkill, RepositorySkillPolicy, SettingsSection, SkillSettings } from '../api/types';
+import type { BuiltInSkill, FoundRepositorySkill, LibrarySkill, RepositorySkillPolicy, SettingsSection, SkillSettings } from '../api/types';
 import { ErrorNote, SaveBar } from './bits';
 
 /** A usable skill name, as Core/Settings/SkillSettings.cs checks it. */
@@ -20,13 +20,49 @@ const newKey = () => `skill-${++nextKey}`;
 
 export const toSkillForm = (s: LibrarySkill): SkillForm => ({ ...s, key: newKey() });
 
-/** The skill the form describes; the host checks it. */
+/** The skill the form describes; the host checks it, and stamps a built-in's version itself. */
 export const fromSkillForm = (s: SkillForm): LibrarySkill => ({
   name: s.name.trim(),
   description: s.description.trim(),
   body: s.body,
   enabled: s.enabled,
   defaultFor: TASK_TYPES.filter((t) => (s.defaultFor ?? []).includes(t)),
+  ...(s.builtIn ? { builtIn: s.builtIn, builtInVersion: s.builtInVersion ?? null, builtInHash: s.builtInHash ?? null } : {}),
+});
+
+/** Where a built-in skill stands against what the factory ships now; null for an Admin's own. */
+export type BuiltInStatus = 'AsShipped' | 'Modified' | 'NewerVersion';
+
+const sameText = (a: string, b: string) => a.replace(/\r\n/g, '\n').trim() === b.replace(/\r\n/g, '\n').trim();
+
+/** Whether the skill reads as the shipped one, as Core/Settings/BuiltInSkills.cs hashes it: description, instructions, defaults. */
+export const readsAsShipped = (skill: LibrarySkill, shipped: BuiltInSkill) =>
+  sameText(skill.description, shipped.description) &&
+  sameText(skill.body, shipped.body) &&
+  [...(skill.defaultFor ?? [])].sort().join(',') === [...shipped.defaultFor].sort().join(',');
+
+export function builtInStatus(skill: LibrarySkill, builtIns: BuiltInSkill[]): BuiltInStatus | null {
+  const shipped = skill.builtIn ? builtIns.find((b) => b.name === skill.builtIn) : undefined;
+  if (!shipped) return null;
+  if (readsAsShipped(skill, shipped)) return 'AsShipped';
+  return (skill.builtInVersion ?? 0) < shipped.version ? 'NewerVersion' : 'Modified';
+}
+
+/** The built-in skills the library no longer has, which an Admin can add back. */
+export const missingBuiltIns = (library: LibrarySkill[], builtIns: BuiltInSkill[]) =>
+  builtIns.filter((b) => !library.some((s) => s.builtIn === b.name));
+
+/** A built-in skill as the shipped text gives it, for "Add back". */
+export const fromBuiltIn = (b: BuiltInSkill): SkillForm => ({
+  key: newKey(),
+  name: b.name,
+  description: b.description,
+  body: b.body,
+  enabled: true,
+  defaultFor: [...b.defaultFor],
+  builtIn: b.name,
+  builtInVersion: b.version,
+  builtInHash: null,
 });
 
 const comparable = (policy: RepositorySkillPolicy, library: SkillForm[]) =>
@@ -77,12 +113,15 @@ export function approvalRows(found: FoundRepositorySkill[]): { skill: FoundRepos
 export function SkillsTab({
   api,
   section,
+  builtIns = [],
   onSaved,
   onNotice,
   onReload,
 }: {
   api: FactoryApi;
   section: SettingsSection<SkillSettings>;
+  /** The shipped text of each built-in skill. */
+  builtIns?: BuiltInSkill[];
   onSaved: (saved: SettingsSection<SkillSettings>) => void;
   onNotice: (text: string) => void;
   onReload: () => Promise<void>;
@@ -120,6 +159,12 @@ export function SkillsTab({
             Every project's runs get these skills. The agent sees each one's name and description, and reads its instructions
             when it decides it needs them. Skills on the computer that runs the factory are never used.
           </p>
+          {builtIns.length > 0 ? (
+            <p className="small muted">
+              The factory ships {builtIns.length} built-in skills: development practices written to work inside its briefs. Edit them
+              freely; Reset to shipped brings back the factory's text, and one you remove can be added back below.
+            </p>
+          ) : null}
           {library.length === 0 ? <p className="small muted">The library is empty.</p> : null}
           <div className="btn-row">
             <button
@@ -136,10 +181,30 @@ export function SkillsTab({
           <SkillCard
             key={skill.key}
             skill={skill}
+            shipped={skill.builtIn ? builtIns.find((b) => b.name === skill.builtIn) : undefined}
+            status={builtInStatus(skill, builtIns)}
             onChange={(change) => update(skill.key, change)}
             onRemove={() => setLibrary((all) => all.filter((s) => s.key !== skill.key))}
           />
         ))}
+
+        {missingBuiltIns(library, builtIns).length > 0 ? (
+          <section className="section" aria-label="Built-in skills not in the library">
+            <h2>Built-in skills not in the library</h2>
+            <p className="small muted">Removed from this library; the factory will not add them again by itself.</p>
+            <div className="stack">
+              {missingBuiltIns(library, builtIns).map((b) => (
+                <div key={b.name} className="btn-row">
+                  <span className="mono">{b.name}</span>
+                  <span className="small muted">{b.description}</span>
+                  <button className="btn small" type="button" onClick={() => setLibrary((all) => [...all, fromBuiltIn(b)])} aria-label={`Add back ${b.name}`}>
+                    Add back
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="section">
           <h2>Repository skills</h2>
@@ -191,12 +256,23 @@ export function SkillsTab({
   );
 }
 
+const BUILT_IN_PILL: Record<BuiltInStatus, [string, string]> = {
+  AsShipped: ['done', 'As shipped'],
+  Modified: ['neutral', 'Modified'],
+  NewerVersion: ['you', 'A newer version is available'],
+};
+
 function SkillCard({
   skill,
+  shipped,
+  status,
   onChange,
   onRemove,
 }: {
   skill: SkillForm;
+  /** The built-in it came from, as the factory ships it now. */
+  shipped?: BuiltInSkill;
+  status: BuiltInStatus | null;
   onChange: (change: Partial<LibrarySkill>) => void;
   onRemove: () => void;
 }) {
@@ -207,6 +283,24 @@ function SkillCard({
     <section className="section" aria-label={label}>
       <div className="section-head">
         <h2>{label}</h2>
+        {shipped && status ? (
+          <>
+            <span className="pill neutral">Built in</span>
+            <span className={`pill ${BUILT_IN_PILL[status][0]}`}>
+              {status === 'NewerVersion' ? `Version ${shipped.version} is available` : BUILT_IN_PILL[status][1]}
+            </span>
+            {status !== 'AsShipped' ? (
+              <button
+                className="btn small"
+                type="button"
+                onClick={() => onChange({ description: shipped.description, body: shipped.body, defaultFor: [...shipped.defaultFor] })}
+                aria-label={`Reset ${label} to shipped`}
+              >
+                Reset to shipped
+              </button>
+            ) : null}
+          </>
+        ) : null}
         <label className="check">
           <input type="checkbox" checked={skill.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} />
           <span>Given to runs</span>
@@ -238,6 +332,12 @@ function SkillCard({
         <label htmlFor={id('body')}>Instructions</label>
         <textarea id={id('body')} className="mono" rows={8} value={skill.body} onChange={(e) => onChange({ body: e.target.value })} />
         <span className="hint">Markdown, as a SKILL.md's body.</span>
+        {shipped && status && status !== 'AsShipped' ? (
+          <details>
+            <summary className="small">Read the shipped text (version {shipped.version})</summary>
+            <pre className="diff">{shipped.body}</pre>
+          </details>
+        ) : null}
       </div>
       <fieldset className="checks">
         <legend className="small">New tasks start with it chosen</legend>

@@ -755,12 +755,28 @@ export interface LibrarySkill {
   enabled: boolean;
   /** The task types whose new tasks start with this skill chosen. */
   defaultFor: string[];
+  /** The built-in skill it came from (Core/Settings/BuiltInSkills.cs); absent or null for an Admin's own. */
+  builtIn?: string | null;
+  /** The shipped version it was last stamped from. The host sets it, from the text it was saved with. */
+  builtInVersion?: number | null;
+  builtInHash?: string | null;
 }
 
 /** The Skills tab (Core/Settings/SkillSettings.cs). */
 export interface SkillSettings {
   repositoryPolicy: RepositorySkillPolicy;
   library: LibrarySkill[];
+  /** The built-in skills this factory has offered; the host keeps it, so one removed stays removed. */
+  offered?: string[];
+}
+
+/** One skill the factory ships, as Api/SettingsApi.cs sends it for "Reset to shipped" and "Add back". */
+export interface BuiltInSkill {
+  name: string;
+  version: number;
+  description: string;
+  body: string;
+  defaultFor: string[];
 }
 
 /** One version of a skill found in a project's repository (Api/SettingsApi.cs). */
@@ -807,6 +823,8 @@ export interface AdminSettings {
   presets: SettingsSection<PresetSettings>;
   /** Absent from an older host. */
   attachments?: SettingsSection<AttachmentSettings>;
+  /** The shipped text of each built-in skill; absent from an older host. */
+  builtInSkills?: BuiltInSkill[];
   knownProviders: KnownProvider[];
   secrets: SecretStatus[];
 }
