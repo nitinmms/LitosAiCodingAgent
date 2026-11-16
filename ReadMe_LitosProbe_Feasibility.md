@@ -146,3 +146,48 @@ Total: **~4–5 weeks** to the README's definition of done. The README's day 1�
 5. **Repair allowance.** Should Probe failures share the existing 2 repair cycles, or get their own?
 6. **Demo/target apps.** Which real Blazor, WebForms/DevExpress and authenticated apps should Phase A/C be proven on? None of the current evaluation targets covers them.
 7. **Process placement.** Do you agree with the out-of-process `Litos.Probe.Cli` using the run gateway (§3), over an in-host library?
+
+## 8. Decisions
+
+### 8.1 Answers to §7 (2026-10-22)
+
+1. **No auto-accept in V1.** Probe adds verified evidence to the handoff. A person still accepts, and the task still ends at `AwaitingHumanTesting`.
+2. **Scenarios come from both sources:** drafted by the spec turn from the acceptance criteria, and written by people. Each revision is approved before Probe uses it.
+3. **Probe runs whether or not the task has a spec.** With no criteria, it runs the project's smoke scenarios.
+4. **Data assertions are in V1 scope,** as named read-only queries, not only UI and HTTP checks.
+5. **Probe failures share the run's existing 2 repair cycles.**
+6. **Target app:** insta-story-generator only.
+7. **Probe is a library inside the factory host.** This overrides the out-of-process CLI recommended in §3. Consequences to handle in the design:
+   - The Playwright Node driver runs inside the host process, so a browser crash or hang must be contained.
+   - Model calls go through `ModelGateway` with a separate session key per scenario, to avoid the gateway's "turn already finished" reply (§2.2).
+
+### 8.2 Token budget (2026-11-12)
+
+Probe has **no budget of its own**. Every Probe model call goes through `ModelGateway` under the `Probe` phase and is charged to the task's token budget. Probe decision calls set a small `MaxOutputTokens` (about 512) so the gateway's output reservation doesn't refuse them early (§2.3).
+
+**Running out partway: same pause and panel as today.** When the gateway refuses a Probe call, the Probe step stops with `ExhaustBudget` / `StopReason.BudgetExhausted` and a resume point at the Probe step. That is the path a coding turn already takes (`RunOrchestrator.OnTurnEnded`). The task moves to `PausedBudget`, and the person sees the existing raise-budget panel, tray alert and chat message. The message says where Probe stopped, e.g. "Probe paused on scenario `reopen-story` (3 of 5 verified so far)".
+
+- **While paused,** Probe closes the browser, kills the app's process tree and deletes the saved sign-in state. Nothing is left running.
+- **On resume** (`RaiseBudgetAndResume`), Probe:
+  - starts the app again, seeds the data and signs in again;
+  - keeps the results of scenarios that finished on the same commit;
+  - reruns the interrupted scenario from the start, with a fresh browser context and fresh data. A browser can't continue halfway through a scenario, and a half-done action may already have changed data.
+- **Evidence collected before the pause** (results, screenshots, traces) stays in the report.
+
+**Budget check before Probe starts.** Before the Probe step begins, Probe estimates its worst case: the scenarios with act steps that have no valid recording, times `maxAiTokensPerScenario`. If that doesn't fit the remaining budget, the run pauses *before* Probe starts, with the same panel. The panel shows the estimate and a suggested new budget, and offers two choices:
+
+- **Raise and resume:** the normal path.
+- **Run without AI steps:** new. Probe runs only the fixed steps and the replays, and lists the other criteria in the handoff as "not verified: budget".
+
+**Per-scenario caps are not budget events.** Hitting `maxAiDecisionsPerScenario` or `maxAiTokensPerScenario` ends that scenario `Inconclusive` and hands its criterion to a person. There is no budget panel and no repair turn, because a model going in circles isn't fixed by more tokens.
+
+**To build later (no code changes yet):**
+- **Core:** the Probe step's budget-refused stop, its resume point, and a record of which scenarios finished on which commit.
+- **Host:** the budget check before Probe starts, and the "Run without AI steps" resume option (a new trigger, or a flag on `RaiseBudgetAndResume`).
+- **Web:** Probe progress and the suggested amount on the panel, plus the second button.
+- **Tests:**
+  - a pause partway through Probe, then resume;
+  - finished scenarios kept on the same commit;
+  - a refusal before Probe starts;
+  - a per-scenario cap ending `Inconclusive` with no panel;
+  - no app process left running while paused.
