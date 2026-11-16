@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Briefs\Templates\*.md" />
+    <EmbeddedResource Include="Skills\BuiltIn\*.md" />
   </ItemGroup>
 
   <ItemGroup>

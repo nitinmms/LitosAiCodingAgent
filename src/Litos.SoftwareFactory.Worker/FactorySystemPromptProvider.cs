@@ -34,9 +34,14 @@ public sealed class FactorySystemPromptProvider(ISystemPromptProvider inner, IRe
         };
     }
 
+    /// <summary>Said before the task's skills, in code, so no edit to a skill can remove it
+    /// (docs/software-factory/built-in-skills.md §3): skills add craft, the brief owns the process.</summary>
+    internal const string BriefWins =
+        "These skills guide how you work. The turn's brief sets what you may do, read, run and spend; where they differ, the brief wins.";
+
     internal static string Section(IReadOnlyList<TaskSkill> taskSkills) =>
         "Skills for this task. The people running this task chose these; follow them throughout the task, in every step, "
-        + "without loading them: their full instructions are here.\n\n"
+        + "without loading them: their full instructions are here. " + BriefWins + "\n\n"
         + string.Join("\n\n", taskSkills.Select(s => $"### Skill: {s.Name}\n{s.Text}"));
 
     internal static string LessonsSection(IReadOnlyList<RunLesson> lessons) =>

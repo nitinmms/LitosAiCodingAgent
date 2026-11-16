@@ -57,6 +57,11 @@ public sealed class FactoryOptions
     /// what they measure.</summary>
     public bool BaselineOnRegistration { get; set; } = true;
 
+    /// <summary>Whether the host adds the built-in skills to the library on start, and updates the
+    /// unedited ones (docs/software-factory/built-in-skills.md). On; the host tests turn it off,
+    /// so a test of the library's own workings starts from an empty one.</summary>
+    public bool BuiltInSkills { get; set; } = true;
+
     /// <summary>How often the coordinator looks for Running runs that no executor in this host
     /// owns, and marks them Interrupted (§16).</summary>
     public TimeSpan LivenessInterval { get; set; } = TimeSpan.FromSeconds(30);

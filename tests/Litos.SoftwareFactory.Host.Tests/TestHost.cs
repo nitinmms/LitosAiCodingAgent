@@ -641,7 +641,12 @@ public sealed class TestHost : IAsyncDisposable
         Action<FactoryOptions>? configure = null, Action<IServiceCollection>? services = null, bool signIn = true, bool startCoordinator = true)
     {
         var dataDirectory = Directory.CreateTempSubdirectory("litos-factory-host-").FullName;
-        var host = new TestHost(configure, s =>
+        // A test of the library's own workings starts from an empty one; BuiltInSkillsHostTests turns the built-ins on.
+        var host = new TestHost(o =>
+        {
+            o.BuiltInSkills = false;
+            configure?.Invoke(o);
+        }, s =>
         {
             if (!startCoordinator)
             {

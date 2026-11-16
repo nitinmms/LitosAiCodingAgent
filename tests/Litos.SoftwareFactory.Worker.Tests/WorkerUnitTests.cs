@@ -1475,6 +1475,7 @@ public class WorkerSkillsTests
         {
             var prompt = await SystemPromptAsync(worker, turnKind);
             Assert.StartsWith("Skills for this task.", prompt.SkillsCatalog);
+            Assert.Contains(FactorySystemPromptProvider.BriefWins, prompt.SkillsCatalog);
             Assert.Contains("### Skill: tdd\nWrite a failing test before the code.\n\n### Skill: prove-it-works\nShow it working.", prompt.Render());
         }
 

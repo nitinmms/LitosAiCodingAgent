@@ -262,4 +262,20 @@ public static class SettingsSeeding
 
         return seeded;
     }
+
+    /// <summary>
+    /// Adds the built-in skills a factory has not been offered yet, and moves unedited ones to the
+    /// shipped version (docs/software-factory/built-in-skills.md). Runs on every start; returns what
+    /// changed, a sentence each, for the log.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> SyncBuiltInSkillsAsync(FactorySettings settings, CancellationToken ct)
+    {
+        var (skills, revision) = settings.ReadWithRevision<SkillSettings>(SettingsSections.Skills);
+        var result = BuiltInSkillSync.OnStart(skills, BuiltInSkills.All);
+        if (!result.Changed)
+            return [];
+
+        await settings.SaveAsync(SettingsSections.Skills, result.Settings, revision, actorId: null, ct);
+        return result.Notes;
+    }
 }

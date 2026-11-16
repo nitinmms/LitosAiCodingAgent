@@ -32,6 +32,17 @@ public sealed record LibrarySkill
     /// skill chosen (m3-architecture.md §13). The person creating a task can still untick it.</summary>
     public IReadOnlyList<string> DefaultFor { get; init; } = [];
 
+    /// <summary>The built-in skill (<see cref="BuiltInSkills"/>) this one came from; null for an
+    /// Admin's own. An Admin may edit a built-in skill, and reset it to the shipped text.</summary>
+    public string? BuiltIn { get; init; }
+
+    /// <summary>The shipped version this skill was last stamped from; null for an Admin's own.</summary>
+    public int? BuiltInVersion { get; init; }
+
+    /// <summary>The shipped text's hash (<see cref="BuiltInSkills.ContentHash(LibrarySkill)"/>) at
+    /// <see cref="BuiltInVersion"/>. The skill is modified when its own content hashes otherwise.</summary>
+    public string? BuiltInHash { get; init; }
+
     /// <summary>The SKILL.md the worker reads.</summary>
     public string Markdown() => $"---\nname: {Name}\ndescription: {Description}\n---\n\n{Body.Replace("\r\n", "\n")}\n";
 }
@@ -39,12 +50,19 @@ public sealed record LibrarySkill
 /// <summary>
 /// The Skills tab (blueprint §8.2, m3-architecture.md §7.3): the factory's own skill library and
 /// what runs do with a repository's skills. By default the library is empty and a repository
-/// skill waits for an Admin's approval.
+/// skill waits for an Admin's approval. The host adds the built-in skills on start
+/// (<see cref="BuiltInSkillSync"/>), so a new factory's library holds those.
 /// </summary>
 public sealed partial record SkillSettings
 {
     public RepositorySkillPolicy RepositoryPolicy { get; init; } = RepositorySkillPolicy.ApproveEach;
     public IReadOnlyList<LibrarySkill> Library { get; init; } = [];
+
+    /// <summary>
+    /// The built-in skills this factory has offered already, kept by the host and never taken from
+    /// a save: a later version's new built-ins are added once, and one an Admin removed stays removed.
+    /// </summary>
+    public IReadOnlyList<string> Offered { get; init; } = [];
 
     public const int MaxSkills = 100;
     public const int MaxDescriptionChars = 1_024;
@@ -65,6 +83,14 @@ public sealed partial record SkillSettings
 
         foreach (var duplicate in Library.GroupBy(s => s.Name, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))
             errors.Add($"There are two skills named \"{duplicate.Key}\".");
+
+        foreach (var builtIn in Library.Where(s => s.BuiltIn is not null).Select(s => s.BuiltIn!).Distinct(StringComparer.Ordinal))
+        {
+            if (BuiltInSkills.Find(builtIn) is null)
+                errors.Add($"\"{builtIn}\" is not one of the factory's built-in skills.");
+            else if (Library.Count(s => s.BuiltIn == builtIn) > 1)
+                errors.Add($"The built-in skill \"{builtIn}\" is in the library twice.");
+        }
 
         foreach (var skill in Library)
         {

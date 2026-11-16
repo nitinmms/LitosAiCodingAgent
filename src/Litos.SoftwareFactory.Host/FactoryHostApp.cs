@@ -232,6 +232,11 @@ public static class FactoryHostApp
             app.Logger.LogInformation(
                 "Factory settings were written to the database from this host's environment. From now on they are changed in the app, and these variables are no longer read: {Variables}.",
                 string.Join(", ", SettingsSeeding.Replaced));
+        if (options.BuiltInSkills)
+        {
+            foreach (var note in await SettingsSeeding.SyncBuiltInSkillsAsync(settings, ct))
+                app.Logger.LogInformation("Skill library: {Note}", note);
+        }
         await app.Services.GetRequiredService<ModelCatalogService>().LoadAsync(ct);
         // Data restored from a backup is checked against it before anything uses it (m4-architecture.md §8.3).
         await app.Services.GetRequiredService<RestoreCheck>().RunAsync(ct);

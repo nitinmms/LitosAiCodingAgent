@@ -63,8 +63,9 @@ public sealed class SkillsTests : IAsyncLifetime
         Assert.Equal(0, skills.GetProperty("revision").GetInt64());
         Assert.Empty(skills.GetProperty("settings").GetProperty("library").EnumerateArray());
         Assert.Equal("ApproveEach", skills.GetProperty("settings").GetProperty("repositoryPolicy").GetString());
-        // Only what the tab edits: a field it does not know reads to it as an unsaved change.
-        Assert.Equal(["repositoryPolicy", "library"], skills.GetProperty("settings").EnumerateObject().Select(p => p.Name));
+        // What the tab edits, and the built-ins offered, which the host keeps and the tab does not compare
+        // (docs/software-factory/built-in-skills.md §3): a field it compared but did not know would read as an unsaved change.
+        Assert.Equal(["repositoryPolicy", "library", "offered"], skills.GetProperty("settings").EnumerateObject().Select(p => p.Name));
     }
 
     [Fact]

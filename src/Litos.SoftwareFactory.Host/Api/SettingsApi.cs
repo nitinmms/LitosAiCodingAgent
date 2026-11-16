@@ -35,6 +35,8 @@ public static class SettingsApi
             Tools = Section(settings, SettingsSections.Tools, settings.Tools),
             Mcp = Section(settings, SettingsSections.Mcp, settings.Mcp),
             Skills = Section(settings, SettingsSections.Skills, settings.Skills),
+            // The shipped text of each built-in skill, for the Skills tab's "Reset to shipped" and "Add back".
+            BuiltInSkills = BuiltInSkills.All.Select(s => new { s.Name, s.Version, s.Description, s.Body, s.DefaultFor }),
             Presets = Section(settings, SettingsSections.Presets, settings.Presets),
             Attachments = Section(settings, SettingsSections.Attachments, settings.Attachments),
             // What the Providers tab lists, in order, with what each needs to be called.
@@ -141,8 +143,10 @@ public static class SettingsApi
         admin.MapPut("/settings/skills", async (
             SaveSettingsRequest<SkillSettings> request, ClaimsPrincipal user, FactorySettings settings, CancellationToken ct) =>
         {
-            if (request.Settings is not { } skills)
+            if (request.Settings is not { } sent)
                 return Results.BadRequest(new { error = "settings are required." });
+            // Which built-in version each skill is, and which built-ins were offered, are the host's.
+            var skills = BuiltInSkillSync.OnSave(sent, settings.Skills, BuiltInSkills.All);
             if (skills.Validate() is { Count: > 0 } errors)
                 return Results.BadRequest(new { error = string.Join(" ", errors), errors });
 
