@@ -1,0 +1,7 @@
+@* The page-readiness marker (testability.ready): rendered only once this component runs
+   interactively, i.e. once the SignalR circuit is live. Placed in MainLayout with its own
+   render mode, so every page has it, static Account pages included. *@
+@if (RendererInfo.IsInteractive)
+{
+    <span data-testid="app-interactive" hidden></span>
+}

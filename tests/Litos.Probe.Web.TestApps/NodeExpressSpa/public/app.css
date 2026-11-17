@@ -1,0 +1,4 @@
+body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 40rem; color: #1d1d1f; }
+nav { display: flex; gap: 1rem; margin-bottom: 1.5rem; }
+li { padding: .25rem 0; }
+form { display: flex; gap: .5rem; margin-top: 1rem; }

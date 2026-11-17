@@ -1,0 +1,25 @@
+# The contract for this app: what a good node-express-spa retrofit looks like.
+version: 1
+application:
+  stack: node-express-spa
+  build:
+    - command: [npm, install, --no-audit, --no-fund, --prefer-offline]
+      timeout_seconds: 300
+    - command: [npm, run, build]
+  processes:
+    - name: web
+      command: [npm, start]
+      environment:
+        PORT: "{port:web}"
+  base_url: web
+  reset:
+    strategy: sqlite-snapshot
+    file: data/notes.db
+    seed: [npm, run, seed]
+testability:
+  auth:
+    type: none
+  test_endpoints:
+    clock: POST /__test/clock
+  routes:
+    public: [/, /about]

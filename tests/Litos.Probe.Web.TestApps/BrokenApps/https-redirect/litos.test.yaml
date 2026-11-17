@@ -1,0 +1,20 @@
+# Broken app "https-redirect" (see ../server.mjs): redirects every request to https.
+version: 1
+application:
+  stack: node-express-spa
+  build: []
+  processes:
+    - name: web
+      command: [node, ../server.mjs, https-redirect]
+      start_timeout_seconds: 20
+      environment:
+        PORT: "{port:web}"
+        APP_PASSWORD: correct-horse
+  base_url: web
+  reset:
+    strategy: none
+testability:
+  auth:
+    type: none
+  routes:
+    public: [/]

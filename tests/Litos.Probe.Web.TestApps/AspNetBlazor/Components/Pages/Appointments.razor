@@ -1,0 +1,56 @@
+@page "/appointments"
+@attribute [Authorize(Roles = "admin,staff")]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ClinicPortal.Data
+@using ClinicPortal.Testing
+@rendermode InteractiveServer
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ClinicClock Clock
+
+<PageTitle>Appointments</PageTitle>
+
+<h1>Appointments</h1>
+<p>Today is @Clock.Now.ToString("dddd d MMMM yyyy").</p>
+
+@if (appointments is null)
+{
+    <p><em>Loading…</em></p>
+}
+else
+{
+    <table class="table" data-testid="appointments">
+        <thead><tr><th>When</th><th>Patient</th><th>Clinician</th><th>Reason</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var a in appointments)
+            {
+                <tr>
+                    <td>@a.StartsAt.ToString("ddd d MMM, HH:mm")</td>
+                    <td>@a.PatientEmail</td>
+                    <td>@a.Clinician</td>
+                    <td>@a.Reason</td>
+                    <td><button class="btn btn-sm btn-outline-danger" @onclick="() => CancelAsync(a.Id)">Cancel @a.Reason</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Appointment>? appointments;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        appointments = await db.Appointments.OrderBy(a => a.StartsAt).ToListAsync();
+    }
+
+    private async Task CancelAsync(int id)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Appointments.Where(a => a.Id == id).ExecuteDeleteAsync();
+        await LoadAsync();
+    }
+}

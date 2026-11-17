@@ -1,0 +1,14 @@
+@page "/"
+
+<PageTitle>Clinic Portal</PageTitle>
+
+<h1>Clinic Portal</h1>
+
+<AuthorizeView>
+    <Authorized>
+        <p>Signed in as @context.User.Identity?.Name.</p>
+    </Authorized>
+    <NotAuthorized>
+        <p>Book and manage clinic appointments. <a href="Account/Login">Log in</a> to see yours.</p>
+    </NotAuthorized>
+</AuthorizeView>

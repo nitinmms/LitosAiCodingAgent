@@ -1,0 +1,45 @@
+@page "/my/appointments"
+@attribute [Authorize(Roles = "patient")]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ClinicPortal.Data
+@rendermode InteractiveServer
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+
+<PageTitle>My appointments</PageTitle>
+
+<h1>My appointments</h1>
+
+<AuthorizeView>
+    @{
+        var email = context.User.Identity?.Name ?? "";
+        var mine = appointments?.Where(a => a.PatientEmail == email).ToList();
+    }
+    @if (mine is null)
+    {
+        <p><em>Loading…</em></p>
+    }
+    else if (mine.Count == 0)
+    {
+        <p>You have no appointments.</p>
+    }
+    else
+    {
+        <ul data-testid="my-appointments">
+            @foreach (var a in mine)
+            {
+                <li>@a.StartsAt.ToString("ddd d MMM, HH:mm") with @a.Clinician: @a.Reason</li>
+            }
+        </ul>
+    }
+</AuthorizeView>
+
+@code {
+    private List<Appointment>? appointments;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        appointments = await db.Appointments.OrderBy(a => a.StartsAt).ToListAsync();
+    }
+}

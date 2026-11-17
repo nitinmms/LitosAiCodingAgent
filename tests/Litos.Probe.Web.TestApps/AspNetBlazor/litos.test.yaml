@@ -1,0 +1,44 @@
+# The contract for this app: what a good aspnet-blazor-server retrofit looks like. The serve
+# command, port injection (ASPNETCORE_URLS), ASPNETCORE_ENVIRONMENT=Testing, the readiness
+# marker and the Blazor error signals all come from the stack profile.
+version: 1
+application:
+  stack: aspnet-blazor-server
+  build:
+    - command: [dotnet, build, -c, Release]
+      timeout_seconds: 600
+  processes:
+    - name: web
+      environment:
+        TEST_ADMIN_USER: admin@clinic.test
+        TEST_ADMIN_PASS: "{secret:TEST_ADMIN_PASS}"
+        TEST_STAFF_USER: staff@clinic.test
+        TEST_STAFF_PASS: "{secret:TEST_STAFF_PASS}"
+        TEST_PATIENT_USER: patient@clinic.test
+        TEST_PATIENT_PASS: "{secret:TEST_PATIENT_PASS}"
+  base_url: web
+  reset:
+    strategy: endpoint
+    endpoint: POST /__test/reset
+testability:
+  auth:
+    type: form
+    login_url: /Account/Login
+    fields: { user: Email, password: Password }
+    submit: Log in
+    success_when: { url_not_contains: /Account/Login }
+    roles:
+      admin: { user: admin@clinic.test, password: "{secret:TEST_ADMIN_PASS}" }
+      staff: { user: staff@clinic.test, password: "{secret:TEST_STAFF_PASS}" }
+      patient: { user: patient@clinic.test, password: "{secret:TEST_PATIENT_PASS}" }
+  test_endpoints:
+    clock: POST /__test/clock
+  routes:
+    public: [/, /Account/Login]
+    protected:
+      admin: [/admin/users, /appointments]
+      staff: [/appointments]
+      patient: [/my/appointments]
+    denied:
+      staff: [/admin/users]
+      patient: [/admin/users, /appointments]

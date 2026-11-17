@@ -1,0 +1,45 @@
+@page "/admin/users"
+@attribute [Authorize(Roles = "admin")]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ClinicPortal.Data
+@rendermode InteractiveServer
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+
+<PageTitle>Users</PageTitle>
+
+<h1>Users</h1>
+
+@if (users is null)
+{
+    <p><em>Loading…</em></p>
+}
+else
+{
+    <table class="table" data-testid="users">
+        <thead><tr><th>Email</th><th>Roles</th></tr></thead>
+        <tbody>
+            @foreach (var (email, roles) in users)
+            {
+                <tr><td>@email</td><td>@roles</td></tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<(string Email, string Roles)>? users;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var rows = await (from u in db.Users
+                          join ur in db.UserRoles on u.Id equals ur.UserId into urs
+                          from ur in urs.DefaultIfEmpty()
+                          join r in db.Roles on ur.RoleId equals r.Id into rs
+                          from r in rs.DefaultIfEmpty()
+                          select new { u.Email, Role = r == null ? null : r.Name }).ToListAsync();
+        users = [.. rows.GroupBy(x => x.Email ?? "").OrderBy(g => g.Key)
+            .Select(g => (g.Key, string.Join(", ", g.Select(x => x.Role).Where(r => r is not null))))];
+    }
+}

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Litos.Probe.Web's Blazor Server test app (README_Litos.Probe.Web.md §13.1): clinic
+       appointments with ASP.NET Identity form login and the roles admin, staff and patient.
+       Started from the SDK Blazor template (Individual auth, Server interactivity), then made
+       testable: test users seeded from TEST_* variables and /__test/* endpoints, both only in
+       the Testing environment; no HTTPS redirection in Testing; a readiness marker once the
+       circuit is live. SQLite for now; Postgres from a `services` container comes with W2.
+       Not part of LitosAiAgent.slnx: the Gate builds it through its contract. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+{
+  "name": "probe-web-node-express-spa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Litos.Probe.Web test app: Express serving a built single-page app, PORT, a SQLite file, no login.",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "build": "node build.mjs",
+    "seed": "node --disable-warning=ExperimentalWarning seed.mjs",
+    "start": "node --disable-warning=ExperimentalWarning server.mjs"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}

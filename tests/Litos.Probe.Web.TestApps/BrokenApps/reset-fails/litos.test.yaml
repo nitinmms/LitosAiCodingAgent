@@ -1,0 +1,21 @@
+# Broken app "reset-fails" (see ../server.mjs): its reset command exits with code 4.
+version: 1
+application:
+  stack: node-express-spa
+  build: []
+  processes:
+    - name: web
+      command: [node, ../server.mjs, healthy]
+      start_timeout_seconds: 20
+      environment:
+        PORT: "{port:web}"
+        APP_PASSWORD: correct-horse
+  base_url: web
+  reset:
+    strategy: command
+    command: [node, -e, "process.exit(4)"]
+testability:
+  auth:
+    type: none
+  routes:
+    public: [/]

@@ -1,0 +1,23 @@
+# A hand-written contract for github.com/nitinmms/insta-story-generator (README_Litos.Probe.Web.md
+# §11, W1 exit check). The app keeps no data and has no login; one Express process serves the
+# Vite build from dist/ and the /api routes.
+version: 1
+application:
+  stack: node-express-spa
+  build:
+    - command: [npm, run, build]        # typecheck + vite build
+      timeout_seconds: 600
+  processes:
+    - name: web
+      command: [npm, start]             # tsx server/index.ts, serves dist/
+      environment:
+        PORT: "{port:web}"
+        HOST: 127.0.0.1
+  base_url: web
+  reset:
+    strategy: none
+testability:
+  auth:
+    type: none
+  routes:
+    public: [/]
