@@ -1,0 +1,38 @@
+{
+  "id": "aspnet-blazor-server",
+  "toolchain": "dotnet",
+  "tier": 1,
+  "description": "An ASP.NET Core app with Blazor Server interactivity (SignalR circuits)",
+  "detect": {
+    "all": [ { "glob": "**/*.csproj", "pattern": "Microsoft\\.NET\\.Sdk\\.Web" } ],
+    "any": [
+      { "glob": "**/*.razor", "pattern": "@rendermode|InteractiveServer" },
+      { "glob": "**/Program.cs", "pattern": "AddInteractiveServerComponents" }
+    ]
+  },
+  "defaults": {
+    "build": [ { "command": [ "dotnet", "build", "-c", "Release" ], "timeoutSeconds": 600 } ],
+    "processes": [ { "name": "web", "command": [ "dotnet", "run", "-c", "Release", "--no-build", "--no-launch-profile" ] } ]
+  },
+  "portTemplate": { "environment": { "ASPNETCORE_URLS": "http://localhost:{port}" } },
+  "testEnvironment": { "ASPNETCORE_ENVIRONMENT": "Testing" },
+  "productionEnvironment": { "ASPNETCORE_ENVIRONMENT": "Production" },
+  "readiness": { "mode": "needsMarker", "defaultSelector": "[data-testid=app-interactive]" },
+  "errorSignals": [
+    { "selectorVisible": "#blazor-error-ui" },
+    { "selectorVisible": "#components-reconnect-modal" },
+    { "textVisible": "An unhandled exception occurred while processing the request" }
+  ],
+  "logErrorPattern": "^\\s*(fail|crit):",
+  "stderrIsError": true,
+  "defaultPorts": [ 5000, 5001, 5080, 7000, 8080 ],
+  "quirks": [
+    "never wait for network idle: the SignalR circuit holds a socket open",
+    "pass --no-launch-profile, or launchSettings.json overrides ASPNETCORE_URLS",
+    "only Development loads a build's static web assets: in Testing call builder.WebHost.UseStaticWebAssets(), or blazor.web.js is missing and no circuit starts",
+    "in Production an unknown POST answers 400 (Allow: GET, HEAD), not 404",
+    "the Identity template's PasskeySubmit.razor.js logs console.error when passkey autofill finds no passkey, as in every headless browser: log it as a warning",
+    "one browser context per circuit"
+  ],
+  "retrofitSkill": "testability-dotnet"
+}

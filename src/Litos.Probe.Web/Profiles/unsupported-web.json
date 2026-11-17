@@ -1,0 +1,14 @@
+{
+  "id": "unsupported-web",
+  "toolchain": "",
+  "tier": 0,
+  "description": "A web framework the factory has no toolchain for yet (Rails, Laravel, Phoenix)",
+  "detect": {
+    "any": [
+      { "glob": "**/Gemfile", "pattern": "['\"]rails['\"]" },
+      { "glob": "**/composer.json", "pattern": "\"laravel/framework\"" },
+      { "glob": "**/mix.exs", "pattern": ":phoenix\\b" }
+    ]
+  },
+  "readiness": { "mode": "load" }
+}

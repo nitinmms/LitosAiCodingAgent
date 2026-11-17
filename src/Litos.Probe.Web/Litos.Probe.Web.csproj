@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Litos.Probe.Web's runtime (README_Litos.Probe.Web.md §3): stack detection, the app's
+       environment (build, processes, ports, reset, tree-kill), the browser (sign-in, visits,
+       signals, screenshots, traces, lint), the Gate, Smoke, the dry run and litos.test.yaml.
+       A library the factory host loads in-process; it never references the factory. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- LibraryImport's generated marshalling (JobObject). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.Probe.Web.Core\Litos.Probe.Web.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Playwright" Version="1.57.0" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.9" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Profiles\*.json" LogicalName="Litos.Probe.Web.Profiles.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.Probe.Web.Tests" />
+    <InternalsVisibleTo Include="Litos.Probe.Web.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- litos-probe-web (README_Litos.Probe.Web.md §9): the engine with environment-variable
+       secrets and a folder sink, for trying a repository outside the factory and for proving a
+       new stack profile. A development and diagnostics tool: the factory never shells out to it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>litos-probe-web</AssemblyName>
+    <RootNamespace>Litos.Probe.Web.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Litos.Probe.Web\Litos.Probe.Web.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.Probe.Web.Tests" />
+  </ItemGroup>
+
+</Project>

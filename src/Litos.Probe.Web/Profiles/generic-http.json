@@ -1,0 +1,14 @@
+{
+  "id": "generic-http",
+  "toolchain": "",
+  "tier": 3,
+  "description": "Any web app: universal signals only, with build and serve commands given by hand",
+  "detect": {},
+  "defaults": { "build": [], "processes": [] },
+  "portTemplate": {},
+  "readiness": { "mode": "load" },
+  "errorSignals": [],
+  "stderrIsError": false,
+  "defaultPorts": [ 3000, 5000, 5173, 8000, 8080, 8787 ],
+  "quirks": [ "the contract must say where the port goes, with {port:<process>}" ]
+}

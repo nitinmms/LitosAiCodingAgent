@@ -1,0 +1,27 @@
+{
+  "id": "node-express-spa",
+  "toolchain": "node",
+  "tier": 1,
+  "description": "An Express server that serves a built single-page app (and usually its API)",
+  "detect": {
+    "all": [ { "glob": "**/package.json", "pattern": "\"express\"\\s*:" } ],
+    "none": [ { "glob": "**/package.json", "pattern": "\"next\"\\s*:" } ]
+  },
+  "defaults": {
+    "build": [ { "command": [ "npm", "run", "build" ], "timeoutSeconds": 600 } ],
+    "processes": [ { "name": "web", "command": [ "npm", "start" ] } ]
+  },
+  "portTemplate": { "environment": { "PORT": "{port}" } },
+  "testEnvironment": { "NODE_ENV": "test" },
+  "productionEnvironment": { "NODE_ENV": "production" },
+  "readiness": { "mode": "load" },
+  "errorSignals": [],
+  "logErrorPattern": "(?i)^\\s*(error|uncaught|unhandled)\\b",
+  "stderrIsError": true,
+  "defaultPorts": [ 3000, 5173, 8080, 8787 ],
+  "quirks": [
+    "npm is npm.cmd on Windows: commands are resolved through PATHEXT",
+    "kill the process tree: npm start leaves a node child that holds the port"
+  ],
+  "retrofitSkill": "testability-node"
+}
