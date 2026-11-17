@@ -2,7 +2,7 @@
 
 **Deterministic browser verification of web apps for the Litos Software Factory. Probe's first part.**
 
-**Status:** Proposed. No code yet.
+**Status:** W1 (engine, CLI, test apps) built 2026-11-17; W2–W4 not started. See §11.1.
 **Date:** 2026-11-17
 **Target:** .NET 10, C#, Playwright for .NET, Chromium
 **Design source:** [docs/software-factory/testability-architecture.md](docs/software-factory/testability-architecture.md) (revision 2)
@@ -93,7 +93,7 @@ The contract says how to build, start, reset, sign into and walk the app. Its fu
 
 - **Required:**
   - `processes` (one or more) and `baseUrl`;
-  - a reset (`command`, `endpoint`, `sqlite-snapshot`, or a `services` container plus a command);
+  - a reset (`command`, `endpoint`, `sqlite-snapshot`, a `services` container plus a command, or `none`, declared for an app that keeps no data);
   - one user per role, if the app has a login.
 - **Defaulted by the stack profile:** build and serve commands, port injection, readiness, error signals and log error patterns.
 - **Optional:** `/health`, a readiness marker (required only for websocket-driven UIs such as Blazor Server), `/__test/*` endpoints, the clock, and `routes.denied`.
@@ -145,7 +145,7 @@ The per-profile facts (serve commands, port flags, Windows traps such as gunicor
 | 4 | Visit every declared route as its role, wait for page readiness | Marker missing, an error signal, a 5xx, or a server error line |
 | 5 | A protected route while logged out | Not redirected to login |
 | 6 | Each `denied` route as its role | Not 401/403 and not redirected away |
-| 7 | `/__test/*` with the stack's Production switch | Anything but 404 |
+| 7 | `/__test/*` with the stack's Production switch | It succeeds, or answers differently from a path that cannot exist (Blazor answers any unknown POST with 400, so "anything but 404" would be wrong) |
 | 8 | Accessibility lint on every visited page | An interactive element with no accessible name and no `data-testid` |
 
 Where each part runs:
@@ -282,6 +282,29 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 | **W4 Breadth** (can follow later) | Tier-2 profiles + retrofit skills `testability-python`, `-jvm`, `-go` | `dry-run` and `gate` on one real or sample repo per tier-2 profile; findings folded into the profiles | ~0.5–1 week |
 
 **Total:** about **5 weeks** for W1–W3 (web apps testable, smoke-tested and scenario-checked before handoff on two stacks, with throwaway databases), plus up to 1 week for W4.
+
+### 11.1 W1 as built (2026-11-17)
+
+**Exit check met:**
+- `litos-probe-web gate` passes all 8 steps on `NodeExpressSpa`, on `AspNetBlazor` (3 roles) and on **insta-story-generator** with the hand-written contract in `tests/Litos.Probe.Web.TestApps/Contracts/`.
+- Each of 17 broken apps fails at the right check, with the right class and message. A flaky one passes as `Flaky`, and a `healthy` control passes (`tests/Litos.Probe.Web.IntegrationTests`).
+
+**Differences from the plan above:**
+- **Reset `none`** is a fourth reset strategy, for apps with no data (insta-story-generator). It must be declared.
+- **`litos.test.yaml`** is the v3 JSON model in snake_case, mapped 1:1 (`application:` / `testability:`), not the idea doc's `app:` / `database:` sections. One schema, and misspelt keys are errors.
+- **`InvalidContract`** is a fifth report outcome: nothing was started (CLI exit code 3).
+- **Gate step 7** compares each test endpoint with a path that cannot exist, instead of requiring 404.
+- **Step 8 lint** runs in the page as JavaScript. Playwright for .NET no longer has an accessibility snapshot API.
+- **Steps 1 and 2 always run**, whatever `--steps` says, because no other step can run without them.
+- **A `sqlite-snapshot` reset runs before start**, because a running app holds the file open.
+- **`services`** are in the model but refused by the validator until W2.
+- The **blazor test app uses SQLite**. Postgres from a `services` container comes in W2.
+
+**Learned on the real apps, now in the `aspnet-blazor-server` profile's quirks:**
+- Outside `Development`, a build (not a publish) serves no static web assets. Testing needs `builder.WebHost.UseStaticWebAssets()`, or `blazor.web.js` is missing and no circuit starts.
+- The Identity template's passkey script logs `console.error` in any browser without a passkey.
+
+`testability-dotnet` should carry both.
 
 **After Probe.Web, full Probe adds:**
 - AI `act` steps through `ModelGateway` (§8.2 budget rules);
