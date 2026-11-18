@@ -19,6 +19,11 @@ public static partial class ContractValidator
     public static IReadOnlyList<string> Validate(WebAppContract contract, StackProfile profile)
     {
         var errors = new List<string>();
+        // Nulls inside lists and maps break every rule below, so they are reported on their own.
+        errors.AddRange(NullValues(contract));
+        if (errors.Count > 0)
+            return errors;
+
         var raw = contract.Application;
 
         if (contract.Version != 1)
@@ -214,6 +219,55 @@ public static partial class ContractValidator
             Check($"testability.auth.roles.{role}.password", credentials.Password, secretsAllowed: true);
         }
     }
+
+    /// <summary>Maps whose values are data: a null value there is an empty entry, not an absent setting.</summary>
+    private static readonly HashSet<string> DataMaps = ["environment", "roles", "testEndpoints", "protected", "denied"];
+
+    private static readonly System.Text.Json.JsonSerializerOptions WithNulls =
+        new(ProbeWebJson.Options) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never };
+
+    /// <summary>
+    /// A null list item or map value: hand-written JSON can hold one even though the model's
+    /// types say it can't, and the engine would fail on it mid-run instead of here.
+    /// </summary>
+    private static IEnumerable<string> NullValues(WebAppContract contract)
+    {
+        var errors = new List<string>();
+
+        void Walk(System.Text.Json.Nodes.JsonNode? node, string path, string? key)
+        {
+            switch (node)
+            {
+                case System.Text.Json.Nodes.JsonArray array:
+                    for (var i = 0; i < array.Count; i++)
+                    {
+                        if (array[i] is null)
+                            errors.Add($"{path}[{i}]: is empty");
+                        else
+                            Walk(array[i], $"{path}[{i}]", null);
+                    }
+
+                    break;
+                case System.Text.Json.Nodes.JsonObject obj:
+                    foreach (var (name, value) in obj)
+                    {
+                        var at = path.Length == 0 ? Snake(name) : key is not null && DataMaps.Contains(key) ? $"{path}.{name}" : $"{path}.{Snake(name)}";
+                        if (value is null && key is not null && DataMaps.Contains(key))
+                            errors.Add($"{at}: is empty");
+                        else
+                            Walk(value, at, key is not null && DataMaps.Contains(key) ? null : name);
+                    }
+
+                    break;
+            }
+        }
+
+        Walk(System.Text.Json.JsonSerializer.SerializeToNode(contract, WithNulls), "", null);
+        return errors;
+    }
+
+    private static string Snake(string camel) =>
+        string.Concat(camel.Select(c => char.IsUpper(c) ? "_" + char.ToLowerInvariant(c) : c.ToString()));
 
     /// <summary>Every secret the contract needs, so a caller can say which are missing before a run.</summary>
     public static IReadOnlyList<string> SecretNames(WebAppContract c) =>

@@ -114,6 +114,38 @@ public class ContractYamlTests
     }
 
     [Fact]
+    public void Empty_values_are_empty_data_or_absent_settings_never_nulls()
+    {
+        var c = ContractYaml.Parse("""
+            application:
+              stack: node-express-spa
+              build:
+              processes:
+                - name: web
+                  command: [node, server.js, ""]
+                  environment:
+                    EMPTY:
+              base_url: web
+              reset: { strategy: none }
+            testability:
+              routes:
+                public:
+                  - /
+            """);
+
+        Assert.Null(c.Application.Build); // "not given": the profile's default build applies
+        Assert.Equal("", c.Application.Processes[0].Environment["EMPTY"]);
+        Assert.Empty(new ProbeWeb(Samples.Profiles).Validate(c));
+    }
+
+    [Fact]
+    public void An_empty_list_item_is_an_empty_string()
+    {
+        var c = ContractYaml.Parse("application:\n  processes:\n    - name: web\n      command:\n        - node\n        -\n");
+        Assert.Equal(["node", ""], c.Application.Processes[0].Command);
+    }
+
+    [Fact]
     public void Serialize_round_trips()
     {
         var original = ContractYaml.Parse(Clinic);

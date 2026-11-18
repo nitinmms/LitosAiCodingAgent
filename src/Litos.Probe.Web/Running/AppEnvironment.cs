@@ -88,12 +88,7 @@ internal sealed class AppEnvironment : IAsyncDisposable
             var result = await RunCommandAsync(label, step.Command, step.WorkingDirectory, step.Environment, step.TimeoutSeconds, ct);
             if (!result.Succeeded)
             {
-                return Classifier.Fail("build", CheckKind.Build, FailureCause.BuildFailed,
-                    $"{result.Describe($"'{string.Join(' ', step.Command)}'")}.") with
-                {
-                    Evidence = new Evidence { Log = Lines(result.Tail) },
-                    DurationMs = started.ElapsedMilliseconds,
-                };
+                return CommandFailed("build", CheckKind.Build, FailureCause.BuildFailed, result, $"'{string.Join(' ', step.Command)}'", started);
             }
         }
 
@@ -105,7 +100,7 @@ internal sealed class AppEnvironment : IAsyncDisposable
     /// database file open: the seed command writes the file once, it is kept as a snapshot, and
     /// the snapshot is copied back over the app's file.
     /// </summary>
-    public async Task<CheckResult> RestoreSnapshotAsync(CancellationToken ct)
+    private async Task<CheckResult> RestoreSnapshotAsync(CancellationToken ct)
     {
         var reset = _contract.Application.Reset!;
         var started = Stopwatch.StartNew();
@@ -121,11 +116,7 @@ internal sealed class AppEnvironment : IAsyncDisposable
                 var seeded = await RunCommandAsync("seed", reset.Seed, reset.WorkingDirectory, reset.Environment, reset.TimeoutSeconds, ct);
                 if (!seeded.Succeeded)
                 {
-                    return Classifier.Fail("reset", CheckKind.Reset, FailureCause.ResetFailed, $"{seeded.Describe("The seed command")}.") with
-                    {
-                        Evidence = new Evidence { Log = Lines(seeded.Tail) },
-                        DurationMs = started.ElapsedMilliseconds,
-                    };
+                    return CommandFailed("reset", CheckKind.Reset, FailureCause.ResetFailed, seeded, "The seed command", started);
                 }
             }
 
@@ -152,7 +143,13 @@ internal sealed class AppEnvironment : IAsyncDisposable
         return CheckResult.Pass("reset", CheckKind.Reset) with { Message = $"Restored {reset.File} from its snapshot.", DurationMs = started.ElapsedMilliseconds };
     }
 
-    /// <summary>The <c>command</c>, <c>endpoint</c> and <c>none</c> resets, which run once the app is up.</summary>
+    /// <summary>
+    /// Whether <see cref="ResetAsync"/> must run before <see cref="StartAsync"/>: a SQLite
+    /// snapshot is copied while no process holds the file. Every other reset needs the app up.
+    /// </summary>
+    public bool ResetsBeforeStart => _contract.Application.Reset!.Strategy == ResetStrategy.SqliteSnapshot;
+
+    /// <summary>The declared reset, at the point <see cref="ResetsBeforeStart"/> says.</summary>
     public async Task<CheckResult> ResetAsync(CancellationToken ct)
     {
         var reset = _contract.Application.Reset!;
@@ -167,11 +164,7 @@ internal sealed class AppEnvironment : IAsyncDisposable
                 var result = await RunCommandAsync("reset", reset.Command, reset.WorkingDirectory, reset.Environment, reset.TimeoutSeconds, ct);
                 return result.Succeeded
                     ? CheckResult.Pass("reset", CheckKind.Reset) with { DurationMs = started.ElapsedMilliseconds }
-                    : Classifier.Fail("reset", CheckKind.Reset, FailureCause.ResetFailed, $"{result.Describe("The reset command")}.") with
-                    {
-                        Evidence = new Evidence { Log = Lines(result.Tail) },
-                        DurationMs = started.ElapsedMilliseconds,
-                    };
+                    : CommandFailed("reset", CheckKind.Reset, FailureCause.ResetFailed, result, "The reset command", started);
 
             case ResetStrategy.Endpoint:
                 var (method, path) = SplitEndpoint(reset.Endpoint!);
@@ -188,7 +181,7 @@ internal sealed class AppEnvironment : IAsyncDisposable
                     return Classifier.Fail("reset", CheckKind.Reset, FailureCause.ResetFailed, $"{method} {path} failed: {ex.Message}");
                 }
 
-            default:
+            default: // ResetStrategy.SqliteSnapshot
                 return await RestoreSnapshotAsync(ct);
         }
     }
@@ -212,7 +205,7 @@ internal sealed class AppEnvironment : IAsyncDisposable
             }
             catch (PlaceholderException ex)
             {
-                var cause = ex.Message.Contains("{secret:", StringComparison.Ordinal) ? FailureCause.SecretMissing : FailureCause.ProcessExited;
+                var cause = ex.Kind == PlaceholderKind.Secret ? FailureCause.SecretMissing : FailureCause.ProcessExited;
                 return Classifier.Fail("start", CheckKind.Start, cause, $"Could not start {definition.Name}: {ex.Message}");
             }
 
@@ -350,12 +343,22 @@ internal sealed class AppEnvironment : IAsyncDisposable
         return lines.Count > 20 ? [.. lines.Take(20), $"… {lines.Count - 20} more"] : lines;
     }
 
+    /// <exception cref="HttpRequestException">The app did not answer, including within the client's 10s timeout.</exception>
     public async Task<HttpResponseMessage> SendAsync(string method, string path, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(new HttpMethod(method), BaseUrl + path);
         if (method != "GET")
             request.Content = new StringContent("");
-        return await _http.SendAsync(request, ct);
+        try
+        {
+            return await _http.SendAsync(request, ct);
+        }
+        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            // The client's own timeout, not the run's limit: a failure of this request, which the
+            // caller reports as such, rather than a cancellation that would read as the run timing out.
+            throw new HttpRequestException($"{method} {path} did not answer within {_http.Timeout.TotalSeconds:0}s.", ex);
+        }
     }
 
     internal static (string Method, string Path) SplitEndpoint(string endpoint)
@@ -397,7 +400,7 @@ internal sealed class AppEnvironment : IAsyncDisposable
         ProcessLaunch launch;
         try
         {
-            launch = Launch(name, command, workingDirectory, environment, _values.WithoutSecrets(), overrides: null);
+            launch = Launch(name, command, workingDirectory, environment, _values, overrides: null);
         }
         catch (PlaceholderException ex)
         {
@@ -436,6 +439,13 @@ internal sealed class AppEnvironment : IAsyncDisposable
             ? full
             : throw new PlaceholderException($"the folder '{relative}' is outside the working copy");
     }
+
+    private CheckResult CommandFailed(string id, CheckKind kind, FailureCause cause, CommandResult result, string what, Stopwatch started) =>
+        Classifier.Fail(id, kind, cause, $"{result.Describe(what)}.") with
+        {
+            Evidence = new Evidence { Log = Lines(result.Tail) },
+            DurationMs = started.ElapsedMilliseconds,
+        };
 
     private IReadOnlyList<string> Lines(IEnumerable<OutputLine> lines) => [.. lines.Select(l => _redactor.Redact(l.Text))];
 

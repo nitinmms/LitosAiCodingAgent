@@ -6,10 +6,11 @@ namespace Litos.Probe.Web.Running;
 
 /// <summary>
 /// One run's placeholder values: its ports, its generated values and the secrets it resolved.
-/// Every secret and generated value is handed to the redactor the moment it is read, so nothing
-/// written afterwards can carry it.
+/// It is the one place values enter a run, so every secret and generated value is handed to the
+/// redactor the moment it is read, and nothing written afterwards can carry it. Where secrets may
+/// go is the validator's rule (README §10), checked before any run starts.
 /// </summary>
-internal sealed class RunValues(IReadOnlyDictionary<string, int> ports, ISecretResolver secrets, SecretRedactor redactor, bool secretsAllowed = true) : IPlaceholderValues
+internal sealed class RunValues(IReadOnlyDictionary<string, int> ports, ISecretResolver secrets, SecretRedactor redactor) : IPlaceholderValues
 {
     public int? Port(string process) => ports.TryGetValue(process, out var port) ? port : null;
 
@@ -25,13 +26,8 @@ internal sealed class RunValues(IReadOnlyDictionary<string, int> ports, ISecretR
 
     public string? Secret(string name)
     {
-        if (!secretsAllowed)
-            throw new PlaceholderException($"{{secret:{name}}} is not allowed here");
         var value = secrets.Resolve(name);
         redactor.Add(value);
         return value;
     }
-
-    /// <summary>The same values with secrets refused, for build and reset commands.</summary>
-    public RunValues WithoutSecrets() => new(ports, secrets, redactor, secretsAllowed: false);
 }

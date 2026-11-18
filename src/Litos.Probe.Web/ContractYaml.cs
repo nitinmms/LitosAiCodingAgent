@@ -67,7 +67,8 @@ public static class ContractYaml
     private static JsonNode? ToJson(YamlNode node, string? parentKey) => node switch
     {
         YamlMappingNode map => ToJsonObject(map, parentKey),
-        YamlSequenceNode list => new JsonArray([.. list.Children.Select(c => ToJson(c, parentKey))]),
+        // An empty list item (`- ` alone) is an empty string, never a null inside a command.
+        YamlSequenceNode list => new JsonArray([.. list.Children.Select(c => ToJson(c, parentKey) ?? JsonValue.Create(""))]),
         YamlScalarNode scalar => ToJsonScalar(scalar, parentKey),
         _ => throw new ContractFormatException($"{FileName}: unsupported YAML node at {node.Start}"),
     };
@@ -80,10 +81,15 @@ public static class ContractYaml
         {
             var key = ((YamlScalarNode)keyNode).Value ?? "";
             var name = verbatim ? key : CamelCase(key);
+            // YamlDotNet already refuses a key written twice; this catches two spellings of one
+            // field (base_url and baseUrl) that map to the same name.
             if (result.ContainsKey(name))
                 throw new ContractFormatException($"{FileName}: '{key}' appears twice at {keyNode.Start}");
             // Inside a verbatim map the value's own keys are schema again (roles.admin.user).
-            result[name] = ToJson(value, verbatim ? null : key);
+            var json = ToJson(value, verbatim ? null : key);
+            if (json is null && !verbatim)
+                continue; // `build:` with nothing after it means "not given", so the default applies
+            result[name] = json ?? JsonValue.Create("");
         }
 
         return result;
@@ -93,7 +99,7 @@ public static class ContractYaml
     {
         var text = scalar.Value ?? "";
         var plain = scalar.Style == ScalarStyle.Plain;
-        if (plain && text is "" or "~" or "null")
+        if (plain && text is ("" or "~" or "null"))
             return null;
 
         if (key is not null && NumberKeys.Contains(key) && plain)

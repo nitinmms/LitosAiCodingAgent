@@ -21,6 +21,8 @@ public abstract class BrokenAppsBase
     protected static async Task AssertFailsAsync(string app, string checkId, Classification classification, string fragment)
     {
         await RequireAsync("node");
+        // wrong-port binds 8787 itself; something else already there would hide the diagnosis.
+        Skip.If(app == "wrong-port" && Processes.Ports.Listening().Contains(8787), "Port 8787 is in use on this machine.");
         var (report, _) = await GateAsync(App("BrokenApps", app), Secrets, pageTimeout: TimeSpan.FromSeconds(8));
 
         var check = Check(report, checkId);
@@ -40,8 +42,26 @@ public class StartFailureTests : BrokenAppsBase
     [InlineData("root-500", "start", Classification.ApplicationDefect, "GET / on web answered 500")]
     [InlineData("crash-on-start", "start", Classification.EnvironmentFailure, "exited with code 3")]
     [InlineData("reset-fails", "reset", Classification.EnvironmentFailure, "exited with code 4")]
+    [InlineData("slow-reset", "reset", Classification.EnvironmentFailure, "did not answer within 10s")]
     [InlineData("test-endpoint-in-production", "production-test-endpoints", Classification.ApplicationDefect, "POST /__test/reset answered 200")]
     public Task Fails_with_the_right_message(string app, string checkId, Classification c, string fragment) => AssertFailsAsync(app, checkId, c, fragment);
+
+    [SkippableFact]
+    public async Task A_slow_request_fails_its_own_check_not_the_whole_run()
+    {
+        await RequireAsync("node");
+        var (report, _) = await GateAsync(App("BrokenApps", "slow-reset"), Secrets);
+        Assert.DoesNotContain(report.Checks, c => c.Id == "timeout");
+    }
+
+    [SkippableFact]
+    public async Task Disposing_the_browser_twice_at_once_never_throws()
+    {
+        await RequireAsync();
+        var browser = await Browser.BrowserHost.LaunchAsync(headless: true);
+        await Task.WhenAll(browser.DisposeAsync().AsTask(), browser.DisposeAsync().AsTask());
+        await browser.DisposeAsync();
+    }
 
     [SkippableFact]
     public async Task A_crashed_app_reports_its_own_last_words()

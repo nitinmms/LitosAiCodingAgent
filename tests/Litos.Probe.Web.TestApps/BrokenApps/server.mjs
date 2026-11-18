@@ -58,6 +58,12 @@ const server = http.createServer(async (req, res) => {
   if (mode === "root-500" && path === "/")
     return send(res, 500, page("Error", "<p>Something went wrong.</p>"));
 
+  // slow-reset's reset endpoint takes longer than the engine's 10s HTTP timeout.
+  if (mode === "slow-reset" && path === "/__test/reset") {
+    await new Promise((resolve) => setTimeout(resolve, 12_000));
+    return send(res, 200, "ok");
+  }
+
   // Test-only endpoints: registered only outside Production, except in the mode that forgets to.
   if (path.startsWith("/__test/") && req.method === "POST" && (!production || mode === "test-endpoint-in-production"))
     return send(res, 200, "ok");

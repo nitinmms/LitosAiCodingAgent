@@ -231,7 +231,7 @@ public interface IProbeWeb
     Task<ProbeWebReport> DryRunAsync(string repoRoot, StackProfile profile, ProbeWebOptions o, CancellationToken ct);
     Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract c, GateScope scope, ProbeWebOptions o, CancellationToken ct);
     Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract c, ProbeWebOptions o, CancellationToken ct);
-    Task<ProbeWebReport> ScenariosAsync(string workingCopy, WebAppContract c, IReadOnlyList<WebScenario> s, ProbeWebOptions o, CancellationToken ct);
+    Task<ProbeWebReport> ScenariosAsync(string workingCopy, WebAppContract c, IReadOnlyList<WebScenario> s, ProbeWebOptions o, CancellationToken ct);   // W3: not in W1's interface
 }
 public sealed record ProbeWebOptions(
     ISecretResolver Secrets, IArtifactSink Artifacts,
@@ -250,7 +250,7 @@ litos-probe-web detect   <repo>                               # which stack prof
 litos-probe-web dry-run  <repo> [--profile node-express-spa]  # try the profile defaults: real gaps
 litos-probe-web gate     <repo> [--contract litos.test.yaml] [--steps 1-8]
 litos-probe-web smoke    <repo> [--contract …] [--headed]
-litos-probe-web scenarios <repo> --scenarios scenarios/*.json
+litos-probe-web scenarios <repo> --scenarios scenarios/*.json                         # W3: not in W1's CLI
 ```
 
 - **Secrets** come from environment variables with the same names, e.g. `TEST_STAFF_PASS`.
@@ -287,7 +287,7 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 
 **Exit check met:**
 - `litos-probe-web gate` passes all 8 steps on `NodeExpressSpa`, on `AspNetBlazor` (3 roles) and on **insta-story-generator** with the hand-written contract in `tests/Litos.Probe.Web.TestApps/Contracts/`.
-- Each of 17 broken apps fails at the right check, with the right class and message. A flaky one passes as `Flaky`, and a `healthy` control passes (`tests/Litos.Probe.Web.IntegrationTests`).
+- Each of 18 broken apps fails at the right check, with the right class and message. A flaky one passes as `Flaky`, and a `healthy` control passes (`tests/Litos.Probe.Web.IntegrationTests`).
 
 **Differences from the plan above:**
 - **Reset `none`** is a fourth reset strategy, for apps with no data (insta-story-generator). It must be declared.
@@ -299,6 +299,9 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 - **A `sqlite-snapshot` reset runs before start**, because a running app holds the file open.
 - **`services`** are in the model but refused by the validator until W2.
 - The **blazor test app uses SQLite**. Postgres from a `services` container comes in W2.
+- **Build and reset commands may declare their own `environment`**, for values a build bakes in (a Vite SPA's API URL, §6.6 of the architecture doc). Secrets are refused there; only app processes and sign-in get them.
+- **`DryRunAsync` takes an optional app folder**, for a monorepo candidate from `detect`. `ScenariosAsync` and the `scenarios` command wait for W3.
+- **`JobObject` and the Windows executable resolver are copies** of the factory's, because Probe.Web never references the factory.
 
 **Learned on the real apps, now in the `aspnet-blazor-server` profile's quirks:**
 - Outside `Development`, a build (not a publish) serves no static web assets. Testing needs `builder.WebHost.UseStaticWebAssets()`, or `blazor.web.js` is missing and no circuit starts.

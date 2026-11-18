@@ -12,6 +12,7 @@ internal sealed class BrowserHost : IAsyncDisposable
 {
     private readonly IPlaywright _playwright;
     private readonly IBrowser _browser;
+    private int _disposed;
 
     private BrowserHost(IPlaywright playwright, IBrowser browser)
     {
@@ -67,17 +68,31 @@ internal sealed class BrowserHost : IAsyncDisposable
 
     private static string FirstLine(string text) => text.Split('\n', 2)[0].Trim();
 
+    /// <summary>
+    /// Once only, and never throws: it runs from the run-limit timer and again from the run's
+    /// own cleanup, and an exception here must not stop the app's processes being killed after it.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            return;
+
         try
         {
             await _browser.CloseAsync();
         }
-        catch (Exception ex) when (ex is PlaywrightException or TimeoutException)
+        catch (Exception)
         {
-            // The driver already went away; disposing it below is all that's left.
+            // The driver already went away, or is going; disposing it below is all that's left.
         }
 
-        _playwright.Dispose();
+        try
+        {
+            _playwright.Dispose();
+        }
+        catch (Exception)
+        {
+            // Same: nothing more can be done for a driver that is already gone.
+        }
     }
 }

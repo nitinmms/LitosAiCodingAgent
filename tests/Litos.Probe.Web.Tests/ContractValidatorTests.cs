@@ -207,6 +207,29 @@ public class ContractValidatorTests
     }
 
     [Fact]
+    public void Nulls_in_hand_written_json_are_reported_not_crashed_on()
+    {
+        const string json = """
+            {
+              "application": {
+                "stack": "generic-http",
+                "processes": [ { "name": "web", "command": ["node", null], "environment": { "PORT": null } } ],
+                "baseUrl": "web",
+                "reset": { "strategy": "none" }
+              },
+              "testability": { "routes": { "public": [null], "protected": {} } }
+            }
+            """;
+        var c = System.Text.Json.JsonSerializer.Deserialize<WebAppContract>(json, Litos.Probe.Web.Core.ProbeWebJson.Options)!;
+
+        var errors = Validate(c);
+
+        Assert.Contains("application.processes[0].command[1]: is empty", errors);
+        Assert.Contains("application.processes[0].environment.PORT: is empty", errors);
+        Assert.Contains("testability.routes.public[0]: is empty", errors);
+    }
+
+    [Fact]
     public void Only_version_1_is_supported() => AssertError(Samples.Minimal() with { Version = 2 }, "version: 2 is not supported");
 
     [Fact]

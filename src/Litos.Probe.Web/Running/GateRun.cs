@@ -74,20 +74,35 @@ internal sealed class GateRun
             {
                 await StepsAsync(limit.Token);
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                Add(Classifier.Fail("timeout", _current, FailureCause.Timeout, $"Stopped: the run went past its {_o.Timeout.TotalMinutes:0.#}-minute limit."), force: true);
-            }
-            catch (Exception ex) when (IsBrowserError(ex) && limit.IsCancellationRequested && !ct.IsCancellationRequested)
+            // The limit passed: either a cancellation, or a page call failing because the browser
+            // was closed under it. The caller's own cancellation propagates.
+            catch (Exception ex) when (!ct.IsCancellationRequested
+                && (ex is OperationCanceledException || (IsBrowserError(ex) && limit.IsCancellationRequested)))
             {
                 Add(Classifier.Fail("timeout", _current, FailureCause.Timeout, $"Stopped: the run went past its {_o.Timeout.TotalMinutes:0.#}-minute limit."), force: true);
             }
             finally
             {
+                // Each part of the teardown runs whatever the part before it did: the app's
+                // processes must go even if the browser's driver misbehaves.
                 if (_browser is not null)
                     await _browser.DisposeAsync();
-                await _env.DisposeAsync();
-                await _env.SaveLogsAsync(_o.Artifacts, CancellationToken.None);
+                try
+                {
+                    await _env.DisposeAsync();
+                }
+                finally
+                {
+                    try
+                    {
+                        await _env.SaveLogsAsync(_o.Artifacts, CancellationToken.None);
+                    }
+                    catch (IOException ex)
+                    {
+                        _findings.Add($"The app's logs could not be saved: {ex.Message}");
+                    }
+                }
+
                 _findings.AddRange(_env.StopWarnings);
                 if (_checks.Any(c => c.Kind == CheckKind.Start && c.Status == CheckStatus.Passed))
                 {
@@ -140,31 +155,8 @@ internal sealed class GateRun
 
     private async Task StepsAsync(CancellationToken ct)
     {
-        var app = _contract.Application;
-
-        // Step 1: build and start; step 2: reset (a SQLite snapshot goes back before start, while no handle is open).
-        _current = CheckKind.Build;
-        if (Add(await _env.BuildAsync(ct)).Failed)
+        if (!await BringUpAsync(ct))
             return;
-
-        var snapshot = app.Reset!.Strategy == ResetStrategy.SqliteSnapshot;
-        if (snapshot)
-        {
-            _current = CheckKind.Reset;
-            if (Add(await _env.RestoreSnapshotAsync(ct)).Failed)
-                return;
-        }
-
-        _current = CheckKind.Start;
-        if (Add(await _env.StartAsync(overrides: null, label: "", strict: true, ct)).Failed)
-            return;
-
-        if (!snapshot)
-        {
-            _current = CheckKind.Reset;
-            if (Add(await _env.ResetAsync(ct)).Failed)
-                return;
-        }
 
         try
         {
@@ -176,105 +168,10 @@ internal sealed class GateRun
             return;
         }
 
-        // Step 3: sign in as each role, keeping only the storage state, in memory.
-        var form = Auth.Type == AuthType.Form;
-        var routes = _contract.Testability.Routes;
-        if (form && (_scope.Includes(3) || _scope.Includes(4) || _scope.Includes(6)))
-        {
-            _current = CheckKind.SignIn;
-            foreach (var (role, credentials) in Auth.Roles)
-            {
-                ct.ThrowIfCancellationRequested();
-                Add(await SignInAsync(role, credentials));
-            }
-        }
-        else if (_scope.Includes(3) && !form)
-        {
-            Add(CheckResult.Skip("signin", CheckKind.SignIn, "The app has no login (auth.type: none)."));
-        }
-
-        // Steps 4 and 5 signed out; steps 4 and 6 per role, each in its own traced context.
-        var visit = _scope.Includes(4) || _scope.Includes(8);
-        await using (var anonymous = await OpenSessionAsync(role: null, trace: true))
-        {
-            if (visit)
-            {
-                _current = CheckKind.RouteVisit;
-                foreach (var route in routes.Public)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var check = await WithRerunAsync(anonymous, (s, rerun) => VisitCheckAsync(s, route, lint: !rerun));
-                    if (_scope.Includes(4))
-                        Add(check, anonymous);
-                    if (_kind == ReportKind.DryRun && route == "/")
-                        _loginSeen = await HasLoginAsync(anonymous.Page);
-                }
-            }
-
-            if (_scope.Includes(5))
-            {
-                _current = CheckKind.LoggedOutRedirect;
-                if (!form)
-                {
-                    Add(CheckResult.Skip("logged-out", CheckKind.LoggedOutRedirect, "The app has no login (auth.type: none)."));
-                }
-                else
-                {
-                    foreach (var route in routes.Protected.Values.SelectMany(r => r).Distinct(StringComparer.Ordinal))
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        Add(await WithRerunAsync(anonymous, (s, _) => LoggedOutCheckAsync(s, route)), anonymous);
-                    }
-                }
-            }
-        }
-
-        foreach (var role in routes.Protected.Keys.Concat(routes.Denied.Keys).Distinct(StringComparer.Ordinal))
-        {
-            var mine = routes.Protected.TryGetValue(role, out var p) ? p : [];
-            var denied = routes.Denied.TryGetValue(role, out var d) ? d : [];
-            if (!_storageStates.ContainsKey(role))
-            {
-                foreach (var route in _scope.Includes(4) ? mine : [])
-                    Add(CheckResult.Skip($"visit:{role}:{route}", CheckKind.RouteVisit, $"Not signed in as {role}.") with { Role = role, Route = route });
-                foreach (var route in _scope.Includes(6) ? denied : [])
-                    Add(CheckResult.Skip($"denied:{role}:{route}", CheckKind.Denied, $"Not signed in as {role}.") with { Role = role, Route = route });
-                continue;
-            }
-
-            await using var session = await OpenSessionAsync(role, trace: true);
-            if (visit)
-            {
-                _current = CheckKind.RouteVisit;
-                foreach (var route in mine)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var check = await WithRerunAsync(session, (s, rerun) => VisitCheckAsync(s, route, lint: !rerun));
-                    if (_scope.Includes(4))
-                        Add(check, session);
-                }
-            }
-
-            if (_scope.Includes(6))
-            {
-                _current = CheckKind.Denied;
-                foreach (var route in denied)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    Add(await WithRerunAsync(session, (s, _) => DeniedCheckAsync(s, route)), session);
-                }
-            }
-        }
-
-        // Step 8: the lint, over every page step 4 visited.
-        if (_scope.Includes(8))
-        {
-            _current = CheckKind.SelectorLint;
-            Add(_lintFindings.Count == 0
-                ? CheckResult.Pass("lint", CheckKind.SelectorLint) with { Message = $"{_lintInteractive} interactive elements on {_lintPages} pages, all named." }
-                : Classifier.Fail("lint", CheckKind.SelectorLint, FailureCause.UnnamedElement,
-                    $"{_lintFindings.Count} interactive element(s) have no accessible name and no data-testid, e.g. {_lintFindings[0].Element} on {_lintFindings[0].Route}."));
-        }
+        await SignInAllAsync(ct);
+        await SignedOutStepsAsync(ct);
+        await RoleStepsAsync(ct);
+        AddLint();
 
         // Step 7 last: it restarts the app as Production.
         if (_scope.Includes(7))
@@ -282,6 +179,151 @@ internal sealed class GateRun
             _current = CheckKind.ProductionTestEndpoints;
             Add(await ProductionEndpointsAsync(ct));
         }
+    }
+
+    /// <summary>Steps 1 and 2: build, start and reset, in the order the reset strategy needs. False when the app isn't up.</summary>
+    private async Task<bool> BringUpAsync(CancellationToken ct)
+    {
+        _current = CheckKind.Build;
+        if (Add(await _env.BuildAsync(ct)).Failed)
+            return false;
+
+        if (_env.ResetsBeforeStart)
+        {
+            _current = CheckKind.Reset;
+            if (Add(await _env.ResetAsync(ct)).Failed)
+                return false;
+        }
+
+        _current = CheckKind.Start;
+        if (Add(await _env.StartAsync(overrides: null, label: "", strict: true, ct)).Failed)
+            return false;
+
+        if (!_env.ResetsBeforeStart)
+        {
+            _current = CheckKind.Reset;
+            if (Add(await _env.ResetAsync(ct)).Failed)
+                return false;
+        }
+
+        return true;
+    }
+
+    private bool HasLogin => Auth.Type == AuthType.Form;
+
+    /// <summary>Steps 4 and 8 both need the pages visited; only step 4 records the visits as checks.</summary>
+    private bool VisitsRoutes => _scope.Includes(4) || _scope.Includes(8);
+
+    /// <summary>Step 3: sign in as each role, keeping only the storage state, in memory.</summary>
+    private async Task SignInAllAsync(CancellationToken ct)
+    {
+        if (!HasLogin)
+        {
+            if (_scope.Includes(3))
+                Add(CheckResult.Skip("signin", CheckKind.SignIn, "The app has no login (auth.type: none)."));
+            return;
+        }
+
+        if (!_scope.Includes(3) && !_scope.Includes(4) && !_scope.Includes(6))
+            return;
+
+        _current = CheckKind.SignIn;
+        foreach (var (role, credentials) in Auth.Roles)
+        {
+            ct.ThrowIfCancellationRequested();
+            Add(await SignInAsync(role, credentials));
+        }
+    }
+
+    /// <summary>Step 4's public routes and step 5's logged-out redirects, in one signed-out traced context.</summary>
+    private async Task SignedOutStepsAsync(CancellationToken ct)
+    {
+        var routes = _contract.Testability.Routes;
+        await using var anonymous = await OpenSessionAsync(role: null, trace: true);
+        await VisitRoutesAsync(anonymous, routes.Public, ct);
+
+        if (!_scope.Includes(5))
+            return;
+
+        _current = CheckKind.LoggedOutRedirect;
+        if (!HasLogin)
+        {
+            Add(CheckResult.Skip("logged-out", CheckKind.LoggedOutRedirect, "The app has no login (auth.type: none)."));
+            return;
+        }
+
+        foreach (var route in routes.Protected.Values.SelectMany(r => r).Distinct(StringComparer.Ordinal))
+        {
+            ct.ThrowIfCancellationRequested();
+            Add(await WithRerunAsync(anonymous, (s, _) => LoggedOutCheckAsync(s, route)), anonymous);
+        }
+    }
+
+    /// <summary>Step 4's protected routes and step 6's denied ones, per role, each role in its own traced context.</summary>
+    private async Task RoleStepsAsync(CancellationToken ct)
+    {
+        var routes = _contract.Testability.Routes;
+        foreach (var role in routes.Protected.Keys.Concat(routes.Denied.Keys).Distinct(StringComparer.Ordinal))
+        {
+            var mine = routes.Protected.GetValueOrDefault(role) ?? [];
+            var denied = routes.Denied.GetValueOrDefault(role) ?? [];
+            if (!_storageStates.ContainsKey(role))
+            {
+                SkipRole(role, mine, denied);
+                continue;
+            }
+
+            await using var session = await OpenSessionAsync(role, trace: true);
+            await VisitRoutesAsync(session, mine, ct);
+
+            if (!_scope.Includes(6))
+                continue;
+            _current = CheckKind.Denied;
+            foreach (var route in denied)
+            {
+                ct.ThrowIfCancellationRequested();
+                Add(await WithRerunAsync(session, (s, _) => DeniedCheckAsync(s, route)), session);
+            }
+        }
+    }
+
+    private async Task VisitRoutesAsync(Session session, IEnumerable<string> routes, CancellationToken ct)
+    {
+        if (!VisitsRoutes)
+            return;
+
+        _current = CheckKind.RouteVisit;
+        foreach (var route in routes)
+        {
+            ct.ThrowIfCancellationRequested();
+            var check = await WithRerunAsync(session, (s, rerun) => VisitCheckAsync(s, route, lint: !rerun));
+            if (_scope.Includes(4))
+                Add(check, session);
+            if (_kind == ReportKind.DryRun && session.Role is null && route == "/")
+                _loginSeen = await HasLoginAsync(session.Page);
+        }
+    }
+
+    /// <summary>A role whose sign-in failed: its pages are skipped, not failed a second time.</summary>
+    private void SkipRole(string role, IEnumerable<string> mine, IEnumerable<string> denied)
+    {
+        foreach (var route in _scope.Includes(4) ? mine : [])
+            Add(CheckResult.Skip($"visit:{role}:{route}", CheckKind.RouteVisit, $"Not signed in as {role}.") with { Role = role, Route = route });
+        foreach (var route in _scope.Includes(6) ? denied : [])
+            Add(CheckResult.Skip($"denied:{role}:{route}", CheckKind.Denied, $"Not signed in as {role}.") with { Role = role, Route = route });
+    }
+
+    /// <summary>Step 8: the lint, over every page step 4 visited.</summary>
+    private void AddLint()
+    {
+        if (!_scope.Includes(8))
+            return;
+
+        _current = CheckKind.SelectorLint;
+        Add(_lintFindings.Count == 0
+            ? CheckResult.Pass("lint", CheckKind.SelectorLint) with { Message = $"{_lintInteractive} interactive elements on {_lintPages} pages, all named." }
+            : Classifier.Fail("lint", CheckKind.SelectorLint, FailureCause.UnnamedElement,
+                $"{_lintFindings.Count} interactive element(s) have no accessible name and no data-testid, e.g. {_lintFindings[0].Element} on {_lintFindings[0].Route}."));
     }
 
     // ---- Checks -----------------------------------------------------------------------------
@@ -359,10 +401,8 @@ internal sealed class GateRun
             _lintFindings.AddRange(result.Unnamed.Select(e => new LintFinding(route, s.Role, e)));
         }
 
-        var failure = v switch
+        var failure = PageBroken(v, route, "") ?? v switch
         {
-            { LoadError: { } error } => (FailureCause.PageSignal, $"{route} did not load: {error}"),
-            { Status: >= 500 } => (FailureCause.PageServerError, $"{route} answered HTTP {v.Status}."),
             { Status: 404 } => (FailureCause.RouteNotFound, $"{route} answered 404: the contract declares a route the app does not have."),
             _ when s.Role is not null && IsLoginPage(v.FinalPath) => (FailureCause.SignedOutDuringVisit, $"{route} sent {s.Role} back to the login page."),
             { MarkerMissing: true } => (FailureCause.MarkerMissing, $"The readiness marker {ReadyDescription()} never appeared on {route}."),
@@ -377,10 +417,8 @@ internal sealed class GateRun
     private async Task<CheckResult> LoggedOutCheckAsync(Session s, string route)
     {
         var v = await VisitAsync(s, route, waitReady: false, lint: false, $"logged-out-{route}");
-        var failure = v switch
+        var failure = PageBroken(v, route, " while signed out") ?? v switch
         {
-            { LoadError: { } error } => (FailureCause.PageSignal, $"{route} did not load: {error}"),
-            { Status: >= 500 } => (FailureCause.PageServerError, $"{route} answered HTTP {v.Status} while signed out."),
             _ when IsLoginPage(v.FinalPath) => ((FailureCause, string)?)null,
             _ => (FailureCause.NotRedirectedToLogin, $"{route} opened without signing in (it ended at {v.FinalPath}, HTTP {v.Status}), instead of redirecting to {Auth.LoginUrl}."),
         };
@@ -390,16 +428,22 @@ internal sealed class GateRun
     private async Task<CheckResult> DeniedCheckAsync(Session s, string route)
     {
         var v = await VisitAsync(s, route, waitReady: false, lint: false, $"denied-{s.Label}-{route}");
-        var failure = v switch
+        var failure = PageBroken(v, route, $" to {s.Role}") ?? v switch
         {
-            { LoadError: { } error } => (FailureCause.PageSignal, $"{route} did not load: {error}"),
             { Status: 401 or 403 } => ((FailureCause, string)?)null,
-            { Status: >= 500 } => (FailureCause.PageServerError, $"{route} answered HTTP {v.Status} to {s.Role}."),
             _ when !SamePath(v.FinalPath, route) => null,
             _ => (FailureCause.DeniedRouteOpened, $"{s.Role} opened {route} (HTTP {v.Status}); it should be refused (401/403) or redirected away."),
         };
         return Finish($"denied:{s.Role}:{route}", CheckKind.Denied, s.Role, route, v, failure);
     }
+
+    /// <summary>What fails any page check before its own rule applies: the page didn't load, or the server failed.</summary>
+    private static (FailureCause, string)? PageBroken(PageVisit v, string route, string context) => v switch
+    {
+        { LoadError: { } error } => (FailureCause.PageSignal, $"{route} did not load: {error}"),
+        { Status: >= 500 } => (FailureCause.PageServerError, $"{route} answered HTTP {v.Status}{context}."),
+        _ => null,
+    };
 
     /// <summary>Gate step 7: restart as Production and require every <c>/__test/*</c> endpoint to be gone.</summary>
     private async Task<CheckResult> ProductionEndpointsAsync(CancellationToken ct)

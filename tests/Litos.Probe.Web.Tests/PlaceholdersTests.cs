@@ -75,6 +75,17 @@ public class PlaceholdersTests
         Assert.Contains(reason, ex.Message);
     }
 
+    [Theory]
+    [InlineData("{port:api}", PlaceholderKind.Port)]
+    [InlineData("{secret:MISSING}", PlaceholderKind.Secret)]
+    [InlineData("{service:cache:port}", PlaceholderKind.Service)]
+    public void A_missing_value_says_which_kind_was_missing(string text, PlaceholderKind kind) =>
+        Assert.Equal(kind, Assert.Throws<PlaceholderException>(() => Placeholders.Resolve(text, new Values())).Kind);
+
+    [Fact]
+    public void A_malformed_placeholder_has_no_kind() =>
+        Assert.Null(Assert.Throws<PlaceholderException>(() => Placeholders.Resolve("{port}", new Values())).Kind);
+
     [Fact]
     public void Resolve_resolves_an_environment_and_keeps_its_names()
     {

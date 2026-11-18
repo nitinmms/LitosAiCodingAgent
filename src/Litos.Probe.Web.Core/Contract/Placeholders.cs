@@ -16,7 +16,11 @@ public interface IPlaceholderValues
     string? Secret(string name);
 }
 
-public sealed class PlaceholderException(string message) : Exception(message);
+/// <param name="Kind">The kind of placeholder that failed; null when the failure is not about one value (a malformed placeholder, a bad folder).</param>
+public sealed class PlaceholderException(string message, PlaceholderKind? kind = null) : Exception(message)
+{
+    public PlaceholderKind? Kind { get; } = kind;
+}
 
 /// <summary>
 /// The contract's placeholders (README §4): <c>{port:web}</c>, <c>{service:db:port}</c>,
@@ -68,11 +72,11 @@ public static partial class Placeholders
             return p.Kind switch
             {
                 PlaceholderKind.Port => values.Port(p.Name!)?.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                    ?? throw new PlaceholderException($"{p.Text}: there is no process named '{p.Name}'"),
+                    ?? throw new PlaceholderException($"{p.Text}: there is no process named '{p.Name}'", PlaceholderKind.Port),
                 PlaceholderKind.Service => values.Service(p.Name!, p.Key!)
-                    ?? throw new PlaceholderException($"{p.Text}: no such service value"),
+                    ?? throw new PlaceholderException($"{p.Text}: no such service value", PlaceholderKind.Service),
                 PlaceholderKind.Secret => values.Secret(p.Name!)
-                    ?? throw new PlaceholderException($"{p.Text}: the secret {p.Name} is not set"),
+                    ?? throw new PlaceholderException($"{p.Text}: the secret {p.Name} is not set", PlaceholderKind.Secret),
                 _ => values.Generated(),
             };
         });
