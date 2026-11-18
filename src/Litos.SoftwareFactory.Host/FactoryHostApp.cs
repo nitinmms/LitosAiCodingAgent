@@ -122,6 +122,10 @@ public static class FactoryHostApp
         services.AddSingleton<Testability.RunArtifactFiles>();
         // The stack profiles the testability checks use (README_Litos.Probe.Web.md §5).
         services.AddSingleton(Litos.Probe.Web.Profiles.StackProfiles.Embedded());
+        services.AddSingleton<Testability.ITestabilityEngine, Testability.ProbeWebEngine>();
+        services.AddSingleton<Testability.TestabilityRuntime>();
+        services.AddSingleton<Testability.TestabilityChecks>();
+        services.AddHostedService<Testability.ServiceContainerSweep>();
         // The documents a run is given are converted as every other Litos face converts them.
         services.AddSingleton(new global::MarkItDown.MarkItDownClient());
         services.AddSingleton<Litos.Tools.Attachments.IAttachmentConverter, Litos.Tools.Attachments.MarkItDownAttachmentConverter>();

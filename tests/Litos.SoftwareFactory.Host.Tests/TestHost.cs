@@ -617,6 +617,9 @@ public sealed class TestHost : IAsyncDisposable
         // The tests script their verifications; one measured at registration would take one of
         // theirs. ProjectProfileTests turns it back on.
         Options.BaselineOnRegistration = false;
+        // Nor do they start apps and browsers behind the API under test.
+        Options.TestabilityOnRegistration = false;
+        Options.SweepServiceContainersOnStart = false;
         configure?.Invoke(Options);
 
         App = FactoryHostApp.Build(["--urls", "http://127.0.0.1:0"], Options, s =>

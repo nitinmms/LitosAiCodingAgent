@@ -48,6 +48,7 @@ import type {
   ToolSettings,
   Turn,
   UsageCall,
+  TestabilityView,
 } from '../api/types';
 
 export interface RecordedRequest {
@@ -314,6 +315,14 @@ export class FakeHost {
   /** Each provider's catalog as last fetched (GET /api/admin/models/catalog); absent: never fetched. */
   readonly catalogs = new Map<string, Omit<ProviderCatalog, 'retired'>>();
   projects: Project[] = [];
+  /** Each project's Testability panel as the host would answer it (GET /api/projects/{id}/testability). */
+  readonly testability = new Map<string, TestabilityView>();
+  /** Each project's own secrets: name to value, which the API never shows. */
+  readonly projectSecrets = new Map<string, Map<string, string>>();
+  /** What a "Check again" leaves the project at; by default the same view, checked now. */
+  testabilityAfterCheck: ((current: TestabilityView) => TestabilityView) | null = null;
+  /** The projects a "Check again" was asked for, in order. */
+  readonly testabilityChecks: string[] = [];
   readonly threads = new Map<string, ThreadDetails>();
   readonly usage = new Map<string, UsageCall[]>();
   /** Where each thread's pull request stands "on GitHub"; a draft unless a test says otherwise. */
@@ -782,6 +791,42 @@ export class FakeHost {
           baseline: this.baselineOnRegistration,
         }),
       ];
+    }
+    const testabilityPath = /^\/api\/projects\/([^/]+)\/testability(\/check)?$/.exec(path);
+    if (testabilityPath) {
+      const project = this.projects.find((p) => p.id === testabilityPath[1]);
+      if (!project) return [404];
+      const current = this.testability.get(project.id) ?? notCheckedView(project);
+      if (testabilityPath[2] && method === 'POST') {
+        this.testabilityChecks.push(project.id);
+        const next = this.testabilityAfterCheck ? this.testabilityAfterCheck(current) : { ...current, checkedAt: this.now.toISOString() };
+        this.testability.set(project.id, next);
+        project.testability = { status: next.status, checkedAt: next.checkedAt, stack: next.stack, adopted: next.adopted };
+        return [202];
+      }
+      if (!testabilityPath[2] && method === 'GET') return [200, current];
+    }
+    const secretsPath = /^\/api\/projects\/([^/]+)\/secrets(?:\/([^/]+))?$/.exec(path);
+    if (secretsPath) {
+      const project = this.projects.find((p) => p.id === secretsPath[1]);
+      if (!project) return [404];
+      const held = this.projectSecrets.get(project.id) ?? new Map<string, string>();
+      this.projectSecrets.set(project.id, held);
+      const name = secretsPath[2] ? decodeURIComponent(secretsPath[2]) : null;
+      if (!name && method === 'GET') {
+        const needed = this.testability.get(project.id)?.missingSecrets ?? [];
+        return [200, {
+          secrets: [...held.keys()].map((n) => ({ name: n, setAt: this.now.toISOString(), setBy: this.user.id })),
+          missing: needed.filter((n) => !held.has(n)),
+        }];
+      }
+      if (name && method === 'PUT') {
+        if (!/^[A-Za-z_][A-Za-z0-9_]{0,99}$/.test(name)) return [400, { error: `"${name}" is not a secret name: use letters, digits and '_', as in TEST_ADMIN_PASS.` }];
+        if (!String(data.value ?? '').trim()) return [400, { error: 'The value is empty. To remove a secret, clear it.' }];
+        held.set(name, String(data.value));
+        return [204];
+      }
+      if (name && method === 'DELETE') return held.delete(name) ? [204] : [404, { error: 'That secret is not set.' }];
     }
     const projectPath = /^\/api\/projects\/([^/]+)$/.exec(path);
     if (projectPath && method === 'PATCH') {
@@ -2082,4 +2127,23 @@ export class FakeHost {
     }
     return [404];
   }
+}
+
+/** A project no one has checked yet, as GET /api/projects/{id}/testability answers it. */
+export function notCheckedView(project: Project): TestabilityView {
+  return {
+    status: 'NotChecked',
+    checkedAt: null,
+    stack: null,
+    adopted: false,
+    commit: null,
+    profileRevision: project.profileRevision,
+    stale: false,
+    problem: null,
+    gaps: [],
+    candidates: [],
+    contract: null,
+    dryRun: null,
+    missingSecrets: [],
+  };
 }

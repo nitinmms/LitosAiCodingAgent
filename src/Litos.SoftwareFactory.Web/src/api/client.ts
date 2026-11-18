@@ -48,6 +48,8 @@ import type {
   ThreadDetails,
   ToolSettings,
   UsageCall,
+  ProjectSecrets,
+  TestabilityView,
 } from './types';
 
 /** A request the host answered with an error status. `message` is the host's own reason. */
@@ -94,6 +96,12 @@ export interface FactoryApi {
   registerProject(request: RegisterProject): Promise<Project>;
   /** Replaces a project's profile; its revision moves on and its baseline is measured again. */
   updateProjectProfile(projectId: string, request: UpdateProfile): Promise<Project>;
+  testability(projectId: string): Promise<TestabilityView>;
+  /** "Check again": runs a dry run of the project's code on the host. */
+  checkTestability(projectId: string): Promise<void>;
+  projectSecrets(projectId: string): Promise<ProjectSecrets>;
+  setProjectSecret(projectId: string, name: string, value: string): Promise<void>;
+  clearProjectSecret(projectId: string, name: string): Promise<void>;
   threads(): Promise<Thread[]>;
   /** The thread list with where the board's live stream starts, read before the list. */
   threadList(): Promise<{ threads: Thread[]; cursor: number }>;
@@ -286,6 +294,13 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     projects: () => send<Project[]>('GET', '/api/projects'),
     registerProject: (request) => send<Project>('POST', '/api/projects', request),
     updateProjectProfile: (projectId, request) => send<Project>('PATCH', `/api/projects/${projectId}`, request),
+    testability: (projectId) => send<TestabilityView>('GET', `/api/projects/${projectId}/testability`),
+    checkTestability: async (projectId) => void (await send<unknown>('POST', `/api/projects/${projectId}/testability/check`)),
+    projectSecrets: (projectId) => send<ProjectSecrets>('GET', `/api/projects/${projectId}/secrets`),
+    setProjectSecret: async (projectId, name, value) =>
+      void (await send<unknown>('PUT', `/api/projects/${projectId}/secrets/${encodeURIComponent(name)}`, { value })),
+    clearProjectSecret: async (projectId, name) =>
+      void (await send<unknown>('DELETE', `/api/projects/${projectId}/secrets/${encodeURIComponent(name)}`)),
     threads: () => send<Thread[]>('GET', '/api/threads'),
     async threadList() {
       const { json, headers } = await request<Thread[]>('GET', '/api/threads');

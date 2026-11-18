@@ -562,6 +562,15 @@ public interface IFactoryStore
 
     Task<ThreadAttachment?> GetAttachmentAsync(Guid attachmentId, CancellationToken ct);
 
+    /// <summary>Records a testability check of a project (testability-architecture.md §6.1).</summary>
+    /// <exception cref="StoreNotFoundException">No project has its id.</exception>
+    Task SaveTestabilityCheckAsync(TestabilityCheck check, CancellationToken ct);
+
+    /// <summary>Each project's newest testability check; a project never checked is left out.</summary>
+    Task<IReadOnlyList<TestabilityCheck>> LatestTestabilityChecksAsync(CancellationToken ct);
+
+    Task<TestabilityCheck?> LatestTestabilityCheckAsync(Guid projectId, CancellationToken ct);
+
     /// <summary>Records a file the browser checks produced (README_Litos.Probe.Web.md §7).</summary>
     /// <exception cref="StoreNotFoundException">No project has its id.</exception>
     Task<RunArtifact> AddRunArtifactAsync(RunArtifact artifact, CancellationToken ct);

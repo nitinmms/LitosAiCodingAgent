@@ -56,6 +56,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<ReflectionJob> ReflectionJobs => Set<ReflectionJob>();
     public DbSet<ThreadAttachment> Attachments => Set<ThreadAttachment>();
     public DbSet<RunArtifact> RunArtifacts => Set<RunArtifact>();
+    public DbSet<TestabilityCheck> TestabilityChecks => Set<TestabilityCheck>();
     public DbSet<ThreadArtifact> Artifacts => Set<ThreadArtifact>();
     public DbSet<ThreadArtifactVersion> ArtifactVersions => Set<ThreadArtifactVersion>();
 
@@ -324,6 +325,16 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
 
         // Browser-test files (README_Litos.Probe.Web.md §7): the bytes live in the data folder, and
         // the rows go with their project.
+        model.Entity<TestabilityCheck>(e =>
+        {
+            e.ToTable("testability_checks");
+            e.Property(c => c.Commit).HasMaxLength(64);
+            e.Property(c => c.Status).HasConversion<string>().HasMaxLength(30);
+            Json(e.Property(c => c.ReportJson));
+            e.HasIndex(c => new { c.ProjectId, c.CreatedAt });
+            e.HasOne<Project>().WithMany().HasForeignKey(c => c.ProjectId).OnDelete(DeleteBehavior.Cascade);
+        });
+
         model.Entity<RunArtifact>(e =>
         {
             e.ToTable("run_artifacts");

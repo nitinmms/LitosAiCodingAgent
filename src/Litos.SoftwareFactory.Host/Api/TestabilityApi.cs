@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Litos.Probe.Web.Core.Contract;
 using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
+using Litos.SoftwareFactory.Core.Testability;
 using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Host.Auth;
 using Litos.SoftwareFactory.Host.Settings;
@@ -20,6 +21,21 @@ public static class TestabilityApi
     {
         var api = app.MapGroup("/api").RequireAuthorization();
         var project = api.MapGroup("/projects/{id:guid}").RequireProjectAccess(ProjectScoped.Project);
+
+        // Where the project stands: the latest check, or that one is under way.
+        project.MapGet("/testability", async (Guid id, IFactoryStore store, FactorySettings settings, TestabilityChecks checks, CancellationToken ct) =>
+            await store.GetProjectAsync(id, ct) is { } found
+                ? Results.Ok(View(found, await store.LatestTestabilityCheckAsync(id, ct), checks.IsChecking(id), settings, detailed: true))
+                : Results.NotFound());
+
+        // "Check again": it runs the project's code (a dry run), so it is a deliberate press, not a refresh.
+        project.MapPost("/testability/check", async (Guid id, IFactoryStore store, TestabilityChecks checks, CancellationToken ct) =>
+        {
+            if (await store.GetProjectAsync(id, ct) is null)
+                return Results.NotFound();
+            checks.CheckNow(id);
+            return Results.Accepted($"/api/projects/{id}/testability");
+        });
 
         // What is set, by name, and what the project's contract still needs. Never a value.
         project.MapGet("/secrets", async (Guid id, IFactoryStore store, FactorySettings settings, CancellationToken ct) =>
@@ -68,6 +84,56 @@ public static class TestabilityApi
 
         return app;
     }
+
+    /// <summary>
+    /// A project's testability for the app: the Projects page's column takes the summary, the
+    /// Testability panel the <paramref name="detailed"/> view with gaps, the contract on the
+    /// default branch and the dry run's checks with their screenshots.
+    /// </summary>
+    public static object View(Project project, TestabilityCheck? latest, bool checking, FactorySettings settings, bool detailed)
+    {
+        var report = latest is null ? null : TestabilityReport.FromJson(latest.ReportJson);
+        var adopted = VerificationProfile.Parse(project.VerificationProfileJson).WebApp() is not null;
+        var status = checking ? TestabilityStatus.Checking : latest?.Status ?? TestabilityStatus.NotChecked;
+        if (!detailed)
+            return new { Status = status.ToString(), CheckedAt = latest?.CreatedAt, report?.Stack, Adopted = adopted };
+
+        var dryRun = report?.DryRun;
+        return new
+        {
+            Status = status.ToString(),
+            CheckedAt = latest?.CreatedAt,
+            latest?.Commit,
+            report?.Stack,
+            Adopted = adopted,
+            project.ProfileRevision,
+            Stale = latest is not null && latest.ProfileRevision != project.ProfileRevision,
+            report?.Problem,
+            Gaps = report?.Gaps ?? [],
+            Candidates = report?.Candidates ?? [],
+            Contract = report?.Contract is { } c ? new { c.Path, c.Commit, c.Valid, c.Problems } : null,
+            DryRun = dryRun is null ? null : new
+            {
+                Outcome = dryRun.Outcome.ToString(),
+                Checks = dryRun.Checks.Select(k => new
+                {
+                    k.Id,
+                    Kind = k.Kind.ToString(),
+                    Status = k.Status.ToString(),
+                    Classification = k.Classification?.ToString(),
+                    k.Message,
+                    k.Route,
+                    Screenshots = k.Evidence.Screenshots.Select(ArtifactUrl).ToList(),
+                }),
+                dryRun.Lint,
+                dryRun.Usage.WallSeconds,
+            },
+            MissingSecrets = MissingSecrets(project, settings),
+        };
+    }
+
+    /// <summary>Where the app downloads a run artifact, by the id Probe.Web's report holds.</summary>
+    public static string ArtifactUrl(string id) => $"/api/run-artifacts/{id}";
 
     /// <summary>The <c>{secret:}</c> names the project's contract uses that are not set yet.</summary>
     public static IReadOnlyList<string> MissingSecrets(Project project, FactorySettings settings) =>

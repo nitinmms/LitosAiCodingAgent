@@ -238,6 +238,21 @@ public sealed class ThreadAttachment
     public const int MaxFileNameLength = 255;
 }
 
+/// <summary>
+/// One testability check of a project's default branch (testability-architecture.md §6.1): its
+/// status and its <see cref="Testability.TestabilityReport"/> as JSON. The newest is the project's.
+/// </summary>
+public sealed class TestabilityCheck
+{
+    public Guid Id { get; set; }
+    public Guid ProjectId { get; set; }
+    public int ProfileRevision { get; set; }
+    public string? Commit { get; set; }
+    public Testability.TestabilityStatus Status { get; set; }
+    public required string ReportJson { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
 /// <summary>What a stored browser-test file is (README_Litos.Probe.Web.md §7).</summary>
 public enum RunArtifactKind { Screenshot, Trace, Log, Report, Email }
 

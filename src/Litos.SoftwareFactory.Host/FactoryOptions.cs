@@ -57,6 +57,18 @@ public sealed class FactoryOptions
     /// what they measure.</summary>
     public bool BaselineOnRegistration { get; set; } = true;
 
+    /// <summary>Whether a project's testability is checked (detect, then a dry run of its stack's
+    /// defaults) as soon as it is registered or its profile replaced, like the baseline
+    /// (testability-architecture.md §6.1). On; the host tests turn it off.</summary>
+    public bool TestabilityOnRegistration { get; set; } = true;
+
+    /// <summary>Whether the host removes the service containers a crashed run left behind when it
+    /// starts (README_Litos.Probe.Web.md §10). On; the host tests turn it off.</summary>
+    public bool SweepServiceContainersOnStart { get; set; } = true;
+
+    /// <summary>The hard limit on one Probe.Web run: a dry run, a Gate or a smoke.</summary>
+    public TimeSpan TestabilityTimeout { get; set; } = TimeSpan.FromMinutes(15);
+
     /// <summary>Whether the host adds the built-in skills to the library on start, and updates the
     /// unedited ones (docs/software-factory/built-in-skills.md). On; the host tests turn it off,
     /// so a test of the library's own workings starts from an empty one.</summary>

@@ -87,3 +87,11 @@ public interface IProbeWeb
     /// <summary>Gate steps 1–6, as the factory runs them on every task.</summary>
     Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract c, ProbeWebOptions o, CancellationToken ct);
 }
+
+/// <summary>The service containers Probe.Web starts, from outside a run (README §10).</summary>
+public static class ServiceContainers
+{
+    /// <summary>Removes every container <paramref name="owner"/>'s crashed runs left behind; returns how many.</summary>
+    public static Task<int> SweepAsync(string owner, IReadOnlyDictionary<string, string> environment, CancellationToken ct, string docker = "docker") =>
+        Running.DockerServices.SweepAsync(new Processes.ProcessLauncher(), environment, owner, ct, docker);
+}

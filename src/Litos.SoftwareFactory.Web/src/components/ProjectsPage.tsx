@@ -4,6 +4,7 @@ import type { Project, ProjectBaseline, Settings } from '../api/types';
 import { fmt, pct } from '../domain/format';
 import { ErrorNote } from './bits';
 import { jsonProblem } from './PresetsTab';
+import { TestabilityPanel, testabilitySummary } from './TestabilityPanel';
 
 /** How often the page looks again while a baseline is being measured. */
 export const BASELINE_POLL_MS = 3_000;
@@ -48,7 +49,9 @@ export function ProjectsPage({
   onReloaded: (projects: Project[]) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
-  const measuring = projects.some((p) => p.baseline?.state === 'Measuring');
+  /** The project whose Testability panel is open, which anyone who can see it may open. */
+  const [testing, setTesting] = useState<string | null>(null);
+  const measuring = projects.some((p) => p.baseline?.state === 'Measuring' || p.testability?.status === 'Checking');
 
   useEffect(() => {
     if (!measuring) return;
@@ -59,6 +62,7 @@ export function ProjectsPage({
   }, [api, measuring, onReloaded]);
 
   const editedProject = projects.find((p) => p.id === editing) ?? null;
+  const testedProject = projects.find((p) => p.id === testing) ?? null;
 
   return (
     <div className="page">
@@ -76,7 +80,8 @@ export function ProjectsPage({
                     <th>Coverage</th>
                     <th>Draft PR</th>
                     <th>Baseline</th>
-                    {isAdmin ? <th /> : null}
+                    <th>UI testing</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -90,18 +95,37 @@ export function ProjectsPage({
                       <td>
                         <BaselineCell baseline={p.baseline} />
                       </td>
-                      {isAdmin ? (
-                        <td>
+                      <td>
+                        <TestabilityCell project={p} />
+                      </td>
+                      <td>
+                        <div className="btn-row">
                           <button
                             className="btn small"
                             type="button"
-                            aria-label={`Change the profile of ${p.name}`}
-                            onClick={() => setEditing(editing === p.id ? null : p.id)}
+                            aria-label={`Testability of ${p.name}`}
+                            onClick={() => {
+                              setEditing(null);
+                              setTesting(testing === p.id ? null : p.id);
+                            }}
                           >
-                            Change profile
+                            Testability
                           </button>
-                        </td>
-                      ) : null}
+                          {isAdmin ? (
+                            <button
+                              className="btn small"
+                              type="button"
+                              aria-label={`Change the profile of ${p.name}`}
+                              onClick={() => {
+                                setTesting(null);
+                                setEditing(editing === p.id ? null : p.id);
+                              }}
+                            >
+                              Change profile
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -117,7 +141,9 @@ export function ProjectsPage({
           </p>
         </section>
 
-        {editedProject ? (
+        {testedProject ? (
+          <TestabilityPanel key={testedProject.id} api={api} project={testedProject} onClose={() => setTesting(null)} />
+        ) : editedProject ? (
           <ProfileEditor
             key={`${editedProject.id}-${editedProject.profileRevision}`}
             api={api}
@@ -140,6 +166,12 @@ export function ProjectsPage({
       </div>
     </div>
   );
+}
+
+function TestabilityCell({ project }: { project: Project }) {
+  const { text, bad } = testabilitySummary(project.testability, project.profileRevision);
+  if (!project.testability) return null;
+  return <span className={bad ? 'error' : undefined}>{text}</span>;
 }
 
 function BaselineCell({ baseline }: { baseline: ProjectBaseline | null | undefined }) {

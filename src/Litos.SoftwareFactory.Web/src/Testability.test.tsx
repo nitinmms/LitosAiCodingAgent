@@ -1,0 +1,165 @@
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it } from 'vitest';
+import { createApi } from './api/client';
+import type { TestabilityView } from './api/types';
+import { App } from './App';
+import { testabilitySummary } from './components/TestabilityPanel';
+import { FakeHost, notCheckedView } from './test/fakeHost';
+
+function start(host: FakeHost) {
+  host.signedIn = true;
+  window.location.hash = '#/projects';
+  render(<App createClient={(onSignedOut) => createApi(host.fetch, onSignedOut)} openEvents={host.openEvents} />);
+  return userEvent.setup();
+}
+
+async function onProjects(host: FakeHost) {
+  const user = start(host);
+  await screen.findByRole('region', { name: 'Projects' });
+  return user;
+}
+
+/** What a dry run of a Node app with no contract leaves (TestabilityChecks.CheckAsync). */
+function gapsView(host: FakeHost, projectId: string, overrides: Partial<TestabilityView> = {}): TestabilityView {
+  const project = host.projects.find((p) => p.id === projectId)!;
+  return {
+    ...notCheckedView(project),
+    status: 'Gaps',
+    checkedAt: '2026-11-18T09:00:00Z',
+    commit: '4e1b9c2aa',
+    stack: 'node-express-spa',
+    gaps: ["No contract: these are the node-express-spa profile's defaults (npm start).", 'No reset declared: add one (strategy: none if the app keeps no data).'],
+    dryRun: {
+      outcome: 'Passed',
+      checks: [
+        { id: 'build', kind: 'Build', status: 'Passed', classification: null, message: null, route: null, screenshots: [] },
+        { id: 'visit:anonymous:/', kind: 'RouteVisit', status: 'Passed', classification: null, message: null, route: '/', screenshots: ['/api/run-artifacts/a1'] },
+      ],
+      lint: { pages: 1, interactive: 10, unnamed: 0 },
+      wallSeconds: 41,
+    },
+    ...overrides,
+  };
+}
+
+const panel = () => within(screen.getByRole('region', { name: 'Testability of SalesApp' }));
+
+describe('the testability summary', () => {
+  it('says where a project stands in a few words', () => {
+    const at = (status: TestabilityView['status']) => testabilitySummary({ status, checkedAt: null, stack: null, adopted: false }, 3);
+    expect(at('Gaps')).toEqual({ text: 'Not testable yet', bad: true });
+    expect(at('CouldNotCheck')).toEqual({ text: 'Could not check', bad: true });
+    expect(at('Adopted').text).toBe('Contract adopted (rev 3)');
+    expect(at('ContractFound').text).toBe('Contract found, not adopted');
+    expect(at('NotAWebApp').bad).toBe(false);
+    expect(testabilitySummary(null).text).toBe('');
+  });
+});
+
+describe('the Projects page', () => {
+  it('shows each project’s UI testing status in its column', async () => {
+    const host = new FakeHost();
+    host.addProject({ testability: { status: 'Gaps', checkedAt: '2026-11-18T09:00:00Z', stack: 'node-express-spa', adopted: false } });
+    await onProjects(host);
+
+    const table = within(screen.getByRole('table'));
+    expect(table.getByRole('columnheader', { name: 'UI testing' })).toBeInTheDocument();
+    expect(table.getByText('Not testable yet')).toBeInTheDocument();
+  });
+});
+
+describe('the Testability panel', () => {
+  it('shows the gaps and the dry run with its screenshots', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.testability.set(project.id, gapsView(host, project.id));
+    const user = await onProjects(host);
+
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+
+    expect(await panel().findByText('Not testable yet')).toBeInTheDocument();
+    expect(within(panel().getByRole('list', { name: 'Gaps' })).getByText(/No reset declared/)).toBeInTheDocument();
+    const shot = panel().getByRole('img', { name: 'Screenshot of /' });
+    expect(shot).toHaveAttribute('src', '/api/run-artifacts/a1');
+    expect(panel().getByText(/No model calls; 41s/)).toBeInTheDocument();
+  });
+
+  it('checks again on request and shows the new result', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.testability.set(project.id, gapsView(host, project.id));
+    host.testabilityAfterCheck = (current) => ({ ...current, status: 'ContractFound', gaps: ['litos.test.yaml on the default branch is ready to adopt.'], dryRun: null,
+      contract: { path: 'litos.test.yaml', commit: '9f3c2e1aa', valid: true, problems: [] } });
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+    await panel().findByText('Not testable yet');
+
+    await user.click(panel().getByRole('button', { name: 'Check again' }));
+
+    expect(await panel().findByText('Contract found, not adopted')).toBeInTheDocument();
+    expect(panel().getByText(/ready to adopt/, { selector: 'p' })).toBeInTheDocument();
+    expect(host.testabilityChecks).toEqual([project.id]);
+  });
+
+  it('sets a missing role secret without ever showing it', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.testability.set(project.id, gapsView(host, project.id, { status: 'Adopted', adopted: true, missingSecrets: ['TEST_ADMIN_PASS'] }));
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+    const secrets = within(await panel().findByRole('group', { name: 'Role secrets' }));
+    expect(secrets.getByText('Missing')).toBeInTheDocument();
+
+    await user.click(secrets.getByRole('button', { name: 'Set TEST_ADMIN_PASS' }));
+    expect(secrets.getByLabelText('Name')).toHaveValue('TEST_ADMIN_PASS');
+    await user.type(secrets.getByLabelText('Value'), 'hunter2!');
+    await user.click(secrets.getByRole('button', { name: 'Set secret' }));
+
+    expect(await secrets.findByText('Set')).toBeInTheDocument();
+    expect(host.projectSecrets.get(project.id)!.get('TEST_ADMIN_PASS')).toBe('hunter2!');
+    expect(host.sent('PUT', `/api/projects/${project.id}/secrets/TEST_ADMIN_PASS`)[0]!.body).toEqual({ value: 'hunter2!' });
+    expect(screen.queryByText('hunter2!')).not.toBeInTheDocument();
+    expect(secrets.getByLabelText('Value')).toHaveValue('');
+  });
+
+  it('refuses a secret name a contract could not use, before sending it', async () => {
+    const host = new FakeHost();
+    host.addProject();
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+    const secrets = within(await panel().findByRole('group', { name: 'Role secrets' }));
+
+    await user.type(secrets.getByLabelText('Name'), '9 lives');
+    await user.type(secrets.getByLabelText('Value'), 'x');
+
+    expect(secrets.getByRole('button', { name: 'Set secret' })).toBeDisabled();
+    expect(secrets.getByText(/Use letters, digits and _/)).toBeInTheDocument();
+  });
+
+  it('clears a set secret', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.projectSecrets.set(project.id, new Map([['TEST_STAFF_PASS', 'x']]));
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+    const secrets = within(await panel().findByRole('group', { name: 'Role secrets' }));
+
+    await user.click(secrets.getByRole('button', { name: 'Clear TEST_STAFF_PASS' }));
+
+    expect(await secrets.findByText(/No secret is set/)).toBeInTheDocument();
+    expect(host.projectSecrets.get(project.id)!.size).toBe(0);
+  });
+
+  it('is open to a project Member, who cannot change the profile', async () => {
+    const host = new FakeHost();
+    host.user = { id: 'u-max', userName: 'max', displayName: 'Max Weber', roles: ['Member'] };
+    const project = host.addProject();
+    host.testability.set(project.id, gapsView(host, project.id));
+    const user = await onProjects(host);
+
+    expect(screen.queryByRole('button', { name: 'Change the profile of SalesApp' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+    expect(await panel().findByText('Not testable yet')).toBeInTheDocument();
+  });
+});

@@ -1,6 +1,7 @@
 using Litos.Probe.Web;
 using Litos.Probe.Web.Core.Contract;
 using Litos.Probe.Web.Profiles;
+using Litos.SoftwareFactory.Host.Testability;
 using System.Security.Claims;
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
@@ -202,19 +203,23 @@ public static class FactoryApi
         // ---- Projects ----
 
         api.MapGet("/projects", async (
-            ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, ProjectBaselines baselines, CancellationToken ct) =>
+            ClaimsPrincipal user, IFactoryStore store, ProjectAccess access, ProjectBaselines baselines, TestabilityChecks testability,
+            FactorySettings settings, CancellationToken ct) =>
         {
             var visible = await access.VisibleProjectsAsync(user, ct);
             var states = baselines.Snapshot();
+            var checking = testability.Checking();
             var latest = (await store.LatestBaselinesAsync(ct)).ToDictionary(b => b.ProjectId);
+            var checks = (await store.LatestTestabilityChecksAsync(ct)).ToDictionary(c => c.ProjectId);
             var isAdmin = user.IsInRole(FactoryRoles.Admin);
             return Results.Ok((await store.ListProjectsAsync(ct))
                 .Where(p => visible?.Contains(p.Id) ?? true)
-                .Select(p => ProjectView(p, BaselineView(states, p, latest.GetValueOrDefault(p.Id)), includeProfile: isAdmin)));
+                .Select(p => ProjectView(p, BaselineView(states, p, latest.GetValueOrDefault(p.Id)), includeProfile: isAdmin,
+                    testability: TestabilityApi.View(p, checks.GetValueOrDefault(p.Id), checking.Contains(p.Id), settings, detailed: false))));
         });
 
         api.MapPost("/projects", async (
-            RegisterProjectRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, StackProfiles stackProfiles, ProjectBaselines baselines,
+            RegisterProjectRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, StackProfiles stackProfiles, ProjectBaselines baselines, TestabilityChecks testability,
             IClock clock, CancellationToken ct) =>
         {
             if (!GitHubRepository.TryParse(request.GitHubUrl ?? "", out var repository))
@@ -243,6 +248,7 @@ public static class FactoryApi
                     CreatedAt = clock.UtcNow,
                 }, ct);
                 baselines.Start(project.Id);
+                testability.Start(project.Id);
                 return Results.Created($"/api/projects/{project.Id}", ProjectView(project, BaselineView(baselines.Snapshot(), project, null), includeProfile: true));
             }
             catch (StoreConflictException ex)
@@ -253,7 +259,7 @@ public static class FactoryApi
 
         // A new profile for a registered project: its revision moves on, so its baseline is measured again (m3-architecture.md §8).
         api.MapPatch("/projects/{id:guid}", async (
-            Guid id, UpdateProfileRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, StackProfiles stackProfiles, ProjectBaselines baselines,
+            Guid id, UpdateProfileRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, StackProfiles stackProfiles, ProjectBaselines baselines, TestabilityChecks testability,
             IClock clock, CancellationToken ct) =>
         {
             if (await store.GetProjectAsync(id, ct) is not { } current)
@@ -277,6 +283,7 @@ public static class FactoryApi
             {
                 var project = await store.UpdateProjectProfileAsync(id, profile.ToJson(), user.UserId(), clock.UtcNow, ct);
                 baselines.Start(project.Id);
+                testability.Start(project.Id);
                 return Results.Ok(ProjectView(project, BaselineView(baselines.Snapshot(), project, null), includeProfile: true));
             }
             catch (StoreNotFoundException)
@@ -796,7 +803,7 @@ public static class FactoryApi
 
     /// <param name="baseline">Where its baseline stands; shown on the Projects page only.</param>
     /// <param name="includeProfile">Its profile as JSON, for an Admin who may replace it.</param>
-    private static object ProjectView(Project project, object? baseline = null, bool includeProfile = false) => new
+    private static object ProjectView(Project project, object? baseline = null, bool includeProfile = false, object? testability = null) => new
     {
         project.Id,
         project.Name,
@@ -808,6 +815,7 @@ public static class FactoryApi
         project.CreatedAt,
         Profile = includeProfile ? project.VerificationProfileJson : null,
         Baseline = baseline,
+        Testability = testability,
     };
 
     private static object BaselineView(BaselineStates states, Project project, VerificationRecord? latest)

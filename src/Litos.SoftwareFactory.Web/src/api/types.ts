@@ -86,6 +86,63 @@ export interface Project {
   profile?: string | null;
   /** Where its baseline stands: on the Projects page only. */
   baseline?: ProjectBaseline | null;
+  /** Where its browser testing stands: on the Projects page only (Api/TestabilityApi.cs). */
+  testability?: TestabilitySummary | null;
+}
+
+/** Where a project stands on browser testing (Core/Testability/TestabilityReport.cs). */
+export type TestabilityStatus =
+  | 'NotChecked'
+  | 'Checking'
+  | 'NotAWebApp'
+  | 'StackNotSupported'
+  | 'Gaps'
+  | 'ContractFound'
+  | 'Adopted'
+  | 'CouldNotCheck';
+
+/** The Projects page's "UI testing" column. */
+export interface TestabilitySummary {
+  status: TestabilityStatus;
+  checkedAt: string | null;
+  stack: string | null;
+  adopted: boolean;
+}
+
+/** One check of the dry run, with its screenshots as download URLs. */
+export interface TestabilityCheckView {
+  id: string;
+  kind: string;
+  status: 'Passed' | 'Failed' | 'Skipped';
+  classification: string | null;
+  message: string | null;
+  route: string | null;
+  screenshots: string[];
+}
+
+/** The Testability panel (Api/TestabilityApi.cs, testability-architecture.md §6.1). */
+export interface TestabilityView extends TestabilitySummary {
+  commit: string | null;
+  profileRevision: number;
+  /** The check ran on an older profile revision. */
+  stale: boolean;
+  problem: string | null;
+  gaps: string[];
+  candidates: { profile: string; tier: number; directory: string; evidence: string[] }[];
+  contract: { path: string; commit: string; valid: boolean; problems: string[] } | null;
+  dryRun: {
+    outcome: string;
+    checks: TestabilityCheckView[];
+    lint: { pages: number; interactive: number; unnamed: number } | null;
+    wallSeconds: number;
+  } | null;
+  missingSecrets: string[];
+}
+
+/** A project's own secrets, by name: never their values. */
+export interface ProjectSecrets {
+  secrets: { name: string; setAt: string; setBy: string | null }[];
+  missing: string[];
 }
 
 /** A project's baseline at its current profile revision (Api/FactoryApi.cs, m3-architecture.md §8). */

@@ -7,6 +7,7 @@ using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
+using Litos.SoftwareFactory.Core.Testability;
 using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
@@ -3957,6 +3958,47 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
             Store.SetRepositorySkillApprovalAsync(project.Id, "deploy", "sha256:other", true, Admin, T0, default));
         await Assert.ThrowsAsync<StoreNotFoundException>(() =>
             Store.SetRepositorySkillApprovalAsync(Guid.NewGuid(), "deploy", "sha256:a", true, Admin, T0, default));
+    }
+
+    // ---- Testability checks (testability-architecture.md §6.1) ----
+
+    private static TestabilityCheck Check(Project project, TestabilityStatus status, DateTimeOffset at) => new()
+    {
+        ProjectId = project.Id,
+        ProfileRevision = 1,
+        Commit = "abc123",
+        Status = status,
+        ReportJson = """{"status":"Gaps","gaps":["No reset declared."]}""",
+        CreatedAt = at,
+    };
+
+    [SkippableFact]
+    public async Task TestabilityChecks_TheNewestIsEachProjects()
+    {
+        var a = await AddProjectAsync("a");
+        var b = await AddProjectAsync("b");
+        await AddProjectAsync("never-checked");
+        await Store.SaveTestabilityCheckAsync(Check(a, TestabilityStatus.CouldNotCheck, T0), default);
+        await Store.SaveTestabilityCheckAsync(Check(a, TestabilityStatus.Gaps, T0.AddMinutes(5)), default);
+        await Store.SaveTestabilityCheckAsync(Check(b, TestabilityStatus.NotAWebApp, T0.AddMinutes(1)), default);
+
+        var latest = (await Store.LatestTestabilityChecksAsync(default)).ToDictionary(c => c.ProjectId);
+
+        Assert.Equal(2, latest.Count);
+        Assert.Equal(TestabilityStatus.Gaps, latest[a.Id].Status);
+        Assert.Equal(TestabilityStatus.NotAWebApp, latest[b.Id].Status);
+        var one = (await Store.LatestTestabilityCheckAsync(a.Id, default))!;
+        Assert.Equal((TestabilityStatus.Gaps, "abc123"), (one.Status, one.Commit));
+        // jsonb does not keep the text as written, so compare what it says.
+        Assert.Equal("No reset declared.", System.Text.Json.JsonDocument.Parse(one.ReportJson).RootElement.GetProperty("gaps")[0].GetString());
+        Assert.Null(await Store.LatestTestabilityCheckAsync(Guid.NewGuid(), default));
+    }
+
+    [SkippableFact]
+    public async Task TestabilityChecks_OfAnUnknownProject_AreRefused()
+    {
+        var ghost = new Project { Id = Guid.NewGuid(), Name = "x", GitHubOwner = "x", GitHubRepository = "x", DefaultBranch = "main", VerificationProfileJson = "{}" };
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.SaveTestabilityCheckAsync(Check(ghost, TestabilityStatus.Gaps, T0), default));
     }
 
     // ---- Browser-test files (README_Litos.Probe.Web.md §7) ----
