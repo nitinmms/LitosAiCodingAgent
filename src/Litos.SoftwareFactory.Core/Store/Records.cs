@@ -238,6 +238,29 @@ public sealed class ThreadAttachment
     public const int MaxFileNameLength = 255;
 }
 
+/// <summary>What a stored browser-test file is (README_Litos.Probe.Web.md §7).</summary>
+public enum RunArtifactKind { Screenshot, Trace, Log, Report, Email }
+
+/// <summary>
+/// A file the browser checks produced: a screenshot, a Playwright trace, an app log, a report or
+/// a captured email (README_Litos.Probe.Web.md §7, testability-architecture.md §6.5). The bytes
+/// are kept in the data folder's run-artifacts/&lt;project&gt;/&lt;id&gt;; this row describes them.
+/// A run's files have its <see cref="RunId"/>; a testability check's or baseline's have none.
+/// </summary>
+public sealed class RunArtifact
+{
+    public Guid Id { get; set; }
+    public Guid ProjectId { get; set; }
+    public Guid? RunId { get; set; }
+    public RunArtifactKind Kind { get; set; }
+    public required string FileName { get; set; }
+    public required string MediaType { get; set; }
+    public long SizeBytes { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+
+    public const int MaxFileNameLength = 255;
+}
+
 /// <summary>
 /// A page a chat answer published on a thread (ReadMe_ArtifactsFeature.md §11.5). Its versions are
 /// <see cref="ThreadArtifactVersion"/> rows; it stays with the thread and goes with it.

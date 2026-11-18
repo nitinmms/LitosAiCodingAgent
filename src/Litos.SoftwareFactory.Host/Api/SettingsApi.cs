@@ -44,7 +44,8 @@ public static class SettingsApi
             {
                 p.Name, p.DisplayName, Precision = p.Precision.ToString(), p.UsesBaseUrl, KeySecret = SecretNames.Provider(p.Name),
             }),
-            Secrets = settings.Secrets,
+            // A project's own secrets (test-role passwords) belong on its Testability panel, not here.
+            Secrets = settings.Secrets.Where(s => !SecretNames.IsProjectSecret(s.Name, out _, out _)).ToList(),
         }));
 
         admin.MapPut("/settings/providers", async (

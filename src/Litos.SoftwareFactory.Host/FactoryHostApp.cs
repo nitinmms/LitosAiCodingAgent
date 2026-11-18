@@ -119,6 +119,9 @@ public static class FactoryHostApp
         services.AddSingleton<RunCoordinator>();
         services.AddHostedService(sp => sp.GetRequiredService<RunCoordinator>());
         services.AddSingleton<Api.AttachmentFiles>();
+        services.AddSingleton<Testability.RunArtifactFiles>();
+        // The stack profiles the testability checks use (README_Litos.Probe.Web.md §5).
+        services.AddSingleton(Litos.Probe.Web.Profiles.StackProfiles.Embedded());
         // The documents a run is given are converted as every other Litos face converts them.
         services.AddSingleton(new global::MarkItDown.MarkItDownClient());
         services.AddSingleton<Litos.Tools.Attachments.IAttachmentConverter, Litos.Tools.Attachments.MarkItDownAttachmentConverter>();
@@ -182,6 +185,7 @@ public static class FactoryHostApp
         app.MapFactoryApi();
         app.MapFactoryRunOrder();
         app.MapFactoryAttachments();
+        app.MapFactoryTestability();
         app.MapFactoryArtifacts();
         app.MapFactorySettings();
         app.MapFactoryLessons();

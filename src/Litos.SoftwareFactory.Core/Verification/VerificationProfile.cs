@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Litos.Probe.Web.Core.Contract;
 
 namespace Litos.SoftwareFactory.Core.Verification;
 
@@ -8,14 +9,25 @@ namespace Litos.SoftwareFactory.Core.Verification;
 /// run and the report formats they produce. It is data — the factory knows nothing about any
 /// language or build tool, so supporting a new stack means writing a profile.
 /// </summary>
+/// <param name="Application">Version 3 (testability-architecture.md §5): how to build and start the
+/// web app, for the browser checks before handoff. Null when the project has no adopted contract.</param>
+/// <param name="Testability">Version 3: how to reset, sign into and walk the app once it is up.</param>
 public sealed record VerificationProfile(
     int ProfileVersion,
     IReadOnlyList<VerificationStep> Steps,
     CoverageRule? Coverage = null,
     IReadOnlyDictionary<string, string>? Environment = null,
-    int MaximumRepairCycles = 2)
+    int MaximumRepairCycles = 2,
+    AppDefinition? Application = null,
+    TestabilityDefinition? Testability = null)
 {
-    public const int CurrentVersion = 2;
+    /// <summary>The version new profiles are written in. Version 2, which has no web-app blocks, is still read as it is.</summary>
+    public const int CurrentVersion = 3;
+
+    /// <summary>The first version that may carry <see cref="Application"/> and <see cref="Testability"/>.</summary>
+    public const int WebAppVersion = 3;
+
+    public static IReadOnlyList<int> SupportedVersions { get; } = [2, 3];
 
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
@@ -40,8 +52,16 @@ public sealed record VerificationProfile(
     {
         var problems = new List<string>();
 
-        if (ProfileVersion != CurrentVersion)
-            problems.Add($"profileVersion must be {CurrentVersion}, but is {ProfileVersion}.");
+        if (!SupportedVersions.Contains(ProfileVersion))
+            problems.Add($"profileVersion must be {string.Join(" or ", SupportedVersions)}, but is {ProfileVersion}.");
+        if ((Application is not null || Testability is not null) && ProfileVersion < WebAppVersion)
+            problems.Add($"application and testability need profileVersion {WebAppVersion}.");
+        if (Testability is not null && Application is null)
+            problems.Add("testability needs an application block: there is no app to test without one.");
+        // Role passwords reach only the app and the browser (testability-architecture.md §5), never
+        // a verification command, which runs the agent's own tests.
+        if (MentionsSecret())
+            problems.Add("{secret:…} may be used only in the application block, never in steps or environment.");
         if (Steps is null || Steps.Count == 0)
             problems.Add("A profile needs at least one step.");
         if (Coverage is { ChangedLinesThresholdPercent: < 0 or > 100 })
@@ -87,6 +107,24 @@ public sealed record VerificationProfile(
 
         return problems;
     }
+
+    /// <summary>The web-app contract, when the profile has one: what Litos.Probe.Web runs before handoff.</summary>
+    public WebAppContract? WebApp() =>
+        Application is null ? null : new WebAppContract { Application = Application, Testability = Testability ?? new TestabilityDefinition() };
+
+    /// <summary>The same profile carrying <paramref name="contract"/>, as version 3; null removes it.</summary>
+    public VerificationProfile WithWebApp(WebAppContract? contract) => this with
+    {
+        ProfileVersion = contract is null ? ProfileVersion : Math.Max(ProfileVersion, WebAppVersion),
+        Application = contract?.Application,
+        Testability = contract?.Testability,
+    };
+
+    private bool MentionsSecret() =>
+        Steps.SelectMany(s => s.Commands()).Any(c => IsSecret(c.Command.Executable) || c.Command.Arguments.Any(IsSecret))
+        || (Environment?.Values.Any(IsSecret) ?? false);
+
+    private static bool IsSecret(string? text) => text?.Contains("{secret:", StringComparison.Ordinal) == true;
 
     private static bool StaysInside(string path) => !Path.IsPathRooted(path) && !path.Split('/', '\\').Contains("..");
 

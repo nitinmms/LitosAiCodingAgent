@@ -1855,6 +1855,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             ProjectScoped.Lesson => await db.Lessons.Where(l => l.Id == id).Select(l => (Guid?)l.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Attachment => await db.Attachments.Where(a => a.Id == id).Select(a => (Guid?)a.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Artifact => await db.Artifacts.Where(a => a.Id == id).Select(a => (Guid?)a.ProjectId).FirstOrDefaultAsync(ct),
+            ProjectScoped.RunArtifact => await db.RunArtifacts.Where(a => a.Id == id).Select(a => (Guid?)a.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Run => await (
                 from r in db.Runs join t in db.Threads on r.ThreadId equals t.Id where r.Id == id select (Guid?)t.ProjectId).FirstOrDefaultAsync(ct),
             ProjectScoped.Finding => await (

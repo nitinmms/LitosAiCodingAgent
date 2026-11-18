@@ -1,3 +1,6 @@
+using Litos.Probe.Web;
+using Litos.Probe.Web.Core.Contract;
+using Litos.Probe.Web.Profiles;
 using System.Security.Claims;
 using System.Text.Json;
 using Litos.SoftwareFactory.Contracts;
@@ -211,7 +214,7 @@ public static class FactoryApi
         });
 
         api.MapPost("/projects", async (
-            RegisterProjectRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, ProjectBaselines baselines,
+            RegisterProjectRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, StackProfiles stackProfiles, ProjectBaselines baselines,
             IClock clock, CancellationToken ct) =>
         {
             if (!GitHubRepository.TryParse(request.GitHubUrl ?? "", out var repository))
@@ -219,9 +222,12 @@ public static class FactoryApi
             if (string.IsNullOrWhiteSpace(request.DefaultBranch))
                 return Problem("defaultBranch is required.");
 
-            var (profile, error) = ProfileFor(settings, request.Preset, request.ProfileJson, request.CoverageThresholdPercent);
+            var (profile, error) = ProfileFor(settings, stackProfiles, request.Preset, request.ProfileJson, request.CoverageThresholdPercent);
             if (profile is null)
                 return Problem(error!);
+            // A project's secrets can be set only once it exists; its contract follows by adoption or an update.
+            if (profile.WebApp() is { } contract && ContractValidator.SecretNames(contract).Count > 0)
+                return Problem("Register the project without a web-app contract that uses {secret:…}, set its secrets, then add the contract.");
 
             try
             {
@@ -247,7 +253,7 @@ public static class FactoryApi
 
         // A new profile for a registered project: its revision moves on, so its baseline is measured again (m3-architecture.md §8).
         api.MapPatch("/projects/{id:guid}", async (
-            Guid id, UpdateProfileRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, ProjectBaselines baselines,
+            Guid id, UpdateProfileRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, StackProfiles stackProfiles, ProjectBaselines baselines,
             IClock clock, CancellationToken ct) =>
         {
             if (await store.GetProjectAsync(id, ct) is not { } current)
@@ -255,10 +261,17 @@ public static class FactoryApi
 
             // With neither a preset nor a profile, only the threshold changes, on the profile the project has.
             var (profile, error) = request.Preset is null && request.ProfileJson is not { Length: > 0 }
-                ? ProfileFor(settings, null, current.VerificationProfileJson, request.CoverageThresholdPercent)
-                : ProfileFor(settings, request.Preset, request.ProfileJson, request.CoverageThresholdPercent);
+                ? ProfileFor(settings, stackProfiles, null, current.VerificationProfileJson, request.CoverageThresholdPercent)
+                : ProfileFor(settings, stackProfiles, request.Preset, request.ProfileJson, request.CoverageThresholdPercent);
             if (profile is null)
                 return Problem(error!);
+
+            // A preset replaces the commands, not the adopted web-app contract; profile JSON replaces everything.
+            if (request.Preset is not null && profile.WebApp() is null && VerificationProfile.Parse(current.VerificationProfileJson).WebApp() is { } kept)
+                profile = profile.WithWebApp(kept);
+            // Every {secret:} must be set before the contract is saved (testability-architecture.md §5).
+            if (profile.WebApp() is { } contract && TestabilityApi.MissingSecrets(id, contract, settings) is { Count: > 0 } missing)
+                return Problem($"Set the project's secrets {string.Join(", ", missing)} first: the web-app contract uses them.");
 
             try
             {
@@ -823,7 +836,7 @@ public static class FactoryApi
     /// host's PATH, so a missing toolchain is said now rather than at the project's first task.
     /// </summary>
     private static (VerificationProfile? Profile, string? Error) ProfileFor(
-        FactorySettings settings, string? presetName, string? profileJson, double? coverageThresholdPercent)
+        FactorySettings settings, StackProfiles stackProfiles, string? presetName, string? profileJson, double? coverageThresholdPercent)
     {
         VerificationProfile profile;
         try
@@ -852,6 +865,10 @@ public static class FactoryApi
         var problems = profile.Validate();
         if (problems.Count > 0)
             return (null, "The verification profile is not usable: " + string.Join(" ", problems));
+
+        // A web-app contract (profile v3) must also run as written, against its stack profile.
+        if (profile.WebApp() is { } contract && new ProbeWeb(stackProfiles).Validate(contract) is { Count: > 0 } contractProblems)
+            return (null, "The web-app contract is not usable: " + string.Join(" ", contractProblems.Select(p => p.TrimEnd('.') + ".")));
 
         var missing = ProfileExecutables.Missing(profile, ProfileExecutables.HostPath());
         if (missing.Count > 0)

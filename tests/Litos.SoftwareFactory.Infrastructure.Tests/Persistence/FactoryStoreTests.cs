@@ -3959,6 +3959,39 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
             Store.SetRepositorySkillApprovalAsync(Guid.NewGuid(), "deploy", "sha256:a", true, Admin, T0, default));
     }
 
+    // ---- Browser-test files (README_Litos.Probe.Web.md §7) ----
+
+    [SkippableFact]
+    public async Task RunArtifacts_AreRecorded_ListedPerRun_AndFindTheirProject()
+    {
+        var project = await AddProjectAsync();
+        var run = Guid.NewGuid();
+        RunArtifact Artifact(string file, RunArtifactKind kind, Guid? runId, int minutes) => new()
+        {
+            ProjectId = project.Id, RunId = runId, Kind = kind, FileName = file, MediaType = "image/png", SizeBytes = 10, CreatedAt = T0.AddMinutes(minutes),
+        };
+
+        var shot = await Store.AddRunArtifactAsync(Artifact("visit-admin.png", RunArtifactKind.Screenshot, run, 2), default);
+        await Store.AddRunArtifactAsync(Artifact("trace-admin.zip", RunArtifactKind.Trace, run, 1), default);
+        await Store.AddRunArtifactAsync(Artifact("baseline.png", RunArtifactKind.Screenshot, null, 0), default);
+
+        Assert.NotEqual(Guid.Empty, shot.Id);
+        Assert.Equal(["trace-admin.zip", "visit-admin.png"], (await Store.ListRunArtifactsAsync(run, default)).Select(a => a.FileName));
+        var read = (await Store.GetRunArtifactAsync(shot.Id, default))!;
+        Assert.Equal((RunArtifactKind.Screenshot, run, 10L), (read.Kind, read.RunId, read.SizeBytes));
+        Assert.Equal(project.Id, await Store.FindProjectIdAsync(ProjectScoped.RunArtifact, shot.Id, default));
+        Assert.Null(await Store.FindProjectIdAsync(ProjectScoped.RunArtifact, Guid.NewGuid(), default));
+    }
+
+    [SkippableFact]
+    public async Task RunArtifacts_OfAnUnknownProject_AreRefused()
+    {
+        await Assert.ThrowsAsync<StoreNotFoundException>(() => Store.AddRunArtifactAsync(new RunArtifact
+        {
+            ProjectId = Guid.NewGuid(), Kind = RunArtifactKind.Log, FileName = "web.log", MediaType = "text/plain", CreatedAt = T0,
+        }, default));
+    }
+
     // ---- Project profiles (m3-architecture.md §8) ----
 
     [SkippableFact]

@@ -11,6 +11,8 @@
     <ProjectReference Include="..\Litos.Artifacts\Litos.Artifacts.csproj" />
     <ProjectReference Include="..\Litos.Host\Litos.Host.csproj" />
     <ProjectReference Include="..\Litos.Tools.Mcp\Litos.Tools.Mcp.csproj" />
+    <!-- The browser checks before handoff (README_Litos.Probe.Web.md §2): an in-host library. -->
+    <ProjectReference Include="..\Litos.Probe.Web\Litos.Probe.Web.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

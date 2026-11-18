@@ -55,6 +55,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<RunSkillLoad> RunSkillLoads => Set<RunSkillLoad>();
     public DbSet<ReflectionJob> ReflectionJobs => Set<ReflectionJob>();
     public DbSet<ThreadAttachment> Attachments => Set<ThreadAttachment>();
+    public DbSet<RunArtifact> RunArtifacts => Set<RunArtifact>();
     public DbSet<ThreadArtifact> Artifacts => Set<ThreadArtifact>();
     public DbSet<ThreadArtifactVersion> ArtifactVersions => Set<ThreadArtifactVersion>();
 
@@ -319,6 +320,19 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             e.Property(a => a.MessageKey).HasMaxLength(200);
             e.HasIndex(a => new { a.ThreadId, a.MessageKey });
             e.HasOne<TaskThread>().WithMany().HasForeignKey(a => a.ThreadId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Browser-test files (README_Litos.Probe.Web.md §7): the bytes live in the data folder, and
+        // the rows go with their project.
+        model.Entity<RunArtifact>(e =>
+        {
+            e.ToTable("run_artifacts");
+            e.Property(a => a.FileName).HasMaxLength(RunArtifact.MaxFileNameLength);
+            e.Property(a => a.MediaType).HasMaxLength(200);
+            e.Property(a => a.Kind).HasConversion<string>().HasMaxLength(20);
+            e.HasIndex(a => a.RunId);
+            e.HasIndex(a => a.ProjectId);
+            e.HasOne<Project>().WithMany().HasForeignKey(a => a.ProjectId).OnDelete(DeleteBehavior.Cascade);
         });
 
         // Pages a chat answer published (ReadMe_ArtifactsFeature.md §11.5): small text, so kept in

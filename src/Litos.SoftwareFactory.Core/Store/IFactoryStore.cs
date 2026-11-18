@@ -84,6 +84,9 @@ public enum ProjectScoped
 
     /// <summary>A page a chat answer published on a thread, for opening it (ReadMe_ArtifactsFeature.md §11).</summary>
     Artifact,
+
+    /// <summary>A screenshot, trace or log from the browser checks, for downloading it.</summary>
+    RunArtifact,
 }
 
 /// <summary>Everything needed to stop a run, applied in one transaction.</summary>
@@ -558,6 +561,15 @@ public interface IFactoryStore
     Task<ThreadAttachment> AddAttachmentAsync(ThreadAttachment attachment, long maxBytesPerThread, CancellationToken ct);
 
     Task<ThreadAttachment?> GetAttachmentAsync(Guid attachmentId, CancellationToken ct);
+
+    /// <summary>Records a file the browser checks produced (README_Litos.Probe.Web.md §7).</summary>
+    /// <exception cref="StoreNotFoundException">No project has its id.</exception>
+    Task<RunArtifact> AddRunArtifactAsync(RunArtifact artifact, CancellationToken ct);
+
+    Task<RunArtifact?> GetRunArtifactAsync(Guid artifactId, CancellationToken ct);
+
+    /// <summary>A run's browser-test files, oldest first.</summary>
+    Task<IReadOnlyList<RunArtifact>> ListRunArtifactsAsync(Guid runId, CancellationToken ct);
 
     /// <summary>The thread's files, oldest first; unsent ones only with <paramref name="includeUnsent"/>.</summary>
     Task<IReadOnlyList<ThreadAttachment>> ListAttachmentsAsync(Guid threadId, bool includeUnsent, CancellationToken ct);

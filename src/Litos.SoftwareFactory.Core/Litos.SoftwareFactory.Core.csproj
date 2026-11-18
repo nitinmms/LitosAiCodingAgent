@@ -5,6 +5,8 @@
        ASP.NET, no EF. Everything with a side effect is a port implemented elsewhere. -->
   <ItemGroup>
     <ProjectReference Include="..\Litos.SoftwareFactory.Contracts\Litos.SoftwareFactory.Contracts.csproj" />
+    <!-- The web-app contract that profile v3 embeds (README_Litos.Probe.Web.md §3). Pure too. -->
+    <ProjectReference Include="..\Litos.Probe.Web.Core\Litos.Probe.Web.Core.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

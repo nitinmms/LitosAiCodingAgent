@@ -85,6 +85,7 @@ public class SecretNamesTests
     [InlineData("provider:openrouter")]
     [InlineData("provider:mesh_api")]
     [InlineData("mcp:github-server:GITHUB_TOKEN")]
+    [InlineData("project:0f8fad5bd9cb469fa16570867728950e:TEST_ADMIN_PASS")]
     public void TheFactorysOwnNames_AreValid(string name) => Assert.True(SecretNames.IsValid(name));
 
     [Theory]
@@ -96,6 +97,9 @@ public class SecretNamesTests
     [InlineData("mcp:server:1BAD")]
     [InlineData("../keys")]
     [InlineData("anything")]
+    [InlineData("project:0f8fad5b-d9cb-469f-a165-70867728950e:PASS")]
+    [InlineData("project:0f8fad5bd9cb469fa16570867728950e:1PASS")]
+    [InlineData("project:0f8fad5bd9cb469fa16570867728950e:")]
     public void AnythingElse_IsNotASecretTheFactoryKeeps(string name) => Assert.False(SecretNames.IsValid(name));
 
     [Fact]
@@ -105,4 +109,37 @@ public class SecretNamesTests
         Assert.Equal("mcp:github:TOKEN", SecretNames.Mcp("github", "TOKEN"));
         Assert.True(SecretNames.IsValid(SecretNames.Mcp("github", "TOKEN")));
     }
+}
+
+public class ProjectSecretNamesTests
+{
+    private static readonly Guid Id = Guid.Parse("0f8fad5b-d9cb-469f-a165-70867728950e");
+
+    [Fact]
+    public void A_projects_secret_is_named_by_its_id_and_reads_back()
+    {
+        var name = SecretNames.Project(Id, "TEST_ADMIN_PASS");
+
+        Assert.Equal("project:0f8fad5bd9cb469fa16570867728950e:TEST_ADMIN_PASS", name);
+        Assert.True(SecretNames.IsValid(name));
+        Assert.True(SecretNames.IsProjectSecret(name, out var project, out var secret));
+        Assert.Equal((Id, "TEST_ADMIN_PASS"), (project, secret));
+        Assert.StartsWith(SecretNames.ProjectPrefix(Id), name, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("github")]
+    [InlineData("provider:openrouter")]
+    [InlineData("mcp:s:TOKEN")]
+    public void Other_secrets_are_not_a_projects(string name) => Assert.False(SecretNames.IsProjectSecret(name, out _, out _));
+
+    [Theory]
+    [InlineData("TEST_ADMIN_PASS", true)]
+    [InlineData("_x", true)]
+    [InlineData("9LIVES", false)]
+    [InlineData("has space", false)]
+    [InlineData("a:b", false)]
+    [InlineData("", false)]
+    public void A_project_secret_name_is_a_variable_name(string name, bool valid) =>
+        Assert.Equal(valid, SecretNames.IsValidProjectSecretName(name));
 }
