@@ -4,6 +4,8 @@ namespace Litos.Probe.Web.Core.Reports;
 public enum FailureCause
 {
     BuildFailed,
+    DockerUnavailable,
+    ServiceNotReady,
     ProcessExited,
     NotReady,
     WrongPort,
@@ -37,7 +39,7 @@ public static class Classifier
     public static Classification Classify(FailureCause cause) => cause switch
     {
         // The app could not be brought up or reset: nothing to repair against, so Blocked.
-        FailureCause.BuildFailed or FailureCause.ProcessExited or FailureCause.NotReady or FailureCause.ResetFailed
+        FailureCause.BuildFailed or FailureCause.DockerUnavailable or FailureCause.ServiceNotReady or FailureCause.ProcessExited or FailureCause.NotReady or FailureCause.ResetFailed
             or FailureCause.Timeout => Classification.EnvironmentFailure,
 
         // The credentials, not the code.

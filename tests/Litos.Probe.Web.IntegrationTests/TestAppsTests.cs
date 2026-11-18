@@ -57,6 +57,7 @@ public class AspNetBlazorTests
     public async Task The_gate_passes_every_step_for_three_roles_and_no_secret_reaches_an_artifact()
     {
         await RequireAsync("dotnet");
+        await RequireDockerAsync();
         var (report, artifacts) = await GateAsync(App("AspNetBlazor"), Secrets);
 
         Assert.True(report.Outcome == ProbeWebOutcome.Passed, Describe(report));
@@ -64,6 +65,14 @@ public class AspNetBlazorTests
         Assert.Equal(3, report.Checks.Count(c => c.Kind == CheckKind.LoggedOutRedirect && c.Status == CheckStatus.Passed));
         Assert.Equal(3, report.Checks.Count(c => c.Kind == CheckKind.Denied && c.Status == CheckStatus.Passed));
         Assert.Equal(CheckStatus.Passed, Check(report, "production-test-endpoints").Status);
+
+        // Postgres and Mailpit came from throwaway containers, and each sign-in sent an email.
+        Assert.Equal(CheckStatus.Passed, Check(report, "services").Status);
+        Assert.Equal(["db", "mail"], report.App!.Services.Select(s => s.Name));
+        Assert.Equal(3, report.Emails.Count(e => e.Subject == "New sign-in to Clinic Portal"));
+        Assert.All(report.Emails, e => Assert.True(File.Exists(Path.Combine(artifacts, e.Artifact!))));
+        var (_, left) = await RunDockerAsync("ps", "-aq", "--filter", "label=litos.probe.owner=probe-web-tests");
+        Assert.Equal("", left.Trim());
 
         // README §10: a test scans every artifact of a run for the secret values.
         var texts = ArtifactTexts(artifacts).Append(("report.json", report.ToJson())).ToList();
@@ -76,6 +85,7 @@ public class AspNetBlazorTests
     public async Task Smoke_runs_steps_one_to_six_only()
     {
         await RequireAsync("dotnet");
+        await RequireDockerAsync();
         var (report, _) = await GateAsync(App("AspNetBlazor"), Secrets, smoke: true);
 
         Assert.Equal(ReportKind.Smoke, report.Kind);

@@ -64,6 +64,33 @@ public class StartFailureTests : BrokenAppsBase
     }
 
     [SkippableFact]
+    public async Task Without_Docker_a_contract_with_services_is_an_environment_failure()
+    {
+        await RequireAsync("node");
+        var (report, _) = await GateAsync(App("BrokenApps", "needs-docker"), docker: "docker-is-not-installed-here");
+
+        var services = Check(report, "services");
+        Assert.Equal(Classification.EnvironmentFailure, services.Classification);
+        Assert.Contains("Docker is not running", services.Message);
+        Assert.Equal(ProbeWebOutcome.EnvironmentFailure, report.Outcome);
+        Assert.DoesNotContain(report.Checks, c => c.Kind == CheckKind.Start);
+    }
+
+    [SkippableFact]
+    public async Task A_sweep_removes_only_its_owners_containers()
+    {
+        await RequireDockerAsync();
+        var (made, _) = await RunDockerAsync("create", "--label", "litos.probe=1", "--label", "litos.probe.owner=probe-web-sweep", "postgres:16-alpine");
+        Skip.If(made != 0, "Could not create a container from postgres:16-alpine.");
+
+        var removed = await Running.DockerServices.SweepAsync(new Processes.ProcessLauncher(), HostEnvironment(), "probe-web-sweep", default);
+
+        Assert.Equal(1, removed);
+        Assert.Equal("", (await RunDockerAsync("ps", "-aq", "--filter", "label=litos.probe.owner=probe-web-sweep")).Output.Trim());
+        Assert.Equal(0, await Running.DockerServices.SweepAsync(new Processes.ProcessLauncher(), HostEnvironment(), "probe-web-sweep", default));
+    }
+
+    [SkippableFact]
     public async Task A_crashed_app_reports_its_own_last_words()
     {
         await RequireAsync("node");

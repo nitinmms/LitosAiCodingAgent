@@ -1,0 +1,23 @@
+# Broken app "needs-docker" (see ../server.mjs): a healthy app whose contract starts a Redis service.
+# The integration tests run it with a Docker CLI that does not exist, to see "Docker is not running".
+version: 1
+application:
+  stack: node-express-spa
+  build: []
+  services:
+    - name: cache
+      image: redis:7-alpine
+  processes:
+    - name: web
+      command: [node, ../server.mjs, healthy]
+      environment:
+        PORT: "{port:web}"
+        REDIS_URL: "redis://127.0.0.1:{service:cache:port}"
+  base_url: web
+  reset:
+    strategy: none
+testability:
+  auth:
+    type: none
+  routes:
+    public: [/]

@@ -25,7 +25,7 @@ internal static class ProbeHarness
 
     public static async Task<(ProbeWebReport Report, string Artifacts)> GateAsync(
         string app, IReadOnlyDictionary<string, string>? secrets = null, GateScope? scope = null, bool smoke = false,
-        TimeSpan? timeout = null, TimeSpan? pageTimeout = null)
+        TimeSpan? timeout = null, TimeSpan? pageTimeout = null, string docker = "docker")
     {
         var contract = ContractYaml.Load(Path.Combine(app, ContractYaml.FileName));
         var folder = Path.Combine(Path.GetTempPath(), "probe-web-it", $"{Path.GetFileName(app)}-{Guid.NewGuid().ToString("N")[..8]}");
@@ -36,6 +36,8 @@ internal static class ProbeHarness
             timeout ?? TimeSpan.FromMinutes(10))
         {
             PageTimeout = pageTimeout ?? TimeSpan.FromSeconds(30),
+            DockerExecutable = docker,
+            ServiceOwner = "probe-web-tests",
         };
 
         var engine = new ProbeWeb(StackProfiles.Embedded());
@@ -43,6 +45,32 @@ internal static class ProbeHarness
             ? await engine.SmokeAsync(app, contract, options, CancellationToken.None)
             : await engine.GateAsync(app, contract, scope ?? GateScope.All, options, CancellationToken.None);
         return (report, folder);
+    }
+
+    /// <summary>Skips the test when Docker is not running here.</summary>
+    public static async Task RequireDockerAsync()
+    {
+        var info = await RunDockerAsync("info", "--format", "{{.ServerVersion}}");
+        Skip.If(info.ExitCode != 0, "Docker is not running.");
+    }
+
+    /// <summary>Runs the Docker CLI and returns its exit code and output.</summary>
+    public static async Task<(int ExitCode, string Output)> RunDockerAsync(params string[] arguments)
+    {
+        try
+        {
+            var start = new System.Diagnostics.ProcessStartInfo("docker") { RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var argument in arguments)
+                start.ArgumentList.Add(argument);
+            using var process = System.Diagnostics.Process.Start(start)!;
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            return (process.ExitCode, output);
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return (-1, "");
+        }
     }
 
     /// <summary>This test run's environment, with the test secrets taken out so only the resolver supplies them.</summary>

@@ -283,6 +283,11 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 
 **Total:** about **5 weeks** for W1–W3 (web apps testable, smoke-tested and scenario-checked before handoff on two stacks, with throwaway databases), plus up to 1 week for W4.
 
+### 11.2 W2 progress
+
+- **W2.1** (factory): verification profile v3 embeds the contract; project secrets `project:<id>:NAME` (Admins and Members, set-only); `run_artifacts` and its download endpoint.
+- **W2.2** (engine): Docker `services` and Mailpit, below.
+
 ### 11.1 W1 as built (2026-11-17)
 
 **Exit check met:**
@@ -297,8 +302,9 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 - **Step 8 lint** runs in the page as JavaScript. Playwright for .NET no longer has an accessibility snapshot API.
 - **Steps 1 and 2 always run**, whatever `--steps` says, because no other step can run without them.
 - **A `sqlite-snapshot` reset runs before start**, because a running app holds the file open.
-- **`services`** are in the model but refused by the validator until W2.
-- The **blazor test app uses SQLite**. Postgres from a `services` container comes in W2.
+- **`services`** (W2.2): the allowlist is data (`Probe.Web.Core/Profiles/services.json`), each image with its ports and a readiness command run inside the container, because Docker's port proxy accepts connections before the server is up. Containers bind loopback on run-allocated ports, carry `litos.probe` / `litos.probe.run` / `litos.probe.owner` labels, and are removed with their anonymous volumes at stop; `DockerServices.SweepAsync` removes an owner's leftovers.
+- **Mailpit** (W2.2): emails it catches are saved as `.eml` artifacts and listed in the report's `emails`; checks on them come with W3 scenarios.
+- The **Blazor test app** runs on Postgres from a `services` container and sends a "new sign-in" email to Mailpit (W2.2); SQLite stays its local-dev default. Moving it found a real Postgres trap: Npgsql refuses a local `DateTime` for `timestamptz`.
 - **Build and reset commands may declare their own `environment`**, for values a build bakes in (a Vite SPA's API URL, §6.6 of the architecture doc). Secrets are refused there; only app processes and sign-in get them.
 - **`DryRunAsync` takes an optional app folder**, for a monorepo candidate from `detect`. `ScenariosAsync` and the `scenarios` command wait for W3.
 - **`JobObject` and the Windows executable resolver are copies** of the factory's, because Probe.Web never references the factory.

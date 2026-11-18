@@ -41,6 +41,12 @@ public sealed record ProbeWebOptions(
 
     /// <summary>How long a page may take to load, and its readiness marker to appear.</summary>
     public TimeSpan PageTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Who starts the service containers (<c>factory</c> or <c>cli</c>), recorded as a label so each sweeps only its own.</summary>
+    public string ServiceOwner { get; init; } = "cli";
+
+    /// <summary>The Docker CLI. Tests point it elsewhere to see Docker missing.</summary>
+    public string DockerExecutable { get; init; } = "docker";
 }
 
 /// <summary>Which of the Gate's 8 steps to run (README §6.1). Steps 1 and 2 always run, because nothing else can without them.</summary>

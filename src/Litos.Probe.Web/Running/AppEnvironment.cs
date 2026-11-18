@@ -37,9 +37,12 @@ internal sealed class AppEnvironment : IAsyncDisposable
     private readonly Regex? _logErrorPattern;
     private readonly IReadOnlyList<Regex> _failOnLogPatterns;
     private readonly HttpClient _http;
+    private readonly IReadOnlyList<PlannedService> _services;
+    private readonly DockerServices _docker;
     private string _label = "";
 
-    public AppEnvironment(string workingCopy, WebAppContract effectiveContract, StackProfile profile, ProbeWebOptions options, SecretRedactor redactor, IProcessLauncher launcher, string scratch)
+    public AppEnvironment(string workingCopy, WebAppContract effectiveContract, StackProfile profile, ProbeWebOptions options, SecretRedactor redactor, IProcessLauncher launcher, string scratch,
+        ServiceCatalog? catalog = null, string? runId = null)
     {
         _workingCopy = Path.GetFullPath(workingCopy);
         _contract = effectiveContract;
@@ -48,9 +51,21 @@ internal sealed class AppEnvironment : IAsyncDisposable
         _redactor = redactor;
         _launcher = launcher;
         _scratch = scratch;
-        // Allocated up front, so a build can bake a port in (a SPA's API URL is fixed at build time).
-        _ports = Ports.Allocate(effectiveContract.Application.Processes.Select(p => p.Name));
-        _values = new RunValues(_ports, options.Secrets, redactor);
+        // Every port allocated up front, so a build can bake one in (a SPA's API URL is fixed at
+        // build time) and no two of the run's processes and services can get the same one.
+        catalog ??= ServiceCatalog.Default;
+        var images = effectiveContract.Application.Services
+            .Select(s => (Definition: s, Image: catalog.Find(s.Image) ?? throw new InvalidOperationException($"'{s.Image}' is not an allowed service image.")))
+            .ToList();
+        var allPorts = Ports.Allocate([
+            .. effectiveContract.Application.Processes.Select(p => p.Name),
+            .. images.SelectMany(s => s.Image.Ports.Keys.Select(port => ServicePortKey(s.Definition.Name, port))),
+        ]);
+        _ports = effectiveContract.Application.Processes.ToDictionary(p => p.Name, p => allPorts[p.Name]);
+        var serviceValues = new Dictionary<string, string>(StringComparer.Ordinal);
+        _values = new RunValues(_ports, options.Secrets, redactor, serviceValues);
+        _services = [.. images.Select(s => PlanService(s.Definition, s.Image, allPorts, serviceValues))];
+        _docker = new DockerServices(launcher, options, redactor, runId ?? Guid.NewGuid().ToString("N")[..12]);
         _logErrorPattern = profile.LogErrorPattern is { } p ? new Regex(p, RegexOptions.None, TimeSpan.FromSeconds(1)) : null;
         _failOnLogPatterns = [.. effectiveContract.Testability.FailOn.Where(f => f.LogPattern is not null).Select(f => new Regex(f.LogPattern!, RegexOptions.None, TimeSpan.FromSeconds(1)))];
         _http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false, UseCookies = false })
@@ -59,6 +74,34 @@ internal sealed class AppEnvironment : IAsyncDisposable
         };
         BaseUrl = $"http://localhost:{_ports[effectiveContract.Application.BaseUrl]}";
     }
+
+    private static string ServicePortKey(string service, string port) => $"service:{service}:{port}";
+
+    /// <summary>
+    /// A service's host ports and resolved values, which <c>{service:&lt;name&gt;:&lt;key&gt;}</c> then
+    /// reads: <c>port</c> (its first port), <c>&lt;port&gt;_port</c>, and each of its variables.
+    /// </summary>
+    private PlannedService PlanService(ServiceDefinition definition, ServiceImage image, IReadOnlyDictionary<string, int> allPorts, Dictionary<string, string> values)
+    {
+        var hostPorts = image.Ports.Keys.ToDictionary(p => p, p => allPorts[ServicePortKey(definition.Name, p)]);
+        var environment = Placeholders.Resolve(definition.Environment, _values);
+        values[$"{definition.Name}:port"] = hostPorts[image.PrimaryPort].ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreach (var (port, hostPort) in hostPorts)
+            values[$"{definition.Name}:{port}_port"] = hostPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreach (var (name, value) in environment)
+            values[$"{definition.Name}:{name}"] = value;
+        return new PlannedService(definition, image, hostPorts, environment);
+    }
+
+    public bool HasServices => _services.Count > 0;
+
+    public IReadOnlyList<ServiceInfo> Services => [.. _services.Select(s => new ServiceInfo(s.Name, s.Definition.Image, s.HostPorts))];
+
+    /// <summary>Starts the contract's service containers and waits for each to be ready (README §6.1 step 1).</summary>
+    public Task<CheckResult> StartServicesAsync(CancellationToken ct) => _docker.StartAsync(_services, ct);
+
+    /// <summary>The emails a Mailpit service caught, saved as evidence. Call before stopping.</summary>
+    public Task<IReadOnlyList<CapturedEmail>> CaptureEmailsAsync(IArtifactSink sink, CancellationToken ct) => _docker.CaptureEmailsAsync(_services, sink, ct);
 
     /// <summary><c>http://localhost:{port}</c>: localhost, not 127.0.0.1, because browsers treat it as a secure context.</summary>
     public string BaseUrl { get; }
@@ -458,9 +501,17 @@ internal sealed class AppEnvironment : IAsyncDisposable
         }
     }
 
+    /// <summary>Stops the processes, then removes the service containers they used.</summary>
     public async ValueTask DisposeAsync()
     {
-        await StopAsync();
-        _http.Dispose();
+        try
+        {
+            await StopAsync();
+        }
+        finally
+        {
+            await _docker.StopAsync();
+            _http.Dispose();
+        }
     }
 }

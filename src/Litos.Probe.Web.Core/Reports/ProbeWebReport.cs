@@ -22,7 +22,7 @@ public enum ProbeWebOutcome
     InvalidContract,
 }
 
-public enum CheckKind { Build, Start, Reset, SignIn, RouteVisit, LoggedOutRedirect, Denied, ProductionTestEndpoints, SelectorLint, Scenario }
+public enum CheckKind { Build, Start, Reset, SignIn, RouteVisit, LoggedOutRedirect, Denied, ProductionTestEndpoints, SelectorLint, Scenario, Services }
 
 public enum CheckStatus { Passed, Failed, Skipped }
 
@@ -58,6 +58,9 @@ public sealed record ProbeWebReport
     /// <summary>What the run found that a person should act on, in plain words: the dry run's gaps, a contract's errors.</summary>
     public IReadOnlyList<string> Findings { get; init; } = [];
 
+    /// <summary>The emails the app sent during the run, caught by a Mailpit service.</summary>
+    public IReadOnlyList<CapturedEmail> Emails { get; init; } = [];
+
     public Usage Usage { get; init; } = new();
 
     public string ToJson() => JsonSerializer.Serialize(this, ProbeWebJson.Indented);
@@ -79,9 +82,13 @@ public sealed record AppInfo
     public string BaseUrl { get; init; } = "";
     public double StartSeconds { get; init; }
     public IReadOnlyList<ProcessInfo> Processes { get; init; } = [];
+    public IReadOnlyList<ServiceInfo> Services { get; init; } = [];
 }
 
 public sealed record ProcessInfo(string Name, int Port);
+
+/// <param name="Ports">Host ports by the image's port names, e.g. <c>port</c>, or <c>smtp</c> and <c>http</c>.</param>
+public sealed record ServiceInfo(string Name, string Image, IReadOnlyDictionary<string, int> Ports);
 
 public sealed record CheckResult
 {
@@ -124,6 +131,9 @@ public sealed record Evidence
     /// <summary>The app's output lines that counted as errors during the check.</summary>
     public IReadOnlyList<string> Log { get; init; } = [];
 }
+
+/// <param name="Artifact">The raw message, as an <c>.eml</c> artifact id.</param>
+public sealed record CapturedEmail(string From, IReadOnlyList<string> To, string Subject, DateTimeOffset? Sent, string? Artifact);
 
 public sealed record LintSummary
 {

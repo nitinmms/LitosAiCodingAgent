@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Profiles\services.json" LogicalName="Litos.Probe.Web.Core.Profiles.services.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Litos.Probe.Web.Tests" />
   </ItemGroup>
 

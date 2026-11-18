@@ -1,15 +1,28 @@
 # The contract for this app: what a good aspnet-blazor-server retrofit looks like. The serve
 # command, port injection (ASPNETCORE_URLS), ASPNETCORE_ENVIRONMENT=Testing, the readiness
-# marker and the Blazor error signals all come from the stack profile.
+# marker and the Blazor error signals all come from the stack profile. Postgres and Mailpit are
+# throwaway containers for each run, so no shared test database is needed.
 version: 1
 application:
   stack: aspnet-blazor-server
   build:
     - command: [dotnet, build, -c, Release]
       timeout_seconds: 600
+  services:
+    - name: db
+      image: postgres:16-alpine
+      environment:
+        POSTGRES_PASSWORD: "{generated}"
+        POSTGRES_DB: clinic
+    - name: mail
+      image: axllent/mailpit:v1.27
   processes:
     - name: web
       environment:
+        Database__Provider: postgres
+        ConnectionStrings__DefaultConnection: "Host=127.0.0.1;Port={service:db:port};Username=postgres;Password={service:db:POSTGRES_PASSWORD};Database=clinic"
+        Smtp__Host: 127.0.0.1
+        Smtp__Port: "{service:mail:smtp_port}"
         TEST_ADMIN_USER: admin@clinic.test
         TEST_ADMIN_PASS: "{secret:TEST_ADMIN_PASS}"
         TEST_STAFF_USER: staff@clinic.test

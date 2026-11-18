@@ -11,7 +11,8 @@ namespace Litos.Probe.Web;
 /// The engine (README §8). Every entry point validates first, so a bad contract costs nothing and
 /// comes back as <see cref="ProbeWebOutcome.InvalidContract"/> with its errors as findings.
 /// </summary>
-public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher = null) : IProbeWeb
+/// <param name="services">The service images contracts may use; the embedded list when null.</param>
+public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher = null, ServiceCatalog? services = null) : IProbeWeb
 {
     private readonly IProcessLauncher _launcher = launcher ?? new ProcessLauncher();
 
@@ -33,7 +34,7 @@ public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher 
         }
 
         var contract = ContractDefaults.FromProfile(profile, string.IsNullOrEmpty(appDirectory) ? null : appDirectory);
-        return new GateRun(repoRoot, contract, profile, new GateScope(new HashSet<int> { 1, 2, 4, 8 }), ReportKind.DryRun, o, _launcher).RunAsync(ct);
+        return new GateRun(repoRoot, contract, profile, new GateScope(new HashSet<int> { 1, 2, 4, 8 }), ReportKind.DryRun, o, _launcher, services).RunAsync(ct);
     }
 
     public Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract c, GateScope scope, ProbeWebOptions o, CancellationToken ct) =>
@@ -48,7 +49,7 @@ public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher 
         var profile = profiles.Find(c.Application.Stack ?? StackProfiles.Generic);
         return profile is null
             ? [$"application.stack: there is no stack profile '{c.Application.Stack}' (known: {string.Join(", ", profiles.All.Select(p => p.Id).Order())})"]
-            : ContractValidator.Validate(c, profile);
+            : ContractValidator.Validate(c, profile, services);
     }
 
     private Task<ProbeWebReport> RunAsync(string workingCopy, WebAppContract c, GateScope scope, ReportKind kind, ProbeWebOptions o, CancellationToken ct)
@@ -67,6 +68,6 @@ public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher 
 
         var profile = profiles.ForContract(c.Application.Stack);
         var effective = ContractDefaults.Apply(c, profile);
-        return new GateRun(workingCopy, effective, profile, scope, kind, o, _launcher).RunAsync(ct);
+        return new GateRun(workingCopy, effective, profile, scope, kind, o, _launcher, services).RunAsync(ct);
     }
 }

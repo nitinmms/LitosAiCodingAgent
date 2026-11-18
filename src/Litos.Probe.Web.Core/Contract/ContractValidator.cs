@@ -16,8 +16,9 @@ public static partial class ContractValidator
     [GeneratedRegex(@"^(?:(GET|POST|PUT|PATCH|DELETE) )?/\S*$")]
     private static partial Regex EndpointPattern();
 
-    public static IReadOnlyList<string> Validate(WebAppContract contract, StackProfile profile)
+    public static IReadOnlyList<string> Validate(WebAppContract contract, StackProfile profile, ServiceCatalog? services = null)
     {
+        services ??= ServiceCatalog.Default;
         var errors = new List<string>();
         // Nulls inside lists and maps break every rule below, so they are reported on their own.
         errors.AddRange(NullValues(contract));
@@ -30,8 +31,6 @@ public static partial class ContractValidator
             errors.Add($"version: {contract.Version} is not supported (only 1)");
         if (raw.Stack is { } stack && stack != profile.Id)
             errors.Add($"application.stack: the contract names '{stack}' but was checked against the profile '{profile.Id}'");
-        if (raw.Services.Count > 0)
-            errors.Add("application.services: service containers are not supported yet (they come with the factory integration, W2)");
 
         var effective = ContractDefaults.Apply(contract, profile);
         var app = effective.Application;
@@ -44,10 +43,53 @@ public static partial class ContractValidator
                 errors.Add($"application.build[{i}].command: is empty");
         }
 
+        var serviceKeys = ValidateServices(app.Services, services, errors);
         ValidateReset(app.Reset, errors);
         ValidateTestability(effective.Testability, errors);
-        ValidatePlaceholders(effective, processNames, errors);
+        ValidatePlaceholders(effective, processNames, serviceKeys, errors);
         return errors;
+    }
+
+    /// <summary>
+    /// Each service: a known name, an allowlisted image with what it needs, and only {generated}
+    /// among its values. Returns, per service, the keys {service:&lt;name&gt;:&lt;key&gt;} may use: its
+    /// ports (port, &lt;name&gt;_port) and its declared variables.
+    /// </summary>
+    private static Dictionary<string, HashSet<string>> ValidateServices(IReadOnlyList<ServiceDefinition> declared, ServiceCatalog catalog, List<string> errors)
+    {
+        var keys = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var (service, i) in declared.Select((s, i) => (s, i)))
+        {
+            var at = $"application.services[{i}]";
+            if (!NamePattern().IsMatch(service.Name))
+                errors.Add($"{at}.name: '{service.Name}' must be lower-case letters, digits, '-' or '_'");
+            else if (keys.ContainsKey(service.Name))
+                errors.Add($"{at}.name: '{service.Name}' is declared twice");
+
+            var image = catalog.Find(service.Image);
+            if (image is null)
+            {
+                errors.Add($"{at}.image: '{service.Image}' is not an allowed service image (allowed: {string.Join(", ", catalog.All.Select(c => c.Repository).Order())})");
+            }
+            else
+            {
+                foreach (var required in image.RequiredEnvironment.Where(v => !service.Environment.ContainsKey(v)))
+                    errors.Add($"{at}.environment: {image.Repository} needs {required}");
+            }
+
+            foreach (var (name, value) in service.Environment)
+            {
+                foreach (var p in Placeholders.Find(value).Where(p => p.Kind != PlaceholderKind.Generated))
+                    errors.Add($"{at}.environment.{name}: {p.Text} is not allowed here; a service's values are literal or {{generated}}");
+            }
+
+            var names = new HashSet<string>(service.Environment.Keys, StringComparer.Ordinal) { "port" };
+            foreach (var port in image?.Ports.Keys ?? [])
+                names.Add($"{port}_port");
+            keys.TryAdd(service.Name, names);
+        }
+
+        return keys;
     }
 
     private static void ValidateProcesses(AppDefinition app, List<string> errors)
@@ -171,7 +213,7 @@ public static partial class ContractValidator
     /// Every placeholder must be well formed and name something that exists. Secrets are allowed
     /// only where README §10 says they go: app process environments and sign-in credentials.
     /// </summary>
-    private static void ValidatePlaceholders(WebAppContract c, HashSet<string> processNames, List<string> errors)
+    private static void ValidatePlaceholders(WebAppContract c, HashSet<string> processNames, Dictionary<string, HashSet<string>> serviceKeys, List<string> errors)
     {
         void Check(string at, string? value, bool secretsAllowed)
         {
@@ -181,8 +223,10 @@ public static partial class ContractValidator
                     errors.Add($"{at}: {problem}");
                 else if (p.Kind == PlaceholderKind.Port && !processNames.Contains(p.Name!))
                     errors.Add($"{at}: {p.Text} names no process");
-                else if (p.Kind == PlaceholderKind.Service)
-                    errors.Add($"{at}: {p.Text} needs a service, and services come with W2");
+                else if (p.Kind == PlaceholderKind.Service && !serviceKeys.ContainsKey(p.Name!))
+                    errors.Add($"{at}: {p.Text} names no service");
+                else if (p.Kind == PlaceholderKind.Service && !serviceKeys[p.Name!].Contains(p.Key!))
+                    errors.Add($"{at}: {p.Text}: the service '{p.Name}' has no '{p.Key}' (it has {string.Join(", ", serviceKeys[p.Name!].Order())})");
                 else if (p.Kind == PlaceholderKind.Secret && !secretsAllowed)
                     errors.Add($"{at}: {p.Text} is not allowed here; secrets go only into process environments and role credentials");
             }

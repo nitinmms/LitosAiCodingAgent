@@ -5,7 +5,8 @@
        Started from the SDK Blazor template (Individual auth, Server interactivity), then made
        testable: test users seeded from TEST_* variables and /__test/* endpoints, both only in
        the Testing environment; no HTTPS redirection in Testing; a readiness marker once the
-       circuit is live. SQLite for now; Postgres from a `services` container comes with W2.
+       circuit is live. Postgres from a `services` container in a test run, SQLite otherwise;
+       email over SMTP, which a Mailpit service catches.
        Not part of LitosAiAgent.slnx: the Gate builds it through its contract. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -17,6 +18,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
 
 </Project>

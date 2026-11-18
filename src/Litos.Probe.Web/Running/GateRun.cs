@@ -27,6 +27,9 @@ internal sealed class GateRun
     private readonly ProbeWebOptions _o;
     private readonly ReportKind _kind;
     private readonly IProcessLauncher _launcher;
+    private readonly ServiceCatalog? _services;
+    private readonly string _runId = Guid.NewGuid().ToString("N")[..12];
+    private IReadOnlyList<CapturedEmail> _emails = [];
     private readonly SecretRedactor _redactor = new();
     private readonly List<CheckResult> _checks = [];
     private readonly List<string> _findings = [];
@@ -41,8 +44,10 @@ internal sealed class GateRun
     private string _scratch = "";
     private CancellationToken _limit;
 
-    public GateRun(string workingCopy, WebAppContract effectiveContract, StackProfile profile, GateScope scope, ReportKind kind, ProbeWebOptions options, IProcessLauncher launcher)
+    public GateRun(string workingCopy, WebAppContract effectiveContract, StackProfile profile, GateScope scope, ReportKind kind, ProbeWebOptions options, IProcessLauncher launcher,
+        ServiceCatalog? services = null)
     {
+        _services = services;
         _workingCopy = Path.GetFullPath(workingCopy);
         _contract = effectiveContract;
         _profile = profile;
@@ -60,14 +65,14 @@ internal sealed class GateRun
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
         limit.CancelAfter(_o.Timeout);
         _limit = limit.Token;
-        _scratch = Path.Combine(_o.TempDirectory ?? Path.GetTempPath(), "litos-probe-web", "runs", Guid.NewGuid().ToString("N")[..12]);
+        _scratch = Path.Combine(_o.TempDirectory ?? Path.GetTempPath(), "litos-probe-web", "runs", _runId);
         Directory.CreateDirectory(_scratch);
         AppInfo? appInfo = null;
 
         try
         {
             using var folderLock = WorkingCopyLock.Acquire(_workingCopy);
-            _env = new AppEnvironment(_workingCopy, _contract, _profile, _o, _redactor, _launcher, _scratch);
+            _env = new AppEnvironment(_workingCopy, _contract, _profile, _o, _redactor, _launcher, _scratch, _services, _runId);
             // When the limit passes, closing the browser ends whatever page call is hanging.
             using var abort = limit.Token.Register(() => _ = _browser?.DisposeAsync().AsTask());
             try
@@ -89,6 +94,9 @@ internal sealed class GateRun
                     await _browser.DisposeAsync();
                 try
                 {
+                    // Emails are read while Mailpit still runs, then everything stops.
+                    if (_env.HasServices)
+                        _emails = await _env.CaptureEmailsAsync(_o.Artifacts, CancellationToken.None);
                     await _env.DisposeAsync();
                 }
                 finally
@@ -111,6 +119,7 @@ internal sealed class GateRun
                         BaseUrl = _env.BaseUrl,
                         StartSeconds = Math.Round(_env.StartDuration.TotalSeconds, 1),
                         Processes = _env.Processes,
+                        Services = _env.Services,
                     };
                 }
             }
@@ -149,6 +158,7 @@ internal sealed class GateRun
                 Findings = _lintFindings,
             } : null,
             Findings = [.. _findings.Select(_redactor.Redact)],
+            Emails = _emails,
             Usage = new Usage { ModelCalls = 0, WallSeconds = Math.Round(wall.Elapsed.TotalSeconds, 1) },
         };
     }
@@ -187,6 +197,14 @@ internal sealed class GateRun
         _current = CheckKind.Build;
         if (Add(await _env.BuildAsync(ct)).Failed)
             return false;
+
+        // Services before the app: its reset and its processes need the database up.
+        if (_env.HasServices)
+        {
+            _current = CheckKind.Services;
+            if (Add(await _env.StartServicesAsync(ct)).Failed)
+                return false;
+        }
 
         if (_env.ResetsBeforeStart)
         {
@@ -821,7 +839,7 @@ internal sealed class GateRun
 
     private static int Step(CheckKind kind) => kind switch
     {
-        CheckKind.Build or CheckKind.Start => 1,
+        CheckKind.Build or CheckKind.Services or CheckKind.Start => 1,
         CheckKind.Reset => 2,
         CheckKind.SignIn => 3,
         CheckKind.RouteVisit => 4,

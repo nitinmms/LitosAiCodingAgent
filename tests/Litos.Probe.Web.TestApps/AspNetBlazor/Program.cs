@@ -27,10 +27,25 @@ builder.Services.AddAuthentication(options =>
     })
     .AddIdentityCookies();
 
+// A "new sign-in" notice by email: the mail a test run's Mailpit service catches.
+builder.Services.ConfigureApplicationCookie(options => options.Events.OnSignedIn = async context =>
+{
+    if (context.Principal?.Identity?.Name is { } email)
+        await context.HttpContext.RequestServices.GetRequiredService<ClinicMail>()
+            .SendAsync(email, "New sign-in to Clinic Portal", $"You signed in to Clinic Portal at {DateTime.UtcNow:u}. If this wasn't you, tell the clinic.");
+});
+
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+// Postgres in a test run (a service container the factory starts); SQLite on a developer's machine.
+var postgres = string.Equals(builder.Configuration["Database:Provider"], "postgres", StringComparison.OrdinalIgnoreCase);
 // The factory serves the interactive pages; it also registers the scoped context Identity uses.
 builder.Services.AddDbContextFactory<ApplicationDbContext>(options =>
-    options.UseSqlite(connectionString));
+{
+    if (postgres)
+        options.UseNpgsql(connectionString);
+    else
+        options.UseSqlite(connectionString);
+});
 
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
     {
@@ -42,7 +57,8 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddSignInManager()
     .AddDefaultTokenProviders();
 
-builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+builder.Services.AddSingleton<ClinicMail>();
+builder.Services.AddSingleton<IEmailSender<ApplicationUser>, ClinicIdentityEmailSender>();
 builder.Services.AddSingleton<ClinicClock>();
 
 var app = builder.Build();
@@ -50,7 +66,8 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    Directory.CreateDirectory("Data");
+    if (!postgres)
+        Directory.CreateDirectory("Data");
     db.Database.EnsureCreated();
 }
 

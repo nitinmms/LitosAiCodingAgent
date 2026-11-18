@@ -85,18 +85,18 @@ public class ContractValidatorTests
     }
 
     [Fact]
-    public void Services_wait_for_W2()
+    public void A_service_is_checked_against_its_image()
     {
         var c = Samples.Minimal();
-        AssertError(c with { Application = c.Application with { Services = [new ServiceDefinition { Name = "db", Image = "postgres:16" }] } }, "W2");
+        AssertError(c with { Application = c.Application with { Services = [new ServiceDefinition { Name = "db", Image = "postgres:16" }] } }, "postgres needs POSTGRES_PASSWORD");
     }
 
     [Fact]
-    public void A_service_placeholder_waits_for_W2()
+    public void A_service_placeholder_must_name_a_declared_service()
     {
         var c = Samples.Minimal();
         var p = c.Application.Processes[0] with { Environment = new Dictionary<string, string> { ["DB"] = "{service:db:port}" } };
-        AssertError(c with { Application = c.Application with { Processes = [p] } }, "services come with W2");
+        AssertError(c with { Application = c.Application with { Processes = [p] } }, "{service:db:port} names no service");
     }
 
     [Fact]

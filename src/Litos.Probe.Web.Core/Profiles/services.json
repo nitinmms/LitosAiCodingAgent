@@ -1,0 +1,45 @@
+[
+  {
+    "repository": "postgres",
+    "tier": 1,
+    "ports": { "port": 5432 },
+    "ready": { "exec": [ "pg_isready", "-h", "127.0.0.1", "-q" ] },
+    "requiredEnvironment": [ "POSTGRES_PASSWORD" ]
+  },
+  {
+    "repository": "mysql",
+    "ports": { "port": 3306 },
+    "ready": { "exec": [ "mysqladmin", "ping", "-h", "127.0.0.1", "--silent" ] },
+    "requiredEnvironment": [ "MYSQL_ROOT_PASSWORD" ]
+  },
+  {
+    "repository": "mariadb",
+    "ports": { "port": 3306 },
+    "ready": { "exec": [ "mariadb-admin", "ping", "-h", "127.0.0.1", "--silent" ] },
+    "requiredEnvironment": [ "MARIADB_ROOT_PASSWORD" ]
+  },
+  {
+    "repository": "mcr.microsoft.com/mssql/server",
+    "ports": { "port": 1433 },
+    "ready": { "exec": [ "/opt/mssql-tools18/bin/sqlcmd", "-C", "-S", "127.0.0.1", "-U", "sa", "-P", "{env:MSSQL_SA_PASSWORD}", "-Q", "SELECT 1" ] },
+    "requiredEnvironment": [ "ACCEPT_EULA", "MSSQL_SA_PASSWORD" ],
+    "startTimeoutSeconds": 300
+  },
+  {
+    "repository": "mongo",
+    "ports": { "port": 27017 },
+    "ready": { "exec": [ "mongosh", "--quiet", "--eval", "db.adminCommand('ping')" ] }
+  },
+  {
+    "repository": "redis",
+    "ports": { "port": 6379 },
+    "ready": { "exec": [ "redis-cli", "ping" ] }
+  },
+  {
+    "repository": "axllent/mailpit",
+    "tier": 1,
+    "ports": { "smtp": 1025, "http": 8025 },
+    "ready": { "httpPath": "/readyz", "httpPort": "http" },
+    "capturesEmail": true
+  }
+]

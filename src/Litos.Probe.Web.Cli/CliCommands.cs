@@ -157,7 +157,11 @@ internal static class Summary
     {
         output.WriteLine($"{report.Kind} · {report.Outcome}{(report.Commit is null ? "" : $" · commit {report.Commit}")} · {report.Usage.WallSeconds:0.0}s · {report.Usage.ModelCalls} model calls");
         if (report.App is { } app)
+        {
             output.WriteLine($"App: {app.BaseUrl} ({string.Join(", ", app.Processes.Select(p => $"{p.Name}:{p.Port}"))}), started in {app.StartSeconds:0.0}s");
+            foreach (var service in app.Services)
+                output.WriteLine($"Service: {service.Name} ({service.Image}) on {string.Join(", ", service.Ports.Select(p => $"{p.Key} {p.Value}"))}");
+        }
 
         foreach (var check in report.Checks)
         {
@@ -172,6 +176,13 @@ internal static class Summary
 
         if (report.Lint is { } lint)
             output.WriteLine($"Lint: {lint.Pages} pages, {lint.Interactive} interactive elements, {lint.Unnamed} unnamed");
+        if (report.Emails.Count > 0)
+        {
+            output.WriteLine($"Emails caught: {report.Emails.Count}");
+            foreach (var email in report.Emails.Take(10))
+                output.WriteLine($"  - to {string.Join(", ", email.To)}: {email.Subject}");
+        }
+
         if (report.Findings.Count > 0)
         {
             output.WriteLine("Findings:");
