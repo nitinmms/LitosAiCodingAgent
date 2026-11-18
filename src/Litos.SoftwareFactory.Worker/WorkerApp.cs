@@ -67,6 +67,7 @@ public static class WorkerApp
             sp.GetRequiredService<FactoryHostClient>(),
             testOutputDirectory: options.TestOutputDirectory,
             webSearch: options.WebSearch,
+            testabilityCheck: options.TestabilityCheck,
             mcpTools: sp.GetService<WorkerMcp>() is { } mcp ? mcp.PermittedTools : null,
             deniedMcpTools: sp.GetService<WorkerMcp>() is { } denying ? denying.DeniedTools : null,
             skills: skills is FactorySkillDiscovery { Skills.HasLoadableSkills: true }));

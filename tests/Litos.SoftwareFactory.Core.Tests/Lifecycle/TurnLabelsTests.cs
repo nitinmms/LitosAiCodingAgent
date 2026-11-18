@@ -65,9 +65,9 @@ public class TurnLabelsTests
         Assert.Equal(expected, TurnLabels.For(state, Stage.Discuss, blockerNeedsYou: true));
 
     [Fact]
-    public void TaskTypes_AreTheFourOfTheBlueprint_AndNothingElseIsKnown()
+    public void TaskTypes_AreTheFourOfTheBlueprintAndMakeTestable_AndNothingElseIsKnown()
     {
-        Assert.Equal(["bug", "feature", "refactor", "chore"], TaskTypes.All);
+        Assert.Equal(["bug", "feature", "refactor", "chore", "testability"], TaskTypes.All);
         Assert.True(TaskTypes.IsKnown("bug"));
         Assert.False(TaskTypes.IsKnown("Bug"));
         Assert.False(TaskTypes.IsKnown("epic"));

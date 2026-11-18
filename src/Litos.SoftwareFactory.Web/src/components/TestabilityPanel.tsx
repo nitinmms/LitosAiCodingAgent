@@ -6,6 +6,12 @@ import { ErrorNote } from './bits';
 /** How often the panel looks again while a check is under way. */
 export const TESTABILITY_POLL_MS = 3_000;
 
+/** What a Make-testable task is asked to do: the request it is delegated with. */
+export function makeTestableRequest(view: TestabilityView): string {
+  const found = view.gaps.length ? `\n\nThe factory's testability check found:\n${view.gaps.map((g) => `- ${g}`).join('\n')}` : '';
+  return `@factory Make this app testable by the factory: write litos.test.yaml at the repository root, and make the smallest changes to the app so it can be built, started on a given port, reset, signed into as each role and walked in a browser.${found}`;
+}
+
 /** A secret name as a contract writes it after {secret:: TEST_ADMIN_PASS. */
 const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,99}$/;
 
@@ -76,6 +82,18 @@ export function TestabilityPanel({ api, project, onClose }: { api: FactoryApi; p
       await load();
     } catch (failure) {
       setError(failure instanceof ApiError ? failure.message : 'The check could not be started.');
+    }
+  };
+
+  const startMakeTestable = async () => {
+    if (!view) return;
+    setError(null);
+    try {
+      const thread = await api.createThread({ projectId: project.id, title: `Make ${project.name} testable`, typeLabel: 'testability' });
+      await api.postMessage(thread.id, crypto.randomUUID(), makeTestableRequest(view));
+      window.location.hash = `#/threads/${thread.id}`;
+    } catch (failure) {
+      setError(failure instanceof ApiError ? failure.message : 'The task could not be started.');
     }
   };
 
@@ -162,6 +180,18 @@ export function TestabilityPanel({ api, project, onClose }: { api: FactoryApi; p
               ) : null}
               <p className="small muted">No model calls; {view.run.wallSeconds.toFixed(0)}s on the factory host.</p>
             </>
+          ) : null}
+
+          {!view.adopted && (view.status === 'Gaps' || view.status === 'CouldNotCheck') ? (
+            <div className="stack-tight">
+              <p className="small">
+                A Make-testable task writes the contract and the smallest app changes it needs, checks them with the factory's Gate, and
+                ends in a pull request. After it is merged, adopt the contract here.
+              </p>
+              <button className="btn primary" type="button" onClick={() => void startMakeTestable()}>
+                Start a Make-testable task
+              </button>
+            </div>
           ) : null}
 
           <div className="btn-row">

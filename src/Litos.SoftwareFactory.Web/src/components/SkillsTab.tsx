@@ -7,7 +7,7 @@ import { ErrorNote, SaveBar } from './bits';
 export const isSkillName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(name);
 
 /** The task types, in Core/Lifecycle/TurnLabels.cs's order, that a skill can be chosen by default for. */
-export const TASK_TYPES = ['bug', 'feature', 'refactor', 'chore'];
+export const TASK_TYPES = ['bug', 'feature', 'refactor', 'chore', 'testability'];
 
 /** One library skill as the form holds it. */
 export interface SkillForm extends LibrarySkill {

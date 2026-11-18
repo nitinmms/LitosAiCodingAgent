@@ -195,6 +195,9 @@ public sealed record WorkerLaunch(
     /// <summary>Which of the run's turns may search the web, through the host (m3-architecture.md §6).</summary>
     public Settings.WebSearchAccess WebSearch { get; init; }
 
+    /// <summary>A Make-testable run: its work turns get the check_testability tool.</summary>
+    public bool TestabilityCheck { get; init; }
+
     /// <summary>The run's MCP servers, secrets included, in the engine's mcp.json shape; null with none (m3-architecture.md §7.2).</summary>
     public string? McpConfigPath { get; init; }
 

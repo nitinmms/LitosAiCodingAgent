@@ -7,10 +7,10 @@ namespace Litos.SoftwareFactory.Core.Tests.Settings;
 public class BuiltInSkillsTests
 {
     [Fact]
-    public void TheFactoryShips_TheSevenDevelopmentSkills_InNameOrder()
+    public void TheFactoryShips_TheDevelopmentAndTestabilitySkills_InNameOrder()
     {
         Assert.Equal(
-            ["address-feedback", "grill-the-request", "review-rubric", "root-cause-debugging", "safe-refactor", "tdd", "verify-before-submit"],
+            ["address-feedback", "grill-the-request", "review-rubric", "root-cause-debugging", "safe-refactor", "tdd", "testability-dotnet", "testability-node", "verify-before-submit"],
             BuiltInSkills.All.Select(s => s.Name));
         Assert.All(BuiltInSkills.All, s => Assert.True(s.Version >= 1));
     }
@@ -106,4 +106,24 @@ public class BuiltInSkillsTests
         Assert.Contains(new SkillSettings { Library = [tdd with { BuiltIn = "nonsense" }] }.Validate(), e => e.Contains("not one of the factory's built-in skills"));
         Assert.Contains(new SkillSettings { Library = [tdd, tdd with { Name = "tdd-2" }] }.Validate(), e => e.Contains("in the library twice"));
     }
+}
+
+public class TestabilitySkillsTests
+{
+    [Theory]
+    [InlineData("testability-dotnet", "UseStaticWebAssets")]
+    [InlineData("testability-node", "process.env.PORT")]
+    public void The_retrofit_skills_start_every_Make_testable_task_and_carry_what_the_real_apps_taught(string name, string fact)
+    {
+        var skill = BuiltInSkills.All.Single(s => s.Name == name);
+
+        Assert.Equal([Litos.SoftwareFactory.Core.Lifecycle.TaskTypes.Testability], skill.DefaultFor);
+        Assert.Contains(fact, skill.Body);
+        Assert.Contains("The brief comes first", skill.Body);
+        Assert.InRange(skill.Body.Length, 500, 3_000);
+    }
+
+    [Fact]
+    public void A_Make_testable_tasks_default_skills_fit_its_limit() =>
+        Assert.True(BuiltInSkills.All.Where(s => s.DefaultFor.Contains(Litos.SoftwareFactory.Core.Lifecycle.TaskTypes.Testability)).Sum(s => s.Body.Length) < TaskSkillSelection.MaxChars);
 }

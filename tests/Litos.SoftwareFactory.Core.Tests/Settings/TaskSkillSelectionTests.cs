@@ -134,7 +134,7 @@ public class TaskSkillSelectionTests
     {
         var errors = Library(Skill("tdd", defaultFor: ["feature", "epic"])).Validate();
 
-        Assert.Equal(["tdd: \"epic\" is not a task type; choose from bug, feature, refactor, chore."], errors);
+        Assert.Equal(["tdd: \"epic\" is not a task type; choose from bug, feature, refactor, chore, testability."], errors);
     }
 
     [Fact]

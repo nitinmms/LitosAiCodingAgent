@@ -234,3 +234,49 @@ public class UiTestStepTests
         Assert.Contains("NullReferenceException", brief);
     }
 }
+
+/// <summary>The Make-testable task's brief (testability-architecture.md §6.3).</summary>
+public class MakeTestableBriefTests
+{
+    private static string Brief(string type, IReadOnlyList<string>? gaps = null, string? stack = null) => BriefComposer.Compose(
+        new StartTurnStep(TurnKind.Implement, BriefKind.Run),
+        new RunContext("SalesApp", "factory/make-testable", "main", "@factory Make this app testable.")
+        {
+            TaskType = type,
+            TestabilityGaps = gaps ?? [],
+            DetectedStack = stack,
+        },
+        RunOrchestrator.NewRun(RunKind.Implement),
+        new RunLimits());
+
+    [Fact]
+    public void A_Make_testable_task_gets_its_own_brief_with_the_gaps_and_the_stack()
+    {
+        var brief = Brief(TaskTypes.Testability, ["No reset declared: add one.", "There is no field labelled 'Email' on /login."], "node-express-spa");
+
+        Assert.StartsWith("# Factory run brief: make the app testable", brief);
+        Assert.Contains("Detected stack: `node-express-spa`.", brief);
+        Assert.Contains("- No reset declared: add one.", brief);
+        Assert.Contains("Call `check_testability`", brief);
+        Assert.Contains("{secret:NAME}", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void Without_a_check_it_says_so_and_points_at_generic_http()
+    {
+        var brief = Brief(TaskTypes.Testability);
+        Assert.Contains("No stack was detected", brief);
+        Assert.Contains("The check has not run yet", brief);
+    }
+
+    [Theory]
+    [InlineData("feature")]
+    [InlineData("bug")]
+    public void Every_other_task_keeps_the_run_brief(string type)
+    {
+        var brief = Brief(type);
+        Assert.StartsWith("# Factory run brief\n", brief.Replace("\r\n", "\n"));
+        Assert.Contains("Do not start the application", brief);
+    }
+}

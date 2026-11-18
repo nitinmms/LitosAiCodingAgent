@@ -46,7 +46,10 @@ public static class TurnLabels
 /// <summary>The labels a task can be filed under (§7.1). Chosen by a person, never derived.</summary>
 public static class TaskTypes
 {
-    public static readonly IReadOnlyList<string> All = ["bug", "feature", "refactor", "chore"];
+    /// <summary>A Make-testable task (testability-architecture.md §6.3): retrofit the app so the factory can test it in a browser.</summary>
+    public const string Testability = "testability";
+
+    public static readonly IReadOnlyList<string> All = ["bug", "feature", "refactor", "chore", Testability];
 
     public static bool IsKnown(string? type) => type is not null && All.Contains(type);
 }

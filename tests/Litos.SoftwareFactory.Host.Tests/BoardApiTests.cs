@@ -70,7 +70,7 @@ public sealed class BoardApiTests : IAsyncLifetime
     [Fact]
     public async Task Settings_ListTheTaskTypes()
     {
-        Assert.Equal(["bug", "feature", "refactor", "chore"],
+        Assert.Equal(["bug", "feature", "refactor", "chore", "testability"],
             (await _host.GetAsync("api/settings")).GetProperty("taskTypes").EnumerateArray().Select(t => t.GetString()));
     }
 

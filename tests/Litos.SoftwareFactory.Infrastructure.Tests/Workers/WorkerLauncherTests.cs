@@ -405,6 +405,13 @@ public class LocalProcessWorkerLauncherTests : IDisposable
     }
 
     [Fact]
+    public void BuildArguments_ForAMakeTestableRun_TurnOnCheckTestability_AndOtherwiseSayNothing()
+    {
+        Assert.Equal(["--testability-check", "on"], LocalProcessWorkerLauncher.BuildArguments(Launch() with { TestabilityCheck = true }, 1).Skip(10));
+        Assert.DoesNotContain("--testability-check", LocalProcessWorkerLauncher.BuildArguments(Launch(), 1));
+    }
+
+    [Fact]
     public void BuildArguments_WithNoShellLimitNoWebSearchAndNoMcp_SayNothingOfThem()
     {
         var arguments = LocalProcessWorkerLauncher.BuildArguments(Launch(), 1);

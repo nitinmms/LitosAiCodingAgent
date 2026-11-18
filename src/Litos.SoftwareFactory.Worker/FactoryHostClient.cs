@@ -38,6 +38,14 @@ public sealed class FactoryHostClient
 
     /// <summary>Asks the host to search the web; it holds the key, and says why when it will not.</summary>
     /// <exception cref="HttpRequestException">The host could not be reached or answered with an error.</exception>
+    public async Task<CheckTestabilityResponse> CheckTestabilityAsync(CheckTestabilityRequest request, CancellationToken ct)
+    {
+        using var response = await Http.PostAsJsonAsync(FactoryWire.TestabilityChecksPath(RunId), request, FactoryWire.Json, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<CheckTestabilityResponse>(FactoryWire.Json, ct)
+            ?? new CheckTestabilityResponse(true, "The host sent no result.");
+    }
+
     public async Task<WebSearchResponse> WebSearchAsync(WebSearchRequest request, CancellationToken ct)
     {
         using var response = await Http.PostAsJsonAsync(FactoryWire.WebSearchPath(RunId), request, FactoryWire.Json, ct);

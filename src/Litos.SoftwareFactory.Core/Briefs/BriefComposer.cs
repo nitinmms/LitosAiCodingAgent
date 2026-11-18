@@ -14,6 +14,15 @@ namespace Litos.SoftwareFactory.Core.Briefs;
 /// </summary>
 public sealed record RunContext(string Project, string Branch, string BaseBranch, string Request)
 {
+    /// <summary>The task's type (Lifecycle.TaskTypes); a Make-testable task gets its own brief.</summary>
+    public string? TaskType { get; init; }
+
+    /// <summary>A Make-testable task: what the factory's testability check found, in plain words.</summary>
+    public IReadOnlyList<string> TestabilityGaps { get; init; } = [];
+
+    /// <summary>A Make-testable task: the stack profile the check detected.</summary>
+    public string? DetectedStack { get; init; }
+
     public string? SpecificationSummary { get; init; }
 
     public IReadOnlyList<string> AcceptanceCriteria { get; init; } = [];
@@ -241,13 +250,32 @@ public static partial class BriefComposer
                 + "with its `id`: that adds a version to the same page rather than another page.\n\n"
                 + Bullets(artifacts.Select(a => $"`{a.Id}`: \"{a.Title}\", version {a.LatestVersion}")));
 
-    private static string Run(RunContext context, RunState state) => Render("run", new()
+    private static string Run(RunContext context, RunState state) =>
+        context.TaskType == Lifecycle.TaskTypes.Testability ? MakeTestable(context, state) : Render("run", new()
     {
         ["project"] = context.Project,
         ["branch"] = context.Branch,
         ["baseBranch"] = context.BaseBranch,
         ["request"] = context.Request.Trim(),
         ["specification"] = Specification(context),
+        ["decisions"] = Decisions(state),
+        ["plan"] = Plan(state),
+        ["verification"] = VerificationSummary(context),
+        ["baseline"] = BaselineFailures(state),
+    });
+
+    /// <summary>A Make-testable task (testability-architecture.md §6.3): the gaps, the stack and the contract to write.</summary>
+    private static string MakeTestable(RunContext context, RunState state) => Render("make-testable", new()
+    {
+        ["project"] = context.Project,
+        ["branch"] = context.Branch,
+        ["baseBranch"] = context.BaseBranch,
+        ["request"] = context.Request.Trim(),
+        ["testability"] = string.Join("\n\n", new[]
+        {
+            context.DetectedStack is { } stack ? $"Detected stack: `{stack}`." : "No stack was detected: use `generic-http` and give the commands.",
+            context.TestabilityGaps.Count == 0 ? "The check has not run yet, or found nothing to list." : Bullets(context.TestabilityGaps),
+        }),
         ["decisions"] = Decisions(state),
         ["plan"] = Plan(state),
         ["verification"] = VerificationSummary(context),

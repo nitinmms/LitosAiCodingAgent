@@ -32,6 +32,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     private readonly Dictionary<string, ITool> _builtIn;
     private readonly FactoryHostClient _host;
     private readonly WorkerWebSearch _webSearch;
+    private readonly bool _testabilityCheck;
     private readonly Func<IEnumerable<ITool>> _mcpTools;
     private readonly Func<IEnumerable<ITool>> _deniedMcpTools;
     private readonly bool _skills;
@@ -50,11 +51,12 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
     /// code only, where calling one returns a refusal naming the policy; none by default.</param>
     public FactoryToolSetPolicy(
         IEnumerable<ITool> registeredTools, FactoryHostClient host, string? workingCopy = null, string? testOutputDirectory = null,
-        WorkerWebSearch webSearch = WorkerWebSearch.Off, Func<IEnumerable<ITool>>? mcpTools = null, bool skills = false,
+        WorkerWebSearch webSearch = WorkerWebSearch.Off, Func<IEnumerable<ITool>>? mcpTools = null, bool skills = false, bool testabilityCheck = false,
         Func<IEnumerable<ITool>>? deniedMcpTools = null)
     {
         _host = host;
         _webSearch = webSearch;
+        _testabilityCheck = testabilityCheck;
         _mcpTools = mcpTools ?? (() => []);
         _deniedMcpTools = deniedMcpTools ?? (() => []);
         _skills = skills;
@@ -110,6 +112,7 @@ public sealed class FactoryToolSetPolicy : IToolSetPolicy
         TurnKind.Implement or TurnKind.Repair or TurnKind.Rework => new ToolRegistry(
             [.. BuiltIn(WorkTools), .. Skill(sessionId), .. WebSearch(sessionId, readOnly: false), .. _mcpTools(),
              .. forKernel ? _deniedMcpTools() : [],
+             .. _testabilityCheck ? [new CheckTestabilityTool(_host, sessionId)] : Array.Empty<ITool>(),
              new SubmitWorkTool(_host, sessionId), new RequestDecisionTool(_host, sessionId)]),
         TurnKind.Review => new ToolRegistry([.. ReadOnly(sessionId), new SubmitReviewTool(_host, sessionId)]),
         TurnKind.Spec => new ToolRegistry([.. ReadOnly(sessionId), new SubmitSpecTool(_host, sessionId)]),

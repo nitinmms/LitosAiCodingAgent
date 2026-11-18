@@ -45,6 +45,9 @@ public static class FactoryWire
 
     public static string WebSearchPath(string runId) => $"/internal/runs/{Uri.EscapeDataString(runId)}/web-search";
 
+    /// <summary>Where a Make-testable run's check_testability tool asks the host to run the Gate on its draft contract.</summary>
+    public static string TestabilityChecksPath(string runId) => $"/internal/runs/{Uri.EscapeDataString(runId)}/testability-checks";
+
     /// <summary>Where a worker says it loaded a skill, so the skill report can count it (m4-architecture.md §12.5).</summary>
     public static string SkillLoadsPath(string runId) => $"/internal/runs/{Uri.EscapeDataString(runId)}/skill-loads";
 
@@ -97,6 +100,11 @@ public sealed record SkillLoadReport(string SessionId, string Name);
 
 /// <summary>What the model is shown: the results, or, when <paramref name="IsError"/>, why there are none.</summary>
 public sealed record WebSearchResponse(bool IsError, string Text);
+
+/// <param name="Steps">Which Gate steps to run, as "1-8" or "1,2,4"; all when null.</param>
+public sealed record CheckTestabilityRequest(string SessionId, string? Steps);
+
+public sealed record CheckTestabilityResponse(bool IsError, string Text);
 
 /// <summary>Body of the worker's compact endpoint. The instruction tells the summarizer what
 /// must survive (acceptance criteria, decisions, changed files, outstanding failures).</summary>

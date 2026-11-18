@@ -81,6 +81,31 @@ public static class WorkerCallbacks
             return Results.Json(await search.SearchAsync(active, body, ct), FactoryWire.Json);
         });
 
+        // check_testability (testability-architecture.md §6.3): the host runs the Gate on the run's
+        // draft litos.test.yaml. Only Make-testable runs have the tool; any other run is refused.
+        runs.MapPost("/testability-checks", async (string runId, HttpRequest request, RunRegistry registry, IFactoryStore store,
+            Testability.DraftChecks checks, CancellationToken ct) =>
+        {
+            if (Authenticate(runId, request, registry) is not { } active)
+                return Results.Unauthorized();
+            if (await store.GetThreadAsync(active.ThreadId, ct) is not { Thread.TypeLabel: Core.Lifecycle.TaskTypes.Testability })
+                return Results.Json(new CheckTestabilityResponse(true, "check_testability is only for Make-testable tasks."), FactoryWire.Json);
+
+            CheckTestabilityRequest? body;
+            try
+            {
+                body = await request.ReadFromJsonAsync<CheckTestabilityRequest>(FactoryWire.Json, ct);
+            }
+            catch (JsonException)
+            {
+                body = null;
+            }
+
+            var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, active.StopToken);
+            using (linked)
+                return Results.Json(await checks.CheckAsync(active, body ?? new CheckTestabilityRequest("", null), linked.Token), FactoryWire.Json);
+        });
+
         // A skill the agent loaded (m4-architecture.md §12.5): bookkeeping for the skill report, never refused for the agent's sake.
         runs.MapPost("/skill-loads", async (string runId, HttpRequest request, RunRegistry registry, IFactoryStore store, IClock clock, CancellationToken ct) =>
         {

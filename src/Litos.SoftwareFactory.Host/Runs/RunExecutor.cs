@@ -48,7 +48,7 @@ public sealed class RunExecutor(
     IFactoryStore store, FactoryOptions options, IWorkspaceProvider workspaces, IVerifier verifier,
     IWorkerLauncher launcher, IWorkerClientFactory clients, IUserDirectory users, FactorySignals signals, IClock clock, Settings.FactorySettings settings,
     FactorySkills skills, RunAttachments attachments, ILogger<RunExecutor> logger, IGitHub? gitHub = null, VerificationGate? verificationGate = null,
-    Testability.RunUiTests? uiTests = null)
+    Testability.RunUiTests? uiTests = null, Testability.DraftChecks? draftChecks = null)
 {
     private readonly VerificationGate _verificationGate = verificationGate ?? new VerificationGate(options);
 
@@ -65,7 +65,12 @@ public sealed class RunExecutor(
             // Browser checks are fixed when the run starts, like its limits: a contract adopted
             // mid-run applies to the next one.
             if (state.Phase == RunPhase.NotStarted)
-                state = state with { UiTestEnabled = uiTests is not null && VerificationProfile.Parse(project.VerificationProfileJson).WebApp() is not null };
+                state = state with
+                {
+                    // A Make-testable task runs the Gate on its own draft instead (testability-architecture.md §6.3).
+                    UiTestEnabled = IsMakeTestable(claimed.Thread) ? draftChecks is not null
+                        : uiTests is not null && VerificationProfile.Parse(project.VerificationProfileJson).WebApp() is not null,
+                };
             StepOutcome outcome = run.Entry switch
             {
                 RunEntry.DecisionAnswered => new DecisionAnswered(run.EntryAnswer ?? ""),
@@ -650,8 +655,9 @@ public sealed class RunExecutor(
             .Where(u => u.RunId == data.Run.Id && u.Phase is nameof(TurnKind.Implement) or nameof(TurnKind.Rework) or nameof(TurnKind.Repair) or nameof(TurnKind.Nudge))
             .Sum(u => u.Charged);
 
-        // A review resumed after a stop is not planned again: it continues, as a full review.
-        if (step.Brief != BriefKind.Review || diff is null)
+        // A review resumed after a stop is not planned again: it continues, as a full review. A
+        // Make-testable task always gets a full one: it changes authentication and start-up (§6.3).
+        if (step.Brief != BriefKind.Review || diff is null || IsMakeTestable(data.Thread))
             return ("Review", TurnAllowance.ForReview(ReviewDepth.Full, implementation, data.Limits));
 
         var plan = ReviewPlanner.Plan(new ReviewInputs(diff.Files, diff.Patch, state.LastVerification, state.LastSubmission), data.Limits);
@@ -680,7 +686,13 @@ public sealed class RunExecutor(
             // The approved specification the run builds (m2-architecture.md §5), if it builds one.
             SpecificationSummary = spec?.Summary,
             AcceptanceCriteria = spec?.AcceptanceCriteria ?? [],
+            TaskType = data.Thread.TypeLabel,
         };
+        if (IsMakeTestable(data.Thread) && await store.LatestTestabilityCheckAsync(data.Project.Id, ct) is { } check)
+        {
+            var report = Core.Testability.TestabilityReport.FromJson(check.ReportJson);
+            context = context with { TestabilityGaps = report.Gaps, DetectedStack = report.Stack };
+        }
 
         WorkspaceDiff? reviewDiff = null;
         if (step.Brief is BriefKind.Rework or BriefKind.Review)
@@ -767,9 +779,13 @@ public sealed class RunExecutor(
         return new Verified(outcome, baseline);
     }
 
-    /// <summary>The browser smoke on the task's working copy (testability-architecture.md §6.4).</summary>
+    private static bool IsMakeTestable(TaskThread thread) => thread.TypeLabel == TaskTypes.Testability;
+
+    /// <summary>The browser smoke on the task's working copy (testability-architecture.md §6.4), or a Make-testable task's Gate on its draft.</summary>
     private async Task<StepOutcome> UiTestAsync(RunData data, CancellationToken ct)
     {
+        if (IsMakeTestable(data.Thread) && draftChecks is not null)
+            return new UiTested(await draftChecks.GateDraftAsync(data.Project, data.Run.Id, data.Workspace.Path, text => NoteAsync(data, text), ct));
         if (uiTests is null || data.Profile.WebApp() is not { } contract)
             return new UiTested(new Core.Testability.UiTestResult { Evidence = Core.Testability.UiTestEvidence.NotSetUp });
         return new UiTested(await uiTests.RunAsync(data.Project, data.Run.Id, data.Workspace.Path, contract, text => NoteAsync(data, text), ct));
@@ -1056,6 +1072,7 @@ public sealed class RunExecutor(
                 PtcEnabled = capabilities.Ptc,
                 ShellTimeoutSeconds = capabilities.ShellTimeoutSeconds,
                 WebSearch = capabilities.WebSearch,
+                TestabilityCheck = IsMakeTestable(claimed.Thread) && draftChecks is not null,
                 McpConfigPath = mcpConfig,
                 SkillsPath = prepared.Path,
                 TempDirectory = options.RunTempDirectory(claimed.Run.Id),

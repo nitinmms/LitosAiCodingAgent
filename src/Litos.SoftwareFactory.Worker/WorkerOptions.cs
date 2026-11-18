@@ -28,6 +28,9 @@ public sealed record WorkerOptions(
 
     public WorkerWebSearch WebSearch { get; init; }
 
+    /// <summary>A Make-testable run: its work turns get the check_testability tool (testability-architecture.md §6.3).</summary>
+    public bool TestabilityCheck { get; init; }
+
     /// <summary>The run's MCP servers, as the host wrote them; null when it has none.</summary>
     public string? McpConfigPath { get; init; }
 
@@ -123,6 +126,7 @@ public sealed record WorkerOptions(
         {
             ShellTimeoutSeconds = OptionalInt("--shell-timeout"),
             WebSearch = webSearch,
+            TestabilityCheck = values.GetValueOrDefault("--testability-check", "off") == "on",
             McpConfigPath = values.TryGetValue("--mcp-config", out var mcpConfig) ? Path.GetFullPath(mcpConfig) : null,
             SkillsPath = values.TryGetValue("--skills", out var skills) ? Path.GetFullPath(skills) : null,
         };

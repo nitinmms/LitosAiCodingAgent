@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { createApi } from './api/client';
@@ -216,5 +216,35 @@ describe('adopting the contract on main', () => {
   it('names the broken-on-main state as bad news', () => {
     expect(testabilitySummary({ status: 'BrokenOnMain', checkedAt: null, stack: null, adopted: true })).toEqual({ text: 'Broken on main', bad: true });
     expect(testabilitySummary({ status: 'TestReady', checkedAt: null, stack: null, adopted: true }, 4).text).toBe('Test-ready (rev 4)');
+  });
+});
+
+describe('starting a Make-testable task', () => {
+  it('creates a testability task for the project and delegates it with the gaps', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.testability.set(project.id, gapsView(host, project.id));
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+
+    await user.click(await panel().findByRole('button', { name: 'Start a Make-testable task' }));
+
+    await waitFor(() => expect(host.sent('POST', '/messages')).toHaveLength(1));
+    expect(host.sent('POST', '/api/threads')[0]!.body).toMatchObject({ projectId: project.id, title: 'Make SalesApp testable', typeLabel: 'testability' });
+    const text = String((host.sent('POST', '/messages')[0]!.body as { text: string }).text);
+    expect(text.startsWith('@factory Make this app testable')).toBe(true);
+    expect(text).toContain('- No reset declared');
+    expect(window.location.hash).toMatch(/^#\/threads\//);
+  });
+
+  it('is not offered once the contract is adopted', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.testability.set(project.id, gapsView(host, project.id, { status: 'TestReady', adopted: true }));
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+
+    await panel().findByText(/Test-ready/);
+    expect(panel().queryByRole('button', { name: 'Start a Make-testable task' })).not.toBeInTheDocument();
   });
 });

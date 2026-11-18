@@ -1650,3 +1650,66 @@ public class WorkerSkillsTests
         Assert.True(refused.IsError);
     }
 }
+
+/// <summary>check_testability: a Make-testable run's one way to run the app (testability-architecture.md §6.3).</summary>
+public class CheckTestabilityToolTests
+{
+    private static readonly string[] Registered = ["read_file", "write_file", "edit_file", "list_directory", "search_code", "shell", "web_search", "skill"];
+
+    private sealed class NamedTool(string name) : ITool
+    {
+        public string Name { get; } = name;
+        public string Description => name;
+        public JsonElement ParameterSchema { get; } = JsonSerializer.SerializeToElement(new { type = "object" });
+        public Task<ToolResult> InvokeAsync(JsonElement arguments, CancellationToken ct) => Task.FromResult(ToolResult.Ok(name));
+    }
+
+    private static string[] Names(Litos.Agent.Tools.ToolRegistry registry) => [.. registry.Schemas.Select(s => s.Name)];
+
+    [Theory]
+    [InlineData("Implement", true)]
+    [InlineData("Repair", true)]
+    [InlineData("Rework", true)]
+    [InlineData("Review", false)]
+    [InlineData("Scan", false)]
+    [InlineData("Chat", false)]
+    public void Only_a_Make_testable_runs_work_turns_get_it(string kind, bool expected)
+    {
+        var on = new FactoryToolSetPolicy(Registered.Select(n => new NamedTool(n)), TestOptions.HostClient(new FakeHttpMessageHandler()), testabilityCheck: true);
+        var off = new FactoryToolSetPolicy(Registered.Select(n => new NamedTool(n)), TestOptions.HostClient(new FakeHttpMessageHandler()));
+
+        Assert.Equal(expected, Names(on.Create("s", kind)).Contains(CheckTestabilityTool.ToolName));
+        Assert.DoesNotContain(CheckTestabilityTool.ToolName, Names(off.Create("s", kind)));
+    }
+
+    [Fact]
+    public async Task It_asks_the_host_and_returns_its_answer_or_its_error()
+    {
+        var handler = new FakeHttpMessageHandler();
+        handler.EnqueueJson(new CheckTestabilityResponse(false, "Gate: Passed (41s, no model calls)."));
+        handler.EnqueueJson(new CheckTestabilityResponse(true, "There is no litos.test.yaml at the repository root yet."));
+        handler.EnqueueFailure();
+        var tool = new CheckTestabilityTool(TestOptions.HostClient(handler), "s-1");
+        var args = JsonDocument.Parse("""{"steps":"1-4"}""").RootElement;
+
+        var passed = await tool.InvokeAsync(args, default);
+        var missing = await tool.InvokeAsync(args, default);
+        var unreachable = await tool.InvokeAsync(args, default);
+
+        Assert.Equal((false, "Gate: Passed (41s, no model calls)."), (passed.IsError, passed.Text));
+        Assert.True(missing.IsError);
+        Assert.Contains("no litos.test.yaml", missing.Text);
+        Assert.True(unreachable.IsError);
+        Assert.Contains("could not run the check", unreachable.Text);
+    }
+
+    [Fact]
+    public void The_flag_turns_it_on_and_it_is_off_otherwise()
+    {
+        var environment = new Dictionary<string, string?> { ["FACTORY_WORKER_SECRET"] = "s", ["FACTORY_HOST_URL"] = "http://127.0.0.1:5180", ["FACTORY_RUN_ID"] = "run-42" };
+        string[] arguments = ["--parent-pid", "4242", "--provider", "openrouter", "--model", "vendor/model", "--data-dir", "factory-data"];
+
+        Assert.True(WorkerOptions.Parse([.. arguments, "--testability-check", "on"], n => environment.GetValueOrDefault(n)).TestabilityCheck);
+        Assert.False(WorkerOptions.Parse(arguments, n => environment.GetValueOrDefault(n)).TestabilityCheck);
+    }
+}
