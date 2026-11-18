@@ -64,8 +64,30 @@ public sealed class FakeTestabilityEngine : ITestabilityEngine
         return Task.FromResult(GateReport);
     }
 
-    public Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract contract, ProbeWebOptions options, CancellationToken ct) =>
-        throw new NotSupportedException("W2.5");
+    /// <summary>What each smoke answers, in order; a passing one once the queue is empty.</summary>
+    public Queue<ProbeWebReport> SmokeReports { get; } = new();
+
+    public List<(string WorkingCopy, ProbeWebOptions Options)> Smokes { get; } = [];
+
+    public static ProbeWebReport PassingSmoke() => new()
+    {
+        Kind = ReportKind.Smoke,
+        Outcome = ProbeWebOutcome.Passed,
+        Commit = "commit0",
+        Checks =
+        [
+            CheckResult.Pass("build", CheckKind.Build),
+            CheckResult.Pass("start", CheckKind.Start),
+            CheckResult.Pass("visit:admin:/admin", CheckKind.RouteVisit) with { Role = "admin", Route = "/admin", Evidence = new Evidence { Screenshots = ["shot-admin"], Trace = "trace-admin" } },
+        ],
+        Usage = new Usage { WallSeconds = 31 },
+    };
+
+    public Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract contract, ProbeWebOptions options, CancellationToken ct)
+    {
+        Smokes.Add((workingCopy, options));
+        return Task.FromResult(SmokeReports.TryDequeue(out var report) ? report : PassingSmoke());
+    }
 }
 
 /// <summary>

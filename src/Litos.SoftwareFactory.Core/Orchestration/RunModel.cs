@@ -175,6 +175,7 @@ public enum BriefKind
 [JsonDerivedType(typeof(StartTurnStep), "turn")]
 [JsonDerivedType(typeof(VerifyStep), "verify")]
 [JsonDerivedType(typeof(HandoffStep), "handoff")]
+[JsonDerivedType(typeof(UiTestStep), "uitest")]
 [JsonDerivedType(typeof(StopStep), "stop")]
 public abstract record RunStep;
 
@@ -205,6 +206,13 @@ public sealed record VerifyStep : RunStep;
 
 /// <summary>Host step: commit, push, create or update the draft PR, compose the handoff.</summary>
 public sealed record HandoffStep : RunStep;
+
+/// <summary>
+/// Host step (testability-architecture.md §6.4): start the app under the adopted contract, run
+/// the browser smoke (Gate steps 1–6), compare it with the Gate baseline on the default branch,
+/// and keep the screenshots. Runs after a passing verification and before the review.
+/// </summary>
+public sealed record UiTestStep : RunStep;
 
 /// <summary>The run stops here. Trigger is the lifecycle transition the host applies.</summary>
 public sealed record StopStep(LifecycleTrigger Trigger, StopReason Reason, string Message) : RunStep;
@@ -244,6 +252,9 @@ public enum StopReason
 
     /// <summary>The scan-only check finished: the run reports what the scan found and stops.</summary>
     ScanOnly,
+
+    /// <summary>The browser smoke could not run: the app, its services or the browser would not come up.</summary>
+    UiTestUnavailable,
 }
 
 // ---- Outcomes: what happened when the host did it ----
@@ -302,6 +313,9 @@ public sealed record Verified(VerificationOutcome Outcome, VerificationOutcome? 
 
 public sealed record HandoffCompleted(bool Succeeded, string? Failure = null) : StepOutcome;
 
+/// <summary>The browser smoke ran (or could not): see <see cref="Testability.UiTestResult"/>.</summary>
+public sealed record UiTested(Testability.UiTestResult Result) : StepOutcome;
+
 /// <summary>
 /// A person paused or cancelled the run while the host was in a step that is not a model turn
 /// (preflight, verification, handoff, the work before a turn), or between two steps. A stop
@@ -319,6 +333,9 @@ public enum RunPhase
     Verify,
     Handoff,
     Stopped,
+
+    /// <summary>The browser smoke, part of the Verify stage on the board.</summary>
+    UiTest,
 }
 
 public sealed record AnsweredDecision(string Question, string Answer);
@@ -362,6 +379,22 @@ public sealed record RunState(RunKind Kind)
 
     public bool ReviewCompleted { get; init; }
 
+    /// <summary>Whether the project had an adopted web-app contract when the run started: then
+    /// each passing verification is followed by the browser smoke before review and handoff.</summary>
+    public bool UiTestEnabled { get; init; }
+
+    /// <summary>The code as last verified has also passed the browser smoke; reset by every verification.</summary>
+    public bool UiTestCurrent { get; init; }
+
+    /// <summary>The browser failures the current repair turn is fixing; empty otherwise.</summary>
+    public IReadOnlyList<Testability.UiDefect> UiDefects { get; init; } = [];
+
+    /// <summary>What the browser smoke found failing when the current repair started, for "repair made no difference".</summary>
+    public IReadOnlyList<string>? UiFailuresBeforeRepair { get; init; }
+
+    /// <summary>The last browser smoke's evidence, for the handoff.</summary>
+    public Testability.UiTestEvidence? UiTest { get; init; }
+
     public ReviewStatus Review { get; init; } = ReviewStatus.NotRun;
 
     public IReadOnlyList<ReviewFinding> Findings { get; init; } = [];
@@ -403,10 +436,10 @@ public sealed record RunState(RunKind Kind)
     /// <summary>The stage a task in this state is in (§5.1).</summary>
     public Stage Stage => Phase switch
     {
-        RunPhase.Verify => Stage.Verify,
+        RunPhase.Verify or RunPhase.UiTest => Stage.Verify,
         RunPhase.Handoff => Stage.Handoff,
         RunPhase.Stopped when LastStop?.Reason == StopReason.HandedOff => Stage.Handoff,
-        RunPhase.Stopped when ResumePoint is VerifyStep => Stage.Verify,
+        RunPhase.Stopped when ResumePoint is VerifyStep or UiTestStep => Stage.Verify,
         RunPhase.Stopped when ResumePoint is HandoffStep => Stage.Handoff,
         _ => WorkTurn == TurnKind.Review ? Stage.Review : Stage.Implement,
     };

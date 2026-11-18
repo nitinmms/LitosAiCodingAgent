@@ -118,6 +118,9 @@ export function Details({
     ['Unit tests', passed + failed > 0 ? `${fmt(passed)} passed${failed ? `, ${fmt(failed)} failed` : ''}` : words(unitTests), toneOf(unitTests)],
     ['Changed-line coverage', coveragePercent === null ? words(coverage) : pct(coveragePercent), toneOf(coverage)],
     ['Agent review', words(review), toneOf(review)],
+    ...(evidence?.uiTesting && evidence.uiTesting.status !== 'NotSetUp'
+      ? [['Browser checks', words(evidence.uiTesting.status), toneOf(evidence.uiTesting.status)] as [string, string, string]]
+      : []),
     ['Human testing', human.text, human.tone],
   ];
 

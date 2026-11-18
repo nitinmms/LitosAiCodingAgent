@@ -485,6 +485,37 @@ export interface HandoffEvidence {
   defaultBranch?: string | null;
   /** The agent's suggestion for running the application; the factory never runs it. */
   howToRun?: RunInstructions | null;
+  /** The browser checks before handoff (Core/Testability/UiTesting.cs); absent on a handoff from before W2.5. */
+  uiTesting?: UiTestEvidence | null;
+}
+
+/** One browser check, with its screenshots and trace as run-artifact ids. */
+export interface UiCheck {
+  id: string;
+  kind: string;
+  role: string | null;
+  route: string | null;
+  status: 'Passed' | 'Failed' | 'Skipped';
+  classification: string | null;
+  message: string | null;
+  screenshots: string[];
+  trace: string | null;
+  log: string[];
+}
+
+/** The browser evidence a handoff carries (testability-architecture.md §6.5). */
+export interface UiTestEvidence {
+  status: 'NotSetUp' | 'Passed' | 'Failed' | 'Inconclusive';
+  contractRevision: number | null;
+  commit: string | null;
+  checks: UiCheck[];
+  preExisting: UiCheck[];
+  lint: { pages: number; interactive: number; unnamed: number } | null;
+  emails: { from: string; to: string[]; subject: string; artifact: string | null }[];
+  /** How the factory built and started the app, from the adopted contract. */
+  runCommands: string[];
+  problem: string | null;
+  wallSeconds: number;
 }
 
 /** How to run the application from a fresh clone (Contracts/Submissions.cs). */

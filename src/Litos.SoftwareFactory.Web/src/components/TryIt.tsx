@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { RunInstructions } from '../api/types';
+import type { RunInstructions, UiTestEvidence } from '../api/types';
 import type { TryItGuide } from '../domain/tryIt';
 import { SafeLink } from './bits';
 
@@ -13,6 +13,7 @@ export function TryItYourself({
   branch,
   pullRequest,
   howToRun,
+  uiTesting,
   tests,
   answer,
 }: {
@@ -21,12 +22,15 @@ export function TryItYourself({
   /** The pull request link, as the card already labels it; null when there is none. */
   pullRequest: React.ReactNode;
   howToRun: RunInstructions | null | undefined;
+  /** The browser checks: when they passed, the factory itself ran the app with these commands. */
+  uiTesting?: UiTestEvidence | null;
   /** The manual test checklist; null when the agent named none. */
   tests: React.ReactNode;
   /** Accept and Request changes; null once the handoff is no longer waiting. */
   answer: React.ReactNode;
 }) {
   const [fresh, setFresh] = useState(true);
+  const ranByFactory = uiTesting?.status === 'Passed' && uiTesting.runCommands.length > 0;
 
   return (
     <section className="tryit" aria-label="Try it yourself">
@@ -73,9 +77,24 @@ export function TryItYourself({
       <TryItStep
         n={2}
         title="Run it"
-        tag={howToRun?.steps.length ? <span className="tag">Suggested by the agent · not run by the factory</span> : null}
+        tag={
+          ranByFactory ? (
+            <span className="tag">Run by the factory{uiTesting!.commit ? ` on commit ${uiTesting!.commit.slice(0, 7)}` : ''}</span>
+          ) : howToRun?.steps.length ? (
+            <span className="tag">Suggested by the agent · not run by the factory</span>
+          ) : null
+        }
       >
-        <RunIt howToRun={howToRun} readmeUrl={guide.readmeUrl} />
+        {ranByFactory ? (
+          <div className="stack-tight" aria-label="Commands the factory ran">
+            <p className="small muted">The factory built and started the app with these, from the adopted contract, and checked it in a browser:</p>
+            {uiTesting!.runCommands.map((command) => (
+              <CommandLine key={command} command={command} />
+            ))}
+          </div>
+        ) : (
+          <RunIt howToRun={howToRun} readmeUrl={guide.readmeUrl} />
+        )}
       </TryItStep>
 
       <TryItStep n={3} title="Test it">

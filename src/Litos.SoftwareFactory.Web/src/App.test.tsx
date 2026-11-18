@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { createApi } from './api/client';
+import type { UiTestEvidence } from './api/types';
 import { App } from './App';
 import { ADMIN, FakeHost, PASSWORD } from './test/fakeHost';
 import { readFileSync } from 'node:fs';
@@ -690,6 +691,54 @@ describe('a handoff', () => {
     const card = within(await screen.findByRole('group', { name: 'Handoff' }));
     return { ...context, card };
   }
+
+  const browserChecks = (overrides: Partial<UiTestEvidence> = {}): UiTestEvidence => ({
+    status: 'Passed',
+    contractRevision: 3,
+    commit: '9f8e7d6c5b4a',
+    checks: [
+      { id: 'start', kind: 'Start', role: null, route: null, status: 'Passed', classification: null, message: null, screenshots: [], trace: null, log: [] },
+      { id: 'visit:anonymous:/', kind: 'RouteVisit', role: null, route: '/', status: 'Passed', classification: null, message: null, screenshots: ['s-home'], trace: 't-anon', log: [] },
+      { id: 'visit:admin:/admin', kind: 'RouteVisit', role: 'admin', route: '/admin', status: 'Passed', classification: null, message: null, screenshots: ['s-admin'], trace: 't-admin', log: [] },
+    ],
+    preExisting: [],
+    lint: { pages: 2, interactive: 14, unnamed: 0 },
+    emails: [],
+    runCommands: ['npm run build', 'npm start'],
+    problem: null,
+    wallSeconds: 31,
+    ...overrides,
+  });
+
+  it('shows the browser checks, the screenshots by role, and the commands the factory ran', async () => {
+    const { card } = await handedOff({ ...onGitHub, uiTesting: browserChecks() });
+
+    expect(card.getByText('3 passed (contract revision 3)')).toBeInTheDocument();
+    const shots = within(card.getByRole('region', { name: 'Screenshots' }));
+    expect(shots.getByRole('heading', { name: 'admin' })).toBeInTheDocument();
+    expect(shots.getByRole('heading', { name: 'Signed out' })).toBeInTheDocument();
+    expect(shots.getByRole('img', { name: 'visit:admin:/admin: Passed' })).toHaveAttribute('src', '/api/run-artifacts/s-admin');
+    const tryIt = within(card.getByRole('region', { name: 'Try it yourself' }));
+    expect(tryIt.getByText('Run by the factory on commit 9f8e7d6')).toBeInTheDocument();
+    expect(tryIt.getByText('npm start')).toBeInTheDocument();
+    expect(tryIt.queryByText('Suggested by the agent · not run by the factory')).not.toBeInTheDocument();
+    expect(card.getByText(/The factory checked the app in a browser/)).toBeInTheDocument();
+  });
+
+  it('says application testing is the tester’s when the project is not set up for it', async () => {
+    const { card } = await handedOff({ uiTesting: browserChecks({ status: 'NotSetUp', checks: [] }) });
+
+    expect(card.getByText('Not set up: application testing is yours')).toBeInTheDocument();
+    expect(card.queryByRole('region', { name: 'Screenshots' })).not.toBeInTheDocument();
+  });
+
+  it('names what already failed on the default branch and keeps the agent’s run steps when the checks did not pass', async () => {
+    const pre = browserChecks().checks[2]!;
+    const { card } = await handedOff({ ...onGitHub, uiTesting: browserChecks({ status: 'Failed', preExisting: [{ ...pre, status: 'Failed' }] }) });
+
+    expect(card.getByText('3 passed, 1 already failing on the default branch (contract revision 3)')).toBeInTheDocument();
+    expect(within(card.getByRole('region', { name: 'Try it yourself' })).queryByText(/Run by the factory/)).not.toBeInTheDocument();
+  });
 
   it('shows the evidence the host measured', async () => {
     const { card } = await handedOff();

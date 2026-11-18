@@ -47,7 +47,8 @@ public interface IUserDirectory
 public sealed class RunExecutor(
     IFactoryStore store, FactoryOptions options, IWorkspaceProvider workspaces, IVerifier verifier,
     IWorkerLauncher launcher, IWorkerClientFactory clients, IUserDirectory users, FactorySignals signals, IClock clock, Settings.FactorySettings settings,
-    FactorySkills skills, RunAttachments attachments, ILogger<RunExecutor> logger, IGitHub? gitHub = null, VerificationGate? verificationGate = null)
+    FactorySkills skills, RunAttachments attachments, ILogger<RunExecutor> logger, IGitHub? gitHub = null, VerificationGate? verificationGate = null,
+    Testability.RunUiTests? uiTests = null)
 {
     private readonly VerificationGate _verificationGate = verificationGate ?? new VerificationGate(options);
 
@@ -61,6 +62,10 @@ public sealed class RunExecutor(
         {
             session.Capabilities = await CapabilitiesAsync(claimed);
             var state = run.StateJson is { Length: > 0 } json ? RunStateJson.Deserialize(json) : RunOrchestrator.NewRun(run.Kind);
+            // Browser checks are fixed when the run starts, like its limits: a contract adopted
+            // mid-run applies to the next one.
+            if (state.Phase == RunPhase.NotStarted)
+                state = state with { UiTestEnabled = uiTests is not null && VerificationProfile.Parse(project.VerificationProfileJson).WebApp() is not null };
             StepOutcome outcome = run.Entry switch
             {
                 RunEntry.DecisionAnswered => new DecisionAnswered(run.EntryAnswer ?? ""),
@@ -105,6 +110,7 @@ public sealed class RunExecutor(
                     PreflightStep => PreflightAsync(context, state, step, hostStopping),
                     StartTurnStep turn => RunTurnAsync(context, session, state, turn, step, hostStopping),
                     VerifyStep => VerifyAsync(context, state, step),
+                    UiTestStep => UiTestAsync(context, step),
                     HandoffStep => HandoffAsync(context, state, step),
                     _ => throw new InvalidOperationException($"Unknown step {transition.Step.GetType().Name}."),
                 });
@@ -759,6 +765,14 @@ public sealed class RunExecutor(
             $"); {coverage}.");
 
         return new Verified(outcome, baseline);
+    }
+
+    /// <summary>The browser smoke on the task's working copy (testability-architecture.md §6.4).</summary>
+    private async Task<StepOutcome> UiTestAsync(RunData data, CancellationToken ct)
+    {
+        if (uiTests is null || data.Profile.WebApp() is not { } contract)
+            return new UiTested(new Core.Testability.UiTestResult { Evidence = Core.Testability.UiTestEvidence.NotSetUp });
+        return new UiTested(await uiTests.RunAsync(data.Project, data.Run.Id, data.Workspace.Path, contract, text => NoteAsync(data, text), ct));
     }
 
     private static VerificationRecord Record(RunData data, VerificationKind kind, string commit, VerificationOutcome outcome, Guid? runId) => new()

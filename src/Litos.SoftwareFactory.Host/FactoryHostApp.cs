@@ -98,7 +98,8 @@ public static class FactoryHostApp
             sp.GetRequiredService<IWorkerClientFactory>(), sp.GetRequiredService<IUserDirectory>(), sp.GetRequiredService<FactorySignals>(),
             sp.GetRequiredService<IClock>(), sp.GetRequiredService<FactorySettings>(),
             sp.GetRequiredService<FactorySkills>(), sp.GetRequiredService<RunAttachments>(), sp.GetRequiredService<ILogger<RunExecutor>>(), sp.GetService<IGitHub>(),
-            sp.GetRequiredService<VerificationGate>()));
+            sp.GetRequiredService<VerificationGate>(), sp.GetRequiredService<Testability.RunUiTests>()));
+        services.AddSingleton<Testability.RunUiTests>();
         services.AddSingleton<VerificationGate>();
         services.AddSingleton<ReadingCopies>();
         // A project's first baseline, measured on registration and on a new profile (m3-architecture.md §8).

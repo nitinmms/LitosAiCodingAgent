@@ -71,7 +71,8 @@ public sealed record HandoffEvidence(
     string? RepositoryUrl = null,
     string? CloneUrl = null,
     string? DefaultBranch = null,
-    RunInstructions? HowToRun = null);
+    RunInstructions? HowToRun = null,
+    Testability.UiTestEvidence? UiTesting = null);
 
 /// <summary>
 /// Composes the handoff (ReadMe_LitosSoftwareFactory_V1.md §11) deterministically, with no
@@ -113,6 +114,7 @@ public static class HandoffComposer
                 .Concat(state.Assumptions.Select(a => $"Assumed, not asked: {a}"))
                 .Concat(Unreported(facts.ApprovedCriteria, submission?.Criteria ?? []).Select(c => $"Approved criterion not reported on: {c}"))
                 .Concat(state.Disclosures)
+                .Concat(ContractDrift(state, facts.ChangedFiles) is { } drift ? [drift] : [])
                 .Concat(facts.Notes)],
             ManualTestSteps: submission?.ManualTestSteps ?? [],
             Commands: [.. (verification?.Commands ?? []).Select(c => $"{c.Command} — {(c.Succeeded ? "ok" : c.TimedOut ? "timed out" : $"exit {c.ExitCode}")} in {c.Duration.TotalSeconds:0.#}s")],
@@ -124,7 +126,21 @@ public static class HandoffComposer
             RepositoryUrl: facts.RepositoryUrl,
             CloneUrl: facts.CloneUrl,
             DefaultBranch: facts.DefaultBranch,
-            HowToRun: submission?.HowToRun ?? facts.PreviousHowToRun);
+            HowToRun: submission?.HowToRun ?? facts.PreviousHowToRun,
+            UiTesting: state.UiTestEnabled ? state.UiTest : Testability.UiTestEvidence.NotSetUp);
+    }
+
+    /// <summary>
+    /// The drift note (testability-architecture.md §5): a branch that changes litos.test.yaml is
+    /// never obeyed, because only the adopted copy in the profile is used. The tester is told so.
+    /// </summary>
+    public static string? ContractDrift(RunState state, IReadOnlyList<string> changedFiles)
+    {
+        if (!changedFiles.Any(f => string.Equals(f.Replace('\\', '/'), "litos.test.yaml", StringComparison.OrdinalIgnoreCase)))
+            return null;
+        return state.UiTestEnabled
+            ? $"litos.test.yaml changed on this branch. The factory still used the adopted contract{(state.UiTest?.ContractRevision is { } r ? $" (profile revision {r})" : "")}; adopt the new one after merging if you agree."
+            : "This branch adds or changes litos.test.yaml. After merging, adopt it on the project's Testability panel so tasks are tested in a browser.";
     }
 
     /// <summary>

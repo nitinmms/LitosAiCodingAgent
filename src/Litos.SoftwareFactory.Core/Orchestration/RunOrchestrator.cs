@@ -35,6 +35,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             TurnEnded turn => OnTurnEnded(state, turn),
             DecisionAnswered answer => OnDecisionAnswered(state, answer, now),
             Verified verified => OnVerified(state, verified),
+            UiTested tested => OnUiTested(state, tested),
             ReviewNotNeeded => OnReviewNotNeeded(state),
             HandoffCompleted handoff => OnHandoff(state, handoff),
             StepStopped stopped => OnStepStopped(state, stopped),
@@ -124,6 +125,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         RunPhase.Preflight => state.AfterPreflight,
         RunPhase.Turn => new StartTurnStep(state.WorkTurn, BriefKind.Resume, SessionOf(state)),
         RunPhase.Verify => new VerifyStep(),
+        RunPhase.UiTest => new UiTestStep(),
         RunPhase.Handoff => new HandoffStep(),
         _ => null,
     };
@@ -441,7 +443,8 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         Require(state.Phase == RunPhase.Verify, state, "finish verification");
 
         var outcome = verified.Outcome;
-        var verifiedState = state with { LastVerification = outcome, Baseline = verified.Baseline ?? state.Baseline };
+        // New code: whatever the browser smoke said before no longer holds.
+        var verifiedState = state with { LastVerification = outcome, Baseline = verified.Baseline ?? state.Baseline, UiTestCurrent = false };
 
         if (outcome.Build == BuildStatus.Unavailable || outcome.UnitTests == UnitTestStatus.Unavailable)
         {
@@ -497,10 +500,58 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         if (passed.ReviewRepairPending)
             passed = passed with { ReviewRepairPending = false, Review = ReviewStatus.FindingsFixed };
 
-        return passed.ReviewCompleted
-            ? Enter(passed, new HandoffStep())
-            : Enter(passed, new StartTurnStep(TurnKind.Review, BriefKind.Review, SessionScope.Review));
+        // The browser smoke comes before the review (README_Litos.Probe.Web.md W2, decided
+        // 2026-11-18): a broken app is repaired before a review spends tokens on it.
+        if (passed.UiTestEnabled && !passed.UiTestCurrent)
+            return Enter(passed, new UiTestStep());
+        return AfterChecks(passed);
     }
+
+    /// <summary>Verification and, where it runs, the browser smoke have passed: review, or hand off once reviewed.</summary>
+    private static RunTransition AfterChecks(RunState state) =>
+        state.ReviewCompleted
+            ? Enter(state, new HandoffStep())
+            : Enter(state, new StartTurnStep(TurnKind.Review, BriefKind.Review, SessionScope.Review));
+
+    /// <summary>
+    /// The browser smoke's result (testability-architecture.md §7). Application defects the task
+    /// caused are repaired in the shared repair cycles; test and credential problems, pre-existing
+    /// failures and flaky checks are disclosed for a person; an app that would not start blocks.
+    /// </summary>
+    private RunTransition OnUiTested(RunState state, UiTested tested)
+    {
+        Require(state.Phase == RunPhase.UiTest, state, "finish the browser checks");
+
+        var result = tested.Result;
+        var notes = result.Notes.Where(n => !state.Disclosures.Contains(n)).ToList();
+        var checkedState = state with { UiTest = result.Evidence, Disclosures = [.. state.Disclosures, .. notes] };
+
+        if (result.EnvironmentProblem is { } problem)
+            return Stop(checkedState, LifecycleTrigger.Block, StopReason.UiTestUnavailable, $"The browser checks could not run: {problem}", new UiTestStep());
+
+        if (result.Defects.Count == 0)
+            return AfterChecks(checkedState with { UiTestCurrent = true, UiDefects = [], UiFailuresBeforeRepair = null });
+
+        var failing = result.Defects.Select(d => d.Id).Order(StringComparer.Ordinal).ToList();
+        if (state.UiFailuresBeforeRepair is { } before && before.SequenceEqual(failing))
+        {
+            return Stop(checkedState, LifecycleTrigger.Block, StopReason.RepairMadeNoDifference,
+                $"The repair made no difference in the browser: {DescribeUi(failing)} still failing.", new UiTestStep());
+        }
+
+        if (checkedState.RepairCyclesUsed < Limits.MaxRepairCycles)
+        {
+            return Enter(
+                checkedState with { RepairCyclesUsed = checkedState.RepairCyclesUsed + 1, UiDefects = result.Defects, UiFailuresBeforeRepair = failing },
+                new StartTurnStep(TurnKind.Repair, BriefKind.Repair));
+        }
+
+        return Stop(checkedState, LifecycleTrigger.Block, StopReason.RepairCyclesExhausted,
+            $"Still failing in the browser after {Limits.MaxRepairCycles} repair cycles: {DescribeUi(failing)}.", new UiTestStep());
+    }
+
+    private static string DescribeUi(IReadOnlyList<string> failing) =>
+        failing.Count <= 3 ? string.Join(", ", failing) : $"{string.Join(", ", failing.Take(3))} and {failing.Count - 3} more";
 
     private static RunTransition OnHandoff(RunState state, HandoffCompleted handoff)
     {
@@ -549,6 +600,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             new(state with { Phase = RunPhase.Turn, CurrentTurn = turn.Kind, WorkTurn = turn.Kind, NudgeUsed = false }, turn),
         VerifyStep => new(state with { Phase = RunPhase.Verify }, step),
         HandoffStep => new(state with { Phase = RunPhase.Handoff }, step),
+        UiTestStep => new(state with { Phase = RunPhase.UiTest }, step),
         _ => throw new InvalidOperationException($"A run cannot enter {step.GetType().Name}."),
     };
 

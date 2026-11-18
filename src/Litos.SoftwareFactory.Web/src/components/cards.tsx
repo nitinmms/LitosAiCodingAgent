@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Decision, HandoffEvidence, Message, PullRequestState, SpecPayload, SpecStatus, Thread } from '../api/types';
+import type { Decision, HandoffEvidence, Message, PullRequestState, SpecPayload, SpecStatus, Thread, UiTestEvidence } from '../api/types';
 import { fmt, pct, shortSha, words } from '../domain/format';
 import { pullRequestLabel, suggestedAllowance } from '../domain/task';
 import { tryItGuide } from '../domain/tryIt';
@@ -135,6 +135,47 @@ export function DecisionCard({
 }
 
 const count = (n: number, noun: string) => `${fmt(n)} ${noun}${n === 1 ? '' : 's'}`;
+
+/** Where a run artifact is downloaded from (Api/TestabilityApi.cs). */
+export const runArtifactUrl = (id: string) => `/api/run-artifacts/${id}`;
+
+/** The handoff's browser-checks line: what ran, and what did not pass. */
+export function uiTestLine(ui: UiTestEvidence | null | undefined): string {
+  if (!ui || ui.status === 'NotSetUp') return 'Not set up: application testing is yours';
+  if (ui.status === 'Inconclusive') return `Could not run${ui.problem ? `: ${ui.problem}` : ''}`;
+  const passed = ui.checks.filter((c) => c.status === 'Passed').length;
+  const failed = ui.checks.filter((c) => c.status === 'Failed').length;
+  const already = ui.preExisting.length ? `, ${ui.preExisting.length} already failing on the default branch` : '';
+  return `${passed} passed${failed ? `, ${failed} failed` : ''}${already} (contract revision ${ui.contractRevision ?? '?'})`;
+}
+
+/** Screenshots grouped by role, as the browser took them. */
+function Screenshots({ ui }: { ui: UiTestEvidence }) {
+  const shots = ui.checks.filter((c) => c.screenshots.length);
+  if (!shots.length) return null;
+  const roles = [...new Set(shots.map((c) => c.role ?? 'Signed out'))];
+  return (
+    <section aria-label="Screenshots">
+      <h3>Screenshots</h3>
+      {roles.map((role) => (
+        <div key={role}>
+          <h4>{role}</h4>
+          <div className="att-sent">
+            {shots
+              .filter((c) => (c.role ?? 'Signed out') === role)
+              .flatMap((c) =>
+                c.screenshots.map((id) => (
+                  <a key={id} href={runArtifactUrl(id)} target="_blank" rel="noreferrer" title={c.message ?? c.id}>
+                    <img className="att-thumb" src={runArtifactUrl(id)} alt={`${c.id}: ${c.status}`} loading="lazy" />
+                  </a>
+                )),
+              )}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
 
 function unitTestLine(e: HandoffEvidence): string {
   const figures: string[] = [];
@@ -354,7 +395,7 @@ export function HandoffCard({
       {e.summary ? <p>{e.summary}</p> : null}
       {guide ? (
         <>
-          <TryItYourself guide={guide} branch={e.branch} pullRequest={pullRequest} howToRun={e.howToRun} tests={tests} answer={answer} />
+          <TryItYourself guide={guide} branch={e.branch} pullRequest={pullRequest} howToRun={e.howToRun} uiTesting={e.uiTesting} tests={tests} answer={answer} />
           <h3>What the factory checked</h3>
         </>
       ) : null}
@@ -387,6 +428,8 @@ export function HandoffCard({
         <dd>{coverageLine(e)}</dd>
         <dt>Agent review</dt>
         <dd>{reviewLine(e)}</dd>
+        <dt>Browser checks</dt>
+        <dd>{uiTestLine(e.uiTesting)}</dd>
         {e.specificationRevision ? (
           <>
             <dt>Specification</dt>
@@ -399,6 +442,8 @@ export function HandoffCard({
           {e.budgetCap === null ? ' used (no cap)' : ` of ${fmt(e.budgetCap)} used`}
         </dd>
       </dl>
+
+      {e.uiTesting ? <Screenshots ui={e.uiTesting} /> : null}
 
       {e.criteria.length ? (
         <>
@@ -459,7 +504,11 @@ export function HandoffCard({
           <b>Not verified:</b> {e.knownLimitations.map((l) => l.replace(/\.?$/, '.')).join(' ')}
         </p>
       ) : null}
-      <p className="small muted">Unit tests are not application testing. That part is yours.</p>
+      <p className="small muted">
+        {e.uiTesting?.status === 'Passed'
+          ? 'The factory checked the app in a browser: start, sign-in, routes and access control. Anything those did not cover is yours.'
+          : 'Unit tests are not application testing. That part is yours.'}
+      </p>
 
       {tests && !guide ? (
         <>

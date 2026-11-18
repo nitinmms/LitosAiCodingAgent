@@ -312,6 +312,20 @@ public static partial class BriefComposer
             }
         }
 
+        // Browser failures (testability-architecture.md §7.4): the brief carries the failing check,
+        // the server's error lines, and the rule that the application changes, not the test.
+        if (state.UiDefects.Count > 0 && !state.ReviewRepairPending)
+        {
+            failures.AppendLine($"## Failing in the browser ({state.UiDefects.Count})").AppendLine();
+            failures.AppendLine("The factory started the app and checked it in a browser. Change the application, not the test or the contract, so these pass.").AppendLine();
+            foreach (var defect in state.UiDefects)
+            {
+                failures.AppendLine($"### `{defect.Id}`").AppendLine().AppendLine(defect.Message).AppendLine();
+                if (defect.Log.Count > 0)
+                    failures.AppendLine("```text").AppendLine(string.Join('\n', defect.Log.Take(15))).AppendLine("```").AppendLine();
+            }
+        }
+
         var blocking = state.ReviewRepairPending
             ? state.Findings.Where(f => f.Severity == FindingSeverity.Blocking).ToList()
             : [];
