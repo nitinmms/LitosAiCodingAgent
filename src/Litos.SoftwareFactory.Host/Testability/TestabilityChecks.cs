@@ -139,7 +139,7 @@ public sealed class TestabilityChecks(
 
         // An adopted contract is the project's: the Gate, not a dry run, says whether it holds.
         if (VerificationProfile.Parse(project.VerificationProfileJson).WebApp() is { } adopted)
-            return report with { Status = TestabilityStatus.Adopted, Stack = adopted.Application.Stack ?? report.Stack };
+            return await GateBaselineAsync(project, root, adopted, report, contract, ct);
         if (contract is { Valid: true })
             return report with { Status = TestabilityStatus.ContractFound, Gaps = ["litos.test.yaml on the default branch is ready to adopt."] };
         if (detection.Status == DetectionStatus.NotAWebApp)
@@ -165,8 +165,40 @@ public sealed class TestabilityChecks(
             Status = environment is null ? TestabilityStatus.Gaps : TestabilityStatus.CouldNotCheck,
             Problem = environment?.Message,
             Gaps = gaps,
-            DryRun = dryRun,
+            Run = dryRun,
         };
+    }
+
+    /// <summary>
+    /// The Gate baseline on the default branch (testability-architecture.md §6.2): all 8 steps of
+    /// the adopted contract, which marks the project test-ready or broken on main. A task's smoke
+    /// is compared with this report, so a check that already fails here is not blamed on a task.
+    /// </summary>
+    private async Task<TestabilityReport> GateBaselineAsync(Project project, string root, Probe.Web.Core.Contract.WebAppContract adopted, TestabilityReport report,
+        ContractOnMain? onMain, CancellationToken ct)
+    {
+        var stack = adopted.Application.Stack ?? report.Stack;
+        Probe.Web.Core.Reports.ProbeWebReport gateRun;
+        using (await gate.EnterAsync(null, ct))
+            gateRun = await engine.GateAsync(root, adopted, GateScope.All, runtime.OptionsFor(project, runId: null), ct);
+
+        var gaps = new List<string>();
+        if (onMain is { Valid: true } && ContractAdoption.Differs(root, adopted))
+            gaps.Add($"litos.test.yaml on the default branch differs from the adopted contract (revision {project.ProfileRevision}): adopt it to use it.");
+        gaps.AddRange(gateRun.Checks.Where(c => c.Failed).Select(c => $"{c.Id}: {c.Message}"));
+        gaps.AddRange(gateRun.Findings);
+
+        var status = gateRun.Outcome switch
+        {
+            Probe.Web.Core.Reports.ProbeWebOutcome.Passed => TestabilityStatus.TestReady,
+            Probe.Web.Core.Reports.ProbeWebOutcome.EnvironmentFailure or Probe.Web.Core.Reports.ProbeWebOutcome.Inconclusive
+                or Probe.Web.Core.Reports.ProbeWebOutcome.InvalidContract => TestabilityStatus.CouldNotCheck,
+            _ => TestabilityStatus.BrokenOnMain,
+        };
+        var problem = status == TestabilityStatus.CouldNotCheck
+            ? gateRun.Checks.FirstOrDefault(c => c.Failed)?.Message ?? gateRun.Findings.FirstOrDefault() ?? "The Gate could not run."
+            : null;
+        return report with { Status = status, Stack = stack, Gaps = gaps, Run = gateRun, Problem = problem };
     }
 
     /// <summary>The default branch's litos.test.yaml, parsed and validated; null when there is none.</summary>

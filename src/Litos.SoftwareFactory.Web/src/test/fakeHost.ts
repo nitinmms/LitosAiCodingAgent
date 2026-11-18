@@ -49,6 +49,7 @@ import type {
   Turn,
   UsageCall,
   TestabilityView,
+  AdoptionPreview,
 } from '../api/types';
 
 export interface RecordedRequest {
@@ -321,6 +322,10 @@ export class FakeHost {
   readonly projectSecrets = new Map<string, Map<string, string>>();
   /** What a "Check again" leaves the project at; by default the same view, checked now. */
   testabilityAfterCheck: ((current: TestabilityView) => TestabilityView) | null = null;
+  /** What GET /api/projects/{id}/testability/adopt answers, by project. */
+  readonly adoptionPreviews = new Map<string, AdoptionPreview>();
+  /** The adoptions made, in order. */
+  readonly adopted: { projectId: string; commit: string }[] = [];
   /** The projects a "Check again" was asked for, in order. */
   readonly testabilityChecks: string[] = [];
   readonly threads = new Map<string, ThreadDetails>();
@@ -791,6 +796,23 @@ export class FakeHost {
           baseline: this.baselineOnRegistration,
         }),
       ];
+    }
+    const adoptPath = /^\/api\/projects\/([^/]+)\/testability\/adopt$/.exec(path);
+    if (adoptPath) {
+      const project = this.projects.find((p) => p.id === adoptPath[1]);
+      if (!project) return [404];
+      const preview = this.adoptionPreviews.get(project.id);
+      if (!preview) return [200, { commit: 'base000', found: false, problems: [], missingSecrets: [], changes: false, canAdopt: false, diff: [] }];
+      if (method === 'GET') return [200, preview];
+      if (method === 'POST') {
+        if (data.commit !== preview.commit) return [409, { error: `The default branch moved since ${String(data.commit)} was shown: review the contract again.` }];
+        if (!preview.canAdopt) return [400, { error: 'The contract cannot be adopted.' }];
+        project.profileRevision += 1;
+        const view = this.testability.get(project.id) ?? notCheckedView(project);
+        this.testability.set(project.id, { ...view, status: 'TestReady', adopted: true, profileRevision: project.profileRevision });
+        this.adopted.push({ projectId: project.id, commit: String(data.commit) });
+        return [200, { profileRevision: project.profileRevision }];
+      }
     }
     const testabilityPath = /^\/api\/projects\/([^/]+)\/testability(\/check)?$/.exec(path);
     if (testabilityPath) {
@@ -2143,7 +2165,7 @@ export function notCheckedView(project: Project): TestabilityView {
     gaps: [],
     candidates: [],
     contract: null,
-    dryRun: null,
+    run: null,
     missingSecrets: [],
   };
 }

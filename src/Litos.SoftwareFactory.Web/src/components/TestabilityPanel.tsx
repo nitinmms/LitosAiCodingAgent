@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
-import type { Project, ProjectSecrets, TestabilitySummary, TestabilityView } from '../api/types';
+import type { AdoptionPreview, Project, ProjectSecrets, TestabilitySummary, TestabilityView } from '../api/types';
 import { ErrorNote } from './bits';
 
 /** How often the panel looks again while a check is under way. */
@@ -27,6 +27,10 @@ export function testabilitySummary(t: TestabilitySummary | null | undefined, rev
       return { text: 'Contract found, not adopted', bad: false };
     case 'Adopted':
       return { text: revision ? `Contract adopted (rev ${revision})` : 'Contract adopted', bad: false };
+    case 'TestReady':
+      return { text: revision ? `Test-ready (rev ${revision})` : 'Test-ready', bad: false };
+    case 'BrokenOnMain':
+      return { text: 'Broken on main', bad: true };
     case 'CouldNotCheck':
       return { text: 'Could not check', bad: true };
   }
@@ -84,7 +88,7 @@ export function TestabilityPanel({ api, project, onClose }: { api: FactoryApi; p
         <>
           <div className="vrow">
             <span>UI testing</span>
-            <span className={`pill ${summary.bad ? 'bad' : view.status === 'Adopted' ? 'done' : 'neutral'}`}>{summary.text}</span>
+            <span className={`pill ${summary.bad ? 'bad' : view.status === 'TestReady' ? 'done' : 'neutral'}`}>{summary.text}</span>
           </div>
           <p className="small muted">
             {view.stack ? <>Stack <span className="mono">{view.stack}</span>. </> : null}
@@ -122,11 +126,16 @@ export function TestabilityPanel({ api, project, onClose }: { api: FactoryApi; p
             </>
           ) : null}
 
-          {view.dryRun ? (
+          {view.contract ? <Adoption api={api} projectId={project.id} onAdopted={async (revision) => {
+            setNotice(`Adopted as profile revision ${revision}. The Gate is running on the default branch.`);
+            await load();
+          }} /> : null}
+
+          {view.run ? (
             <>
-              <h3>Dry run of the stack's defaults</h3>
+              <h3>{view.run.kind === 'gate' ? 'Gate on the default branch' : "Dry run of the stack's defaults"}</h3>
               <ul className="checks" aria-label="Dry run checks">
-                {view.dryRun.checks.map((check) => (
+                {view.run.checks.map((check) => (
                   <li key={check.id}>
                     <span className={`pill ${check.status === 'Passed' ? 'done' : check.status === 'Failed' ? 'bad' : 'neutral'}`}>{check.status}</span>{' '}
                     <span className="mono">{check.id}</span>
@@ -139,7 +148,19 @@ export function TestabilityPanel({ api, project, onClose }: { api: FactoryApi; p
                   </li>
                 ))}
               </ul>
-              <p className="small muted">No model calls; {view.dryRun.wallSeconds.toFixed(0)}s on the factory host.</p>
+              {view.run.emails.length ? (
+                <>
+                  <h4>Emails the app sent</h4>
+                  <ul aria-label="Emails">
+                    {view.run.emails.map((email, i) => (
+                      <li key={i}>
+                        To {email.to.join(', ')}: {email.url ? <a href={email.url}>{email.subject}</a> : email.subject}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              <p className="small muted">No model calls; {view.run.wallSeconds.toFixed(0)}s on the factory host.</p>
             </>
           ) : null}
 
@@ -159,6 +180,80 @@ export function TestabilityPanel({ api, project, onClose }: { api: FactoryApi; p
 
       {secrets ? <RoleSecrets api={api} projectId={project.id} secrets={secrets} onChanged={load} /> : null}
     </section>
+  );
+}
+
+/**
+ * Adoption (testability-architecture.md §5): the default branch's litos.test.yaml, shown as a
+ * diff against the adopted contract, then saved as a new profile revision. Only the commit the
+ * person reviewed is adopted.
+ */
+function Adoption({ api, projectId, onAdopted }: { api: FactoryApi; projectId: string; onAdopted: (revision: number) => Promise<void> }) {
+  const [preview, setPreview] = useState<AdoptionPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const review = async () => {
+    setError(null);
+    try {
+      setPreview(await api.adoptionPreview(projectId));
+    } catch (failure) {
+      setError(failure instanceof ApiError ? failure.message : 'The contract could not be read.');
+    }
+  };
+
+  const adopt = async () => {
+    if (!preview) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { profileRevision } = await api.adoptContract(projectId, preview.commit);
+      setPreview(null);
+      await onAdopted(profileRevision);
+    } catch (failure) {
+      setError(failure instanceof ApiError ? failure.message : 'The contract could not be adopted.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div role="group" aria-label="Adopt the contract">
+      {preview ? (
+        <>
+          <h3>Contract at {preview.commit.slice(0, 7)}</h3>
+          {preview.changes ? (
+            <pre className="mono small" aria-label="Contract changes">
+              {preview.diff.map((line, i) => (
+                <div key={i} className={line.kind === 'Added' ? 'diff-add' : line.kind === 'Removed' ? 'diff-del' : undefined}>
+                  {line.kind === 'Added' ? '+ ' : line.kind === 'Removed' ? '- ' : '  '}
+                  {line.text}
+                </div>
+              ))}
+            </pre>
+          ) : (
+            <p className="small muted">It is the contract already adopted.</p>
+          )}
+          {preview.problems.length ? <p className="error">It does not run as written: {preview.problems.join(' ')}</p> : null}
+          {preview.missingSecrets.length ? (
+            <p className="error">Set {preview.missingSecrets.join(', ')} below first: the contract uses them.</p>
+          ) : null}
+          <div className="btn-row">
+            <button className="btn primary" type="button" disabled={busy || !preview.canAdopt} onClick={() => void adopt()}>
+              Adopt this contract
+            </button>
+            <button className="btn" type="button" onClick={() => setPreview(null)}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <button className="btn small" type="button" onClick={() => void review()}>
+          Review contract on main
+        </button>
+      )}
+      <ErrorNote message={error} />
+    </div>
   );
 }
 

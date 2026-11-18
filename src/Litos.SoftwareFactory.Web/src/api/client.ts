@@ -48,6 +48,7 @@ import type {
   ThreadDetails,
   ToolSettings,
   UsageCall,
+  AdoptionPreview,
   ProjectSecrets,
   TestabilityView,
 } from './types';
@@ -99,6 +100,9 @@ export interface FactoryApi {
   testability(projectId: string): Promise<TestabilityView>;
   /** "Check again": runs a dry run of the project's code on the host. */
   checkTestability(projectId: string): Promise<void>;
+  adoptionPreview(projectId: string): Promise<AdoptionPreview>;
+  /** Adopts the contract read at `commit`, the one the person reviewed. */
+  adoptContract(projectId: string, commit: string): Promise<{ profileRevision: number }>;
   projectSecrets(projectId: string): Promise<ProjectSecrets>;
   setProjectSecret(projectId: string, name: string, value: string): Promise<void>;
   clearProjectSecret(projectId: string, name: string): Promise<void>;
@@ -296,6 +300,8 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     updateProjectProfile: (projectId, request) => send<Project>('PATCH', `/api/projects/${projectId}`, request),
     testability: (projectId) => send<TestabilityView>('GET', `/api/projects/${projectId}/testability`),
     checkTestability: async (projectId) => void (await send<unknown>('POST', `/api/projects/${projectId}/testability/check`)),
+    adoptionPreview: (projectId) => send<AdoptionPreview>('GET', `/api/projects/${projectId}/testability/adopt`),
+    adoptContract: (projectId, commit) => send<{ profileRevision: number }>('POST', `/api/projects/${projectId}/testability/adopt`, { commit }),
     projectSecrets: (projectId) => send<ProjectSecrets>('GET', `/api/projects/${projectId}/secrets`),
     setProjectSecret: async (projectId, name, value) =>
       void (await send<unknown>('PUT', `/api/projects/${projectId}/secrets/${encodeURIComponent(name)}`, { value })),

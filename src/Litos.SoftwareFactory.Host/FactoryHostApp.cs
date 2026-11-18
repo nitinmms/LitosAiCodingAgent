@@ -125,6 +125,7 @@ public static class FactoryHostApp
         services.AddSingleton<Testability.ITestabilityEngine, Testability.ProbeWebEngine>();
         services.AddSingleton<Testability.TestabilityRuntime>();
         services.AddSingleton<Testability.TestabilityChecks>();
+        services.AddSingleton<Testability.ContractAdoption>();
         services.AddHostedService<Testability.ServiceContainerSweep>();
         // The documents a run is given are converted as every other Litos face converts them.
         services.AddSingleton(new global::MarkItDown.MarkItDownClient());

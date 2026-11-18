@@ -881,6 +881,9 @@ public static class AuditActions
 {
     public const string ProjectRegister = "project.register";
     public const string ProjectProfileUpdate = "project.profile_update";
+
+    /// <summary>A litos.test.yaml from the default branch adopted into the profile (testability-architecture.md §5).</summary>
+    public const string TestabilityAdopt = "project.testability_adopt";
     public const string MemberAdd = "project.member.add";
     public const string MemberRemove = "project.member.remove";
     public const string InvitationCreate = "invitation.create";

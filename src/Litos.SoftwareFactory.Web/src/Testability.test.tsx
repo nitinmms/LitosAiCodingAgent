@@ -30,7 +30,8 @@ function gapsView(host: FakeHost, projectId: string, overrides: Partial<Testabil
     commit: '4e1b9c2aa',
     stack: 'node-express-spa',
     gaps: ["No contract: these are the node-express-spa profile's defaults (npm start).", 'No reset declared: add one (strategy: none if the app keeps no data).'],
-    dryRun: {
+    run: {
+      kind: 'dry-run',
       outcome: 'Passed',
       checks: [
         { id: 'build', kind: 'Build', status: 'Passed', classification: null, message: null, route: null, screenshots: [] },
@@ -38,6 +39,7 @@ function gapsView(host: FakeHost, projectId: string, overrides: Partial<Testabil
       ],
       lint: { pages: 1, interactive: 10, unnamed: 0 },
       wallSeconds: 41,
+      emails: [],
     },
     ...overrides,
   };
@@ -89,7 +91,7 @@ describe('the Testability panel', () => {
     const host = new FakeHost();
     const project = host.addProject();
     host.testability.set(project.id, gapsView(host, project.id));
-    host.testabilityAfterCheck = (current) => ({ ...current, status: 'ContractFound', gaps: ['litos.test.yaml on the default branch is ready to adopt.'], dryRun: null,
+    host.testabilityAfterCheck = (current) => ({ ...current, status: 'ContractFound', gaps: ['litos.test.yaml on the default branch is ready to adopt.'], run: null,
       contract: { path: 'litos.test.yaml', commit: '9f3c2e1aa', valid: true, problems: [] } });
     const user = await onProjects(host);
     await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
@@ -161,5 +163,58 @@ describe('the Testability panel', () => {
     expect(screen.queryByRole('button', { name: 'Change the profile of SalesApp' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
     expect(await panel().findByText('Not testable yet')).toBeInTheDocument();
+  });
+});
+
+describe('adopting the contract on main', () => {
+  const preview = (overrides: Partial<import('./api/types').AdoptionPreview> = {}): import('./api/types').AdoptionPreview => ({
+    commit: '9f3c2e1aa0',
+    found: true,
+    problems: [],
+    missingSecrets: [],
+    changes: true,
+    canAdopt: true,
+    diff: [{ kind: 'Same', text: 'version: 1' }, { kind: 'Added', text: '  stack: node-express-spa' }],
+    ...overrides,
+  });
+
+  it('shows the diff, then adopts the reviewed commit', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.testability.set(project.id, gapsView(host, project.id, { status: 'ContractFound', run: null,
+      contract: { path: 'litos.test.yaml', commit: '9f3c2e1aa0', valid: true, problems: [] } }));
+    host.adoptionPreviews.set(project.id, preview());
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+    const adoption = within(await panel().findByRole('group', { name: 'Adopt the contract' }));
+
+    await user.click(adoption.getByRole('button', { name: 'Review contract on main' }));
+    expect(await adoption.findByText(/stack: node-express-spa/)).toHaveClass('diff-add');
+    await user.click(adoption.getByRole('button', { name: 'Adopt this contract' }));
+
+    expect(await panel().findByText(/Adopted as profile revision 2/)).toBeInTheDocument();
+    expect(host.adopted).toEqual([{ projectId: project.id, commit: '9f3c2e1aa0' }]);
+    expect(await panel().findByText('Test-ready (rev 2)')).toBeInTheDocument();
+  });
+
+  it('will not adopt a contract whose secrets are not set', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.testability.set(project.id, gapsView(host, project.id, { status: 'ContractFound', run: null,
+      contract: { path: 'litos.test.yaml', commit: '9f3c2e1aa0', valid: true, problems: [] } }));
+    host.adoptionPreviews.set(project.id, preview({ missingSecrets: ['TEST_ADMIN_PASS'], canAdopt: false }));
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+    const adoption = within(await panel().findByRole('group', { name: 'Adopt the contract' }));
+
+    await user.click(adoption.getByRole('button', { name: 'Review contract on main' }));
+
+    expect(await adoption.findByText(/Set TEST_ADMIN_PASS below first/)).toBeInTheDocument();
+    expect(adoption.getByRole('button', { name: 'Adopt this contract' })).toBeDisabled();
+  });
+
+  it('names the broken-on-main state as bad news', () => {
+    expect(testabilitySummary({ status: 'BrokenOnMain', checkedAt: null, stack: null, adopted: true })).toEqual({ text: 'Broken on main', bad: true });
+    expect(testabilitySummary({ status: 'TestReady', checkedAt: null, stack: null, adopted: true }, 4).text).toBe('Test-ready (rev 4)');
   });
 });

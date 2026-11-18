@@ -288,6 +288,7 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 - **W2.1** (factory): verification profile v3 embeds the contract; project secrets `project:<id>:NAME` (Admins and Members, set-only); `run_artifacts` and its download endpoint.
 - **W2.2** (engine): Docker `services` and Mailpit, below.
 - **W2.3** (factory): the testability check (detect, the default branch's `litos.test.yaml`, then a dry run of the stack's defaults under `VerificationGate` when there is no contract) at registration, after a profile change and on *Check again*; stored in `testability_checks`; a *UI testing* column and a Testability panel (gaps, dry-run checks with screenshots, the contract on main, set-only role secrets) open to the project's Members; the factory's leftover service containers swept at host start.
+- **W2.4** (factory): *Adopt* (Admins and Members, audited): the default branch's `litos.test.yaml` shown as a line diff against the adopted contract, refused if main moved since the preview, if it does not validate or if its secrets are not set; saved as a new profile revision with `adoptedFrom`. The check then runs the whole Gate (1–8) on the default branch: *Test-ready* or *Broken on main*, kept as the baseline a task's smoke is compared with. A newer contract on main than the adopted one shows as a gap. The handoff's drift note comes with W2.5.
 
 ### 11.1 W1 as built (2026-11-17)
 

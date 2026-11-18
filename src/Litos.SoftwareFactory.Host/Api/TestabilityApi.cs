@@ -5,6 +5,7 @@ using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Core.Testability;
 using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Host.Auth;
+using Litos.SoftwareFactory.Host.Runs;
 using Litos.SoftwareFactory.Host.Settings;
 using Litos.SoftwareFactory.Host.Testability;
 
@@ -15,6 +16,9 @@ namespace Litos.SoftwareFactory.Host.Api;
 /// its role secrets, set and cleared by anyone who can see the project but never read back, and
 /// the browser checks' files.
 /// </summary>
+/// <param name="Commit">The default branch's head the reviewed preview was read at.</param>
+public sealed record AdoptRequest(string? Commit);
+
 public static class TestabilityApi
 {
     public static IEndpointRouteBuilder MapFactoryTestability(this IEndpointRouteBuilder app)
@@ -35,6 +39,47 @@ public static class TestabilityApi
                 return Results.NotFound();
             checks.CheckNow(id);
             return Results.Accepted($"/api/projects/{id}/testability");
+        });
+
+        // What adopting the default branch's litos.test.yaml would change, before anyone does it.
+        project.MapGet("/testability/adopt", async (Guid id, IFactoryStore store, ContractAdoption adoption, CancellationToken ct) =>
+        {
+            if (await store.GetProjectAsync(id, ct) is not { } found)
+                return Results.NotFound();
+            var preview = await adoption.PreviewAsync(found, ct);
+            return Results.Ok(new
+            {
+                preview.Commit,
+                preview.Found,
+                preview.Problems,
+                preview.MissingSecrets,
+                preview.Changes,
+                preview.CanAdopt,
+                Diff = preview.Diff.Select(l => new { Kind = l.Kind.ToString(), l.Text }),
+            });
+        });
+
+        // Adoption: anyone on the project (README §13.2, decided 2026-11-18), audited, and only
+        // the commit they saw, so a push in between is never adopted unseen. The Gate baseline
+        // on the default branch follows at once.
+        project.MapPost("/testability/adopt", async (Guid id, AdoptRequest request, ClaimsPrincipal user, IFactoryStore store, ContractAdoption adoption,
+            ProjectBaselines baselines, TestabilityChecks checks, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Commit))
+                return Results.BadRequest(new { error = "commit is required: adopt the contract you reviewed." });
+            if (await store.GetProjectAsync(id, ct) is not { } found)
+                return Results.NotFound();
+            try
+            {
+                var adopted = await adoption.AdoptAsync(found, request.Commit.Trim(), user.UserId(), ct);
+                baselines.Start(id);
+                checks.CheckNow(id);
+                return Results.Ok(new { adopted.ProfileRevision });
+            }
+            catch (AdoptionRefusedException ex)
+            {
+                return ex.Conflict ? Results.Conflict(new { error = ex.Message }) : Results.BadRequest(new { error = ex.Message });
+            }
         });
 
         // What is set, by name, and what the project's contract still needs. Never a value.
@@ -98,7 +143,7 @@ public static class TestabilityApi
         if (!detailed)
             return new { Status = status.ToString(), CheckedAt = latest?.CreatedAt, report?.Stack, Adopted = adopted };
 
-        var dryRun = report?.DryRun;
+        var run = report?.Run;
         return new
         {
             Status = status.ToString(),
@@ -112,10 +157,11 @@ public static class TestabilityApi
             Gaps = report?.Gaps ?? [],
             Candidates = report?.Candidates ?? [],
             Contract = report?.Contract is { } c ? new { c.Path, c.Commit, c.Valid, c.Problems } : null,
-            DryRun = dryRun is null ? null : new
+            Run = run is null ? null : new
             {
-                Outcome = dryRun.Outcome.ToString(),
-                Checks = dryRun.Checks.Select(k => new
+                Kind = run.Kind == Probe.Web.Core.Reports.ReportKind.DryRun ? "dry-run" : run.Kind.ToString().ToLowerInvariant(),
+                Outcome = run.Outcome.ToString(),
+                Checks = run.Checks.Select(k => new
                 {
                     k.Id,
                     Kind = k.Kind.ToString(),
@@ -125,8 +171,9 @@ public static class TestabilityApi
                     k.Route,
                     Screenshots = k.Evidence.Screenshots.Select(ArtifactUrl).ToList(),
                 }),
-                dryRun.Lint,
-                dryRun.Usage.WallSeconds,
+                run.Lint,
+                run.Usage.WallSeconds,
+                Emails = run.Emails.Select(e => new { e.From, e.To, e.Subject, Url = e.Artifact is null ? null : ArtifactUrl(e.Artifact) }),
             },
             MissingSecrets = MissingSecrets(project, settings),
         };

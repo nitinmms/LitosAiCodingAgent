@@ -22,8 +22,14 @@ public enum TestabilityStatus
     /// <summary>The default branch has a <c>litos.test.yaml</c> no one has adopted yet.</summary>
     ContractFound,
 
-    /// <summary>The profile carries an adopted contract.</summary>
+    /// <summary>The profile carries an adopted contract that has not been checked on the default branch yet.</summary>
     Adopted,
+
+    /// <summary>The adopted contract passed the Gate (steps 1–8) on the default branch: tasks are UI-tested.</summary>
+    TestReady,
+
+    /// <summary>The adopted contract fails the Gate on the default branch: tasks disclose it, and a person looks.</summary>
+    BrokenOnMain,
 
     /// <summary>The check itself could not run: the repository could not be read, or the browser is missing.</summary>
     CouldNotCheck,
@@ -58,8 +64,12 @@ public sealed record TestabilityReport
 
     public ContractOnMain? Contract { get; init; }
 
-    /// <summary>The dry run, with its screenshots as run-artifact ids; null when none ran.</summary>
-    public ProbeWebReport? DryRun { get; init; }
+    /// <summary>
+    /// What ran: the dry run of the stack's defaults, or the Gate baseline of an adopted contract,
+    /// with its screenshots as run-artifact ids. Null when nothing ran. A Gate baseline is what a
+    /// task's smoke is compared with (SmokeComparison).
+    /// </summary>
+    public ProbeWebReport? Run { get; init; }
 
     /// <summary>Why the check could not run, for <see cref="TestabilityStatus.CouldNotCheck"/>.</summary>
     public string? Problem { get; init; }

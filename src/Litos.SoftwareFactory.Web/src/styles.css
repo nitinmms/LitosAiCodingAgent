@@ -503,3 +503,7 @@ button.sort:focus-visible{outline:2px solid var(--focus)}
 /* Request changes: what sending will start, before it is sent */
 .confirm-strip{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;background:var(--amber-soft);border:1px solid var(--amber);border-radius:var(--r-md);padding:8px 12px;margin-bottom:8px}
 .confirm-strip p{flex:1 1 280px;min-width:0}
+
+/* Contract adoption: the diff against the adopted contract. */
+.diff-add{background:var(--ok-soft);color:var(--ok)}
+.diff-del{background:var(--bad-soft);color:var(--bad)}

@@ -99,6 +99,8 @@ export type TestabilityStatus =
   | 'Gaps'
   | 'ContractFound'
   | 'Adopted'
+  | 'TestReady'
+  | 'BrokenOnMain'
   | 'CouldNotCheck';
 
 /** The Projects page's "UI testing" column. */
@@ -130,13 +132,27 @@ export interface TestabilityView extends TestabilitySummary {
   gaps: string[];
   candidates: { profile: string; tier: number; directory: string; evidence: string[] }[];
   contract: { path: string; commit: string; valid: boolean; problems: string[] } | null;
-  dryRun: {
+  /** What ran: the dry run of the stack's defaults, or the Gate on the default branch. */
+  run: {
+    kind: 'dry-run' | 'gate' | 'smoke';
     outcome: string;
     checks: TestabilityCheckView[];
     lint: { pages: number; interactive: number; unnamed: number } | null;
     wallSeconds: number;
+    emails: { from: string; to: string[]; subject: string; url: string | null }[];
   } | null;
   missingSecrets: string[];
+}
+
+/** What adopting the default branch's litos.test.yaml would change (GET .../testability/adopt). */
+export interface AdoptionPreview {
+  commit: string;
+  found: boolean;
+  problems: string[];
+  missingSecrets: string[];
+  changes: boolean;
+  canAdopt: boolean;
+  diff: { kind: 'Same' | 'Added' | 'Removed'; text: string }[];
 }
 
 /** A project's own secrets, by name: never their values. */
