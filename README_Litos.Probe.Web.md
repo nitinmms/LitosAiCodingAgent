@@ -291,6 +291,52 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 - **W2.4** (factory): *Adopt* (Admins and Members, audited): the default branch's `litos.test.yaml` shown as a line diff against the adopted contract, refused if main moved since the preview, if it does not validate or if its secrets are not set; saved as a new profile revision with `adoptedFrom`. The check then runs the whole Gate (1–8) on the default branch: *Test-ready* or *Broken on main*, kept as the baseline a task's smoke is compared with. A newer contract on main than the adopted one shows as a gap. The handoff's drift note comes with W2.5.
 - **W2.5** (factory): `UiTestStep` in the run: Verify → browser smoke (Gate 1–6, compared with the Gate baseline on main) → Review → Handoff, again after a review repair. New application defects start a repair turn in the shared cycles, with the failing checks and server log lines in the brief and "change the application, not the test"; the same failures after a repair block as "repair made no difference". A start failure is the task's when main starts fine, the environment's otherwise (Blocked, `UiTestUnavailable`, resumes at the browser step). Test and credential defects, checks already failing on main and flaky checks are disclosed, not repaired. `HandoffEvidence.UiTesting` carries every check with its screenshots and trace, the pre-existing failures, lint, emails and the commands the factory ran; the card shows a *Browser checks* row, screenshots by role, *Run by the factory on commit …* on *Try it yourself*, and the drift note when the branch changes `litos.test.yaml`.
 - **W2.6** (factory): the *Make-testable* task. Task type `testability`, started from the Testability panel with the check's gaps as its request; its own brief (`make-testable.md`: the gaps, the detected stack, the contract's shape, "start the app only through `check_testability`"); the `check_testability` worker tool, given only to that task's work turns, which has the host run the Gate on the draft `litos.test.yaml` in the working copy; the run's own Gate step (all 8 steps on the draft, no baseline: a missing or broken draft, and a start-up that fails, are the task's to repair); a full review always; built-in skills `testability-dotnet` and `testability-node`, default for the type (both attach: they are short, and say which stack they are for).
+- **W2.7** (live check, 2026-11-19): §11.3.
+
+### 11.3 W2.7 live check (2026-11-19)
+
+**Set-up.** Dev host from source (Debug, `:5180`, dev database on 5433). The installed factory (`:5181`) was not touched. The target was the private repository `nitinmms/clinic-portal`: the Blazor sample without the contract (§13.1 item 4), SQLite-backed, form login, roles admin, staff and patient. The tasks ran on the dev factory's default model, `deepseek/deepseek-v4.1-flash` via OpenRouter.
+
+**What happened**
+
+| Step | Result | Tokens |
+|---|---|---|
+| Register, then the check at registration | **Gaps**: `aspnet-blazor-server` detected. The dry run built and started the app; the marker was missing, with no reset and no auth. | none |
+| Make-testable task, first run | Out of budget (PausedBudget) at 299k with **no file changed** (finding 1). Resumed with more budget: draft PR #1, but the Gate stopped at *start* because the role secrets were not set (4, 7). | 828k |
+| Request changes 1 (marker render mode, `console.error`, junk, run the Gate) | Gate 18 of 19: sign-in failed for every role because of the seeding and the password policy. Out of budget again, then resumed: **Gate 19 of 19**. | +450k |
+| Request changes 2 (remove `artifacts/`) | Clean branch, 13 files. Merged by the user (main `2aad33c`). | +156k |
+| Check again, Adopt | **Contract found**, then adopted (profile rev 2). Gate baseline **Test-ready**, 19 of 19 in 31 s. | none |
+| Feature task "patients can cancel an upcoming appointment" | 3 decisions answered. Out of budget at 292k in Implement (12), then resumed: verification 30 tests and 98.6% coverage, **browser smoke 17 of 17 with 11 screenshots, no repair**, full review, draft PR #2. | 538k |
+
+**Exit check (§11 W2 row):**
+- **Blazor sample, the core path:** met (check → Make-testable → merge → adopt → Test-ready → feature task handed off with smoke screenshots).
+- **Postgres from `services` and email through Mailpit:** not covered, because clinic-portal uses SQLite and sends no email in Testing.
+- **insta-story-generator:** not run yet.
+- **Cost:** far above what the design expected, about 1.43M tokens for the retrofit and 0.54M for a small feature.
+
+**Fixed during the check (pushed):**
+- `d62987c`: the .NET preset writes `dotnet test` results to `artifacts/factory-test-results/` in the working copy, and only `/.factory/` was excluded, so every .NET task committed about 15k lines of `.trx` and coverage output. Both folders are now in `.git/info/exclude`.
+- `4005bfc`: the adopted contract is stored in a `jsonb` column, which does not keep key order. A file adopted a moment earlier therefore showed as "differs from the adopted contract". `ContractYaml.Canonical` writes data maps in key order, and adoption compares that form.
+
+**Findings, not yet fixed.** They are numbered as in the session. 12, 1 and 2 cost the most.
+
+| # | Finding | Where it showed | Suggested direction |
+|---|---|---|---|
+| 1 | The Make-testable brief says "write unit tests", and the .NET preset requires 80% changed-line coverage, but the repo had **no test project**. The model spent 246k tokens on scratch experiments about where a test project could live, and wrote nothing. | Make-testable, first turn | Tell the brief what to do in a repo without tests (create `Tests/` next to the app, the layout the skill names). Or relax coverage for a `testability` task's own hooks. |
+| 2 | No guard against a work turn that makes no progress: 29 calls with zero files changed, until the budget ran out. | Make-testable | A no-change limit (N calls without a write, then *Blocked: no progress*), like the scan's allowance. |
+| 3 | The model. Reasoning bursts of 9–23k output tokens, all reasoning and no reply, spent the last of the budget several times, and cost notes were acknowledged and then ignored. | All three tasks | Record per model which ones suit work turns. Retry the same tasks on a stronger model before changing the briefs. |
+| 4 | A Make-testable task **hands off when the Gate on its draft failed**. | First handoff | Hand off only when the Gate passes. Otherwise the result is a repair turn or *Blocked*. |
+| 6 | The review called about 53k lines of committed junk *Minor* and left it open; nothing stopped the handoff. | First handoff | Committed generated output (coverage, `.trx`, logs) is at least *Major*. |
+| 7 | The Gate failing at *start* because **the contract's secrets were not set** is the person's job, not the agent's. | First handoff | *Blocked: set TEST_… on the Testability panel*, then resume at the Gate. |
+| 8 | `uiTesting.commit` holds the previous commit (main or the earlier draft), not the one the Gate ran on. | Every handoff | Record the working copy's head when the browser step runs. |
+| 9 | The review can't tell real Gate rules from guesses: it reported the `hidden` marker as a risk, but the Gate waits for *attached*. It also didn't notice the test being gamed (`console.error` changed to `console.warn`). | First review | Give the review the contract's rules. Treat a change that hides a Gate signal as a defect. |
+| 10 | A failed sign-in carries no server-log lines (the seeding error), so the agent built its own in-process login probe, costing about 70k. | Request changes 1 | Attach the app's log lines from the sign-in window to a `signin:*` failure. |
+| 11 | When told the budget is low, the agent keeps exploring instead of committing what is already fixed. | Request changes 1 | A budget-low note that says "commit, then run `check_testability`", or a forced checkpoint commit. |
+| 12 | **Coverage of `.razor` markup sent the feature task into bUnit:** version probing, reading assemblies through reflection, package conflicts. That was about 25 of 43 calls, more than the feature itself. | Feature task | When a contract is adopted, browser smoke checks the pages, so `.razor` markup lines could leave the coverage denominator. The brief would say "test the logic in C#". This is a design decision. |
+| 13 | The reset seeds users only, so the lists are empty in the smoke screenshots and the feature (the Cancel button, the Cancelled label) is never visible in the evidence. | Feature handoff | The Make-testable brief and skills ask for representative domain data in the reset. W3 scenarios need it anyway. |
+| 14 | The handoff published a "known limitation" (four tests failing on a clean checkout) that the factory's own verification contradicted: all 30 passed. | Feature handoff | Drop or flag agent-written limitations that name tests the verification ran green. |
+
+Finding 5 is the `d62987c` fix above. The registration, the dry run, Check again, Adopt, the Gate baseline and the smoke comparison all behaved as designed, apart from 8 and the `jsonb` fix.
 
 ### 11.1 W1 as built (2026-11-17)
 
