@@ -494,6 +494,58 @@ public sealed class TestabilityChecksTests : IAsyncLifetime
     }
 
     [Fact]
+    public void The_adopted_copy_read_back_in_another_key_order_is_the_same_contract()
+    {
+        // clinic-portal, 2026-11-19: the profile's jsonb column handed the environment back sorted
+        // by key length, so the file just adopted showed as "differs from the adopted contract".
+        const string onMain = """
+            version: 1
+            application:
+              stack: node-express-spa
+              processes:
+                - name: web
+                  command: [npm, start]
+                  environment:
+                    NODE_ENV: test
+                    PORT: "{port:web}"
+                    ADMIN_PASSWORD: "{secret:TEST_ADMIN_PASS}"
+              base_url: web
+              reset: { strategy: none }
+            testability:
+              routes: { public: [/], protected: { staff: [/a], admin: [/b] } }
+            """;
+        var root = Directory.CreateTempSubdirectory("adopt-order").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(root, ContractYaml.FileName), onMain);
+            var file = ContractYaml.Parse(onMain);
+            var process = file.Application.Processes[0];
+            var fromJsonb = file with
+            {
+                Application = file.Application with
+                {
+                    Processes = [process with { Environment = process.Environment.OrderBy(e => e.Key.Length).ThenBy(e => e.Key, StringComparer.Ordinal).ToDictionary() }],
+                },
+                Testability = file.Testability with
+                {
+                    Routes = file.Testability.Routes with { Protected = file.Testability.Routes.Protected.Reverse().ToDictionary() },
+                    AdoptedFrom = new ContractOrigin { Commit = "base000", Path = ContractYaml.FileName },
+                },
+            };
+
+            Assert.False(ContractAdoption.Differs(root, fromJsonb));
+            Assert.Equal(ContractAdoption.Text(file), ContractAdoption.Text(fromJsonb));
+
+            File.WriteAllText(Path.Combine(root, ContractYaml.FileName), onMain.Replace("NODE_ENV: test", "NODE_ENV: production"));
+            Assert.True(ContractAdoption.Differs(root, fromJsonb));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task A_newer_contract_on_main_than_the_adopted_one_is_a_gap()
     {
         var projectId = await ProjectWithContractOnMainAsync();

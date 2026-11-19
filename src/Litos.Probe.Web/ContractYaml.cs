@@ -56,11 +56,20 @@ public static class ContractYaml
     public static WebAppContract Load(string path) => Parse(File.ReadAllText(path));
 
     /// <summary>The contract as yaml, for a draft the factory writes or the CLI prints.</summary>
-    public static string Serialize(WebAppContract contract)
+    public static string Serialize(WebAppContract contract) => Serialize(contract, sortDataMaps: false);
+
+    /// <summary>
+    /// The contract as yaml with every data map (environment, roles, routes, test endpoints) in key
+    /// order, so two copies compare by what they say. Order in those maps means nothing to the Gate,
+    /// and a contract read back from a jsonb column has lost it (jsonb sorts keys by length).
+    /// </summary>
+    public static string Canonical(WebAppContract contract) => Serialize(contract, sortDataMaps: true);
+
+    private static string Serialize(WebAppContract contract, bool sortDataMaps)
     {
         var node = JsonSerializer.SerializeToNode(contract, ProbeWebJson.Options)!;
         var builder = new StringBuilder();
-        Write(builder, node, 0, parentKey: null);
+        Write(builder, node, 0, parentKey: null, sortDataMaps);
         return builder.ToString();
     }
 
@@ -151,14 +160,15 @@ public static class ContractYaml
         return builder.ToString();
     }
 
-    private static void Write(StringBuilder builder, JsonNode? node, int indent, string? parentKey)
+    private static void Write(StringBuilder builder, JsonNode? node, int indent, string? parentKey, bool sortDataMaps)
     {
         var pad = new string(' ', indent);
         switch (node)
         {
             case JsonObject obj:
                 var verbatim = parentKey is not null && VerbatimKeyMaps.Contains(parentKey);
-                foreach (var (name, value) in obj)
+                var entries = verbatim && sortDataMaps ? obj.OrderBy(e => e.Key, StringComparer.Ordinal) : obj.AsEnumerable();
+                foreach (var (name, value) in entries)
                 {
                     var key = verbatim ? name : SnakeCase(name);
                     if (IsEmpty(value))
@@ -166,7 +176,7 @@ public static class ContractYaml
                     if (value is JsonObject or JsonArray && !IsInlineList(value))
                     {
                         builder.Append(pad).Append(Quote(key)).AppendLine(":");
-                        Write(builder, value, indent + 2, verbatim ? null : key);
+                        Write(builder, value, indent + 2, verbatim ? null : key, sortDataMaps);
                     }
                     else
                     {
@@ -181,7 +191,7 @@ public static class ContractYaml
                     if (item is JsonObject child)
                     {
                         var lines = new StringBuilder();
-                        Write(lines, child, indent + 2, parentKey);
+                        Write(lines, child, indent + 2, parentKey, sortDataMaps);
                         var text = lines.ToString();
                         builder.Append(pad).Append("- ").Append(text.TrimStart());
                     }

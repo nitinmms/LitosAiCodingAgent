@@ -92,9 +92,13 @@ public sealed class ContractAdoption(
         }
     }
 
-    /// <summary>The contract as yaml, without where it was adopted from, so two copies compare by what they say.</summary>
+    /// <summary>
+    /// The contract as yaml, without where it was adopted from and with its data maps in key order,
+    /// so two copies compare by what they say: the adopted copy comes back from a jsonb column,
+    /// which does not keep the order the file wrote its environment or roles in.
+    /// </summary>
     public static string Text(WebAppContract contract) =>
-        ContractYaml.Serialize(contract with { Testability = contract.Testability with { AdoptedFrom = null } });
+        ContractYaml.Canonical(contract with { Testability = contract.Testability with { AdoptedFrom = null } });
 
     private async Task<(string Commit, WebAppContract? Contract, IReadOnlyList<string> Problems)> ReadMainAsync(Project project, CancellationToken ct)
     {

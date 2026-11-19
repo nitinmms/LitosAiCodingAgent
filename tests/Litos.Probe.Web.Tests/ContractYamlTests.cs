@@ -157,6 +157,69 @@ public class ContractYamlTests
         Assert.Contains("ConnectionStrings__Default:", yaml);
     }
 
+    /// <summary>The clinic contract with every data map's keys reversed, as a jsonb column may hand them back.</summary>
+    private static WebAppContract WithDataMapsReversed(WebAppContract c) => c with
+    {
+        Application = c.Application with
+        {
+            Processes = [.. c.Application.Processes.Select(p => p with { Environment = p.Environment.Reverse().ToDictionary() })],
+        },
+        Testability = c.Testability with
+        {
+            Auth = c.Testability.Auth is { } auth ? auth with { Roles = auth.Roles.Reverse().ToDictionary() } : null,
+            Routes = c.Testability.Routes with
+            {
+                Protected = c.Testability.Routes.Protected.Reverse().ToDictionary(),
+                Denied = c.Testability.Routes.Denied.Reverse().ToDictionary(),
+            },
+        },
+    };
+
+    [Fact]
+    public void Canonical_ignores_the_order_of_data_maps()
+    {
+        var original = ContractYaml.Parse(Clinic);
+        var reordered = WithDataMapsReversed(original);
+
+        Assert.NotEqual(ContractYaml.Serialize(original), ContractYaml.Serialize(reordered));
+        Assert.Equal(ContractYaml.Canonical(original), ContractYaml.Canonical(reordered));
+    }
+
+    [Fact]
+    public void Canonical_keeps_the_schemas_own_order_and_still_round_trips()
+    {
+        var original = ContractYaml.Parse(Clinic);
+        var canonical = ContractYaml.Canonical(original);
+
+        // Only data maps are sorted: version still comes first, and application before testability.
+        Assert.StartsWith("version: 1", canonical);
+        Assert.True(canonical.IndexOf("application:", StringComparison.Ordinal) < canonical.IndexOf("testability:", StringComparison.Ordinal));
+        var again = ContractYaml.Parse(canonical);
+        Assert.Equal(ContractYaml.Canonical(original), ContractYaml.Canonical(again));
+    }
+
+    [Fact]
+    public void Canonical_still_tells_a_real_change_apart()
+    {
+        var original = ContractYaml.Parse(Clinic);
+        var process = original.Application.Processes[0];
+        var changedValue = original with
+        {
+            Application = original.Application with
+            {
+                Processes = [process with { Environment = new Dictionary<string, string>(process.Environment) { ["PORT_HINT"] = "4000" } }],
+            },
+        };
+        // The order of a list, unlike a map, means something (build steps run in turn).
+        var reversedArguments = original with
+        {
+            Application = original.Application with { Processes = [process with { Command = [.. process.Command.Reverse()] }] },
+        };
+
+        Assert.NotEqual(ContractYaml.Canonical(original), ContractYaml.Canonical(changedValue));
+        Assert.NotEqual(ContractYaml.Canonical(original), ContractYaml.Canonical(reversedArguments));
+    }
+
     [Fact]
     public void The_clinic_sample_survives_the_json_used_by_profile_v3()
     {
