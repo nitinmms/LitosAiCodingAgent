@@ -309,13 +309,25 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 | Feature task "patients can cancel an upcoming appointment" | 3 decisions answered. Out of budget at 292k in Implement (12), then resumed: verification 30 tests and 98.6% coverage, **browser smoke 17 of 17 with 11 screenshots, no repair**, full review, draft PR #2. | 538k |
 | Request changes (an ownership check in `CancelAsync`) | 32 tests, smoke 17 of 17, review clean; stopped once at Review (15). Merged by the user. *Check again* on main `0b713f6`: **Test-ready**, 19 of 19. | +229k |
 
+**insta-story-generator** (the same day, on `claude-haiku-5-5`, the user's choice):
+
+| Step | Result | Tokens |
+|---|---|---|
+| Check again (the registration check had failed on the old token) | The dry run failed at build: `npm run build` in a reading copy with no `node_modules`. This was a factory bug, fixed in `e4e0b72` (below). After the fix: **Gaps**, `node-express-spa`; the app built, started in 7.5 s, loaded `/` and passed lint, with no contract and no reset. | none |
+| Make-testable task | 1 decision (move `tsx` into `dependencies`). Verify failed on 4 tests the change broke (main's baseline: 167 of 167); one ordinary repair, then 172 tests and 100% coverage. **Gate passed** on the draft. Draft PR #10: a fake AI provider enabled only by `NODE_ENV=test` together with `STORY_PROVIDER=fake`, plus a contract with no auth and no reset. Merged by the user. | 240k |
+| Check again, Adopt | **Contract found** on `6dd3170`, adopted (profile rev 2). Gate baseline **Test-ready** in 21 s, no gaps. | none |
+| Feature task "Start over button on the story form" | 1 decision (keep the existing *Start a new story* button too). Verification passed first time: 180 tests and 100% coverage. **Smoke 4 of 4**; the screenshot shows *Start over* disabled on the empty form, with the provider set to *Test fake*. Light review, clean. Draft PR #11, merged by the user. | 188k |
+
+Neither Haiku task had a stall, a detour or a budget pause. insta is a simpler app than clinic-portal (no login, no data), so the comparison is not like for like. Still, 428k tokens for retrofit plus feature, against about 2.2M on `deepseek-v4.1-flash`, supports finding 3: much of clinic-portal's cost came from the model.
+
 **Exit check (§11 W2 row):**
 - **Blazor sample, the core path:** met (check → Make-testable → merge → adopt → Test-ready → feature task handed off with smoke screenshots).
-- **Postgres from `services` and email through Mailpit:** not covered, because clinic-portal uses SQLite and sends no email in Testing.
-- **insta-story-generator:** not run yet.
-- **Cost:** far above what the design expected, about 1.43M tokens for the retrofit and 0.54M for a small feature.
+- **insta-story-generator:** met, by the same path.
+- **Postgres from `services` and email through Mailpit:** not covered, because clinic-portal uses SQLite and sends no email in Testing. The user set it aside for now (2026-11-19).
+- **Cost:** on `deepseek-v4.1-flash`, far above what the design expected (clinic-portal: about 1.43M for the retrofit, 0.77M for a small feature). On `claude-haiku-5-5` (insta-story-generator): 240k and 188k.
 
 **Fixed during the check (pushed):**
+- `e4e0b72`: the dry run and the Gate baseline built the app in the reading copy without installing its dependencies. `dotnet build` hid this by restoring on its own, but `npm run build` failed. They now run the verification profile's own prepare and restore commands first (`VerificationProfile.RestoreOnly`), under the same permit. A failed install means the check could not run, and the check says why.
 - `d62987c`: the .NET preset writes `dotnet test` results to `artifacts/factory-test-results/` in the working copy, and only `/.factory/` was excluded, so every .NET task committed about 15k lines of `.trx` and coverage output. Both folders are now in `.git/info/exclude`.
 - `4005bfc`: the adopted contract is stored in a `jsonb` column, which does not keep key order. A file adopted a moment earlier therefore showed as "differs from the adopted contract". `ContractYaml.Canonical` writes data maps in key order, and adoption compares that form.
 
@@ -337,9 +349,10 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 | 13 | The reset seeds users only, so the lists are empty in the smoke screenshots and the feature (the Cancel button, the Cancelled label) is never visible in the evidence. | Feature handoff | The Make-testable brief and skills ask for representative domain data in the reset. W3 scenarios need it anyway. |
 | 15 | A run that passed Verify and the browser smoke stopped at a *light* review, **104 tokens short** of the budget, and needed a person to raise it. | Feature rework | Once Verify passes, set aside enough budget for the review and the handoff. |
 | 16 | *(clinic-portal, not the factory.)* Four of the retrofit's tests (`TestDataTests`, `TestingEnvironmentTests`) failed three times in the agent's local runs (`Cannot create a DbSet for IdentityUserPasskey<string>`), then passed. The likely cause is test classes running in parallel against a shared in-memory SQLite database. | Feature rework | Run those test classes one at a time. That should go into the `testability-dotnet` skill too. |
+| 17 | The handoff of a Make-testable task said "litos.test.yaml changed on this branch. The factory still used the adopted contract (profile revision 1)", although nothing was adopted and changing the contract is that task's whole job. | insta Make-testable handoff | No drift note on a `testability` task, nor when no contract is adopted. |
 | 14 | The handoff published a "known limitation" (four tests failing on a clean checkout) that the factory's own verification contradicted: all 30 passed. | Feature handoff | Drop or flag agent-written limitations that name tests the verification ran green. |
 
-**All 15 open findings are carried into W3** (§11.4). Finding 5 is the `d62987c` fix above. The registration, the dry run, Check again, Adopt, the Gate baseline and the smoke comparison all behaved as designed, apart from 8 and the `jsonb` fix.
+**All 16 open findings are carried into W3** (§11.4). Finding 5 is the `d62987c` fix above. The registration, the dry run, Check again, Adopt, the Gate baseline and the smoke comparison all behaved as designed, apart from 8 and the `jsonb` fix.
 
 ### 11.4 W3 also carries the W2.7 findings (decided 2026-11-19)
 
@@ -351,7 +364,7 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
 |---|---|---|
 | Run guards and budget behaviour | 2, 3, 11, 15 | A no-progress limit; a budget-low checkpoint; record per model which ones suit work turns; budget set aside for review and handoff after Verify. |
 | Make-testable task | 1, 4, 7, 13, 16 | The brief for a repo without tests; hand off only when the Gate passes; *Blocked* while secrets are unset; seeded domain data in the reset. |
-| Evidence and review | 6, 8, 9, 10, 14 | Generated output is a defect; the right commit; the review knows the contract's rules and flags hidden signals; log lines on sign-in failures; no limitation that the verification contradicts. |
+| Evidence and review | 6, 8, 9, 10, 14, 17 | Generated output is a defect; the right commit; the review knows the contract's rules and flags hidden signals; log lines on sign-in failures; no limitation that the verification contradicts; no drift note on a Make-testable task. |
 | Coverage of pages (design) | 12 | Proposed answer below; to confirm at the start of W3. |
 
 **Finding 12, proposed answer (2026-11-19, to confirm at the start of W3).**
@@ -380,7 +393,7 @@ The question: does page markup still count toward changed-line coverage once the
 3. **Transparent evidence.** The handoff says "N changed markup lines checked in the browser, not by unit tests".
 4. **Later: measured browser coverage, on every stack.** During the browser step, record what actually ran: Playwright's `page.coverage` for client JavaScript (Chromium), and the stack's own collector for the server (`dotnet-coverage`, `NODE_V8_COVERAGE`/`c8`, `coverage run`). Merge that into the unit-test report. This is the answer for React, and later the principled replacement for rule 2. W3 scenarios that click through a page would then earn real coverage of the `@code` handlers they exercise, measured rather than assumed.
 
-Still open from the W2 exit check, also for W3: the Postgres `services` and Mailpit path on a sample that uses them, and the insta-story-generator run.
+Still open from the W2 exit check, set aside by the user for now: the Postgres `services` and Mailpit path on a sample that uses them.
 
 ### 11.1 W1 as built (2026-11-17)
 
