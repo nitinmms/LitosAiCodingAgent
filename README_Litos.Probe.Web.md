@@ -336,7 +336,22 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 | 13 | The reset seeds users only, so the lists are empty in the smoke screenshots and the feature (the Cancel button, the Cancelled label) is never visible in the evidence. | Feature handoff | The Make-testable brief and skills ask for representative domain data in the reset. W3 scenarios need it anyway. |
 | 14 | The handoff published a "known limitation" (four tests failing on a clean checkout) that the factory's own verification contradicted: all 30 passed. | Feature handoff | Drop or flag agent-written limitations that name tests the verification ran green. |
 
-Finding 5 is the `d62987c` fix above. The registration, the dry run, Check again, Adopt, the Gate baseline and the smoke comparison all behaved as designed, apart from 8 and the `jsonb` fix.
+**All 13 open findings are carried into W3** (§11.4). Finding 5 is the `d62987c` fix above. The registration, the dry run, Check again, Adopt, the Gate baseline and the smoke comparison all behaved as designed, apart from 8 and the `jsonb` fix.
+
+### 11.4 W3 also carries the W2.7 findings (decided 2026-11-19)
+
+W3 starts by fixing the open findings from §11.3, before the scenario work, because scenarios depend on several of them:
+- **13** (seeded domain data): a scenario cannot cancel an appointment that does not exist.
+- **8** (the right commit on the evidence) and **10** (server-log lines on a failed sign-in): the scenario results in the criteria table use the same evidence.
+
+| Group | Findings | Note |
+|---|---|---|
+| Run guards and budget behaviour | 2, 3, 11 | A no-progress limit; a budget-low checkpoint; record per model which ones suit work turns. |
+| Make-testable task | 1, 4, 7, 13 | The brief for a repo without tests; hand off only when the Gate passes; *Blocked* while secrets are unset; seeded domain data in the reset. |
+| Evidence and review | 6, 8, 9, 10, 14 | Generated output is a defect; the right commit; the review knows the contract's rules and flags hidden signals; log lines on sign-in failures; no limitation that the verification contradicts. |
+| Coverage of pages (design) | 12 | To decide at the start of W3: whether `.razor` markup lines leave the coverage denominator once a contract is adopted. |
+
+Still open from the W2 exit check, also for W3: the Postgres `services` and Mailpit path on a sample that uses them, and the insta-story-generator run.
 
 ### 11.1 W1 as built (2026-11-17)
 
