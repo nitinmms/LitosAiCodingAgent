@@ -276,6 +276,50 @@ public class GitWorkspaceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EveryWorkingCopy_KeepsTheDotnetPresetsTestResults_OutOfItsDiffsAndCommits()
+    {
+        // What the .NET preset's dotnet test --results-directory leaves behind (clinic-portal, 2026-11-19).
+        await _workspace.EnsureClonedAsync(default);
+        var results = InWorkspace(Path.Combine("artifacts", "factory-test-results"));
+        Directory.CreateDirectory(Path.Combine(results, "8c1e9f6f", "In"));
+        File.WriteAllText(Path.Combine(results, "run_net10.0.trx"), "<TestRun/>");
+        File.WriteAllText(Path.Combine(results, "8c1e9f6f", "coverage.cobertura.xml"), "<coverage/>");
+
+        Assert.True((await _workspace.GetStatusAsync(default)).IsClean);
+    }
+
+    [Fact]
+    public async Task AWorkingCopyMadeBeforeTheDotnetPattern_GetsIt_WhenNextOpened_Once()
+    {
+        // A copy whose exclude file holds only the first pattern, as every copy made before it did.
+        await _workspace.EnsureClonedAsync(default);
+        var excludePath = InWorkspace(Path.Combine(".git", "info", "exclude"));
+        File.WriteAllText(excludePath, $"# git's own sample\n# The Litos software factory's verification reports.\n{GitWorkspace.FactoryFolderPattern}\n");
+
+        await _workspace.EnsureClonedAsync(default);
+        await _workspace.EnsureClonedAsync(default);
+
+        var exclude = File.ReadAllText(excludePath);
+        Assert.StartsWith("# git's own sample\n", exclude);
+        foreach (var pattern in GitWorkspace.ReportPatterns)
+            Assert.Equal(1, exclude.Split(pattern).Length - 1);
+    }
+
+    [Fact]
+    public async Task ARepositoryThatTracksAFileUnderArtifacts_StillShowsItsChanges()
+    {
+        // The exclude covers only the factory's own folder, not the rest of artifacts/, and never a tracked file.
+        await _workspace.EnsureClonedAsync(default);
+        Directory.CreateDirectory(InWorkspace("artifacts"));
+        File.WriteAllText(InWorkspace(Path.Combine("artifacts", "release-notes.md")), "notes");
+
+        var status = await _workspace.GetStatusAsync(default);
+
+        Assert.False(status.IsClean);
+        Assert.Contains(status.ChangedPaths, p => p.Contains("release-notes.md"));
+    }
+
+    [Fact]
     public async Task EnsureClonedAsync_UnreachableRemote_ThrowsWorkspaceException()
     {
         var workspace = new GitWorkspace(new GitWorkspaceOptions(_temp.Combine("workspaces", "bad"), _temp.Combine("no-such-remote.git")));

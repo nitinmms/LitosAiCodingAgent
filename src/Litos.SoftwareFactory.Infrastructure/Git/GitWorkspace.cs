@@ -48,20 +48,33 @@ public sealed class GitWorkspace(GitWorkspaceOptions options, IProcessRunner? pr
     public const string FactoryFolderPattern = "/.factory/";
 
     /// <summary>
+    /// Where the .NET preset's <c>dotnet test --results-directory</c> writes its .trx and coverage
+    /// reports. Every .NET project's profile carries this path, so it is excluded where it is rather
+    /// than moved under <see cref="FactoryFolderPattern"/>.
+    /// </summary>
+    public const string DotnetTestResultsPattern = "/artifacts/factory-test-results/";
+
+    /// <summary>Every folder the factory's own verification writes into a working copy.</summary>
+    public static readonly IReadOnlyList<string> ReportPatterns = [FactoryFolderPattern, DotnetTestResultsPattern];
+
+    /// <summary>
     /// Keeps the presets' reports out of every diff and commit through the copy's own
     /// .git/info/exclude, whatever the repository's .gitignore says, without changing a file the
     /// repository tracks. Like build output, they also survive the clean before a reading checkout.
+    /// A copy made before a pattern was added gets it the next time it is opened.
     /// </summary>
     private void ExcludeFactoryFolder()
     {
         var exclude = System.IO.Path.Combine(options.Path, ".git", "info", "exclude");
         var text = File.Exists(exclude) ? File.ReadAllText(exclude) : "";
-        if (text.Split('\n').Any(l => l.Trim() == FactoryFolderPattern))
+        var lines = text.Split('\n').Select(l => l.Trim()).ToHashSet();
+        var missing = ReportPatterns.Where(p => !lines.Contains(p)).ToList();
+        if (missing.Count == 0)
             return;
 
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(exclude)!);
         var separator = text.Length == 0 || text.EndsWith('\n') ? "" : "\n";
-        File.AppendAllText(exclude, $"{separator}# The Litos software factory's verification reports.\n{FactoryFolderPattern}\n");
+        File.AppendAllText(exclude, $"{separator}# The Litos software factory's verification reports.\n{string.Join("\n", missing)}\n");
     }
 
     // Fetch and push name the remote by its URL, not as "origin": the working copy's own config
