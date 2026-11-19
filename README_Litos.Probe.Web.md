@@ -352,7 +352,33 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
 | Run guards and budget behaviour | 2, 3, 11, 15 | A no-progress limit; a budget-low checkpoint; record per model which ones suit work turns; budget set aside for review and handoff after Verify. |
 | Make-testable task | 1, 4, 7, 13, 16 | The brief for a repo without tests; hand off only when the Gate passes; *Blocked* while secrets are unset; seeded domain data in the reset. |
 | Evidence and review | 6, 8, 9, 10, 14 | Generated output is a defect; the right commit; the review knows the contract's rules and flags hidden signals; log lines on sign-in failures; no limitation that the verification contradicts. |
-| Coverage of pages (design) | 12 | To decide at the start of W3: whether `.razor` markup lines leave the coverage denominator once a contract is adopted. |
+| Coverage of pages (design) | 12 | Proposed answer below; to confirm at the start of W3. |
+
+**Finding 12, proposed answer (2026-11-19, to confirm at the start of W3).**
+
+The question: does page markup still count toward changed-line coverage once the browser checks cover those pages?
+
+**It is not specific to Blazor.** It arises wherever templates compile into code that the coverage tool measures, and only there:
+
+| Stack | Templates in the coverage figure? | Can markup be split from logic? |
+|---|---|---|
+| Blazor `.razor` | Yes (compiled render tree) | Yes: markup vs `@code { }` |
+| Razor Pages / MVC `.cshtml` | Yes (compiled into the assembly) | Yes: markup vs `@functions` / `@code`; the `.cshtml.cs` model stays counted |
+| Vue `.vue` / Svelte | Yes, when tests import them | Yes: the template block vs the script block |
+| React `.jsx` / `.tsx` | Yes | No clean split: handlers and hooks sit inline next to the returned JSX |
+| Django/Jinja, Go `html/template`, Thymeleaf/JSP | No: the coverage tools do not see template files | Not needed |
+
+**Not whole view files.** The logic lives in them too: the rework's ownership check went into `CancelAsync` inside `MyAppointments.razor`. Excluding the file would have shipped a security fix with no test required, and the smoke step never clicks Cancel.
+
+**But markup should not need component tests either.** bUnit cost about 25 of the feature's 43 calls, and it proves only that the HTML renders, which the browser check proves with a real circuit, auth and database for every role.
+
+**The browser check's proof is limited, though.** A page renders without errors *with the data present at the time*. With a reset that seeds no domain data (13), conditional markup is never rendered. Markup credit is only honest once 13 is fixed.
+
+**Proposal:**
+1. **Brief rule, all stacks.** "Put rules (who may do what, what counts as upcoming) in a plain function, method or hook that the page calls, and unit-test that. Do not add a component-test library." This alone would have prevented most of the feature task's cost.
+2. **Markup exclusion, set in the stack profile.** A profile names its view files and how to find their markup ranges (Razor: outside `@code` / `@functions`; Vue/Svelte: the template block). Once a contract is adopted, changed markup lines of a page whose route the contract visits leave the coverage denominator. `@code` and script lines stay counted, and so does any page the contract does not visit (the drift note already flags a new route). Razor (`.razor` and `.cshtml`) comes first; Vue and Svelte follow with their profiles. React gets no markup exclusion: its component tests (React Testing Library, jsdom) are usually already set up and cheap, and rule 1 applies.
+3. **Transparent evidence.** The handoff says "N changed markup lines checked in the browser, not by unit tests".
+4. **Later: measured browser coverage, on every stack.** During the browser step, record what actually ran: Playwright's `page.coverage` for client JavaScript (Chromium), and the stack's own collector for the server (`dotnet-coverage`, `NODE_V8_COVERAGE`/`c8`, `coverage run`). Merge that into the unit-test report. This is the answer for React, and later the principled replacement for rule 2. W3 scenarios that click through a page would then earn real coverage of the `@code` handlers they exercise, measured rather than assumed.
 
 Still open from the W2 exit check, also for W3: the Postgres `services` and Mailpit path on a sample that uses them, and the insta-story-generator run.
 
