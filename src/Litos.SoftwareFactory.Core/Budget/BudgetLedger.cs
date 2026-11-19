@@ -63,7 +63,12 @@ public abstract record AdmissionDecision;
 /// <summary>The call may be sent, with the provider's output limit set to MaxOutputTokens so
 /// the response cannot exceed the reservation. LimitedBy names what cut that limit below the
 /// output allowance — the task's budget or the user's quota — and is null when nothing did.</summary>
-public sealed record Admitted(long Reserved, int MaxOutputTokens, RefusalReason? LimitedBy = null) : AdmissionDecision;
+public sealed record Admitted(long Reserved, int MaxOutputTokens, RefusalReason? LimitedBy = null) : AdmissionDecision
+{
+    /// <summary>What the task's allowance had left before this call was reserved, or null when it
+    /// has no cap. The gateway reads it for the budget-low note (BudgetNote).</summary>
+    public long? TaskRemaining { get; init; }
+}
 
 /// <summary>The call must not be sent: it does not fit. Nothing has been spent.</summary>
 public sealed record Refused(RefusalReason Reason, long Needed, long Remaining) : AdmissionDecision;
@@ -176,7 +181,7 @@ public static class BudgetLedger
         if (budget.QuotaRemaining is { } quota && quota - input < output)
             (output, limitedBy) = (quota - input, RefusalReason.UserQuota);
 
-        return new Admitted(input + output, (int)output, limitedBy);
+        return new Admitted(input + output, (int)output, limitedBy) { TaskRemaining = budget.TaskRemaining };
     }
 
     /// <summary>

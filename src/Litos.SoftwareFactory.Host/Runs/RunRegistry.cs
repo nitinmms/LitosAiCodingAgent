@@ -73,6 +73,13 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
 
     public Guid? DecisionId { get; set; }
 
+    /// <summary>Why the gateway stopped this turn for making no progress (ProgressGuard), if it did.</summary>
+    public string? NoProgressStop { get; private set; }
+
+    private bool _progressNoteSent;
+
+    private bool _budgetNoteSent;
+
     /// <summary>The worker serving this run, once it is started; steering goes through it.</summary>
     public Litos.SoftwareFactory.Core.Ports.IWorkerClient? Client { get; set; }
 
@@ -143,6 +150,9 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             _submission = null;
             BudgetRefusal = null;
             BudgetRefusalReason = null;
+            NoProgressStop = null;
+            _progressNoteSent = false;
+            _budgetNoteSent = false;
             DecisionId = null;
             _followUps = 0;
             _inTurn = true;
@@ -295,6 +305,45 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
             if (!Core.Orchestration.CostMeter.IsDue(TurnCalls, contextTokens, _costMeter, limits, out var next))
                 return false;
             _costMeter = next;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The progress guard after a settled call of a work turn: whether to send its note or stop
+    /// the turn, with the calls it counted. Only calls in this turn count, so a turn resumed after
+    /// a stop gets a fresh allowance rather than being stopped at its first call. Never for a
+    /// review or a scan, which do not write, and never once the turn has submitted.
+    /// </summary>
+    public (Core.Orchestration.ProgressGuard.Verdict Verdict, int Calls) JudgeProgress(int callsSinceWrite, Core.Orchestration.RunLimits limits)
+    {
+        lock (_lock)
+        {
+            if (TurnKind is null || _submission is not null || !IsWorkTurn(WorkKind) || NoProgressStop is not null)
+                return (Core.Orchestration.ProgressGuard.Verdict.Continue, 0);
+
+            var calls = Math.Min(callsSinceWrite, TurnCalls);
+            var verdict = Core.Orchestration.ProgressGuard.Judge(calls, _progressNoteSent, limits);
+            if (verdict == Core.Orchestration.ProgressGuard.Verdict.Note)
+                _progressNoteSent = true;
+            else if (verdict == Core.Orchestration.ProgressGuard.Verdict.Stop)
+                NoProgressStop = Core.Orchestration.ProgressGuard.StopReason(calls);
+            return (verdict, calls);
+        }
+    }
+
+    /// <summary>Whether the work turn in progress is due its budget-low note (BudgetNote); once per turn.</summary>
+    public bool BudgetNoteDue(long? callsLeft, Core.Orchestration.RunLimits limits)
+    {
+        lock (_lock)
+        {
+            if (TurnKind is null || _submission is not null || !IsWorkTurn(WorkKind)
+                || !Core.Orchestration.BudgetNote.IsDue(callsLeft, _budgetNoteSent, limits))
+            {
+                return false;
+            }
+
+            _budgetNoteSent = true;
             return true;
         }
     }

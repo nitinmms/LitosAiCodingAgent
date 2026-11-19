@@ -224,6 +224,8 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         var resumeTurn = new StartTurnStep(state.WorkTurn, BriefKind.Resume, SessionOf(state));
         switch (turn.Reason)
         {
+            case TurnEndReason.BudgetRefused when state.WorkTurn == TurnKind.Review:
+                return OnReviewOutOfBudget(state, turn);
             case TurnEndReason.BudgetRefused:
                 return Stop(
                     state, LifecycleTrigger.ExhaustBudget, StopReason.BudgetExhausted,
@@ -259,6 +261,10 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
                 return Stop(
                     state, LifecycleTrigger.Block, StopReason.TurnTimeLimit,
                     $"The turn passed its time limit of {Describe(Limits.TurnTimeout)}.", resumeTurn);
+            case TurnEndReason.NoProgress:
+                return Stop(
+                    state, LifecycleTrigger.Block, StopReason.NoProgress,
+                    turn.Detail ?? "The turn made too many model calls without changing a file.", resumeTurn);
         }
 
         return state.WorkTurn switch
@@ -380,6 +386,24 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             + "The factory's own verification (build, unit tests and changed-line coverage) passed; review the change yourself.";
         return Enter(
             state with { ReviewCutOffs = cutOffs, Review = ReviewStatus.DidNotFinish, Disclosures = [.. state.Disclosures, disclosure] },
+            new HandoffStep());
+    }
+
+    /// <summary>
+    /// The task's budget ran out during the review (Probe.Web README §11.3 finding 15). A review
+    /// only starts once the factory's own verification, and the browser checks when the project
+    /// has a contract, have passed, so, as for a review cut off by its output limit, it never
+    /// blocks the change: the run hands off with the review not run, and says so. The cap is not
+    /// exceeded. On the W2.7 check a verified change stopped 104 tokens short of a light review
+    /// and waited for a person to raise the budget.
+    /// </summary>
+    private static RunTransition OnReviewOutOfBudget(RunState state, TurnEnded turn)
+    {
+        var why = turn.Detail is { Length: > 0 } detail ? $" ({detail.TrimEnd('.')})" : "";
+        var disclosure = $"The agent review was not run: there was no budget left for it once the factory's own verification had passed{why}. "
+            + "Review the change yourself, or raise the budget and request changes to have it reviewed.";
+        return Enter(
+            state with { Review = ReviewStatus.SkippedForBudget, Disclosures = [.. state.Disclosures, disclosure] },
             new HandoffStep());
     }
 

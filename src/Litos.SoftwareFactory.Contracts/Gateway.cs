@@ -76,7 +76,11 @@ public static class GatewayErrorCodes
     /// <summary>The provider failed. The call may have incurred usage.</summary>
     public const string ProviderError = "provider_error";
 
+    /// <summary>The host stopped a work turn that went too many calls without changing the
+    /// working copy (ProgressGuard); nothing was sent.</summary>
+    public const string NoProgress = "no_progress";
+
     /// <summary>True when the host refused the call before sending it — the run is already
     /// paused, and retrying would only be refused again.</summary>
-    public static bool IsRefusal(string code) => code is BudgetExhausted or QuotaExhausted;
+    public static bool IsRefusal(string code) => code is BudgetExhausted or QuotaExhausted or NoProgress;
 }

@@ -91,6 +91,14 @@ public sealed class ModelGateway(
             return;
         }
 
+        // A work turn the progress guard stopped gets no more calls; the turn ends on the refusal
+        // and the run is blocked, resumable. Compaction (no tools) is not the turn's own call.
+        if (chat.Tools.Count > 0 && run.NoProgressStop is { } stopped)
+        {
+            await write(new GatewayError(GatewayErrorCodes.NoProgress, stopped));
+            return;
+        }
+
         var calibration = CalibrationFor(run.Provider, run.Model);
         var provider = providers.Resolve(run.Provider);
         var requestKey = request.RequestKey;
@@ -140,7 +148,7 @@ public sealed class ModelGateway(
             string? brokenBecause;
             try
             {
-                brokenBecause = await SendAsync(provider, sent, admitted.LimitedBy, estimate, calibration, requestKey, run, sessionKey, call, write, ct);
+                brokenBecause = await SendAsync(provider, sent, admitted.LimitedBy, admitted.TaskRemaining, estimate, calibration, requestKey, run, sessionKey, call, write, ct);
             }
             catch (OperationCanceledException)
             {
@@ -195,8 +203,9 @@ public sealed class ModelGateway(
     /// part-way, when nothing has been written and the call can be sent again.
     /// </summary>
     /// <param name="limitedBy">What cut the call's output limit below the allowance, if anything.</param>
+    /// <param name="taskRemaining">What the task's allowance had left before this call, for the budget-low note.</param>
     private async Task<string?> SendAsync(
-        IChatProvider provider, ChatRequest chat, RefusalReason? limitedBy, RequestEstimate estimate, CalibrationWindow calibration, string requestKey,
+        IChatProvider provider, ChatRequest chat, RefusalReason? limitedBy, long? taskRemaining, RequestEstimate estimate, CalibrationWindow calibration, string requestKey,
         ActiveRun run, string sessionKey, CallState call, Func<GatewayEvent, Task> write, CancellationToken ct)
     {
         var nothingProducedRetries = 0;
@@ -231,8 +240,8 @@ public sealed class ModelGateway(
                             run.PreferredUpstream = servedBy;
                         if (run.RecordTurnCall(charged) is { } wrapUp)
                             _ = WrapUpAsync(run, wrapUp);
-                        else if (run.CostNoteDue(completed.Usage.TotalInputTokens, options.Limits))
-                            _ = CostNoteAsync(run, chat, completed.Usage.TotalInputTokens, charged);
+                        else
+                            AfterWorkCall(run, chat, completed, taskRemaining, charged);
 
                         // Charged, but not passed on: to the agent loop an empty reply looks like
                         // a turn that chose to stop, and the run would be blamed for not calling
@@ -402,6 +411,46 @@ public sealed class ModelGateway(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Run {RunId}: the cost note could not be sent.", run.RunId);
+        }
+    }
+
+    /// <summary>
+    /// What a settled call of a work turn may set off, at most one steer per call so the turn is
+    /// not handed three notes at once: the budget-low note first, since running out leaves nothing
+    /// to hand off; then the progress guard's note; then the cost note. A progress stop sends no
+    /// steer: the turn's next call is refused.
+    /// </summary>
+    private void AfterWorkCall(ActiveRun run, ChatRequest chat, MessageCompleted completed, long? taskRemaining, long charged)
+    {
+        var limits = options.Limits;
+        var (progress, calls) = run.JudgeProgress(ProgressGuard.CallsSinceLastWrite([.. chat.Messages, completed.Message]), limits);
+        var remainingAfter = taskRemaining - charged;
+        var callsLeft = BudgetNote.CallsLeft(remainingAfter, charged);
+
+        if (progress == ProgressGuard.Verdict.Stop)
+            _ = NoteAsync(run, steer: null, ProgressGuard.StopReason(calls));
+        else if (run.BudgetNoteDue(callsLeft, limits))
+            _ = NoteAsync(run, BudgetNote.Note(remainingAfter!.Value, callsLeft!.Value), BudgetNote.ThreadLine(remainingAfter.Value, callsLeft.Value));
+        else if (progress == ProgressGuard.Verdict.Note)
+            _ = NoteAsync(run, ProgressGuard.Note(calls, limits), ProgressGuard.ThreadLine(calls));
+        else if (run.CostNoteDue(completed.Usage.TotalInputTokens, limits))
+            _ = CostNoteAsync(run, chat, completed.Usage.TotalInputTokens, charged);
+    }
+
+    /// <summary>Steers the turn, when there is a steer, and notes it in the thread. Not awaited by
+    /// the call that triggered it; a failure is logged.</summary>
+    private async Task NoteAsync(ActiveRun run, string? steer, string threadLine)
+    {
+        try
+        {
+            if (steer is not null && run.Client is { } client && run.SessionId is { } sessionId)
+                await client.SteerAsync(sessionId, steer, CancellationToken.None);
+            await store.AddFactoryMessageAsync(run.ThreadId, MessageKind.Status, threadLine, null, clock.UtcNow, CancellationToken.None);
+            signals.EventsWritten();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Run {RunId}: a run-guard note could not be sent.", run.RunId);
         }
     }
 

@@ -91,6 +91,23 @@ public sealed record RunLimits
     /// <summary>...but never within this many calls of the last note.</summary>
     public int CostNoteMinGapCalls { get; init; } = 5;
 
+    // ---- Run guards in work turns (ProgressGuard, BudgetNote; Probe.Web README §11.4, W3.1) ----
+
+    /// <summary>Whether work turns get the progress guard and the budget-low note (FACTORY_RUN_GUARDS=off turns them off).</summary>
+    public bool RunGuards { get; init; } = true;
+
+    /// <summary>A work turn that has made this many model calls since it last changed the working
+    /// copy is told to make the change or ask. Healthy turns wrote within 2 to 7 calls and never
+    /// went more than 16 without a write; the two stalls of the W2.7 check went 28 and 29.</summary>
+    public int ProgressNoteAfterCalls { get; init; } = 15;
+
+    /// <summary>...and is stopped (Blocked, no progress, resumable) at this many.</summary>
+    public int ProgressStopAfterCalls { get; init; } = 25;
+
+    /// <summary>A work turn is told to finish once its task's budget has room for about this many
+    /// more calls at the cost of its last one.</summary>
+    public int BudgetLowCallsLeft { get; init; } = 5;
+
     // ---- The decision scan (DecisionPolicy) ----
 
     /// <summary>After each answer, while questions remain, the scan session checks whether the
@@ -286,6 +303,10 @@ public enum TurnEndReason
     /// <summary>A model call reached its output limit without replying: in practice a reasoning
     /// model that spent the whole allowance thinking.</summary>
     OutputLimit,
+
+    /// <summary>The gateway stopped a work turn that made too many model calls without changing
+    /// the working copy (ProgressGuard).</summary>
+    NoProgress,
 }
 
 /// <summary>

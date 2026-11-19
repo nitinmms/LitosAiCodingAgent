@@ -383,6 +383,25 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
   | W3.7 | Spec turn drafts scenarios; results in the handoff criteria table |
   | W3.8 | Live check: one scenario-verified task on each repo |
 
+**W3.1 as built (run guards and budget).** For work turns only (implement, rework, repair, and their nudges), never for a review or a scan. `FACTORY_RUN_GUARDS=off` turns the guards off.
+- **Progress guard (finding 2), `Core/Orchestration/RunGuards.cs` `ProgressGuard`.** After each settled call the gateway counts, from the conversation it already holds, the model calls since the last one that changed the working copy:
+  - what counts as a change: `write_file`/`edit_file`, kernel code that calls them or writes, deletes or moves files, and `git rm`/`mv`/`apply`/`restore`;
+  - what doesn't count: anything on a line naming `SCRATCH_DIR`.
+
+  Only calls in the current turn count, so a resumed turn gets a fresh window. At **15 calls** the turn is told once to make the change, ask with `request_decision`, or submit. At **25** the gateway stops it: the next call is refused with `no_progress`, and the run is *Blocked: no progress*, resumable. The limits come from the dev factory's runs: healthy turns wrote by call 2–7 and never went more than 16 calls without a write, while the two W2.7 stalls went 28 and 29.
+- **Budget-low note (finding 11), `BudgetNote`.** `Admitted.TaskRemaining` carries what the task's budget had left. When there is room for about **5 calls** or fewer at the cost of the last one, the turn is told once to finish the edit, run the tests and the brief's checks once, and call `submit_work`, saying what is not done.
+- **At most one steer per call.** The budget note comes first, then the progress note, then the cost note. A stop sends no steer, only the thread line.
+- **Review with no budget left (finding 15), `RunOrchestrator.OnReviewOutOfBudget`.** A review only starts once verification (and the browser smoke, with a contract) has passed, so `BudgetRefused` during a review now hands off with `ReviewStatus.SkippedForBudget`. The disclosure says so, with the refusal's figures; the card reads "Not run: no budget was left once verification had passed. Review the change yourself" and is marked as needing you. The cap is never exceeded. Work turns still pause for budget as before.
+- **Per-model notes (finding 3).** What the W2.7 work turns showed:
+
+  | Model | Make-testable | Feature | Notes |
+  |---|---|---|---|
+  | `deepseek/deepseek-v4.1-flash` | clinic-portal: 1.43M, two budget pauses, a 246k turn with no change | clinic-portal: 0.77M, bUnit detour | Reasoning bursts of 9–23k tokens with no reply; cost notes acknowledged, then ignored |
+  | `claude-haiku-5-5` | insta-story-generator: 240k, one ordinary repair | insta-story-generator: 188k, passed first time | No stall, detour or pause |
+
+  The dev factory now defaults to `claude-haiku-5-5`.
+- **Tests:** Core 1,328 (27 new: what counts as a write, the verdicts, the budget estimate, the orchestrator's stop and handoff); host 11 new (`ActiveRunProgressTests`, `GatewayRunGuardTests`: per-turn counting, note, stop, the refusal spending nothing, the budget note, guards off); web 588 (2 new). One existing test changed on purpose: `BudgetRefused_DuringReview_HandsOffWithTheReviewNotRun` replaces the test that resumed the review.
+
 **Finding 12, the proposal as discussed (2026-11-19; only item 1 was adopted, above).**
 
 The question: does page markup still count toward changed-line coverage once the browser checks cover those pages?

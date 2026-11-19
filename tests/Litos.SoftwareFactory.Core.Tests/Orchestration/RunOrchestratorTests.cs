@@ -735,14 +735,15 @@ public class RunOrchestratorTests
         Assert.Equal(1, run.State.RepairCyclesUsed); // a budget pause does not reset the allowance
     }
 
+    /// <summary>Until W3.1 this paused for budget and resumed the review; a review now never blocks
+    /// a verified change for budget (Probe.Web README §11.3 finding 15, decided 2026-11-19).</summary>
     [Fact]
-    public void BudgetRefused_DuringReview_ResumesInTheReviewSession()
+    public void BudgetRefused_DuringReview_HandsOffWithTheReviewNotRun()
     {
         var run = new Run().AtReview();
-        run.Report(new TurnEnded(TurnEndReason.BudgetRefused));
-        run.Report(new Resumed());
 
-        AssertTurn(run.Report(new PreflightCompleted(true)), TurnKind.Review, BriefKind.Resume, SessionScope.Review);
+        Assert.IsType<HandoffStep>(run.Report(new TurnEnded(TurnEndReason.BudgetRefused)));
+        Assert.Equal(ReviewStatus.SkippedForBudget, run.State.Review);
     }
 
     [Fact]

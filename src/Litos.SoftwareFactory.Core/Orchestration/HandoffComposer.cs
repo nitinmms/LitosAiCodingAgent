@@ -217,6 +217,7 @@ public static class HandoffComposer
             nameof(ReviewStatus.FindingsFixed) => $"Agent review: {Count(blocking, "finding")} fixed. ",
             nameof(ReviewStatus.FindingsOpen) => $"Agent review: {Count(evidence.Findings.Count, "finding")} open. ",
             nameof(ReviewStatus.DidNotFinish) => "Agent review: did not finish. ",
+            nameof(ReviewStatus.SkippedForBudget) => "Agent review: not run, because no budget was left once verification had passed. ",
             nameof(ReviewStatus.NotNeeded) => "Agent review: not needed for a change this small with no risk signals; the factory's own verification passed. ",
             _ => "Agent review: not run. ",
         });

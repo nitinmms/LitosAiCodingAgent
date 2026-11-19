@@ -47,6 +47,10 @@ public enum ReviewStatus
     /// <summary>A review was started but did not finish: its model reached the output limit
     /// without replying. Distinct from NotRun, which means no review was attempted.</summary>
     DidNotFinish,
+
+    /// <summary>The task's budget ran out once verification had passed, so the run handed off
+    /// without its review rather than pausing (RunOrchestrator.OnReviewOutOfBudget).</summary>
+    SkippedForBudget,
 }
 
 public enum HumanTestingStatus

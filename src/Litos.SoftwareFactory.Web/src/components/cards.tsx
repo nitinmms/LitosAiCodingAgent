@@ -206,6 +206,8 @@ function reviewLine(e: HandoffEvidence): string {
       return 'Not needed (a small change with no risk signals)';
     case 'DidNotFinish':
       return "Didn't finish (its model reached the output limit without replying)";
+    case 'SkippedForBudget':
+      return 'Not run: no budget was left once verification had passed. Review the change yourself';
     default:
       return 'Not run';
   }

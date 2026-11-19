@@ -566,6 +566,8 @@ public sealed class RunExecutor(
             return new TurnEnded(TurnEndReason.PausedByUser);
         if (active.BudgetRefusal is { } refusal)
             return new TurnEnded(TurnEndReason.BudgetRefused, Detail: refusal);
+        if (active.NoProgressStop is { } noProgress && submission is null)
+            return new TurnEnded(TurnEndReason.NoProgress, FilesChanged: before != await FingerprintAsync(data, hostStopping), Detail: noProgress);
         if (timeout.IsCancellationRequested && submission is null)
             return new TurnEnded(TurnEndReason.TimeLimit);
 

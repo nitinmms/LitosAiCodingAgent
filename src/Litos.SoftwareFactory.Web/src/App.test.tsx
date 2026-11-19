@@ -929,6 +929,12 @@ describe('a handoff', () => {
     expect(card.getByText("Didn't finish (its model reached the output limit without replying)")).toBeInTheDocument();
   });
 
+  it('says a review skipped because the budget ran out after verification passed, and that it is yours to review', async () => {
+    const { card } = await handedOff({ review: 'SkippedForBudget', findings: [] });
+
+    expect(card.getByText('Not run: no budget was left once verification had passed. Review the change yourself')).toBeInTheDocument();
+  });
+
   it('says plainly when a change was not reviewed because it did not need one', async () => {
     const { card } = await handedOff({ review: 'NotNeeded', findings: [] });
 
