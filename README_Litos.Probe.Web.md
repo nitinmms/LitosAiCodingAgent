@@ -365,9 +365,25 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
 | Run guards and budget behaviour | 2, 3, 11, 15 | A no-progress limit; a budget-low checkpoint; record per model which ones suit work turns; budget set aside for review and handoff after Verify. |
 | Make-testable task | 1, 4, 7, 13, 16 | The brief for a repo without tests; hand off only when the Gate passes; *Blocked* while secrets are unset; seeded domain data in the reset. |
 | Evidence and review | 6, 8, 9, 10, 14, 17 | Generated output is a defect; the right commit; the review knows the contract's rules and flags hidden signals; log lines on sign-in failures; no limitation that the verification contradicts; no drift note on a Make-testable task. |
-| Coverage of pages (design) | 12 | Proposed answer below; to confirm at the start of W3. |
+| Coverage of pages (design) | 12 | **Decided: the brief rule only** (below). |
 
-**Finding 12, proposed answer (2026-11-19, to confirm at the start of W3).**
+**W3 decisions (2026-11-19, the user at the start of W3):**
+- **Finding 12: the brief rule only.** Every stack's brief says "put rules in a plain function, method or hook that the page calls and unit-test that; do not add a component-test library". Coverage stays as it is, so markup still counts. It is revisited once measured browser coverage (proposal item 4 below) exists. Proposal items 2 and 3 are not built.
+- **Finding 3:** the dev factory's default provider is now `anthropic`, whose default model is `claude-haiku-5-5` (settings revision 7), so W3's fixes are measured against it. `deepseek-v4.1-flash` stays offered.
+- **Slices, with a stop for review after each:**
+
+  | Slice | Scope |
+  |---|---|
+  | W3.1 | Run guards and budget: 2, 11, 15, 3 |
+  | W3.2 | Make-testable task: 1, 4, 7, 13, 16 |
+  | W3.3 | Evidence and review: 6, 8, 9, 10, 14, 17 |
+  | W3.4 | The brief rule for 12 |
+  | W3.5 | `WebScenario` model and runner (fixed steps) |
+  | W3.6 | Scenario store with revisions and approval |
+  | W3.7 | Spec turn drafts scenarios; results in the handoff criteria table |
+  | W3.8 | Live check: one scenario-verified task on each repo |
+
+**Finding 12, the proposal as discussed (2026-11-19; only item 1 was adopted, above).**
 
 The question: does page markup still count toward changed-line coverage once the browser checks cover those pages?
 
