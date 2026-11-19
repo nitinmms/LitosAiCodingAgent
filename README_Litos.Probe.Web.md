@@ -307,6 +307,7 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 | Request changes 2 (remove `artifacts/`) | Clean branch, 13 files. Merged by the user (main `2aad33c`). | +156k |
 | Check again, Adopt | **Contract found**, then adopted (profile rev 2). Gate baseline **Test-ready**, 19 of 19 in 31 s. | none |
 | Feature task "patients can cancel an upcoming appointment" | 3 decisions answered. Out of budget at 292k in Implement (12), then resumed: verification 30 tests and 98.6% coverage, **browser smoke 17 of 17 with 11 screenshots, no repair**, full review, draft PR #2. | 538k |
+| Request changes (an ownership check in `CancelAsync`) | 32 tests, smoke 17 of 17, review clean; stopped once at Review (15). Merged by the user. *Check again* on main `0b713f6`: **Test-ready**, 19 of 19. | +229k |
 
 **Exit check (§11 W2 row):**
 - **Blazor sample, the core path:** met (check → Make-testable → merge → adopt → Test-ready → feature task handed off with smoke screenshots).
@@ -334,9 +335,11 @@ Each step ends with its tests green (the factory's standing rule: comprehensive 
 | 11 | When told the budget is low, the agent keeps exploring instead of committing what is already fixed. | Request changes 1 | A budget-low note that says "commit, then run `check_testability`", or a forced checkpoint commit. |
 | 12 | **Coverage of `.razor` markup sent the feature task into bUnit:** version probing, reading assemblies through reflection, package conflicts. That was about 25 of 43 calls, more than the feature itself. | Feature task | When a contract is adopted, browser smoke checks the pages, so `.razor` markup lines could leave the coverage denominator. The brief would say "test the logic in C#". This is a design decision. |
 | 13 | The reset seeds users only, so the lists are empty in the smoke screenshots and the feature (the Cancel button, the Cancelled label) is never visible in the evidence. | Feature handoff | The Make-testable brief and skills ask for representative domain data in the reset. W3 scenarios need it anyway. |
+| 15 | A run that passed Verify and the browser smoke stopped at a *light* review, **104 tokens short** of the budget, and needed a person to raise it. | Feature rework | Once Verify passes, set aside enough budget for the review and the handoff. |
+| 16 | *(clinic-portal, not the factory.)* Four of the retrofit's tests (`TestDataTests`, `TestingEnvironmentTests`) failed three times in the agent's local runs (`Cannot create a DbSet for IdentityUserPasskey<string>`), then passed. The likely cause is test classes running in parallel against a shared in-memory SQLite database. | Feature rework | Run those test classes one at a time. That should go into the `testability-dotnet` skill too. |
 | 14 | The handoff published a "known limitation" (four tests failing on a clean checkout) that the factory's own verification contradicted: all 30 passed. | Feature handoff | Drop or flag agent-written limitations that name tests the verification ran green. |
 
-**All 13 open findings are carried into W3** (§11.4). Finding 5 is the `d62987c` fix above. The registration, the dry run, Check again, Adopt, the Gate baseline and the smoke comparison all behaved as designed, apart from 8 and the `jsonb` fix.
+**All 15 open findings are carried into W3** (§11.4). Finding 5 is the `d62987c` fix above. The registration, the dry run, Check again, Adopt, the Gate baseline and the smoke comparison all behaved as designed, apart from 8 and the `jsonb` fix.
 
 ### 11.4 W3 also carries the W2.7 findings (decided 2026-11-19)
 
@@ -346,8 +349,8 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
 
 | Group | Findings | Note |
 |---|---|---|
-| Run guards and budget behaviour | 2, 3, 11 | A no-progress limit; a budget-low checkpoint; record per model which ones suit work turns. |
-| Make-testable task | 1, 4, 7, 13 | The brief for a repo without tests; hand off only when the Gate passes; *Blocked* while secrets are unset; seeded domain data in the reset. |
+| Run guards and budget behaviour | 2, 3, 11, 15 | A no-progress limit; a budget-low checkpoint; record per model which ones suit work turns; budget set aside for review and handoff after Verify. |
+| Make-testable task | 1, 4, 7, 13, 16 | The brief for a repo without tests; hand off only when the Gate passes; *Blocked* while secrets are unset; seeded domain data in the reset. |
 | Evidence and review | 6, 8, 9, 10, 14 | Generated output is a defect; the right commit; the review knows the contract's rules and flags hidden signals; log lines on sign-in failures; no limitation that the verification contradicts. |
 | Coverage of pages (design) | 12 | To decide at the start of W3: whether `.razor` markup lines leave the coverage denominator once a contract is adopted. |
 
