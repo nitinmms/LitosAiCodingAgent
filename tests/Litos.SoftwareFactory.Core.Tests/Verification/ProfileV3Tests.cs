@@ -104,6 +104,34 @@ public class ProfileV3Tests
         Assert.Contains(profile.Validate(), p => p.Contains("{secret:…} may be used only in the application block"));
     }
 
+    [Fact]
+    public void RestoreOnly_keeps_each_steps_prepare_and_restore_and_drops_build_tests_and_coverage()
+    {
+        var restore = new CommandSpec("npm", ["ci"], 900);
+        var prepare = new CommandSpec("python", ["-m", "venv", "{venv}"], 300);
+        var profile = new VerificationProfile(3,
+        [
+            new VerificationStep("web", "web", Restore: restore, Build: new CommandSpec("npm", ["run", "typecheck"], 600), UnitTests: Step.UnitTests),
+            new VerificationStep("api", "api", Prepare: [prepare], UnitTests: Step.UnitTests),
+            new VerificationStep("docs", "docs", Build: new CommandSpec("mkdocs", ["build"], 60)), // installs nothing
+        ], Coverage: new CoverageRule(80)).WithWebApp(Contract());
+
+        var only = profile.RestoreOnly()!;
+
+        Assert.Equal(["web", "api"], only.Steps.Select(s => s.Name));
+        Assert.All(only.Steps, s => Assert.Null(s.Build));
+        Assert.All(only.Steps, s => Assert.Empty(s.UnitTests ?? []));
+        Assert.Equal([("restore", restore)], only.Steps[0].Commands());
+        Assert.Equal([("prepare", prepare)], only.Steps[1].Commands());
+        Assert.Equal("web", only.Steps[0].WorkingDirectory);
+        Assert.Null(only.Coverage);
+        Assert.Null(only.WebApp());
+    }
+
+    [Fact]
+    public void RestoreOnly_is_null_when_the_profile_installs_nothing() =>
+        Assert.Null(new VerificationProfile(3, [Step, new VerificationStep("docs", Build: new CommandSpec("mkdocs", ["build"], 60))]).RestoreOnly());
+
     [Theory]
     [InlineData(1)]
     [InlineData(4)]

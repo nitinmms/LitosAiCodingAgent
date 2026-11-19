@@ -18,7 +18,7 @@ namespace Litos.SoftwareFactory.Host.Testability;
 /// </summary>
 public sealed class TestabilityChecks(
     IFactoryStore store, FactoryOptions options, ReadingCopies readingCopies, VerificationGate gate, ITestabilityEngine engine,
-    TestabilityRuntime runtime, IClock clock, IHostApplicationLifetime lifetime, ILogger<TestabilityChecks> logger)
+    TestabilityRuntime runtime, IVerifier verifier, IClock clock, IHostApplicationLifetime lifetime, ILogger<TestabilityChecks> logger)
 {
     private readonly Lock _lock = new();
 
@@ -122,6 +122,32 @@ public sealed class TestabilityChecks(
         }
     }
 
+    /// <summary>
+    /// Installs the project's dependencies in the reading copy with the verification profile's own
+    /// prepare and restore commands (npm ci, dotnet restore, a venv), as a task's Verify does before
+    /// its browser step: the contract's build assumes them (npm run build fails without
+    /// node_modules). Run under the verification permit, since it runs the project's install
+    /// scripts. Answers why it failed, or null.
+    /// </summary>
+    private async Task<string?> RestoreAsync(Project project, string root, string? commit, CancellationToken ct)
+    {
+        if (VerificationProfile.Parse(project.VerificationProfileJson).RestoreOnly() is not { } restore)
+            return null;
+
+        var directory = Path.Combine(options.DataDirectory, "projects", project.Id.ToString("N"),
+            $"testability-restore-{(commit is { Length: > 0 } c ? c[..Math.Min(12, c.Length)] : "head")}");
+        var outcome = await verifier.VerifyAsync(new VerificationRequest(root, restore, ChangedFiles: null, directory)
+        {
+            TempDirectory = Path.Combine(directory, "tmp"),
+            Variables = ProfileVariables.For(options.DataDirectory, project.Id),
+        }, ct);
+        if (outcome.Build is not (BuildStatus.Failed or BuildStatus.Unavailable))
+            return null;
+
+        var why = outcome.Problems.Count > 0 ? string.Join(" ", outcome.Problems) : $"Build {outcome.Build}.";
+        return $"The project's dependencies could not be installed on the default branch, so the app was not built: {why}";
+    }
+
     internal async Task<TestabilityReport> CheckAsync(Project project, CancellationToken ct)
     {
         using var held = await readingCopies.HoldAsync(project.Id, ct);
@@ -149,7 +175,11 @@ public sealed class TestabilityChecks(
 
         Probe.Web.Core.Reports.ProbeWebReport dryRun;
         using (await gate.EnterAsync(null, ct))
+        {
+            if (await RestoreAsync(project, root, report.Commit, ct) is { } restoreFailed)
+                return report with { Status = TestabilityStatus.CouldNotCheck, Problem = restoreFailed };
             dryRun = await engine.DryRunAsync(root, profile, best.Directory, runtime.OptionsFor(project, runId: null), ct);
+        }
 
         var gaps = new List<string>();
         if (contract is { Valid: false })
@@ -180,7 +210,11 @@ public sealed class TestabilityChecks(
         var stack = adopted.Application.Stack ?? report.Stack;
         Probe.Web.Core.Reports.ProbeWebReport gateRun;
         using (await gate.EnterAsync(null, ct))
+        {
+            if (await RestoreAsync(project, root, report.Commit, ct) is { } restoreFailed)
+                return report with { Status = TestabilityStatus.CouldNotCheck, Problem = restoreFailed };
             gateRun = await engine.GateAsync(root, adopted, GateScope.All, runtime.OptionsFor(project, runId: null), ct);
+        }
 
         var gaps = new List<string>();
         if (onMain is { Valid: true } && ContractAdoption.Differs(root, adopted))

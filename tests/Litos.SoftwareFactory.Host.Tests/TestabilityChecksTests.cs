@@ -7,6 +7,7 @@ using Litos.Probe.Web.Core.Profiles;
 using Litos.Probe.Web.Core.Reports;
 using Litos.Probe.Web.Detection;
 using Litos.Probe.Web.Profiles;
+using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Testability;
 using Litos.SoftwareFactory.Core.Verification;
 using Litos.SoftwareFactory.Host.Testability;
@@ -144,6 +145,54 @@ public sealed class TestabilityChecksTests : IAsyncLifetime
         var check = view.GetProperty("run").GetProperty("checks").EnumerateArray().Single(c => c.GetProperty("id").GetString() == "visit:anonymous:/");
         Assert.Equal("/api/run-artifacts/3f2c0000-0000-0000-0000-000000000001", check.GetProperty("screenshots")[0].GetString());
         Assert.Equal(("node-express-spa", (string?)""), (_engine.DryRuns.Single().Profile, _engine.DryRuns.Single().Directory));
+    }
+
+    /// <summary>The verifications that only installed dependencies (no build, no tests), in the order they ran.</summary>
+    private List<VerificationRequest> Restores() =>
+        [.. _host.Verifier.Requests.Where(r => r.Profile.Steps.All(s => s.Build is null && (s.UnitTests ?? []).Count == 0))];
+
+    [Fact]
+    public async Task The_check_installs_the_projects_dependencies_in_the_reading_copy_before_the_dry_run()
+    {
+        // insta-story-generator, 2026-11-19: npm run build failed in the reading copy, which had no node_modules.
+        var projectId = await _host.RegisterProjectAsync();
+
+        await SettledAsync(projectId);
+
+        var restore = Assert.Single(Restores());
+        Assert.Equal(_host.Workspaces.ReadingOf(projectId).Path, restore.WorkingCopy);
+        Assert.All(restore.Profile.Steps, s => Assert.NotNull(s.Restore));
+        Assert.Null(restore.ChangedFiles);
+        Assert.Single(_engine.DryRuns);
+    }
+
+    [Fact]
+    public async Task A_restore_that_fails_on_main_means_the_check_could_not_run_and_nothing_is_started()
+    {
+        _host.Verifier.Baseline = new VerificationOutcome(BuildStatus.Failed, UnitTestStatus.NotRun, CoverageStatus.NotMeasured, [], null, [],
+            ["Step 'node': restore failed with exit code 1."]);
+        var projectId = await _host.RegisterProjectAsync();
+
+        var view = await SettledAsync(projectId);
+
+        Assert.Equal("CouldNotCheck", view.GetProperty("status").GetString());
+        Assert.Contains("dependencies could not be installed", view.GetProperty("problem").GetString());
+        Assert.Contains("restore failed with exit code 1", view.GetProperty("problem").GetString());
+        Assert.Empty(_engine.DryRuns);
+    }
+
+    [Fact]
+    public async Task The_gate_baseline_installs_the_dependencies_first_too()
+    {
+        var projectId = await ProjectWithContractOnMainAsync();
+        await SetSecretAsync(projectId);
+        var before = Restores().Count;
+
+        using (await AdoptAsync(projectId)) { }
+        await SettledAsync(projectId);
+
+        Assert.Equal(before + 1, Restores().Count);
+        Assert.Single(_engine.Gates);
     }
 
     [Fact]

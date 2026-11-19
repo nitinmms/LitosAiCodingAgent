@@ -29,6 +29,21 @@ public sealed record VerificationProfile(
 
     public static IReadOnlyList<int> SupportedVersions { get; } = [2, 3];
 
+    /// <summary>
+    /// The profile cut down to what installs the project's dependencies: each step's prepare and
+    /// restore commands, without its build, tests or coverage rule. Null when the profile installs
+    /// nothing. The testability check runs it in the reading copy before it builds the app there,
+    /// as a task's Verify does before the browser step (npm run build fails without node_modules).
+    /// </summary>
+    public VerificationProfile? RestoreOnly()
+    {
+        var steps = Steps
+            .Where(s => s.Restore is not null || s.Prepare is { Count: > 0 })
+            .Select(s => s with { Build = null, UnitTests = [] })
+            .ToList();
+        return steps.Count == 0 ? null : this with { Steps = steps, Coverage = null, Application = null, Testability = null };
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
     private static JsonSerializerOptions CreateJsonOptions()
