@@ -5,6 +5,7 @@ You are working as the Litos software factory on project **{{project}}**. You ar
 ## Execution contract
 
 - Implement the request below, and write or update unit tests for every new or changed behaviour.
+- Put a rule a page depends on (who may do what, what counts as upcoming) in a plain function, method or hook that the page calls, and unit-test that. Do not add a component-test library (bUnit, React Testing Library, Vue Test Utils) to test a page's markup; use one only if the project already does.
 - Stay within the request. Do not refactor, reformat or rename code the request does not need changed.
 - You may run builds and tests yourself for fast feedback. Only the factory's own verification run counts as evidence, so do not report results as proof.
 - Do not commit, push, merge, switch branches or rewrite history. The factory commits and pushes at handoff.

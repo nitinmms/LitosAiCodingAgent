@@ -629,8 +629,23 @@ public static partial class BriefComposer
         text.AppendLine(". Add tests that exercise these lines:").AppendLine();
         foreach (var file in changed.Uncovered)
             text.AppendLine($"- `{file.File}`: lines {FormatLines(file.Lines)}");
+
+        // Finding 12 (README_Litos.Probe.Web.md, decided 2026-11-19): markup is not worth a
+        // component-test library. bUnit cost clinic-portal's feature task 25 of its 43 calls.
+        if (changed.Uncovered.Any(f => IsPageFile(f.File)))
+        {
+            text.AppendLine().AppendLine(
+                "Some of these lines are in page or component files. Move any rule they hold into a plain function or method and test that. "
+                + "Do not add a component-test library for the markup itself: markup lines still uncovered after that are disclosed to the tester, not held against the work.");
+        }
+
         return text.ToString().TrimEnd();
     }
+
+    private static readonly string[] PageExtensions = [".razor", ".cshtml", ".vue", ".svelte", ".jsx", ".tsx"];
+
+    /// <summary>A file whose lines are page markup as well as code: a Razor, Vue, Svelte or JSX view.</summary>
+    internal static bool IsPageFile(string path) => PageExtensions.Any(e => path.EndsWith(e, StringComparison.OrdinalIgnoreCase));
 
     private static string VerificationResult(RunState state)
     {

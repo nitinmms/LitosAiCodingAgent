@@ -655,6 +655,46 @@ public class BriefComposerTests
         Assert.DoesNotContain("Failing tests", brief);
     }
 
+    private static RunState CoverageShortIn(string file) => State() with
+    {
+        RepairCyclesUsed = 1,
+        LastVerification = new VerificationOutcome(
+            BuildStatus.Passed, UnitTestStatus.Passed, CoverageStatus.BelowThreshold, [],
+            new ChangedLineCoverage(5, 10, [new UncoveredLines(file, [3, 4])]), [], []),
+    };
+
+    [Theory]
+    [InlineData("Components/Pages/MyAppointments.razor")]
+    [InlineData("Pages/Orders.cshtml")]
+    [InlineData("web/src/Cart.TSX")]
+    [InlineData("src/Story.vue")]
+    public void RepairBrief_CoverageShortInAPage_SaysTestTheRuleNotTheMarkup(string file)
+    {
+        // Finding 12: bUnit cost clinic-portal's feature task 25 of its 43 calls.
+        var brief = Compose(BriefKind.Repair, CoverageShortIn(file), kind: TurnKind.Repair);
+
+        Assert.Contains("Some of these lines are in page or component files. Move any rule they hold into a plain function or method and test that.", brief);
+        Assert.Contains("markup lines still uncovered after that are disclosed to the tester", brief);
+    }
+
+    [Fact]
+    public void RepairBrief_CoverageShortInPlainCode_SaysNothingAboutMarkup() =>
+        Assert.DoesNotContain("page or component files", Compose(BriefKind.Repair, CoverageShortIn("src/Orders.cs"), kind: TurnKind.Repair));
+
+    [Theory]
+    [InlineData(BriefKind.Run, TurnKind.Implement, null)]
+    [InlineData(BriefKind.Run, TurnKind.Implement, "testability")]
+    [InlineData(BriefKind.Rework, TurnKind.Rework, null)]
+    public void WorkBriefs_SayToTestRulesInPlainCode_AndNotToAddAComponentTestLibrary(BriefKind kind, TurnKind turn, string? taskType)
+    {
+        var context = Context with { TaskType = taskType, TesterFeedback = "Cancelled appointments still show a Cancel button." };
+
+        var brief = Compose(kind, State(), context, kind: turn);
+
+        Assert.Contains("in a plain function, method or hook that the page calls, and unit-test that.", brief);
+        Assert.Contains("Do not add a component-test library (bUnit, React Testing Library, Vue Test Utils) to test a page's markup; use one only if the project already does.", brief);
+    }
+
     [Theory]
     [InlineData(new[] { 1 }, "1")]
     [InlineData(new[] { 1, 2, 3 }, "1-3")]
