@@ -333,7 +333,11 @@ public sealed record DecisionAnswered(string Answer) : StepOutcome;
 public sealed record ReviewNotNeeded : StepOutcome;
 
 /// <summary>Baseline is the same profile run on the base commit, so pre-existing failures are known.</summary>
-public sealed record Verified(VerificationOutcome Outcome, VerificationOutcome? Baseline = null) : StepOutcome;
+public sealed record Verified(VerificationOutcome Outcome, VerificationOutcome? Baseline = null) : StepOutcome
+{
+    /// <summary>Changed files that are build, test or coverage output (<see cref="Verification.GeneratedOutput"/>): a failure to repair.</summary>
+    public IReadOnlyList<string> GeneratedFiles { get; init; } = [];
+}
 
 public sealed record HandoffCompleted(bool Succeeded, string? Failure = null) : StepOutcome;
 
@@ -409,6 +413,9 @@ public sealed record RunState(RunKind Kind)
 
     /// <summary>The code as last verified has also passed the browser smoke; reset by every verification.</summary>
     public bool UiTestCurrent { get; init; }
+
+    /// <summary>Generated output on the branch at the last verification (finding 6); the repair removes it.</summary>
+    public IReadOnlyList<string> GeneratedFiles { get; init; } = [];
 
     /// <summary>The browser failures the current repair turn is fixing; empty otherwise.</summary>
     public IReadOnlyList<Testability.UiDefect> UiDefects { get; init; } = [];

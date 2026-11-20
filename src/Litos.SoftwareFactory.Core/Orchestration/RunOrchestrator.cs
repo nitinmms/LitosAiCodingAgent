@@ -17,6 +17,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
 {
     private const string BuildFailure = "<build>";
     private const string NoReportFailure = "<unit-test command>";
+    private const string GeneratedPrefix = "<generated>";
 
     public RunLimits Limits { get; } = limits ?? new RunLimits();
 
@@ -468,7 +469,10 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
 
         var outcome = verified.Outcome;
         // New code: whatever the browser smoke said before no longer holds.
-        var verifiedState = state with { LastVerification = outcome, Baseline = verified.Baseline ?? state.Baseline, UiTestCurrent = false };
+        var verifiedState = state with
+        {
+            LastVerification = outcome, Baseline = verified.Baseline ?? state.Baseline, UiTestCurrent = false, GeneratedFiles = verified.GeneratedFiles,
+        };
 
         if (outcome.Build == BuildStatus.Unavailable || outcome.UnitTests == UnitTestStatus.Unavailable)
         {
@@ -478,7 +482,9 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
                 "The verification commands could not be run." + detail, new VerifyStep());
         }
 
-        var failures = HardFailures(outcome, verifiedState.Baseline);
+        // Generated output on the branch fails like a broken build: nothing reviews it away (finding 6).
+        IReadOnlySet<string> failures = HardFailures(outcome, verifiedState.Baseline)
+            .Concat(verified.GeneratedFiles.Select(f => GeneratedPrefix + f)).ToHashSet();
         var coverageShort = outcome.Coverage == CoverageStatus.BelowThreshold;
 
         if (failures.Count == 0 && !coverageShort)
@@ -620,7 +626,10 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             parts.Add("the build");
         if (failures.Contains(NoReportFailure))
             parts.Add("a unit-test command that reported no failing test");
-        var tests = failures.Count(f => f != BuildFailure && f != NoReportFailure);
+        var generated = failures.Count(f => f.StartsWith(GeneratedPrefix, StringComparison.Ordinal));
+        if (generated > 0)
+            parts.Add(generated == 1 ? "1 generated file on the branch" : $"{generated} generated files on the branch");
+        var tests = failures.Count(f => f != BuildFailure && f != NoReportFailure && !f.StartsWith(GeneratedPrefix, StringComparison.Ordinal));
         if (tests > 0)
             parts.Add(tests == 1 ? "1 test" : $"{tests} tests");
         return string.Join(" and ", parts);

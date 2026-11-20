@@ -234,17 +234,118 @@ public class UiTestStepTests
     }
 
     [Theory]
-    [InlineData(true, "The factory still used the adopted contract (profile revision 3)")]
-    [InlineData(false, "adopt it on the project's Testability panel")]
-    public void A_branch_that_changes_the_contract_file_says_it_was_not_obeyed(bool adopted, string note)
+    [InlineData(true, true, "The factory still used the adopted contract (profile revision 3)")]
+    [InlineData(false, false, "adopt it on the project's Testability panel")]
+    // Finding 17: a Make-testable task runs the browser step on its own draft, so the change is its job.
+    [InlineData(true, false, "adopt it on the project's Testability panel")]
+    public void A_branch_that_changes_the_contract_file_says_it_was_not_obeyed_only_under_an_adopted_one(bool uiTests, bool adopted, string note)
     {
-        var run = new Run(uiTests: adopted);
+        var run = new Run(uiTests: uiTests);
         run.Verified();
-        if (adopted)
+        if (uiTests)
             run.UiTested(Clean());
 
-        Assert.Contains(note, HandoffComposer.ContractDrift(run.State, ["src/a.cs", "litos.test.yaml"]));
-        Assert.Null(HandoffComposer.ContractDrift(run.State, ["src/a.cs", "docs/litos.test.yaml.md"]));
+        var drift = HandoffComposer.ContractDrift(run.State, ["src/a.cs", "litos.test.yaml"], adopted);
+        Assert.Contains(note, drift);
+        if (!adopted)
+            Assert.DoesNotContain("still used", drift);
+        Assert.Null(HandoffComposer.ContractDrift(run.State, ["src/a.cs", "docs/litos.test.yaml.md"], adopted));
+    }
+
+    [Fact]
+    public void The_browser_evidence_names_the_handoff_commit_while_it_is_current()
+    {
+        // Finding 8: Probe.Web reads HEAD, which is the commit before the uncommitted work it tested.
+        var run = new Run();
+        run.Verified();
+        run.UiTested(Clean() with { Evidence = Clean().Evidence with { Commit = "main000" } });
+
+        var evidence = HandoffComposer.Evidence(run.State, new HandoffFacts("factory/x", "handoff1", null, null));
+
+        Assert.Equal("handoff1", evidence.UiTesting!.Commit);
+    }
+
+    [Fact]
+    public void Stale_browser_evidence_keeps_the_commit_it_was_taken_at()
+    {
+        var run = new Run();
+        run.Verified();
+        run.UiTested(Clean() with { Evidence = Clean().Evidence with { Commit = "main000" } });
+        var stale = run.State with { UiTestCurrent = false };
+
+        Assert.Equal("main000", HandoffComposer.Evidence(stale, new HandoffFacts("factory/x", "handoff1", null, null)).UiTesting!.Commit);
+    }
+
+    [Fact]
+    public void Generated_output_on_the_branch_is_repaired_like_a_failure_and_blocks_if_it_stays()
+    {
+        // Finding 6: the review called 53k lines of coverage output minor.
+        var run = new Run();
+        run.Report(new RunStarted());
+        run.Report(new PreflightCompleted(true));
+        run.Report(new TurnEnded(TurnEndReason.Completed, new WorkSubmission("done", [], [], [], []), FilesChanged: true));
+        string[] junk = ["Tests/TestResults/a.trx", "coverage/lcov.info"];
+
+        var repair = Assert.IsType<StartTurnStep>(run.Report(new Verified(Passing()) { GeneratedFiles = junk }));
+        Assert.Equal(TurnKind.Repair, repair.Kind);
+        var brief = BriefComposer.Compose(repair, new RunContext("SalesApp", "factory/x", "main", "Orders need a CSV export."), run.State, new RunLimits());
+        Assert.Contains("## Generated output on the branch (2)", brief);
+        Assert.Contains("- `Tests/TestResults/a.trx`", brief);
+        Assert.Contains("add their folder or pattern to `.gitignore`", brief);
+
+        run.Report(new TurnEnded(TurnEndReason.Completed, new WorkSubmission("removed", [], [], [], []), FilesChanged: true));
+        var stop = Assert.IsType<StopStep>(run.Report(new Verified(Passing()) { GeneratedFiles = junk }));
+        Assert.Equal(StopReason.RepairMadeNoDifference, stop.Reason);
+        Assert.Contains("2 generated files on the branch", stop.Message);
+    }
+
+    [Fact]
+    public void Removing_the_generated_output_goes_on_to_the_browser_step()
+    {
+        var run = new Run();
+        run.Report(new RunStarted());
+        run.Report(new PreflightCompleted(true));
+        run.Report(new TurnEnded(TurnEndReason.Completed, new WorkSubmission("done", [], [], [], []), FilesChanged: true));
+        run.Report(new Verified(Passing()) { GeneratedFiles = ["bin/Debug/app.dll"] });
+        run.Report(new TurnEnded(TurnEndReason.Completed, new WorkSubmission("removed", [], [], [], []), FilesChanged: true));
+
+        Assert.IsType<UiTestStep>(run.Report(new Verified(Passing())));
+        Assert.Empty(run.State.GeneratedFiles);
+    }
+
+    private static string ReviewBrief(bool uiTests, ReviewDepth depth = ReviewDepth.Full)
+    {
+        var run = new Run(uiTests);
+        run.Verified();
+        if (uiTests)
+            run.UiTested(Clean());
+        var context = new RunContext("SalesApp", "factory/x", "main", "Orders need a CSV export.") { ReviewDepth = depth };
+        return BriefComposer.Compose(new StartTurnStep(TurnKind.Review, BriefKind.Review, SessionScope.Review), context, run.State, new RunLimits());
+    }
+
+    [Theory]
+    [InlineData(ReviewDepth.Full)]
+    [InlineData(ReviewDepth.Light)]
+    public void A_browser_tested_review_knows_the_gate_rules_and_that_hiding_a_signal_is_blocking(ReviewDepth depth)
+    {
+        // Finding 9: the review called the hidden marker a risk, and missed console.error made console.warn.
+        var brief = ReviewBrief(uiTests: true, depth);
+
+        Assert.Contains("## The browser checks", brief);
+        Assert.Contains("once the readiness marker is *attached*", brief);
+        Assert.Contains("A change that silences one of these signals instead of fixing its cause is `blocking`", brief);
+        Assert.Contains("Committed generated output (build, test or coverage results, logs) is always `blocking`.", brief);
+        Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void A_review_without_browser_checks_has_no_gate_section()
+    {
+        var brief = ReviewBrief(uiTests: false);
+
+        Assert.DoesNotContain("## The browser checks", brief);
+        Assert.Contains("Committed generated output", brief);
+        Assert.DoesNotContain("{{", brief);
     }
 
     [Fact]

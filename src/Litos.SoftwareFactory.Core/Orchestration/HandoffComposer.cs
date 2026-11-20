@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Verification;
 
@@ -14,6 +15,13 @@ public sealed record HandoffFacts(string Branch, string? CommitSha, int? PullReq
     public long? BudgetCap { get; init; }
 
     public IReadOnlyList<string> ChangedFiles { get; init; } = [];
+
+    /// <summary>
+    /// The browser step ran under the project's adopted contract, so a changed litos.test.yaml on
+    /// the branch was not obeyed. False for a Make-testable task, which runs its own draft, and
+    /// for a project with nothing adopted (finding 17).
+    /// </summary>
+    public bool UsedAdoptedContract { get; init; }
 
     /// <summary>Things that went wrong around the handoff itself, such as a draft PR that could
     /// not be opened.</summary>
@@ -110,11 +118,11 @@ public static class HandoffComposer
             TestsAdded: submission?.TestsAdded ?? [],
             // The scan's assumptions are choices made without asking; the tester sees each one, and
             // each approved criterion the work did not report on.
-            KnownLimitations: [.. (submission?.KnownLimitations ?? [])
+            KnownLimitations: [.. (submission?.KnownLimitations ?? []).Select(l => Contradicted(l, verification))
                 .Concat(state.Assumptions.Select(a => $"Assumed, not asked: {a}"))
                 .Concat(Unreported(facts.ApprovedCriteria, submission?.Criteria ?? []).Select(c => $"Approved criterion not reported on: {c}"))
                 .Concat(state.Disclosures)
-                .Concat(ContractDrift(state, facts.ChangedFiles) is { } drift ? [drift] : [])
+                .Concat(ContractDrift(state, facts.ChangedFiles, facts.UsedAdoptedContract) is { } drift ? [drift] : [])
                 .Concat(facts.Notes)],
             ManualTestSteps: submission?.ManualTestSteps ?? [],
             Commands: [.. (verification?.Commands ?? []).Select(c => $"{c.Command} — {(c.Succeeded ? "ok" : c.TimedOut ? "timed out" : $"exit {c.ExitCode}")} in {c.Duration.TotalSeconds:0.#}s")],
@@ -127,18 +135,60 @@ public static class HandoffComposer
             CloneUrl: facts.CloneUrl,
             DefaultBranch: facts.DefaultBranch,
             HowToRun: submission?.HowToRun ?? facts.PreviousHowToRun,
-            UiTesting: state.UiTestEnabled ? state.UiTest : Testability.UiTestEvidence.NotSetUp);
+            UiTesting: state.UiTestEnabled ? UiTestingAt(state, facts.CommitSha) : Testability.UiTestEvidence.NotSetUp);
+    }
+
+    /// <summary>
+    /// The browser evidence, labelled with the commit it describes (finding 8). The browser step
+    /// runs on the uncommitted working copy, so Probe.Web reads the commit before it. While the
+    /// result is current nothing has changed since, and the handoff commit is exactly what ran.
+    /// </summary>
+    private static Testability.UiTestEvidence? UiTestingAt(RunState state, string? handoffCommit) =>
+        state is { UiTestCurrent: true, UiTest: { } evidence } && handoffCommit is { Length: > 0 }
+            ? evidence with { Commit = handoffCommit }
+            : state.UiTest;
+
+    /// <summary>
+    /// An agent's limitation that says tests fail, naming tests the factory's own verification ran
+    /// green (finding 14), is kept but answered with what the factory measured. A name counts when
+    /// it is a test's class or method, as a whole word of eight characters or more.
+    /// </summary>
+    internal static string Contradicted(string limitation, VerificationOutcome? verification)
+    {
+        if (verification is not { Tests.Count: > 0 } || !FailWords.IsMatch(limitation))
+            return limitation;
+
+        var named = verification.Tests
+            .SelectMany(t => NameParts(t.Name).Select(part => (Part: part, Test: t)))
+            .Where(p => p.Part.Length >= 8 && Regex.IsMatch(limitation, $@"\b{Regex.Escape(p.Part)}\b"))
+            .GroupBy(p => p.Part, p => p.Test)
+            .ToList();
+        if (named.Count == 0 || named.Any(g => g.Any(t => t.Outcome != TestOutcome.Passed)))
+            return limitation;
+
+        var ran = string.Join(" and ", named.Select(g => $"{g.Key} ({g.Count()} test{(g.Count() == 1 ? "" : "s")})"));
+        return $"{limitation.TrimEnd()} (Not what the factory measured: its verification ran {ran}, and all passed.)";
+    }
+
+    private static readonly Regex FailWords = new(@"\bfail", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>A test's class and method names: "Shop.Tests.CartTests.Adds_an_item(x: 1)" gives CartTests and Adds_an_item.</summary>
+    private static IEnumerable<string> NameParts(string name)
+    {
+        var plain = name.Split('(', 2)[0];
+        var parts = plain.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? parts[^2..] : parts;
     }
 
     /// <summary>
     /// The drift note (testability-architecture.md §5): a branch that changes litos.test.yaml is
     /// never obeyed, because only the adopted copy in the profile is used. The tester is told so.
     /// </summary>
-    public static string? ContractDrift(RunState state, IReadOnlyList<string> changedFiles)
+    public static string? ContractDrift(RunState state, IReadOnlyList<string> changedFiles, bool usedAdoptedContract)
     {
         if (!changedFiles.Any(f => string.Equals(f.Replace('\\', '/'), "litos.test.yaml", StringComparison.OrdinalIgnoreCase)))
             return null;
-        return state.UiTestEnabled
+        return state.UiTestEnabled && usedAdoptedContract
             ? $"litos.test.yaml changed on this branch. The factory still used the adopted contract{(state.UiTest?.ContractRevision is { } r ? $" (profile revision {r})" : "")}; adopt the new one after merging if you agree."
             : "This branch adds or changes litos.test.yaml. After merging, adopt it on the project's Testability panel so tasks are tested in a browser.";
     }

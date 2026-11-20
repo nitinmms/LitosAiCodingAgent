@@ -32,6 +32,31 @@ public class DiffParserTests
     }
 
     [Fact]
+    public void Parse_MarksANewFileAsAdded_AndAModifiedOneNot()
+    {
+        const string patch = """
+            diff --git a/Tests/TestResults/run.trx b/Tests/TestResults/run.trx
+            new file mode 100644
+            index 0000000..1111111
+            --- /dev/null
+            +++ b/Tests/TestResults/run.trx
+            @@ -0,0 +1 @@
+            +<TestRun />
+            diff --git a/bin/tracked.xml b/bin/tracked.xml
+            index 1111111..2222222 100644
+            --- a/bin/tracked.xml
+            +++ b/bin/tracked.xml
+            @@ -1 +1 @@
+            -<old />
+            +<new />
+            """;
+
+        var files = DiffParser.Parse(patch);
+
+        Assert.Equal([("Tests/TestResults/run.trx", true), ("bin/tracked.xml", false)], files.Select(f => (f.Path, f.Added)));
+    }
+
+    [Fact]
     public void Parse_DiffWithContext_CountsOnlyAddedLines()
     {
         const string patch = """

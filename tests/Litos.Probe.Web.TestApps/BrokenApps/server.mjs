@@ -44,6 +44,11 @@ function readBody(req) {
 // wrong-port ignores PORT, as an app with a hard-coded port does.
 const listenOn = mode === "wrong-port" ? 8787 : port;
 
+// seed-fails logs a failed seeding at start-up and then refuses every sign-in, as clinic-portal
+// did when Identity's password policy rejected the test users (README_Litos.Probe.Web.md finding 10).
+if (mode === "seed-fails")
+  console.error("fail: could not seed admin@test: Passwords must be at least 12 characters.");
+
 if (mode === "crash-on-start") {
   console.error("Error: Cannot find module './config.json'");
   process.exit(3);
@@ -72,7 +77,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, page("Log in", loginForm(mode !== "unlabelled-login")));
   if (path === "/login" && req.method === "POST") {
     const form = await readBody(req);
-    if (form.get("pass") !== password)
+    if (form.get("pass") !== password || mode === "seed-fails")
       return send(res, 200, page("Log in", `<p role="alert">Invalid login attempt.</p>${loginForm(true)}`));
     return send(res, 302, "", { location: "/", "set-cookie": `sid=${form.get("user") === "admin@test" ? "admin" : "user"}; Path=/; HttpOnly` });
   }

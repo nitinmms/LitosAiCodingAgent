@@ -90,6 +90,66 @@ public sealed class UiTestRunTests : IAsyncLifetime
         Assert.Equal(["shot-admin"], ui.Checks.Single(c => c.Id == "visit:admin:/admin").Screenshots);
         Assert.Equal(["npm run build", "npm start"], ui.RunCommands);
         Assert.Contains(details.Messages, m => m.Text.StartsWith("Browser checks: 3 passed, 0 failed", StringComparison.Ordinal));
+        // Finding 8: the smoke ran on the uncommitted work that the handoff then committed.
+        Assert.Equal(details.LatestHandoff!.CommitSha, ui.Commit);
+        Assert.NotEqual("commit0", ui.Commit);
+    }
+
+    [Fact]
+    public async Task A_feature_branch_that_changes_the_contract_is_told_the_adopted_one_was_used()
+    {
+        var projectId = await TestableProjectAsync();
+        _host.Workers.Script.Enqueue(call =>
+        {
+            _host.Workers.WorkspaceOf(call.Worker).Write("litos.test.yaml", "version: 1\n");
+            return _host.Workers.Default(call);
+        });
+        var threadId = await DelegatedAsync(projectId);
+
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        var evidence = JsonSerializer.Deserialize<HandoffEvidence>(details.LatestHandoff!.EvidenceJson, FactoryWire.Json)!;
+        Assert.Contains(evidence.KnownLimitations, l => l.StartsWith("litos.test.yaml changed on this branch. The factory still used the adopted contract", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Generated_output_the_turn_left_on_the_branch_is_sent_back_and_blocks_if_it_stays()
+    {
+        // Finding 6: W2.7's first handoff carried about 53k lines of coverage output.
+        var projectId = await _host.RegisterProjectAsync();
+        _host.Workers.Script.Enqueue(call =>
+        {
+            _host.Workers.WorkspaceOf(call.Worker).Write("Tests/TestResults/run.trx", "<TestRun />\n");
+            return _host.Workers.Default(call);
+        });
+        var threadId = await DelegatedAsync(projectId);
+
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.Blocked);
+
+        var repair = _host.Workers.Turns.Single(t => t.Kind == TurnKind.Repair);
+        Assert.Contains("## Generated output on the branch (1)", repair.Brief);
+        Assert.Contains("- `Tests/TestResults/run.trx`", repair.Brief);
+        Assert.Contains(details.Messages, m => m.Text.StartsWith("Generated output on the branch (build, test or coverage results), which must be removed: Tests/TestResults/run.trx", StringComparison.Ordinal));
+        Assert.Equal(StopReason.RepairMadeNoDifference, details.LatestRun!.StopReason);
+        Assert.Null(details.LatestHandoff);
+    }
+
+    [Fact]
+    public async Task Generated_files_the_repository_already_tracks_are_not_the_tasks()
+    {
+        var projectId = await _host.RegisterProjectAsync();
+        _host.Workspaces.Of(projectId).Files["bin/report.xml"] = "<old />\n";
+        _host.Workers.Script.Enqueue(call =>
+        {
+            _host.Workers.WorkspaceOf(call.Worker).Write("bin/report.xml", "<new />\n");
+            return _host.Workers.Default(call);
+        });
+        var threadId = await DelegatedAsync(projectId);
+
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        Assert.DoesNotContain(_host.Workers.Turns, t => t.Kind == TurnKind.Repair);
+        Assert.DoesNotContain(details.Messages, m => m.Text.StartsWith("Generated output on the branch", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -1,0 +1,29 @@
+# Broken app "seed-fails" (see ../server.mjs): seeding its test users fails at start-up, so no sign-in succeeds.
+version: 1
+application:
+  stack: node-express-spa
+  build: []
+  processes:
+    - name: web
+      command: [node, ../server.mjs, seed-fails]
+      start_timeout_seconds: 20
+      environment:
+        PORT: "{port:web}"
+        APP_PASSWORD: correct-horse
+  base_url: web
+  reset:
+    strategy: none
+testability:
+  auth:
+    type: form
+    login_url: /login
+    fields: { user: Email, password: Password }
+    submit: Log in
+    success_when: { url_not_contains: /login }
+    roles:
+      admin: { user: admin@test, password: "{secret:BROKEN_ADMIN_PASS}" }
+      user: { user: user@test, password: "{secret:BROKEN_USER_PASS}" }
+  routes:
+    public: [/]
+    protected: { admin: [/admin] }
+    denied: { user: [/admin] }

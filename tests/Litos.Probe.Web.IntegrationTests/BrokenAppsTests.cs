@@ -158,6 +158,24 @@ public class AccessFailureTests : BrokenAppsBase
         Assert.Contains("was not reached", signIn.Message);
         Assert.Equal(CheckStatus.Skipped, Check(report, "visit:admin:/admin").Status);
         Assert.Equal(CheckStatus.Passed, Check(report, "denied:user:/admin").Status);
+
+        // Finding 10: what the page showed, and the app's output when it logged no error.
+        Assert.Single(signIn.Evidence.Screenshots);
+        Assert.Contains(signIn.Evidence.Log, l => l.Contains("broken app (healthy) on http://localhost:", StringComparison.Ordinal));
+    }
+
+    [SkippableFact]
+    public async Task A_sign_in_failure_carries_the_seeding_error_the_app_logged_at_start_up()
+    {
+        // Finding 10: clinic-portal's seeding failed at start-up, and the agent spent about 70k
+        // tokens building its own login probe because the sign-in failure said nothing of it.
+        await RequireAsync("node");
+        var (report, _) = await GateAsync(App("BrokenApps", "seed-fails"), Secrets);
+
+        var signIn = Check(report, "signin:admin");
+        Assert.Equal(Classification.AuthenticationFailure, signIn.Classification);
+        Assert.Contains(signIn.Evidence.Log, l => l.Contains("could not seed admin@test: Passwords must be at least 12 characters.", StringComparison.Ordinal));
+        Assert.Single(signIn.Evidence.Screenshots);
     }
 
     [SkippableFact]

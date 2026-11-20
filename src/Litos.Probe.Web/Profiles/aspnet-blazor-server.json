@@ -23,6 +23,9 @@
     { "selectorVisible": "#components-reconnect-modal" },
     { "textVisible": "An unhandled exception occurred while processing the request" }
   ],
+  "ignoreConsole": [
+    { "source": "PasskeySubmit.razor.js", "reason": "the Identity template's passkey autofill logs an error in a headless browser, which has no passkey" }
+  ],
   "logErrorPattern": "^\\s*(fail|crit):",
   "stderrIsError": true,
   "defaultPorts": [ 5000, 5001, 5080, 7000, 8080 ],
@@ -31,7 +34,6 @@
     "pass --no-launch-profile, or launchSettings.json overrides ASPNETCORE_URLS",
     "only Development loads a build's static web assets: in Testing call builder.WebHost.UseStaticWebAssets(), or blazor.web.js is missing and no circuit starts",
     "in Production an unknown POST answers 400 (Allow: GET, HEAD), not 404",
-    "the Identity template's PasskeySubmit.razor.js logs console.error when passkey autofill finds no passkey, as in every headless browser: log it as a warning",
     "one browser context per circuit"
   ],
   "retrofitSkill": "testability-dotnet"

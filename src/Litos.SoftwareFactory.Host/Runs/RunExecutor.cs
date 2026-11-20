@@ -778,7 +778,11 @@ public sealed class RunExecutor(
             (newFailures != outcome.FailedCount ? $", {outcome.FailedCount - newFailures} of them already failing before this task" : "") +
             $"); {coverage}.");
 
-        return new Verified(outcome, baseline);
+        // Only what the branch adds: a repository that tracks such files is not the task's to clean up.
+        var generated = Core.Verification.GeneratedOutput.Find(diff.Files.Where(f => f.Added).Select(f => f.Path));
+        if (generated.Count > 0)
+            await NoteAsync(data, $"Generated output on the branch (build, test or coverage results), which must be removed: {string.Join(", ", generated.Take(5))}{(generated.Count > 5 ? $" and {generated.Count - 5} more" : "")}.");
+        return new Verified(outcome, baseline) { GeneratedFiles = generated };
     }
 
     private static bool IsMakeTestable(TaskThread thread) => thread.TypeLabel == TaskTypes.Testability;
@@ -884,6 +888,7 @@ public sealed class RunExecutor(
                 CloneUrl = repository.CloneUrl,
                 DefaultBranch = data.Project.DefaultBranch,
                 PreviousHowToRun = PreviousHowToRun(current.LatestHandoff),
+                UsedAdoptedContract = !IsMakeTestable(data.Thread) && data.Profile.WebApp() is not null,
             });
 
             await store.SetRunCommitsAsync(data.Run.Id, null, head, null, CancellationToken.None);

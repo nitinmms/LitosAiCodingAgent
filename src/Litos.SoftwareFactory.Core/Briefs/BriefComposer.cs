@@ -340,6 +340,17 @@ public static partial class BriefComposer
             }
         }
 
+        if (state.GeneratedFiles.Count > 0 && !state.ReviewRepairPending)
+        {
+            failures.AppendLine($"## Generated output on the branch ({state.GeneratedFiles.Count})").AppendLine();
+            failures.AppendLine("These files are build, test or coverage output, not source. Delete them, and add their folder or pattern to `.gitignore` so they cannot come back.").AppendLine();
+            foreach (var file in state.GeneratedFiles.Take(20))
+                failures.AppendLine($"- `{file}`");
+            if (state.GeneratedFiles.Count > 20)
+                failures.AppendLine($"- and {state.GeneratedFiles.Count - 20} more");
+            failures.AppendLine();
+        }
+
         // Browser failures (testability-architecture.md §7.4): the brief carries the failing check,
         // the server's error lines, and the rule that the application changes, not the test.
         if (state.UiDefects.Count > 0 && !state.ReviewRepairPending)
@@ -408,8 +419,27 @@ public static partial class BriefComposer
             ["claims"] = Claims(state.LastSubmission),
             ["change"] = change,
             ["scope"] = scope,
+            ["gate"] = state.UiTestEnabled ? GateRules : "",
         });
     }
+
+    /// <summary>
+    /// What the browser checks really test (finding 9), so a review neither guesses at them nor
+    /// misses a change that hides one of their signals.
+    /// </summary>
+    private const string GateRules = """
+        ## The browser checks
+
+        The factory starts this app and checks it in a browser. Judge the change against what those checks really do:
+
+        - A page passes once the readiness marker is *attached* (present in the page), whether or not it is visible.
+        - An uncaught page error, a `console.error`, an HTTP 5xx on a document or API call, a failed request, or an error line in the server's log fails the page.
+        - Every interactive control needs an accessible name or a `data-testid`.
+        - Each role signs in through the login form; a signed-out visit must reach the login page, and each denied route must be refused.
+        - The test-only endpoints (`/__test/*`) must be gone when the app runs as Production.
+
+        A change that silences one of these signals instead of fixing its cause is `blocking`: a `console.error` turned into a warning or removed, a caught and swallowed exception, a route, role or denied route removed from `litos.test.yaml`, a check skipped in the Testing environment only.
+        """;
 
     /// <summary>
     /// What the implementing agent said it did (ReadMe_CodeVerifyOptimisations.md §2), for the

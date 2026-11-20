@@ -386,6 +386,18 @@ internal sealed class AppEnvironment : IAsyncDisposable
         return lines.Count > 20 ? [.. lines.Take(20), $"… {lines.Count - 20} more"] : lines;
     }
 
+    /// <summary>
+    /// For a failure with no request of its own to blame, such as a sign-in that did not succeed:
+    /// the app's error lines since it started, or, when it logged none, its last output lines.
+    /// </summary>
+    public IReadOnlyList<string> DiagnosisLines()
+    {
+        var errors = ErrorLinesSince(new LogMark(new Dictionary<string, long>()));
+        if (errors.Count > 0)
+            return errors;
+        return [.. _running.SelectMany(p => p.Log.Tail(15).Select(l => _redactor.Redact($"{p.Name}: {l.Text}")))];
+    }
+
     /// <exception cref="HttpRequestException">The app did not answer, including within the client's 10s timeout.</exception>
     public async Task<HttpResponseMessage> SendAsync(string method, string path, CancellationToken ct)
     {

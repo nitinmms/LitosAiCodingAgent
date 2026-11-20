@@ -45,12 +45,22 @@ public sealed record StackProfile
     /// <summary>Ports the framework binds when it ignores the one it was given: Gate step 1 says which one it chose.</summary>
     public IReadOnlyList<int> DefaultPorts { get; init; } = [];
 
+    /// <summary>
+    /// Framework scripts whose <c>console.error</c> is known noise in a headless browser, so the
+    /// app need not be changed to hide it (README_Litos.Probe.Web.md finding 9). The report counts
+    /// what was ignored.
+    /// </summary>
+    public IReadOnlyList<IgnoredConsole> IgnoreConsole { get; init; } = [];
+
     public IReadOnlyList<string> Quirks { get; init; } = [];
     public string? RetrofitSkill { get; init; }
 
     public static StackProfile Parse(string json) =>
         JsonSerializer.Deserialize<StackProfile>(json, ProbeWebJson.Options) ?? throw new JsonException("Empty stack profile");
 }
+
+/// <summary>Console errors from a script whose URL path ends with <see cref="Source"/>, and why they are ignored.</summary>
+public sealed record IgnoredConsole(string Source, string Reason);
 
 /// <summary>Markers matched against the repository. <see cref="All"/> must all match, one of <see cref="Any"/> (when given), and none of <see cref="None"/>.</summary>
 public sealed record DetectRules

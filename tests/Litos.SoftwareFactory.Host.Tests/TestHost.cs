@@ -212,7 +212,7 @@ public sealed class FakeWorkspace : IWorkspace
         var changed = Changed(baseCommit);
         var patch = string.Concat(changed.Select(f => $"+++ b/{f}\n+{Files[f]}"));
         return Task.FromResult(new WorkspaceDiff(
-            baseCommit, patch, [.. changed.Select(f => new FileChange(f, [new LineRange(1, Math.Max(1, Files[f].Split('\n').Length - 1))]))]));
+            baseCommit, patch, [.. changed.Select(f => new FileChange(f, [new LineRange(1, Math.Max(1, Files[f].Split('\n').Length - 1))], Added: !_base.ContainsKey(f)))]));
     }
 
     public Task<string?> CommitAllAsync(string message, CommitIdentity author, string? coAuthoredBy, CancellationToken ct)

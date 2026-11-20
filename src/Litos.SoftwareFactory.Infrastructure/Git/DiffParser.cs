@@ -22,6 +22,7 @@ public static partial class DiffParser
         var newLine = 0;
         int? runStart = null;
         var inHunk = false;
+        var added = false;
 
         void EndRun()
         {
@@ -34,8 +35,9 @@ public static partial class DiffParser
         {
             EndRun();
             if (path is not null)
-                files.Add(new FileChange(path, [.. ranges]));
+                files.Add(new FileChange(path, [.. ranges], added));
             path = null;
+            added = false;
             ranges = [];
             inHunk = false;
         }
@@ -47,6 +49,13 @@ public static partial class DiffParser
             if (line.StartsWith("diff --git ", StringComparison.Ordinal))
             {
                 EndFile();
+                continue;
+            }
+
+            // "--- /dev/null" is a new file: the base commit did not have it.
+            if (!inHunk && line == "--- /dev/null")
+            {
+                added = true;
                 continue;
             }
 

@@ -9,7 +9,7 @@ Look for:
 - new or changed behaviour with no test, and tests that only mirror the implementation;
 - leftover debug code, commented-out code and unrelated changes.
 
-Report only what you have checked in the code. Mark a finding `blocking` when it must be fixed before a person tests the change, and `minor` otherwise.
+Report only what you have checked in the code. Mark a finding `blocking` when it must be fixed before a person tests the change, and `minor` otherwise. Committed generated output (build, test or coverage results, logs) is always `blocking`.
 
 ## Working economically
 
@@ -20,6 +20,8 @@ Every call you make re-sends this whole conversation, and the task has a token b
 - Stop when you have checked what the list above asks for. A review is not a second implementation.
 
 {{scope}}
+
+{{gate}}
 
 ## Request
 

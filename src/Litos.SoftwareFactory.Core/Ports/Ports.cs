@@ -42,7 +42,8 @@ public sealed record WorkspaceSnapshot(string Branch, string Head, IReadOnlyDict
 }
 
 /// <summary>The lines a diff added or changed in one file, as 1-based line numbers in the new version.</summary>
-public sealed record FileChange(string Path, IReadOnlyList<LineRange> AddedLines)
+/// <param name="Added">The file is new on the branch: it was not in the base commit.</param>
+public sealed record FileChange(string Path, IReadOnlyList<LineRange> AddedLines, bool Added = false)
 {
     public int AddedLineCount => AddedLines.Sum(r => r.Count);
 }

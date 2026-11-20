@@ -10,9 +10,11 @@ Look for:
 - a bug you can see in the change itself;
 - something the request asked for that the change does not do, or something it changes that it should not.
 
-If the change cannot be judged from this brief alone, report that as a `blocking` finding saying what you would need to check. Mark a finding `blocking` when it must be fixed before a person tests the change, and `minor` otherwise.
+If the change cannot be judged from this brief alone, report that as a `blocking` finding saying what you would need to check. Mark a finding `blocking` when it must be fixed before a person tests the change, and `minor` otherwise. Committed generated output (build, test or coverage results, logs) is always `blocking`.
 
 {{scope}}
+
+{{gate}}
 
 ## Request
 

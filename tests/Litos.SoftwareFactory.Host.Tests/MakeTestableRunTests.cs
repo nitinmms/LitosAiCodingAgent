@@ -106,6 +106,11 @@ public sealed class MakeTestableRunTests : IAsyncLifetime
     [Fact]
     public async Task It_gets_the_make_testable_brief_the_tool_the_gate_on_its_draft_and_a_full_review()
     {
+        _host.Workers.Script.Enqueue(call =>
+        {
+            _host.Workers.WorkspaceOf(call.Worker).Write(ContractYaml.FileName, Draft);
+            return _host.Workers.Default(call);
+        });
         var (_, threadId) = await MakeTestableAsync(Draft);
 
         await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
@@ -124,6 +129,12 @@ public sealed class MakeTestableRunTests : IAsyncLifetime
         Assert.Contains(_host.Workers.Turns, t => t.Kind == TurnKind.Review);
         var details = await _host.ThreadAsync(threadId);
         Assert.DoesNotContain(details.Messages, m => m.Text.Contains("light review", StringComparison.OrdinalIgnoreCase) || m.Text.StartsWith("No review", StringComparison.Ordinal));
+
+        // Finding 17: writing the contract is this task's job, and it ran on its own draft.
+        var evidence = System.Text.Json.JsonSerializer.Deserialize<HandoffEvidence>(details.LatestHandoff!.EvidenceJson, FactoryWire.Json)!;
+        Assert.DoesNotContain(evidence.KnownLimitations, l => l.Contains("still used the adopted contract", StringComparison.Ordinal));
+        Assert.Contains(evidence.KnownLimitations, l => l.Contains("adopt it on the project's Testability panel", StringComparison.Ordinal));
+        Assert.Contains("## The browser checks", _host.Workers.Turns.First(t => t.Kind == TurnKind.Review).Brief);
     }
 
     [Fact]

@@ -34,6 +34,9 @@ internal sealed class GateRun
     private readonly List<CheckResult> _checks = [];
     private readonly List<string> _findings = [];
     private readonly List<LintFinding> _lintFindings = [];
+
+    /// <summary>Console errors the stack profile ignores, by rule, for the report's findings.</summary>
+    private readonly Dictionary<IgnoredConsole, int> _ignoredConsole = [];
     private readonly Dictionary<string, string> _storageStates = new(StringComparer.Ordinal);
     private int _lintPages;
     private int _lintInteractive;
@@ -157,7 +160,7 @@ internal sealed class GateRun
                 Unnamed = _lintFindings.Count,
                 Findings = _lintFindings,
             } : null,
-            Findings = [.. _findings.Select(_redactor.Redact)],
+            Findings = [.. _findings.Concat(IgnoredConsoleFindings()).Select(_redactor.Redact)],
             Emails = _emails,
             Usage = new Usage { ModelCalls = 0, WallSeconds = Math.Round(wall.Elapsed.TotalSeconds, 1) },
         };
@@ -386,11 +389,15 @@ internal sealed class GateRun
 
             if (!await SignedInAsync(page))
             {
+                // What the page said and what the server logged (finding 10): a seeding error at
+                // start-up is the usual cause, and it is in the log long before the sign-in.
+                var screenshot = await ScreenshotAsync(page, $"signin-{role}");
                 return Classifier.Fail(id, CheckKind.SignIn, FailureCause.SignInNotReached,
                     $"Signed in as {role}, but {Describe(Auth.SuccessWhen!)} was not reached (the page is {PageWatcher.PathOf(page.Url)}). Check the test user's credentials.") with
                 {
                     Role = role,
                     DurationMs = started.ElapsedMilliseconds,
+                    Evidence = new Evidence { Log = _env.DiagnosisLines(), Screenshots = screenshot is null ? [] : [screenshot] },
                 };
             }
 
@@ -734,7 +741,8 @@ internal sealed class GateRun
         public string? Role { get; } = role;
         public string Label => Role ?? "anonymous";
         public IPage Page { get; } = page;
-        public PageWatcher Watcher { get; } = new(page, url => run._env.AppOrigins.Contains(BrowserHost.OriginOf(url)), run._contract.Testability.ConsoleErrors);
+        public PageWatcher Watcher { get; } = new(page, url => run._env.AppOrigins.Contains(BrowserHost.OriginOf(url)), run._contract.Testability.ConsoleErrors,
+            run._profile.IgnoreConsole, run.CountIgnored);
         public List<int> CheckIndexes { get; } = [];
 
         public async ValueTask DisposeAsync()
@@ -772,6 +780,21 @@ internal sealed class GateRun
     }
 
     // ---- Helpers ----------------------------------------------------------------------------
+
+    private void CountIgnored(IgnoredConsole rule)
+    {
+        lock (_ignoredConsole)
+            _ignoredConsole[rule] = _ignoredConsole.GetValueOrDefault(rule) + 1;
+    }
+
+    private List<string> IgnoredConsoleFindings()
+    {
+        lock (_ignoredConsole)
+        {
+            return [.. _ignoredConsole.Select(p =>
+                $"Ignored {p.Value} console.error line{(p.Value == 1 ? "" : "s")} from {p.Key.Source} ({_profile.Id} profile): {p.Key.Reason}")];
+        }
+    }
 
     private CheckResult Add(CheckResult check, Session? session = null, bool force = false)
     {

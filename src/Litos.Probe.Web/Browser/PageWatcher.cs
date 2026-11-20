@@ -1,3 +1,4 @@
+using Litos.Probe.Web.Core.Profiles;
 using Microsoft.Playwright;
 
 namespace Litos.Probe.Web.Browser;
@@ -16,7 +17,9 @@ internal sealed class PageWatcher
     private readonly Func<string, bool> _isApp;
     private readonly bool _consoleErrorsFail;
 
-    public PageWatcher(IPage page, Func<string, bool> isAppUrl, bool consoleErrorsFail)
+    /// <param name="ignored">The stack profile's known framework noise; <paramref name="onIgnored"/> hears each line it drops.</param>
+    public PageWatcher(IPage page, Func<string, bool> isAppUrl, bool consoleErrorsFail,
+        IReadOnlyList<IgnoredConsole>? ignored = null, Action<IgnoredConsole>? onIgnored = null)
     {
         _isApp = isAppUrl;
         _consoleErrorsFail = consoleErrorsFail;
@@ -26,7 +29,11 @@ internal sealed class PageWatcher
         {
             // The browser's own "Failed to load resource" lines repeat what the network signals
             // already report, and a missing favicon would otherwise fail every page.
-            if (message.Type == "error" && !message.Text.StartsWith("Failed to load resource", StringComparison.Ordinal))
+            if (message.Type != "error" || message.Text.StartsWith("Failed to load resource", StringComparison.Ordinal))
+                return;
+            if (IgnoredBy(message.Location, ignored) is { } rule)
+                onIgnored?.Invoke(rule);
+            else
                 Add($"console.error: {FirstLine(message.Text)}", isConsoleError: true);
         };
         page.Response += (_, response) =>
@@ -63,6 +70,25 @@ internal sealed class PageWatcher
     {
         lock (_lock)
             _signals.Add((text, isConsoleError));
+    }
+
+    /// <summary>The rule that ignores a console message from <paramref name="location"/> (<c>URL:line:column</c>), if one does.</summary>
+    internal static IgnoredConsole? IgnoredBy(string? location, IReadOnlyList<IgnoredConsole>? ignored)
+    {
+        if (string.IsNullOrEmpty(location) || ignored is not { Count: > 0 })
+            return null;
+        // Strip ":line:column", then any query string, and compare the end of the path.
+        var url = location;
+        for (var i = 0; i < 2; i++)
+        {
+            var colon = url.LastIndexOf(':');
+            if (colon <= 0 || !int.TryParse(url[(colon + 1)..], out _))
+                break;
+            url = url[..colon];
+        }
+
+        var path = PathOf(url).Split('?', 2)[0];
+        return ignored.FirstOrDefault(r => path.EndsWith(r.Source, StringComparison.OrdinalIgnoreCase));
     }
 
     internal static string PathOf(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.PathAndQuery : url;

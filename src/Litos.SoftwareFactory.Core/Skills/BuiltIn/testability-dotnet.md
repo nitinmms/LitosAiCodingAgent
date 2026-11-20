@@ -11,7 +11,7 @@ Applies when the detected stack is `aspnet-blazor-server` or another ASP.NET Cor
 - The contract runs the app with `ASPNETCORE_ENVIRONMENT=Testing`. Gate everything test-only on `builder.Environment.IsEnvironment("Testing")`.
 - In Testing, call `builder.WebHost.UseStaticWebAssets()`: only Development loads a build's static web assets, so without it `blazor.web.js` is missing and no Blazor circuit ever starts.
 - Skip `app.UseHttpsRedirection()` and secure-only cookies in Testing: the factory serves plain `http://localhost`, and https breaks sign-in.
-- The serve command has `--no-launch-profile`, or launchSettings.json overrides the port the factory passes in ASPNETCORE_URLS.
+- Serve with `--no-launch-profile`, or launchSettings.json overrides the port the factory passes in ASPNETCORE_URLS.
 
 ## Test users
 - Seed one user per role at start-up in Testing only, from variables the contract passes (TEST_ADMIN_USER, TEST_ADMIN_PASS, ...), with `UserManager<T>` and `RoleManager<T>`. Confirm the email when sign-in needs a confirmed account. If the user exists, reset the password to the variable's value.
@@ -31,5 +31,5 @@ Applies when the detected stack is `aspnet-blazor-server` or another ASP.NET Cor
 ## Pages
 - Blazor Server needs the readiness marker `[data-testid=app-interactive]`, rendered only once the component runs interactively (`RendererInfo.IsInteractive`), in the layout with its own `@rendermode InteractiveServer`, so every page has it.
 - Every input needs a `<label for>`; every icon-only button an `aria-label`. The Gate's lint fails a control with neither a name nor a `data-testid`.
-- The Identity template's `PasskeySubmit.razor.js` logs `console.error` in a headless browser (no passkey): make it a warning.
+- Never silence a Gate signal (`console.error` made a warning): fix its cause. The profile ignores the passkey script's headless error.
 - Protect pages with `[Authorize(Roles = "...")]`: the Gate checks signed-out visits redirect to login and lower roles are refused.
