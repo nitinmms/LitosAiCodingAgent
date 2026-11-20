@@ -113,6 +113,11 @@ public class TestabilitySkillsTests
     [Theory]
     [InlineData("testability-dotnet", "UseStaticWebAssets")]
     [InlineData("testability-node", "process.env.PORT")]
+    [InlineData("testability-dotnet", "<Compile Remove=\"Tests/**\" />")]
+    [InlineData("testability-dotnet", "[Collection(\"Database\")]")]
+    [InlineData("testability-dotnet", "Seed domain data too")]
+    [InlineData("testability-node", "test-results/junit.xml")]
+    [InlineData("testability-node", "Seed domain data too")]
     public void The_retrofit_skills_start_every_Make_testable_task_and_carry_what_the_real_apps_taught(string name, string fact)
     {
         var skill = BuiltInSkills.All.Single(s => s.Name == name);

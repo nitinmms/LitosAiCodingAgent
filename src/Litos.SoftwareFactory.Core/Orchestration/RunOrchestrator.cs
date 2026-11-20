@@ -550,6 +550,16 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         var notes = result.Notes.Where(n => !state.Disclosures.Contains(n)).ToList();
         var checkedState = state with { UiTest = result.Evidence, Disclosures = [.. state.Disclosures, .. notes] };
 
+        // Only a person can set a secret: never a repair, never a handoff (finding 7). Resume runs the Gate again.
+        if (result.MissingSecrets.Count > 0)
+        {
+            var one = result.MissingSecrets.Count == 1;
+            return Stop(checkedState, LifecycleTrigger.Block, StopReason.SecretsNotSet,
+                $"The Testability Gate needs {string.Join(", ", result.MissingSecrets)}, which {(one ? "is" : "are")} not set. "
+                + $"Set {(one ? "it" : "them")} on the project's Testability panel, then resume: the factory runs the Gate again.",
+                new UiTestStep());
+        }
+
         if (result.EnvironmentProblem is { } problem)
             return Stop(checkedState, LifecycleTrigger.Block, StopReason.UiTestUnavailable, $"The browser checks could not run: {problem}", new UiTestStep());
 

@@ -34,7 +34,12 @@ public sealed class RunUiTests(IFactoryStore store, ITestabilityEngine engine, T
     /// bring the app up is the environment's, unless the default branch comes up fine: then the
     /// task broke its build or start-up, and that is repaired too (§7.2).
     /// </summary>
-    internal static UiTestResult Interpret(ProbeWebReport report, ProbeWebReport? baseline, bool baselineHealthy, int revision, IReadOnlyList<string> runCommands)
+    /// <param name="draft">
+    /// A Make-testable task's own draft contract (finding 4): the contract and the test users are
+    /// the task's work, so a test or sign-in failure is repaired too, never handed off.
+    /// </param>
+    internal static UiTestResult Interpret(
+        ProbeWebReport report, ProbeWebReport? baseline, bool baselineHealthy, int revision, IReadOnlyList<string> runCommands, bool draft = false)
     {
         var compared = SmokeComparison.Compare(report, baseline);
         var fresh = compared.NewFailures;
@@ -48,12 +53,13 @@ public sealed class RunUiTests(IFactoryStore store, ITestabilityEngine engine, T
                 ? "The adopted contract no longer validates: " + string.Join(" ", report.Findings)
                 : null;
 
-        var defects = fresh.Where(c => c.Classification == Classification.ApplicationDefect).Concat(theTasks)
+        bool Blamed(CheckResult c) => draft ? c.Classification != Classification.EnvironmentFailure : c.Classification == Classification.ApplicationDefect;
+        var defects = fresh.Where(Blamed).Concat(theTasks)
             .Select(c => new UiDefect(c.Id, c.Message ?? c.Id, c.Evidence.Log))
             .ToList();
 
         var notes = new List<string>();
-        notes.AddRange(fresh.Where(c => c.Classification is Classification.TestDefect or Classification.AuthenticationFailure)
+        notes.AddRange(fresh.Where(c => !draft && c.Classification is Classification.TestDefect or Classification.AuthenticationFailure)
             .Select(c => $"Browser check {c.Id} needs a person, not a code change: {c.Message}"));
         notes.AddRange(compared.PreExisting.Select(c => $"Browser check {c.Id} already fails on the default branch, so it is not blamed on this task."));
         notes.AddRange(compared.Report.Checks.Where(c => c.Classification == Classification.Flaky)

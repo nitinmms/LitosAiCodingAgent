@@ -272,6 +272,9 @@ public enum StopReason
 
     /// <summary>The browser smoke could not run: the app, its services or the browser would not come up.</summary>
     UiTestUnavailable,
+
+    /// <summary>A Make-testable task's Gate needs secrets nobody has set: a person sets them, then resumes at the Gate.</summary>
+    SecretsNotSet,
 }
 
 // ---- Outcomes: what happened when the host did it ----

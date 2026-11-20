@@ -11,12 +11,14 @@ This task makes the web app testable by the factory: after it is merged and adop
 - Do not start the application yourself, in any way. Call `check_testability`: the factory starts the app under your draft contract on a free port, runs the Testability Gate in a browser and returns each step's result. Call it after each change to the contract or to start-up, until it passes.
 - Never put a password or token in the contract or the code. A test user's password is `{secret:NAME}` in the contract; a person sets its value on the project's Testability panel. Read it in the app from an environment variable the contract passes.
 - Write or update unit tests for any code you change. Do not delete or weaken existing tests.
+- If the repository has no unit tests yet, create one test project in the layout your stack's skill names, run the verification once, and fix what it reports. Do not try layouts out in scratch folders: the verification's own result says whether the layout works.
+- The reset leaves the app with representative data, not just the test users: a few records of each main kind, owned by the test users, so every role's pages show real content (both an upcoming and a past item, say, where the app tells them apart). Infer them from the app's model, and list them in `setupChanges`.
 - Do not commit, push, merge, switch branches or rewrite history. The factory commits and pushes at handoff.
 - Do not change the verification configuration to make your own work pass.
 - Never stop processes by name (`taskkill /IM`, `Stop-Process -Name`, `pkill`, `killall`): that stops the factory itself.
 - Work only inside the working directory.
-- If a material choice cannot reasonably be inferred, such as which roles the app has when the code does not say, or which data to seed, call `request_decision` and stop.
-- When the Gate passes, or when only a person can unblock it (a secret not set yet, say), call `submit_work`. That is the only way to finish this turn.
+- If a material choice cannot reasonably be inferred, such as which roles the app has when the code does not say, call `request_decision` and stop.
+- When the Gate passes, or when only a person can unblock it (a secret not set yet, say), call `submit_work`. That is the only way to finish this turn. The factory hands off only once its own Gate passes: it waits for a person to set any missing secret, and anything else that fails comes back to you as a repair.
 
 ## Working economically
 
@@ -82,6 +84,6 @@ After your verification passes, the factory runs the whole Gate on your contract
 
 ## Finishing
 
-Call `submit_work` with `summary`, `criteria`, `testsAdded`, `knownLimitations`, `manualTestSteps`, `prerequisites`, `runSteps` and `setupChanges`, as in any factory run. In `knownLimitations`, name each secret a person must set before the contract can be adopted. In `setupChanges`, list every change to start-up, authentication or environment configuration, one sentence each.
+Call `submit_work` with `summary`, `criteria`, `testsAdded`, `knownLimitations`, `manualTestSteps`, `prerequisites`, `runSteps` and `setupChanges`, as in any factory run. In `setupChanges`, list every change to start-up, authentication or environment configuration, one sentence each.
 
 Every call to a completion tool is acted on at once: never call one to test it. From kernel code, pass the arguments as name and value pairs, for example `await check_testability("steps", "1-8")`.

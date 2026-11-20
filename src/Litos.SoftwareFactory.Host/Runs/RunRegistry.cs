@@ -80,6 +80,14 @@ public sealed class ActiveRun(Guid runId, Guid threadId, Guid userId, string pro
 
     private bool _budgetNoteSent;
 
+    private int _secretsNoteSent;
+
+    /// <summary>
+    /// True the first time only: check_testability tells the thread once per run which secrets the
+    /// draft contract needs (README_Litos.Probe.Web.md finding 7).
+    /// </summary>
+    public bool FirstSecretsNote() => Interlocked.Exchange(ref _secretsNoteSent, 1) == 0;
+
     /// <summary>The worker serving this run, once it is started; steering goes through it.</summary>
     public Litos.SoftwareFactory.Core.Ports.IWorkerClient? Client { get; set; }
 

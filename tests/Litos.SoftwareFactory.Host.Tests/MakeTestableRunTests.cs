@@ -3,8 +3,10 @@ using Litos.Probe.Web.Core.Reports;
 using Litos.SoftwareFactory.Contracts;
 using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
+using Litos.SoftwareFactory.Core.Settings;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Core.Testability;
+using Litos.SoftwareFactory.Host.Settings;
 using Litos.SoftwareFactory.Host.Testability;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -36,6 +38,41 @@ public sealed class MakeTestableRunTests : IAsyncLifetime
         testability:
           routes: { public: [/] }
         """;
+
+    /// <summary>A draft whose test user's password is a project secret.</summary>
+    private const string DraftWithSecret = """
+        version: 1
+        application:
+          stack: node-express-spa
+          processes:
+            - name: web
+              command: [npm, start]
+              environment: { TEST_ADMIN_PASS: "{secret:TEST_ADMIN_PASS}" }
+          base_url: web
+          reset: { strategy: none }
+        testability:
+          auth:
+            type: form
+            login_url: /login
+            fields: { user: Email, password: Password }
+            submit: Log in
+            success_when: { url_not_contains: /login }
+            roles:
+              admin: { user: admin@example.test, password: "{secret:TEST_ADMIN_PASS}" }
+          routes:
+            public: [/]
+            protected: { admin: [/admin] }
+        """;
+
+    private static ProbeWebReport FailedGate(params CheckResult[] checks) => new()
+    {
+        Kind = ReportKind.Gate,
+        Outcome = ProbeWebOutcome.Failed,
+        Checks = [CheckResult.Pass("build", CheckKind.Build), CheckResult.Pass("start", CheckKind.Start), .. checks],
+    };
+
+    private Task SetSecretAsync(Guid projectId, string name) =>
+        _host.App.Services.GetRequiredService<FactorySettings>().SetSecretAsync(SecretNames.Project(projectId, name), "not-a-real-password", null, default);
 
     private async Task<(Guid ProjectId, Guid ThreadId)> MakeTestableAsync(string? draft)
     {
@@ -100,6 +137,72 @@ public sealed class MakeTestableRunTests : IAsyncLifetime
         Assert.Contains("There is no litos.test.yaml at the repository root yet", repair.Brief);
         Assert.Equal(StopReason.RepairMadeNoDifference, details.LatestRun!.StopReason);
         Assert.Empty(_engine.Gates);
+    }
+
+    [Fact]
+    public async Task A_sign_in_failure_on_the_draft_is_repaired_and_it_hands_off_only_once_the_gate_passes()
+    {
+        // Finding 4: W2.7's first handoff went out with the Gate failing at sign-in.
+        _engine.GateReports.Enqueue(FailedGate(
+            CheckResult.Fail("signin:admin", CheckKind.SignIn, Classification.AuthenticationFailure, "Signed in as admin, but /login was still shown.")));
+        var (_, threadId) = await MakeTestableAsync(Draft);
+
+        await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+
+        var repair = _host.Workers.Turns.Single(t => t.Kind == TurnKind.Repair);
+        Assert.Contains("signin:admin", repair.Brief);
+        Assert.Equal(2, _engine.Gates.Count);
+    }
+
+    [Fact]
+    public async Task A_draft_gate_that_keeps_failing_blocks_and_is_never_handed_off()
+    {
+        var failing = FailedGate(CheckResult.Fail("visit:anonymous:/gone", CheckKind.RouteVisit, Classification.TestDefect, "/gone answered 404."));
+        _engine.GateReport = failing;
+        var (_, threadId) = await MakeTestableAsync(Draft);
+
+        var details = await _host.WaitForStateAsync(threadId, LifecycleState.Blocked);
+
+        Assert.Equal(StopReason.RepairMadeNoDifference, details.LatestRun!.StopReason);
+        Assert.Null(details.LatestHandoff);
+    }
+
+    [Fact]
+    public async Task Unset_secrets_block_before_the_gate_and_resume_runs_it_once_they_are_set()
+    {
+        // Finding 7: only a person can set a secret.
+        var (projectId, threadId) = await MakeTestableAsync(DraftWithSecret);
+
+        var blocked = await _host.WaitForStateAsync(threadId, LifecycleState.Blocked);
+
+        Assert.Equal(StopReason.SecretsNotSet, blocked.LatestRun!.StopReason);
+        Assert.Contains(blocked.Messages, m => m.Text.Contains("needs TEST_ADMIN_PASS, which is not set", StringComparison.Ordinal));
+        Assert.Empty(_engine.Gates);
+        Assert.DoesNotContain(_host.Workers.Turns, t => t.Kind == TurnKind.Repair);
+
+        await SetSecretAsync(projectId, "TEST_ADMIN_PASS");
+        await _host.PostAsync($"api/threads/{threadId}/resume", null, System.Net.HttpStatusCode.OK);
+
+        await _host.WaitForStateAsync(threadId, LifecycleState.AwaitingHumanTesting);
+        Assert.Single(_engine.Gates);
+    }
+
+    [Fact]
+    public async Task Check_testability_asks_the_thread_for_unset_secrets_once_per_run()
+    {
+        var (_, threadId) = await MakeTestableAsync(DraftWithSecret);
+        await _host.WaitForStateAsync(threadId, LifecycleState.Blocked);
+        var checks = _host.App.Services.GetRequiredService<DraftChecks>();
+        var active = new Runs.ActiveRun(Guid.NewGuid(), threadId, await _host.AdminIdAsync(), "fake", "fake-model");
+
+        var first = await checks.CheckAsync(active, new CheckTestabilityRequest("s", "1-2"), default);
+        await checks.CheckAsync(active, new CheckTestabilityRequest("s", "1-2"), default);
+
+        Assert.Contains("Not set yet: TEST_ADMIN_PASS", first.Text);
+        Assert.Contains("Do not work around it", first.Text);
+        var details = await _host.ThreadAsync(threadId);
+        Assert.Single(details.Messages, m => m.Text.StartsWith("The draft contract needs TEST_ADMIN_PASS, not set yet. Set it on the project's Testability panel", StringComparison.Ordinal));
+        Assert.NotEmpty(_engine.Gates);
     }
 
     [Fact]

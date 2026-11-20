@@ -59,10 +59,13 @@ public sealed class FakeTestabilityEngine : ITestabilityEngine
 
     public List<(string Root, WebAppContract Contract, GateScope Scope)> Gates { get; } = [];
 
+    /// <summary>What each Gate answers, in order; <see cref="GateReport"/> once the queue is empty.</summary>
+    public Queue<ProbeWebReport> GateReports { get; } = new();
+
     public Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract contract, GateScope scope, ProbeWebOptions options, CancellationToken ct)
     {
         Gates.Add((workingCopy, contract, scope));
-        return Task.FromResult(GateReport);
+        return Task.FromResult(GateReports.TryDequeue(out var next) ? next : GateReport);
     }
 
     /// <summary>What each smoke answers, in order; a passing one once the queue is empty.</summary>

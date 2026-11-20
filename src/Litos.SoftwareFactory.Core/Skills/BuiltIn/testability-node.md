@@ -1,6 +1,6 @@
 ---
 name: testability-node
-version: 1
+version: 2
 description: Use in a Make-testable task on a Node web app (Express serving a built SPA, Vite, Next): a production-like build and start, PORT, NODE_ENV=test endpoints, a resettable data store, and the traps check_testability reports.
 defaultFor: testability
 ---
@@ -21,6 +21,11 @@ Applies when the detected stack is `node-express-spa` or another Node web app. T
 - No data at all: `reset: { strategy: none }`.
 - A SQLite file: `strategy: sqlite-snapshot` with a seed script (`npm run seed`) that writes the file; the factory copies it back before each start.
 - A server database: a service container (postgres, mysql, mongo, redis) and a reset command or endpoint.
+- Seed domain data too, not just users: a few records of each main kind, owned by the test users, in each state the pages tell apart (a draft and a published post), so every role's pages show real content.
+
+## Unit tests
+- No tests yet: add Vitest (or the runner the tooling suggests) with the scripts and report paths under "Verification the factory will run" in the brief; by default a `test:ci` script writing `test-results/junit.xml` and `coverage/cobertura-coverage.xml`. Run the verification once rather than trying set-ups out.
+- Put the logic you add (the fake's choice, the reset) in plain modules the tests import.
 
 ## Sign-in and pages
 - Form login: labelled fields (`<label for>`), a submit button whose text is its name, and a URL change after success (`success_when: { url_not_contains: /login }`). A JWT kept in localStorage works as is.

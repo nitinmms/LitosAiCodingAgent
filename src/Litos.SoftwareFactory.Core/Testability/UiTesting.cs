@@ -81,5 +81,11 @@ public sealed record UiTestResult
     /// <summary>Set when the app, its services or the browser could not be brought up: the run is Blocked.</summary>
     public string? EnvironmentProblem { get; init; }
 
+    /// <summary>
+    /// A Make-testable draft's <c>{secret:}</c> names nobody has set (README_Litos.Probe.Web.md
+    /// finding 7): the Gate did not run, and the run is Blocked until a person sets them.
+    /// </summary>
+    public IReadOnlyList<string> MissingSecrets { get; init; } = [];
+
     public UiTestEvidence Evidence { get; init; } = new();
 }

@@ -142,6 +142,34 @@ public class UiTestStepTests
     }
 
     [Fact]
+    public void Unset_secrets_block_for_a_person_and_resume_at_the_gate_never_a_repair()
+    {
+        var run = new Run();
+        run.Verified();
+
+        var stop = Assert.IsType<StopStep>(run.UiTested(new UiTestResult { MissingSecrets = ["TEST_ADMIN_PASS", "TEST_STAFF_PASS"] }));
+
+        Assert.Equal((LifecycleTrigger.Block, StopReason.SecretsNotSet), (stop.Trigger, stop.Reason));
+        Assert.Equal(
+            "The Testability Gate needs TEST_ADMIN_PASS, TEST_STAFF_PASS, which are not set. Set them on the project's Testability panel, then resume: the factory runs the Gate again.",
+            stop.Message);
+        Assert.IsType<UiTestStep>(run.State.ResumePoint);
+        Assert.Equal(0, run.State.RepairCyclesUsed);
+        Assert.False(run.State.UiTestCurrent);
+    }
+
+    [Fact]
+    public void One_unset_secret_reads_in_the_singular()
+    {
+        var run = new Run();
+        run.Verified();
+
+        var stop = Assert.IsType<StopStep>(run.UiTested(new UiTestResult { MissingSecrets = ["TEST_ADMIN_PASS"] }));
+
+        Assert.Contains("needs TEST_ADMIN_PASS, which is not set. Set it on", stop.Message);
+    }
+
+    [Fact]
     public void Notes_for_a_person_are_disclosed_once_and_do_not_stop_the_run()
     {
         var run = new Run();
@@ -233,6 +261,21 @@ public class UiTestStepTests
         Assert.Contains("Change the application, not the test", brief);
         Assert.Contains("NullReferenceException", brief);
     }
+
+    [Fact]
+    public void On_a_Make_testable_task_the_repair_may_fix_the_contract_but_not_by_dropping_checks()
+    {
+        var run = new Run();
+        run.Verified();
+        run.UiTested(Broken("visit:anonymous:/gone"));
+        var context = new RunContext("SalesApp", "factory/make-testable", "main", "@factory Make this app testable.") { TaskType = TaskTypes.Testability };
+
+        var brief = BriefComposer.Compose(new StartTurnStep(TurnKind.Repair, BriefKind.Repair), context, run.State, new RunLimits());
+
+        Assert.Contains("Testability Gate on your draft contract. Fix whichever is wrong, the app or the contract", brief);
+        Assert.Contains("Do not remove a route a person would open", brief);
+        Assert.DoesNotContain("not the test or the contract", brief);
+    }
 }
 
 /// <summary>The Make-testable task's brief (testability-architecture.md §6.3).</summary>
@@ -260,6 +303,19 @@ public class MakeTestableBriefTests
         Assert.Contains("Call `check_testability`", brief);
         Assert.Contains("{secret:NAME}", brief);
         Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void It_says_what_to_do_without_tests_to_seed_domain_data_and_that_only_a_passing_gate_hands_off()
+    {
+        var brief = Brief(TaskTypes.Testability, stack: "aspnet-blazor-server");
+
+        Assert.Contains("If the repository has no unit tests yet, create one test project in the layout your stack's skill names", brief);
+        Assert.Contains("Do not try layouts out in scratch folders", brief);
+        Assert.Contains("The reset leaves the app with representative data, not just the test users", brief);
+        Assert.Contains("The factory hands off only once its own Gate passes", brief);
+        // Seed data is inferred and disclosed, not asked about (W3.2, decided 2026-11-20).
+        Assert.DoesNotContain("which data to seed", brief);
     }
 
     [Fact]

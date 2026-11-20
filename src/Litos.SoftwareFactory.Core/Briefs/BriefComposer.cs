@@ -345,7 +345,12 @@ public static partial class BriefComposer
         if (state.UiDefects.Count > 0 && !state.ReviewRepairPending)
         {
             failures.AppendLine($"## Failing in the browser ({state.UiDefects.Count})").AppendLine();
-            failures.AppendLine("The factory started the app and checked it in a browser. Change the application, not the test or the contract, so these pass.").AppendLine();
+            // A Make-testable task's contract is its own work (finding 4), so the fix may be there,
+            // but never by dropping what a person would open or check.
+            failures.AppendLine(context.TaskType == Lifecycle.TaskTypes.Testability
+                ? "The factory ran the Testability Gate on your draft contract. Fix whichever is wrong, the app or the contract, so these pass. "
+                  + "Do not remove a route a person would open, a role or a denied route to make a check pass."
+                : "The factory started the app and checked it in a browser. Change the application, not the test or the contract, so these pass.").AppendLine();
             foreach (var defect in state.UiDefects)
             {
                 failures.AppendLine($"### `{defect.Id}`").AppendLine().AppendLine(defect.Message).AppendLine();

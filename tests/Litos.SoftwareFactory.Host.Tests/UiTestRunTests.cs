@@ -192,6 +192,44 @@ public sealed class UiTestRunTests : IAsyncLifetime
     }
 
     [Fact]
+    public void On_a_Make_testable_draft_the_same_failures_are_the_tasks_to_repair()
+    {
+        // Finding 4: the contract and the test users are the retrofit's own work.
+        var report = FakeTestabilityEngine.PassingSmoke() with
+        {
+            Kind = ReportKind.Gate,
+            Outcome = ProbeWebOutcome.Failed,
+            Checks =
+            [
+                CheckResult.Fail("visit:anonymous:/gone", CheckKind.RouteVisit, Classification.TestDefect, "/gone answered 404."),
+                CheckResult.Fail("signin:admin", CheckKind.SignIn, Classification.AuthenticationFailure, "Signed in as admin, but it was not reached."),
+            ],
+        };
+
+        var result = RunUiTests.Interpret(report, baseline: null, baselineHealthy: true, 1, [], draft: true);
+
+        Assert.Equal(["visit:anonymous:/gone", "signin:admin"], result.Defects.Select(d => d.Id));
+        Assert.DoesNotContain(result.Notes, n => n.Contains("needs a person"));
+        Assert.Equal(UiTestingStatus.Failed, result.Evidence.Status);
+    }
+
+    [Fact]
+    public void On_a_draft_a_missing_browser_still_blocks()
+    {
+        var report = FakeTestabilityEngine.PassingSmoke() with
+        {
+            Kind = ReportKind.Gate,
+            Outcome = ProbeWebOutcome.EnvironmentFailure,
+            Checks = [CheckResult.Pass("start", CheckKind.Start), CheckResult.Fail("browser", CheckKind.Start, Classification.EnvironmentFailure, "Chromium for Playwright is not installed.")],
+        };
+
+        var result = RunUiTests.Interpret(report, baseline: null, baselineHealthy: true, 1, [], draft: true);
+
+        Assert.Empty(result.Defects);
+        Assert.Contains("Chromium", result.EnvironmentProblem);
+    }
+
+    [Fact]
     public void A_start_failure_is_the_tasks_when_main_starts_fine_and_the_environments_otherwise()
     {
         var report = FakeTestabilityEngine.PassingSmoke() with

@@ -3,6 +3,7 @@ using Litos.Probe.Web;
 using Litos.Probe.Web.Core.Contract;
 using Litos.Probe.Web.Core.Reports;
 using Litos.SoftwareFactory.Contracts;
+using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
 using Litos.SoftwareFactory.Core.Testability;
 using Litos.SoftwareFactory.Host.Api;
@@ -18,7 +19,7 @@ namespace Litos.SoftwareFactory.Host.Testability;
 /// </summary>
 public sealed class DraftChecks(
     IFactoryStore store, IWorkspaceProvider workspaces, ITestabilityEngine engine, TestabilityRuntime runtime, VerificationGate gate,
-    FactorySettings settings)
+    FactorySettings settings, IClock clock, FactorySignals signals)
 {
     /// <summary>The draft in the working copy, or why there is none to run.</summary>
     public static (WebAppContract? Contract, string? Problem) Read(string workingCopy, ITestabilityEngine engine)
@@ -61,12 +62,27 @@ public sealed class DraftChecks(
         if (contract is null)
             return new CheckTestabilityResponse(true, problem!);
 
+        // The person can set a secret while the agent works on, so they hear of it now, once per
+        // run, rather than when the factory's own Gate stops for it (finding 7).
+        var missing = TestabilityApi.MissingSecrets(project.Id, contract, settings);
+        if (missing.Count > 0 && active.FirstSecretsNote())
+        {
+            await store.AddFactoryMessageAsync(details.Thread.Id, MessageKind.Status, SecretsNote(missing), null, clock.UtcNow, CancellationToken.None);
+            signals.EventsWritten();
+        }
+
         ProbeWebReport report;
         using (await gate.EnterAsync(null, ct))
             report = await engine.GateAsync(workingCopy, contract, scope, runtime.OptionsFor(project, active.RunId), ct);
 
-        return new CheckTestabilityResponse(false, Describe(report, TestabilityApi.MissingSecrets(project.Id, contract, settings)));
+        return new CheckTestabilityResponse(false, Describe(report, missing));
     }
+
+    /// <summary>The thread line that asks a person for the draft's secrets.</summary>
+    internal static string SecretsNote(IReadOnlyList<string> missing) =>
+        $"The draft contract needs {string.Join(", ", missing)}, not set yet. Set {(missing.Count == 1 ? "it" : "them")} on the project's "
+        + "Testability panel: sign-in cannot pass until then, and the factory's own Gate waits for "
+        + (missing.Count == 1 ? "it." : "them.");
 
     /// <summary>The Gate's result in a few lines: each check, what failed and the server's error lines.</summary>
     internal static string Describe(ProbeWebReport report, IReadOnlyList<string> missingSecrets)
@@ -90,11 +106,15 @@ public sealed class DraftChecks(
         foreach (var finding in report.Findings)
             text.AppendLine($"Note: {finding}");
         if (missingSecrets.Count > 0)
-            text.AppendLine($"Not set yet: {string.Join(", ", missingSecrets)}. Sign-in cannot pass until a person sets them on the project's Testability panel; name them in knownLimitations.");
+            text.AppendLine($"Not set yet: {string.Join(", ", missingSecrets)}. Sign-in cannot pass until a person sets them on the project's Testability panel, "
+                + "and the factory has asked for them on the thread. Do not work around it: finish everything else, then call submit_work. The factory's own Gate waits for them.");
         return text.ToString().TrimEnd();
     }
 
-    /// <summary>The run's own Gate step: the whole Gate on the draft, with no baseline (there is none yet).</summary>
+    /// <summary>
+    /// The run's own Gate step: the whole Gate on the draft, with no baseline (there is none yet).
+    /// Every failure is the task's to repair (finding 4); only unset secrets wait for a person (7).
+    /// </summary>
     public async Task<UiTestResult> GateDraftAsync(Project project, Guid runId, string workingCopy, Func<string, Task> note, CancellationToken ct)
     {
         var (contract, problem) = Read(workingCopy, engine);
@@ -108,6 +128,16 @@ public sealed class DraftChecks(
             };
         }
 
+        // Checked before the Gate starts: without them sign-in cannot pass, so the Gate would only cost time.
+        if (TestabilityApi.MissingSecrets(project.Id, contract, settings) is { Count: > 0 } missing)
+        {
+            return new UiTestResult
+            {
+                MissingSecrets = missing,
+                Evidence = new UiTestEvidence { Status = UiTestingStatus.Inconclusive, Problem = $"Not set: {string.Join(", ", missing)}." },
+            };
+        }
+
         ProbeWebReport report;
         using (await gate.EnterAsync(() => note("Waiting for another task's verification to finish before the Gate."), ct))
         {
@@ -115,12 +145,9 @@ public sealed class DraftChecks(
             report = await engine.GateAsync(workingCopy, contract, GateScope.All, runtime.OptionsFor(project, runId), ct);
         }
 
-        // There is no baseline: everything the Gate finds is the retrofit's, and a start-up that
-        // fails is the retrofit's to fix too, unless the browser or Docker itself is missing.
-        var result = RunUiTests.Interpret(report, baseline: null, baselineHealthy: true, project.ProfileRevision, []);
-        var missing = TestabilityApi.MissingSecrets(project.Id, contract, settings);
-        if (missing.Count > 0)
-            result = result with { Notes = [.. result.Notes, $"Set {string.Join(", ", missing)} on the project's Testability panel, then adopt the contract after merging."] };
+        // There is no baseline: everything the Gate finds is the retrofit's, a start-up or sign-in
+        // that fails included, unless the browser or Docker itself is missing.
+        var result = RunUiTests.Interpret(report, baseline: null, baselineHealthy: true, project.ProfileRevision, [], draft: true);
         await note($"Testability Gate: {report.Outcome}.");
         return result;
     }
