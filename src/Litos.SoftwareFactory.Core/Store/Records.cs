@@ -932,6 +932,11 @@ public static class AuditActions
 
     /// <summary>A litos.test.yaml from the default branch adopted into the profile (testability-architecture.md §5).</summary>
     public const string TestabilityAdopt = "project.testability_adopt";
+
+    /// <summary>A project scenario revision written, approved or the scenario retired (README_Litos.Probe.Web.md W3.6).</summary>
+    public const string ScenarioRevise = "project.scenario_revise";
+    public const string ScenarioApprove = "project.scenario_approve";
+    public const string ScenarioRetire = "project.scenario_retire";
     public const string MemberAdd = "project.member.add";
     public const string MemberRemove = "project.member.remove";
     public const string InvitationCreate = "invitation.create";

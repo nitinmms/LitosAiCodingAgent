@@ -17,11 +17,13 @@ public sealed class RunUiTests(IFactoryStore store, ITestabilityEngine engine, T
     public async Task<UiTestResult> RunAsync(Project project, Guid runId, string workingCopy, WebAppContract contract, Func<string, Task> note, CancellationToken ct)
     {
         var baseline = await BaselineAsync(project, ct);
+        var scenarios = await ProjectScenarios.ApprovedAsync(store, project.Id, ct);
         ProbeWebReport report;
         using (await gate.EnterAsync(() => note("Waiting for another task's verification to finish before the browser checks."), ct))
         {
-            await note("Starting the app for the browser checks: start, reset, sign in, routes and access control.");
-            report = await engine.SmokeAsync(workingCopy, contract, runtime.OptionsFor(project, runId), ct);
+            await note("Starting the app for the browser checks: start, reset, sign in, routes and access control"
+                + (scenarios.Count == 0 ? "." : $", then the project's {(scenarios.Count == 1 ? "approved scenario" : $"{scenarios.Count} approved scenarios")}."));
+            report = await engine.SmokeAsync(workingCopy, contract, runtime.OptionsFor(project, runId), ct, scenarios);
         }
 
         var result = Interpret(report, baseline.Report, baseline.Healthy, project.ProfileRevision, RunCommands(contract));

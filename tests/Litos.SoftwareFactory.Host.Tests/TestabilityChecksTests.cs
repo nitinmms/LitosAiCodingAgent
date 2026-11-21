@@ -62,9 +62,14 @@ public sealed class FakeTestabilityEngine : ITestabilityEngine
     /// <summary>What each Gate answers, in order; <see cref="GateReport"/> once the queue is empty.</summary>
     public Queue<ProbeWebReport> GateReports { get; } = new();
 
-    public Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract contract, GateScope scope, ProbeWebOptions options, CancellationToken ct)
+    /// <summary>The scenarios each Gate, smoke and scenarios run was given, in order (W3.6).</summary>
+    public List<(string Kind, IReadOnlyList<Litos.Probe.Web.Core.Scenarios.WebScenario> Scenarios)> ScenarioRuns { get; } = [];
+
+    public Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract contract, GateScope scope, ProbeWebOptions options, CancellationToken ct,
+        IReadOnlyList<Litos.Probe.Web.Core.Scenarios.WebScenario>? scenarios = null)
     {
         Gates.Add((workingCopy, contract, scope));
+        ScenarioRuns.Add(("gate", scenarios ?? []));
         return Task.FromResult(GateReports.TryDequeue(out var next) ? next : GateReport);
     }
 
@@ -87,10 +92,33 @@ public sealed class FakeTestabilityEngine : ITestabilityEngine
         Usage = new Usage { WallSeconds = 31 },
     };
 
-    public Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract contract, ProbeWebOptions options, CancellationToken ct)
+    public Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract contract, ProbeWebOptions options, CancellationToken ct,
+        IReadOnlyList<Litos.Probe.Web.Core.Scenarios.WebScenario>? scenarios = null)
     {
         Smokes.Add((workingCopy, options));
+        ScenarioRuns.Add(("smoke", scenarios ?? []));
         return Task.FromResult(SmokeReports.TryDequeue(out var report) ? report : PassingSmoke());
+    }
+
+    /// <summary>What "Run on main" answers; a passing scenario check once the queue is empty.</summary>
+    public Queue<ProbeWebReport> ScenarioReports { get; } = new();
+
+    public Task<ProbeWebReport> ScenariosAsync(string workingCopy, WebAppContract contract, IReadOnlyList<Litos.Probe.Web.Core.Scenarios.WebScenario> scenarios,
+        ProbeWebOptions options, CancellationToken ct)
+    {
+        ScenarioRuns.Add(("scenarios", scenarios));
+        return Task.FromResult(ScenarioReports.TryDequeue(out var report) ? report : new ProbeWebReport
+        {
+            Kind = ReportKind.Scenarios,
+            Outcome = ProbeWebOutcome.Passed,
+            Commit = "main000",
+            Checks = [.. scenarios.Select(sc => CheckResult.Pass($"scenario:{sc.Id}", CheckKind.Scenario) with
+            {
+                Scenario = new ScenarioInfo(sc.Id, sc.Revision, sc.Title, sc.Criterion),
+                Steps = [new StepResult(0, $"open {sc.Start}", CheckStatus.Passed, null, 12, "4d1e0000-0000-0000-0000-000000000001")],
+                Evidence = new Evidence { Screenshots = ["4d1e0000-0000-0000-0000-000000000001"] },
+            })],
+        });
     }
 }
 

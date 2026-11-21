@@ -193,6 +193,7 @@ public static class FactoryHostApp
         app.MapFactoryRunOrder();
         app.MapFactoryAttachments();
         app.MapFactoryTestability();
+        app.MapFactoryScenarios();
         app.MapFactoryArtifacts();
         app.MapFactorySettings();
         app.MapFactoryLessons();

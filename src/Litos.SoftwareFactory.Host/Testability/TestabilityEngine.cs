@@ -2,6 +2,7 @@ using Litos.Probe.Web;
 using Litos.Probe.Web.Core.Contract;
 using Litos.Probe.Web.Core.Profiles;
 using Litos.Probe.Web.Core.Reports;
+using Litos.Probe.Web.Core.Scenarios;
 using Litos.Probe.Web.Detection;
 using Litos.Probe.Web.Processes;
 using Litos.Probe.Web.Profiles;
@@ -27,9 +28,15 @@ public interface ITestabilityEngine
 
     Task<ProbeWebReport> DryRunAsync(string repoRoot, StackProfile profile, string? appDirectory, ProbeWebOptions options, CancellationToken ct);
 
-    Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract contract, GateScope scope, ProbeWebOptions options, CancellationToken ct);
+    /// <param name="scenarios">A project's approved scenarios, run after the Gate's own checks in the same app start (W3.6).</param>
+    Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract contract, GateScope scope, ProbeWebOptions options, CancellationToken ct,
+        IReadOnlyList<WebScenario>? scenarios = null);
 
-    Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract contract, ProbeWebOptions options, CancellationToken ct);
+    Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract contract, ProbeWebOptions options, CancellationToken ct,
+        IReadOnlyList<WebScenario>? scenarios = null);
+
+    /// <summary>Scenarios alone, for trying one on the default branch before approving it.</summary>
+    Task<ProbeWebReport> ScenariosAsync(string workingCopy, WebAppContract contract, IReadOnlyList<WebScenario> scenarios, ProbeWebOptions options, CancellationToken ct);
 }
 
 /// <summary>The real engine: Probe.Web in this process, with its embedded stack profiles.</summary>
@@ -46,11 +53,16 @@ public sealed class ProbeWebEngine(StackProfiles profiles) : ITestabilityEngine
     public Task<ProbeWebReport> DryRunAsync(string repoRoot, StackProfile profile, string? appDirectory, ProbeWebOptions options, CancellationToken ct) =>
         _engine.DryRunAsync(repoRoot, profile, options, ct, appDirectory);
 
-    public Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract contract, GateScope scope, ProbeWebOptions options, CancellationToken ct) =>
-        _engine.GateAsync(workingCopy, contract, scope, options, ct);
+    public Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract contract, GateScope scope, ProbeWebOptions options, CancellationToken ct,
+        IReadOnlyList<WebScenario>? scenarios = null) =>
+        _engine.GateAsync(workingCopy, contract, scope, options, ct, scenarios);
 
-    public Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract contract, ProbeWebOptions options, CancellationToken ct) =>
-        _engine.SmokeAsync(workingCopy, contract, options, ct);
+    public Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract contract, ProbeWebOptions options, CancellationToken ct,
+        IReadOnlyList<WebScenario>? scenarios = null) =>
+        _engine.SmokeAsync(workingCopy, contract, options, ct, scenarios);
+
+    public Task<ProbeWebReport> ScenariosAsync(string workingCopy, WebAppContract contract, IReadOnlyList<WebScenario> scenarios, ProbeWebOptions options, CancellationToken ct) =>
+        _engine.ScenariosAsync(workingCopy, contract, scenarios, options, ct);
 }
 
 /// <summary>

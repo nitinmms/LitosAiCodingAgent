@@ -15,7 +15,10 @@ public enum UiTestingStatus
     Inconclusive,
 }
 
-/// <summary>One browser check, as the handoff shows it: its screenshots and trace are run-artifact ids.</summary>
+/// <summary>
+/// One browser check, as the handoff shows it: its screenshots and trace are run-artifact ids. A
+/// scenario's check also carries the scenario (revision, criterion) and its steps (W3.6).
+/// </summary>
 public sealed record UiCheck(
     string Id,
     string Kind,
@@ -26,7 +29,9 @@ public sealed record UiCheck(
     string? Message,
     IReadOnlyList<string> Screenshots,
     string? Trace,
-    IReadOnlyList<string> Log);
+    IReadOnlyList<string> Log,
+    ScenarioInfo? Scenario = null,
+    IReadOnlyList<StepResult>? Steps = null);
 
 /// <summary>
 /// The browser evidence a task's handoff carries (HandoffEvidence.UiTesting): what was checked,
@@ -60,7 +65,7 @@ public sealed record UiTestEvidence
     /// <summary>The handoff's view of one Probe.Web check.</summary>
     public static UiCheck CheckOf(CheckResult c) => new(
         c.Id, c.Kind.ToString(), c.Role, c.Route, c.Status.ToString(), c.Classification?.ToString(), c.Message,
-        c.Evidence.Screenshots, c.Evidence.Trace, c.Evidence.Log);
+        c.Evidence.Screenshots, c.Evidence.Trace, c.Evidence.Log, c.Scenario, c.Steps);
 }
 
 /// <summary>A failure the task's change caused, which a repair turn fixes in the application.</summary>

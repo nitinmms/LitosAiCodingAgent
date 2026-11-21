@@ -208,12 +208,14 @@ public sealed class TestabilityChecks(
         ContractOnMain? onMain, CancellationToken ct)
     {
         var stack = adopted.Application.Stack ?? report.Stack;
+        // The project's approved scenarios run here too, so a task is not blamed for one main already fails (W3.6).
+        var scenarios = await ProjectScenarios.ApprovedAsync(store, project.Id, ct);
         Probe.Web.Core.Reports.ProbeWebReport gateRun;
         using (await gate.EnterAsync(null, ct))
         {
             if (await RestoreAsync(project, root, report.Commit, ct) is { } restoreFailed)
                 return report with { Status = TestabilityStatus.CouldNotCheck, Problem = restoreFailed };
-            gateRun = await engine.GateAsync(root, adopted, GateScope.All, runtime.OptionsFor(project, runId: null), ct);
+            gateRun = await engine.GateAsync(root, adopted, GateScope.All, runtime.OptionsFor(project, runId: null), ct, scenarios);
         }
 
         var gaps = new List<string>();
@@ -222,7 +224,11 @@ public sealed class TestabilityChecks(
         gaps.AddRange(gateRun.Checks.Where(c => c.Failed).Select(c => $"{c.Id}: {c.Message}"));
         gaps.AddRange(gateRun.Findings);
 
-        var status = gateRun.Outcome switch
+        // A failing scenario is a gap, not a broken main: the Gate's own checks say whether the app is test-ready.
+        var outcome = gateRun.Outcome == Probe.Web.Core.Reports.ProbeWebOutcome.InvalidContract
+            ? gateRun.Outcome
+            : Probe.Web.Core.Reports.ReportOutcome.Compute(gateRun.Checks.Where(c => c.Kind != Probe.Web.Core.Reports.CheckKind.Scenario));
+        var status = outcome switch
         {
             Probe.Web.Core.Reports.ProbeWebOutcome.Passed => TestabilityStatus.TestReady,
             Probe.Web.Core.Reports.ProbeWebOutcome.EnvironmentFailure or Probe.Web.Core.Reports.ProbeWebOutcome.Inconclusive
@@ -233,6 +239,37 @@ public sealed class TestabilityChecks(
             ? gateRun.Checks.FirstOrDefault(c => c.Failed)?.Message ?? gateRun.Findings.FirstOrDefault() ?? "The Gate could not run."
             : null;
         return report with { Status = status, Stack = stack, Gaps = gaps, Run = gateRun, Problem = problem };
+    }
+
+    /// <summary>
+    /// "Run on main" (W3.6): one scenario on the default branch's head, alone, so its author can
+    /// try a draft before approving it. Same reading copy, install and permit as the check.
+    /// </summary>
+    public async Task<Probe.Web.Core.Reports.ProbeWebReport> TryScenarioAsync(
+        Project project, Probe.Web.Core.Contract.WebAppContract adopted, Probe.Web.Core.Scenarios.WebScenario scenario, CancellationToken ct)
+    {
+        using var held = await readingCopies.HoldAsync(project.Id, ct);
+        var workspace = readingCopies.For(project);
+        await workspace.EnsureClonedAsync(ct);
+        await workspace.FetchAsync(ct);
+        await workspace.CheckoutForReadingAsync(project.DefaultBranch, ct);
+        var commit = (await workspace.GetStatusAsync(ct)).HeadCommit;
+
+        using (await gate.EnterAsync(null, ct))
+        {
+            if (await RestoreAsync(project, workspace.Path, commit, ct) is { } restoreFailed)
+            {
+                return new Probe.Web.Core.Reports.ProbeWebReport
+                {
+                    Kind = Probe.Web.Core.Reports.ReportKind.Scenarios,
+                    Outcome = Probe.Web.Core.Reports.ProbeWebOutcome.EnvironmentFailure,
+                    Commit = commit,
+                    Findings = [restoreFailed],
+                };
+            }
+
+            return await engine.ScenariosAsync(workspace.Path, adopted, [scenario], runtime.OptionsFor(project, runId: null), ct);
+        }
     }
 
     /// <summary>The default branch's litos.test.yaml, parsed and validated; null when there is none.</summary>
