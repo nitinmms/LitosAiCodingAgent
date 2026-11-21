@@ -466,6 +466,25 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
   - **notes app:** add a note with `expectResponse` 201; the next scenario finds the seeded list again; the renamed button gives a TestDefect naming *Add note*; wrong text gives an ApplicationDefect; a role on a login-less app is never run;
   - **broken app `scenarios`:** each role signed in afresh; form sign-in with a typed secret, not traced and not in any artifact; `expectError`.
 
+**Live check after W3.1–W3.5 (2026-11-21).** The user chose to check before W3.6. Setup: the dev host from source (`:5180`, dev database), rebuilt with W3.1–W3.5; the installed factory (`:5181`) was not touched.
+
+| Step | Result |
+|---|---|
+| clinic-portal *Check again* on main `0b713f6` | **Test-ready**, Gate 19 of 19 in 44 s. No console lines ignored: no route in the contract opens the login page. |
+| Feature task "upcoming appointment count on My appointments" (`claude-haiku-5-5`, 300k) | 1 decision (answered by the user in the UI). Verification 44 tests (12 new), 100% changed-line coverage; **smoke 17 of 17**, 11 screenshots; review *not needed* (risk score 0); draft **PR #3** at **78k tokens** (W2.7's feature on `deepseek-v4.1-flash`: 538k). |
+| Scenarios CLI on a clone of main, 5 scenarios (staff list, patient refused, form sign-in typing a secret, wrong password, a deliberately renamed button) | First run: the two scenarios that open `/Account/Login` failed on the Identity passkey script's `console.error`. After the fix below: **4 of 4 pass**, the renamed button gives a **TestDefect** naming what the page has ("Logout": the list is empty), the report counts 3 ignored passkey lines, and no artifact holds the password. 41 s. |
+
+**What the W3 fixes did in a real run:**
+- **8:** `uiTesting.commit` is the handoff commit (`5676f10`).
+- **12, W3.4:** the rule went into a plain `Data/AppointmentRules.cs` with its own tests. The page tests still use bUnit, which clinic-portal has had since W2.7 (PR #2), and that is what "use one only if the project already does" allows; it cost little this time.
+- **Not exercised:** the review rules (9: no review was needed), the drift note (17: no contract change), the guards (W3.1: no stall, no low budget), and generated output (6: none).
+
+**Found and fixed during the check:**
+- **`a939677` (W3.3, finding 9):** the passkey rule never fired. `MapStaticAssets` serves the module as `PasskeySubmit.pr21mg9rrw.razor.js`, with the fingerprint inside the name. `ignoreConsole` sources may now use `*`, and the Blazor profile says `PasskeySubmit*.razor.js`.
+- **`ba9c3a7` (W3.3, finding 14):** the handoff kept "the four pre-existing failing TestData/TestingEnvironment tests" although the verification ran 44 of 44 green. The flag matched only the full class names; a class now also counts without its `Tests` suffix.
+
+**Still open, in clinic-portal rather than the factory:** finding 13, since its reset still seeds no appointments, so neither the smoke screenshots nor a cancel scenario can show the data. Finding 16 too: the agent's own local runs still failed the four tests that share an in-memory SQLite database. A Make-testable or follow-up task on the repo would fix both under the W3.2 brief.
+
 **Finding 12, the proposal as discussed (2026-11-19; only item 1 was adopted, above).**
 
 The question: does page markup still count toward changed-line coverage once the browser checks cover those pages?
