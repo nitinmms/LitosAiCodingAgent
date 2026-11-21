@@ -172,12 +172,21 @@ public static class HandoffComposer
 
     private static readonly Regex FailWords = new(@"\bfail", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    /// <summary>A test's class and method names: "Shop.Tests.CartTests.Adds_an_item(x: 1)" gives CartTests and Adds_an_item.</summary>
+    /// <summary>
+    /// A test's class and method names: "Shop.Tests.CartTests.Adds_an_item(x: 1)" gives CartTests and
+    /// Adds_an_item. The class counts without its Tests suffix too, as agents write it: the live
+    /// check's limitation named "TestData/TestingEnvironment tests" for TestDataTests and
+    /// TestingEnvironmentTests.
+    /// </summary>
     private static IEnumerable<string> NameParts(string name)
     {
         var plain = name.Split('(', 2)[0];
         var parts = plain.Split('.', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length >= 2 ? parts[^2..] : parts;
+        if (parts.Length < 2)
+            return parts;
+        var type = parts[^2];
+        var bare = type.EndsWith("Tests", StringComparison.Ordinal) ? type[..^5] : type.EndsWith("Test", StringComparison.Ordinal) ? type[..^4] : type;
+        return bare == type ? [type, parts[^1]] : [type, bare, parts[^1]];
     }
 
     /// <summary>

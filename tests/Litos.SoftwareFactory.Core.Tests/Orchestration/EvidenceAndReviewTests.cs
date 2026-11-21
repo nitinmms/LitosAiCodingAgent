@@ -69,6 +69,16 @@ public class EvidenceAndReviewTests
         Assert.Equal(limitation, HandoffComposer.Contradicted(limitation, W27));
 
     [Fact]
+    public void A_class_named_without_its_Tests_suffix_counts_too()
+    {
+        // The live check's handoff (2026-11-21), verbatim.
+        const string limitation = "I ran the build (succeeded) and the 27 related tests (all passed) only; the factory's full test run is not yet done. "
+            + "The four pre-existing failing TestData/TestingEnvironment tests were not touched.";
+
+        Assert.EndsWith("its verification ran TestData (3 tests) and TestingEnvironment (1 test), and all passed.)", HandoffComposer.Contradicted(limitation, W27));
+    }
+
+    [Fact]
     public void Without_a_verification_nothing_is_answered() =>
         Assert.Equal("TestDataTests fail.", HandoffComposer.Contradicted("TestDataTests fail.", null));
 
