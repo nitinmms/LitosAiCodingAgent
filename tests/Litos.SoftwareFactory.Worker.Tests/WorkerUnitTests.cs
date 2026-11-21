@@ -689,6 +689,46 @@ public class CompletionToolTests
     // ---- submit_spec ----
 
     [Fact]
+    public async Task SubmitSpec_And_SubmitWork_PostTheirScenarios_AsRawJsonObjects()
+    {
+        // README_Litos.Probe.Web.md W3.7: the host, not the worker, checks them against the contract.
+        var (spec, specHandler) = Create((h, s) => new SubmitSpecTool(h, s));
+        var result = await spec.InvokeAsync(Args("""
+            {"summary":"s","acceptanceCriteria":["Patients can cancel."],"testPlan":"t",
+             "scenarios":[{"id":"cancel","criterion":"Patients can cancel.","role":"patient","steps":[{"type":"click","target":{"role":"button","name":"Cancel"}}]}]}
+            """), default);
+        Assert.False(result.IsError, result.Text);
+        var posted = Assert.Single(Assert.IsType<SpecSubmission>(Posted(specHandler).Submission).Scenarios!);
+        Assert.Equal("cancel", System.Text.Json.JsonDocument.Parse(posted).RootElement.GetProperty("id").GetString());
+
+        var (work, workHandler) = Create((h, s) => new SubmitWorkTool(h, s));
+        result = await work.InvokeAsync(Args("""{"summary":"done","scenarios":[{"id":"a","steps":[]},{"id":"b","steps":[]}]}"""), default);
+        Assert.False(result.IsError, result.Text);
+        Assert.Equal(2, Assert.IsType<WorkSubmission>(Posted(workHandler).Submission).Scenarios!.Count);
+    }
+
+    [Theory]
+    [InlineData("""{"summary":"done","scenarios":"click Cancel"}""", "'scenarios' must be an array")]
+    [InlineData("""{"summary":"done","scenarios":["click Cancel"]}""", "must be a scenario object")]
+    public async Task SubmitWork_RefusesScenariosThatAreNotObjects(string json, string problem)
+    {
+        var (tool, _) = Create((h, s) => new SubmitWorkTool(h, s));
+
+        var result = await tool.InvokeAsync(Args(json), default);
+
+        Assert.True(result.IsError);
+        Assert.Contains(problem, result.Text);
+    }
+
+    [Fact]
+    public async Task SubmitWork_WithoutScenarios_PostsNone()
+    {
+        var (tool, handler) = Create((h, s) => new SubmitWorkTool(h, s));
+        await tool.InvokeAsync(Args("""{"summary":"done","scenarios":[]}"""), default);
+        Assert.Null(Assert.IsType<WorkSubmission>(Posted(handler).Submission).Scenarios);
+    }
+
+    [Fact]
     public async Task SubmitSpec_PostsTheSpecification()
     {
         var (tool, handler) = Create((h, s) => new SubmitSpecTool(h, s));

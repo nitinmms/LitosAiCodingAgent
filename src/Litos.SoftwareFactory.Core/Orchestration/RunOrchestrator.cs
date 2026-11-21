@@ -329,7 +329,14 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             // has not changed: the earlier turn's instructions stand until a turn gives new ones.
             case WorkSubmission work:
                 return Enter(
-                    state with { LastSubmission = work with { HowToRun = work.HowToRun ?? state.LastSubmission?.HowToRun } },
+                    state with
+                    {
+                        LastSubmission = work with
+                        {
+                            HowToRun = work.HowToRun ?? state.LastSubmission?.HowToRun,
+                            Scenarios = work.Scenarios ?? state.LastSubmission?.Scenarios,
+                        },
+                    },
                     new VerifyStep());
 
             case DecisionSubmission decision when state.DecisionsAsked < Limits.MaxDecisions:

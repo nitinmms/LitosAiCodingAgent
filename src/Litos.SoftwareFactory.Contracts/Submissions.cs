@@ -27,13 +27,17 @@ public sealed record LessonProposal(
 /// <summary>submit_work: an implement, repair or rework turn is finished and ready to verify.</summary>
 /// <param name="HowToRun">How a tester who has only just got the branch runs the application.
 /// Null when the turn did not say; the host then keeps the instructions it already has.</param>
+/// <param name="Scenarios">Browser scenarios the turn drafted for its criteria, each a JSON object
+/// in Probe.Web's format (README_Litos.Probe.Web.md W3.7); null when it drafted none. Not approved:
+/// they run for evidence, and a failure is disclosed, never repaired.</param>
 public sealed record WorkSubmission(
     string Summary,
     IReadOnlyList<CriterionCoverage> Criteria,
     IReadOnlyList<string> TestsAdded,
     IReadOnlyList<string> KnownLimitations,
     IReadOnlyList<string> ManualTestSteps,
-    RunInstructions? HowToRun = null) : Submission;
+    RunInstructions? HowToRun = null,
+    IReadOnlyList<string>? Scenarios = null) : Submission;
 
 /// <summary>
 /// The agent's suggestion for running the application from a fresh copy of the branch. The
@@ -74,12 +78,15 @@ public enum FindingSeverity
 public sealed record ReviewFinding(FindingSeverity Severity, string File, int? Line, string Text);
 
 /// <summary>submit_spec: a spec turn's proposed specification, for the user to approve.</summary>
+/// <param name="Scenarios">One browser scenario per criterion a person can check in the app, each a
+/// JSON object (W3.7). Approved with the specification; then run like a project's own.</param>
 public sealed record SpecSubmission(
     string Summary,
     IReadOnlyList<string> AcceptanceCriteria,
     IReadOnlyList<string> AffectedAreas,
     string TestPlan,
-    IReadOnlyList<string> OpenQuestions) : Submission;
+    IReadOnlyList<string> OpenQuestions,
+    IReadOnlyList<string>? Scenarios = null) : Submission;
 
 /// <summary>
 /// submit_plan: the decision scan's result. The approach and the files it expects to change, and

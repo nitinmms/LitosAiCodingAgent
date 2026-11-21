@@ -26,13 +26,15 @@ You have read-only tools on a copy of the repository at {{branch}}. Do not edit 
    - `testPlan`: which criteria unit tests will cover, and which can only be checked by hand, and how.
    - `openQuestions`: only what a person must decide before the work starts. Leave it empty when the request and the code settle everything.
 
+{{scenarios}}
+
 ## Working economically
 
 Every call you make re-sends this whole conversation, and everything you print is paid for again on every later call. Do several things in one script, print only what you need, and aim to finish in a few calls.
 
 ## Finishing
 
-Call `submit_spec` with `summary` (text), `acceptanceCriteria` (a list of strings), `affectedAreas` (a list of strings), `testPlan` (text) and `openQuestions` (a list of strings). Every call to a completion tool is acted on at once: never call one to test it or to find out its parameters. From kernel code, pass the arguments as name and value pairs; named C# arguments do not compile. For example:
+Call `submit_spec` with `summary` (text), `acceptanceCriteria` (a list of strings), `affectedAreas` (a list of strings), `testPlan` (text), `openQuestions` (a list of strings){{scenariosField}}. Every call to a completion tool is acted on at once: never call one to test it or to find out its parameters. From kernel code, pass the arguments as name and value pairs; named C# arguments do not compile. For example:
 
 ```csharp
 await submit_spec(

@@ -16,6 +16,36 @@ namespace Litos.SoftwareFactory.Worker;
 /// </summary>
 public abstract class CompletionTool(FactoryHostClient host, string sessionId) : ITool
 {
+    /// <summary>The schema of a <c>scenarios</c> argument: objects in Probe.Web's scenario format, which the host checks.</summary>
+    protected static object ScenarioArray(string description) => new
+    {
+        type = "array",
+        description,
+        items = new { type = "object", description = "A scenario: id, criterion, role, start and steps, as the brief shows." },
+    };
+
+    /// <summary>
+    /// The <c>scenarios</c> argument as raw JSON objects: the host checks each against the project's
+    /// contract, since only it knows the roles and routes. Null when there are none.
+    /// </summary>
+    protected static (IReadOnlyList<string>? Scenarios, string? Problem) Scenarios(JsonElement arguments)
+    {
+        if (!arguments.TryGetProperty("scenarios", out var value) || value.ValueKind == JsonValueKind.Null)
+            return (null, null);
+        if (value.ValueKind != JsonValueKind.Array)
+            return (null, "'scenarios' must be an array of scenario objects.");
+
+        var scenarios = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+                return (null, "every entry in 'scenarios' must be a scenario object (id, criterion, role, start, steps), not a string.");
+            scenarios.Add(item.GetRawText());
+        }
+
+        return (scenarios.Count == 0 ? null : scenarios, null);
+    }
+
     public abstract string Name { get; }
 
     public abstract string Description { get; }
@@ -152,6 +182,7 @@ public sealed class SubmitWorkTool(FactoryHostClient host, string sessionId) : C
                 },
             },
             setupChanges = new { type = "string", description = "What this change alters about setting up or running the application, such as a new environment variable; \"Nothing new to set up.\" when nothing." },
+            scenarios = ScenarioArray("Browser scenarios for the criteria a person can check in the app, as the brief describes; leave out when the brief has no Browser scenarios section."),
         },
         required = new[] { "summary" },
     });
@@ -204,7 +235,11 @@ public sealed class SubmitWorkTool(FactoryHostClient host, string sessionId) : C
             ? new RunInstructions(prerequisites, steps, setupChanges)
             : null;
 
-        return (new WorkSubmission(summary, criteria, testsAdded, limitations, manualSteps, howToRun), null);
+        var (scenarios, scenariosProblem) = Scenarios(arguments);
+        if (scenariosProblem is not null)
+            return (null, scenariosProblem);
+
+        return (new WorkSubmission(summary, criteria, testsAdded, limitations, manualSteps, howToRun, scenarios), null);
     }
 
     /// <summary>
@@ -415,6 +450,7 @@ public sealed class SubmitSpecTool(FactoryHostClient host, string sessionId) : C
             affectedAreas = StringArray("Parts of the code or product that will change."),
             testPlan = new { type = "string", description = "Which criteria unit tests will cover and which are manual-only." },
             openQuestions = StringArray("Anything a person must answer before implementation."),
+            scenarios = ScenarioArray("One browser scenario per criterion a person can check in the app, as the brief describes; leave out when the brief has no Browser scenarios section."),
         },
         required = new[] { "summary", "acceptanceCriteria", "testPlan" },
     });
@@ -432,7 +468,11 @@ public sealed class SubmitSpecTool(FactoryHostClient host, string sessionId) : C
         if (Strings(arguments, "affectedAreas") is not { } areas || Strings(arguments, "openQuestions") is not { } questions)
             return (null, "'affectedAreas' and 'openQuestions' must be arrays of strings.");
 
-        return (new SpecSubmission(summary, criteria, areas, testPlan, questions), null);
+        var (scenarios, scenariosProblem) = Scenarios(arguments);
+        if (scenariosProblem is not null)
+            return (null, scenariosProblem);
+
+        return (new SpecSubmission(summary, criteria, areas, testPlan, questions, scenarios), null);
     }
 }
 

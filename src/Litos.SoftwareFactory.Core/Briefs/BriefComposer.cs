@@ -12,8 +12,21 @@ namespace Litos.SoftwareFactory.Core.Briefs;
 /// the host at preflight from its own records; the briefs are rendered from this and the
 /// run's state.
 /// </summary>
+/// <summary>
+/// What a brief says about browser scenarios (README_Litos.Probe.Web.md W3.7), when the project has
+/// an adopted contract: the roles a scenario may sign in as and the routes it knows. With
+/// <see cref="Approved"/> the task builds an approved specification's scenarios, one line each.
+/// </summary>
+public sealed record ScenarioGuide(IReadOnlyList<string> Roles, IReadOnlyList<string> Routes)
+{
+    public IReadOnlyList<string> Approved { get; init; } = [];
+}
+
 public sealed record RunContext(string Project, string Branch, string BaseBranch, string Request)
 {
+    /// <summary>Set when the project has an adopted contract: the brief asks for browser scenarios, or names the approved ones.</summary>
+    public ScenarioGuide? Scenarios { get; init; }
+
     /// <summary>The task's type (Lifecycle.TaskTypes); a Make-testable task gets its own brief.</summary>
     public string? TaskType { get; init; }
 
@@ -62,14 +75,19 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
 }
 
 /// <summary>A specification as a person approves it: one revision of what a task will build.</summary>
+/// <param name="Scenarios">The revision's browser scenarios, as JSON objects (W3.7).</param>
 public sealed record SpecDraft(
     int Revision, string Summary, IReadOnlyList<string> AcceptanceCriteria, IReadOnlyList<string> AffectedAreas,
-    string TestPlan, IReadOnlyList<string> OpenQuestions);
+    string TestPlan, IReadOnlyList<string> OpenQuestions, IReadOnlyList<string>? Scenarios = null);
 
 /// <summary>What a spec turn is told: the task, what was asked, the draft it revises, if any,
 /// and the thread so far.</summary>
 public sealed record SpecContext(
-    string Project, string Branch, string Title, string Request, SpecDraft? Previous, IReadOnlyList<ChatLine> Conversation);
+    string Project, string Branch, string Title, string Request, SpecDraft? Previous, IReadOnlyList<ChatLine> Conversation)
+{
+    /// <summary>Set when the project has an adopted contract: the spec drafts a scenario per criterion.</summary>
+    public ScenarioGuide? Scenarios { get; init; }
+}
 
 /// <summary>One earlier message of a thread, as a chat brief shows it.</summary>
 public sealed record ChatLine(string Speaker, string Text);
@@ -168,7 +186,61 @@ public static partial class BriefComposer
                 "Revise it as asked above. Keep what the request does not ask to change.\n\n" + DescribeSpec(previous))
             : "",
         ["conversation"] = Conversation(context.Conversation),
+        ["scenarios"] = ScenarioSection(context.Scenarios, forSpec: true),
+        ["scenariosField"] = context.Scenarios is null ? "" : " and `scenarios` (a list of scenario objects)",
     });
+
+    /// <summary>
+    /// The Browser scenarios section (W3.7): how to write them, or, for a task that builds an
+    /// approved specification's scenarios, what they expect of the app.
+    /// </summary>
+    internal static string ScenarioSection(ScenarioGuide? guide, bool forSpec)
+    {
+        if (guide is null)
+            return "";
+        if (guide.Approved.Count > 0)
+        {
+            return "## Browser scenarios\n\n"
+                + "The approved specification comes with browser scenarios. After verification the factory runs them in a browser, and one that fails "
+                + "because of your change comes back to you. Keep the routes, labels, button names and test ids they use:\n\n"
+                + Bullets(guide.Approved);
+        }
+
+        var intro = forSpec
+            ? "The factory tests this app in a browser. For each acceptance criterion a person could check by using the app, add one scenario to "
+              + "`scenarios`. It is approved with the specification and run against the finished work. Leave out criteria that only a unit test, "
+              + "or a person reading the code, can check."
+            : "The factory tests this app in a browser. In `submit_work`, add a scenario to `scenarios` for each acceptance criterion a person could "
+              + "check by using the app. The factory runs them after verification and shows the person testing your work what each step did, with "
+              + "screenshots. They are not approved, so one that fails is reported, not sent back to you. If the app does not do what a scenario "
+              + "expects, fix the app, not the scenario.";
+        var roles = guide.Roles.Count == 0
+            ? "The app has no sign-in: leave `role` out."
+            : $"`role`: one of {string.Join(", ", guide.Roles.Select(r => $"`{r}`"))}; leave it out for a signed-out visitor.";
+        var start = guide.Routes.Count == 0 ? "/" : guide.Routes[0];
+        return "## Browser scenarios\n\n" + intro + "\n\n" + $$"""
+            Each scenario is a JSON object:
+            - `id`: lower-case letters, digits and `-`, unique in the task.
+            - `criterion`: the criterion's text, copied exactly.
+            - {{roles}}
+            - `start`: the route it opens first, such as `{{start}}`.
+            - `steps`, in order. Actions: `navigate` (`path`), `click`, `fill` (`value`), `select` (`value`), `check`, `uncheck`, `waitFor`, `screenshot` (`name`). Checks: `expectVisible`, `expectHidden`, `expectText` (`text`), `expectUrl` (`url`), `expectState` (`state`: enabled, disabled, checked or unchecked), `expectError` (`text`), `expectResponse` (`method`, `path`, `status`).
+            - A step's `target` is exactly one of `role` with its exact `name`, `label`, `testId` or `text`; add `within` (a container such as the row) when several elements match. Take labels, names and test ids from the code, never guess them: a target that matches nothing is reported for a person.
+            - The data is reset before each scenario, so a scenario that needs a record creates it first. Use `{run}` in a value for something unique.
+            - Check the outcome a person would see, then end with a `screenshot`.
+
+            For example:
+
+            ```json
+            { "id": "add-a-note", "criterion": "A person can add a note and sees it in the list.", "start": "{{start}}",
+              "steps": [
+                { "type": "fill", "target": { "label": "New note" }, "value": "Probe {run}" },
+                { "type": "click", "target": { "role": "button", "name": "Add note" } },
+                { "type": "expectText", "target": { "testId": "notes" }, "text": "Probe" },
+                { "type": "screenshot", "name": "added" } ] }
+            ```
+            """;
+    }
 
     /// <summary>A specification as the briefs show it.</summary>
     internal static string DescribeSpec(SpecDraft spec)
@@ -262,6 +334,7 @@ public static partial class BriefComposer
         ["plan"] = Plan(state),
         ["verification"] = VerificationSummary(context),
         ["baseline"] = BaselineFailures(state),
+        ["scenarios"] = ScenarioSection(context.Scenarios, forSpec: false),
     });
 
     /// <summary>A Make-testable task (testability-architecture.md §6.3): the gaps, the stack and the contract to write.</summary>
@@ -307,6 +380,7 @@ public static partial class BriefComposer
         ["contract"] = Contract,
         ["changedFiles"] = context.ChangedFiles.Count == 0 ? "(none)" : Bullets(context.ChangedFiles.Select(f => $"`{f}`")),
         ["decisions"] = Decisions(state),
+        ["scenarios"] = ScenarioSection(context.Scenarios, forSpec: false),
     });
 
     private static string Repair(RunContext context, RunState state, RunLimits limits)
