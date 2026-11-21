@@ -7,20 +7,21 @@ public sealed record ComparedReport(ProbeWebReport Report, IReadOnlyList<CheckRe
 
 /// <summary>
 /// The baseline rule (testability-architecture.md §6.2): a smoke check that also fails on main is
-/// pre-existing. Scenarios are never compared, because a scenario for new behaviour always fails
-/// on main and would otherwise read as "pre-existing" and pass (Probe feasibility §2.1).
+/// pre-existing. A scenario counts only when main ran the very same revision of it: a project's
+/// approved scenario that already fails on main is not the task's (W3.6), while a scenario for new
+/// behaviour, which main never ran, can never read as "pre-existing" and pass (Probe feasibility §2.1).
 /// </summary>
 public static class SmokeComparison
 {
     public static ComparedReport Compare(ProbeWebReport now, ProbeWebReport? baseline)
     {
         var failingOnMain = baseline?.Checks
-            .Where(c => c.Failed && c.Kind != CheckKind.Scenario)
-            .Select(c => c.Id)
+            .Where(c => c.Failed)
+            .Select(Key)
             .ToHashSet(StringComparer.Ordinal) ?? [];
 
         var checks = now.Checks
-            .Select(c => c.Failed && c.Kind != CheckKind.Scenario && failingOnMain.Contains(c.Id) ? c with { PreExisting = true } : c)
+            .Select(c => c.Failed && failingOnMain.Contains(Key(c)) ? c with { PreExisting = true } : c)
             .ToList();
 
         var report = now with { Checks = checks };
@@ -33,4 +34,9 @@ public static class SmokeComparison
             [.. checks.Where(c => c.Failed && !c.PreExisting)],
             [.. checks.Where(c => c.PreExisting)]);
     }
+
+    /// <summary>A check's id; a scenario's with its revision, and a scenario without one never matches.</summary>
+    private static string Key(CheckResult c) => c.Kind != CheckKind.Scenario
+        ? c.Id
+        : c.Scenario is { } s ? $"{c.Id}@{s.Revision}" : $"{c.Id}@unmatched:{Guid.NewGuid():N}";
 }

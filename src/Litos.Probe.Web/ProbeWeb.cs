@@ -38,14 +38,48 @@ public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher 
         return new GateRun(repoRoot, contract, profile, new GateScope(new HashSet<int> { 1, 2, 4, 8 }), ReportKind.DryRun, o, _launcher, services).RunAsync(ct);
     }
 
-    public Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract c, GateScope scope, ProbeWebOptions o, CancellationToken ct) =>
-        RunAsync(workingCopy, c, scope, ReportKind.Gate, o, ct);
+    public Task<ProbeWebReport> GateAsync(
+        string workingCopy, WebAppContract c, GateScope scope, ProbeWebOptions o, CancellationToken ct, IReadOnlyList<WebScenario>? scenarios = null) =>
+        WithScenariosAsync(workingCopy, c, scope, ReportKind.Gate, o, ct, scenarios);
 
-    public Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract c, ProbeWebOptions o, CancellationToken ct) =>
-        RunAsync(workingCopy, c, GateScope.Smoke, ReportKind.Smoke, o, ct);
+    public Task<ProbeWebReport> SmokeAsync(
+        string workingCopy, WebAppContract c, ProbeWebOptions o, CancellationToken ct, IReadOnlyList<WebScenario>? scenarios = null) =>
+        WithScenariosAsync(workingCopy, c, GateScope.Smoke, ReportKind.Smoke, o, ct, scenarios);
+
+    /// <summary>
+    /// The Gate or the smoke, then the scenarios in the same app start (W3.6): the factory runs a
+    /// project's approved scenarios this way on every task and in main's baseline.
+    /// </summary>
+    private async Task<ProbeWebReport> WithScenariosAsync(
+        string workingCopy, WebAppContract c, GateScope scope, ReportKind kind, ProbeWebOptions o, CancellationToken ct, IReadOnlyList<WebScenario>? scenarios)
+    {
+        if (scenarios is not { Count: > 0 })
+            return await RunAsync(workingCopy, c, scope, kind, o, ct);
+        var (valid, invalid) = Sort(scenarios, c);
+        return Merge(await RunAsync(workingCopy, c, scope, kind, o, ct, valid), invalid);
+    }
 
     public async Task<ProbeWebReport> ScenariosAsync(
         string workingCopy, WebAppContract c, IReadOnlyList<WebScenario> scenarios, ProbeWebOptions o, CancellationToken ct)
+    {
+        var (valid, invalid) = Sort(scenarios, c);
+        if (valid.Count == 0)
+        {
+            return new ProbeWebReport
+            {
+                Kind = ReportKind.Scenarios,
+                Outcome = invalid.Count > 0 ? ProbeWebOutcome.Failed : ProbeWebOutcome.Inconclusive,
+                Contract = new ContractInfo { Source = o.ContractSource, Revision = o.ContractRevision, Stack = c.Application.Stack },
+                Checks = invalid,
+                Findings = invalid.Count > 0 ? [] : ["No scenarios to run."],
+            };
+        }
+
+        return Merge(await RunAsync(workingCopy, c, new GateScope(new HashSet<int> { 1, 2 }), ReportKind.Scenarios, o, ct, valid), invalid);
+    }
+
+    /// <summary>The scenarios that can run, and a TestDefect check for each one that cannot.</summary>
+    private static (List<WebScenario> Valid, List<CheckResult> Invalid) Sort(IReadOnlyList<WebScenario> scenarios, WebAppContract c)
     {
         var invalid = new List<CheckResult>();
         var valid = new List<WebScenario>();
@@ -63,19 +97,11 @@ public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher 
             }
         }
 
-        if (valid.Count == 0)
-        {
-            return new ProbeWebReport
-            {
-                Kind = ReportKind.Scenarios,
-                Outcome = invalid.Count > 0 ? ProbeWebOutcome.Failed : ProbeWebOutcome.Inconclusive,
-                Contract = new ContractInfo { Source = o.ContractSource, Revision = o.ContractRevision, Stack = c.Application.Stack },
-                Checks = invalid,
-                Findings = invalid.Count > 0 ? [] : ["No scenarios to run."],
-            };
-        }
+        return (valid, invalid);
+    }
 
-        var report = await RunAsync(workingCopy, c, new GateScope(new HashSet<int> { 1, 2 }), ReportKind.Scenarios, o, ct, valid);
+    private static ProbeWebReport Merge(ProbeWebReport report, IReadOnlyList<CheckResult> invalid)
+    {
         if (invalid.Count == 0)
             return report;
         var checks = report.Checks.Concat(invalid).ToList();

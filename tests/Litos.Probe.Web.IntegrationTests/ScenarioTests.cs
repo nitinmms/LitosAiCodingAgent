@@ -100,6 +100,38 @@ public class NodeExpressSpaScenarioTests
     }
 }
 
+[Collection(NodeExpressSpaCollection.Name)]
+public class SmokeWithScenariosTests
+{
+    [SkippableFact]
+    public async Task The_smoke_and_the_scenarios_run_in_one_start_and_the_scenarios_start_on_clean_data()
+    {
+        // W3.6: the factory runs a project's approved scenarios right after a task's smoke.
+        await RequireAsync("node", "npm");
+        var scenarios = WebScenario.Parse("""
+            [
+              { "id": "adds", "revision": 3, "steps": [
+                  { "type": "fill", "target": { "label": "New note" }, "value": "Smoke {run}" },
+                  { "type": "click", "target": { "role": "button", "name": "Add note" } },
+                  { "type": "expectText", "target": { "testId": "notes" }, "text": "Smoke" } ] },
+              { "id": "clean", "steps": [ { "type": "expectHidden", "target": { "text": "Smoke", "within": { "testId": "notes" } } } ] },
+              { "id": "broken", "steps": [] }
+            ]
+            """);
+
+        var (report, _) = await GateAsync(App("NodeExpressSpa"), smoke: true, scenarios: scenarios);
+
+        Assert.Equal(ReportKind.Smoke, report.Kind);
+        Assert.Equal(1, report.Checks.Count(c => c.Kind == CheckKind.Start));
+        Assert.Contains(report.Checks, c => c.Id == "visit:anonymous:/about" && c.Status == CheckStatus.Passed);
+        Assert.Equal(3, Check(report, "scenario:adds").Scenario!.Revision);
+        Assert.True(Check(report, "scenario:adds").Status == CheckStatus.Passed, Describe(report));
+        Assert.Equal(CheckStatus.Passed, Check(report, "scenario:clean").Status);
+        Assert.Equal(Classification.TestDefect, Check(report, "scenario:broken").Classification);
+        Assert.Equal(ProbeWebOutcome.Failed, report.Outcome);
+    }
+}
+
 public class SignedInScenarioTests
 {
     private static readonly Dictionary<string, string> Secrets = new()

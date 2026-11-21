@@ -56,14 +56,40 @@ public class ReportTests
         Assert.Empty(compared.PreExisting);
     }
 
+    private static CheckResult FailingScenario(int? revision) =>
+        CheckResult.Fail("scenario:book-appointment", CheckKind.Scenario, Classification.ApplicationDefect, "button missing") with
+        {
+            Scenario = revision is { } r ? new ScenarioInfo("book-appointment", r, null, null) : null,
+        };
+
     [Fact]
-    public void Scenarios_are_never_baseline_compared()
+    public void A_scenario_that_fails_on_main_at_the_same_revision_is_pre_existing()
     {
-        var scenario = CheckResult.Fail("scenario:book-appointment", CheckKind.Scenario, Classification.ApplicationDefect, "button missing");
-        var compared = SmokeComparison.Compare(new ProbeWebReport { Checks = [scenario] }, new ProbeWebReport { Checks = [scenario] });
+        // W3.6: a project's approved scenario that main already fails is not the task's.
+        var compared = SmokeComparison.Compare(new ProbeWebReport { Checks = [FailingScenario(2)] }, new ProbeWebReport { Checks = [FailingScenario(2)] });
+
+        Assert.Empty(compared.NewFailures);
+        Assert.Single(compared.PreExisting);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(null)]
+    public void A_scenario_main_ran_at_another_revision_or_never_is_the_tasks(int? onMain)
+    {
+        var baseline = new ProbeWebReport { Checks = onMain is null ? [] : [FailingScenario(onMain)] };
+        var compared = SmokeComparison.Compare(new ProbeWebReport { Checks = [FailingScenario(2)] }, baseline);
 
         Assert.Single(compared.NewFailures);
         Assert.Empty(compared.PreExisting);
+    }
+
+    [Fact]
+    public void A_scenario_without_its_revision_is_never_matched()
+    {
+        var compared = SmokeComparison.Compare(new ProbeWebReport { Checks = [FailingScenario(null)] }, new ProbeWebReport { Checks = [FailingScenario(null)] });
+
+        Assert.Single(compared.NewFailures);
     }
 
     [Fact]

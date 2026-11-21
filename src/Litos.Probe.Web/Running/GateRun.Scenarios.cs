@@ -21,7 +21,8 @@ internal sealed partial class GateRun
 
     private readonly IReadOnlyList<WebScenario> _scenarios;
 
-    private async Task ScenarioStepsAsync(CancellationToken ct)
+    /// <param name="resetFirst">After a smoke or a Gate: their visits and sign-ins came after the bring-up's reset.</param>
+    private async Task ScenarioStepsAsync(CancellationToken ct, bool resetFirst)
     {
         _current = CheckKind.Scenario;
         for (var i = 0; i < _scenarios.Count; i++)
@@ -29,8 +30,8 @@ internal sealed partial class GateRun
             ct.ThrowIfCancellationRequested();
             var scenario = _scenarios[i];
 
-            // The bring-up's reset covers the first scenario; every later one starts clean too.
-            if (i > 0 && await ResetBetweenAsync(ct) is { } failed)
+            // On its own the bring-up's reset covers the first scenario; every later one starts clean too.
+            if ((i > 0 || resetFirst) && await ResetBetweenAsync(ct) is { } failed)
             {
                 Add(ScenarioCheck(scenario) with
                 {

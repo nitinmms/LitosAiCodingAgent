@@ -25,7 +25,7 @@ internal static class ProbeHarness
 
     public static async Task<(ProbeWebReport Report, string Artifacts)> GateAsync(
         string app, IReadOnlyDictionary<string, string>? secrets = null, GateScope? scope = null, bool smoke = false,
-        TimeSpan? timeout = null, TimeSpan? pageTimeout = null, string docker = "docker")
+        TimeSpan? timeout = null, TimeSpan? pageTimeout = null, string docker = "docker", IReadOnlyList<Core.Scenarios.WebScenario>? scenarios = null)
     {
         var contract = ContractYaml.Load(Path.Combine(app, ContractYaml.FileName));
         var folder = Path.Combine(Path.GetTempPath(), "probe-web-it", $"{Path.GetFileName(app)}-{Guid.NewGuid().ToString("N")[..8]}");
@@ -42,8 +42,8 @@ internal static class ProbeHarness
 
         var engine = new ProbeWeb(StackProfiles.Embedded());
         var report = smoke
-            ? await engine.SmokeAsync(app, contract, options, CancellationToken.None)
-            : await engine.GateAsync(app, contract, scope ?? GateScope.All, options, CancellationToken.None);
+            ? await engine.SmokeAsync(app, contract, options, CancellationToken.None, scenarios)
+            : await engine.GateAsync(app, contract, scope ?? GateScope.All, options, CancellationToken.None, scenarios);
         return (report, folder);
     }
 

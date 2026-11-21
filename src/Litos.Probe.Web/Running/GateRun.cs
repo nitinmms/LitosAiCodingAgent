@@ -184,7 +184,7 @@ internal sealed partial class GateRun
 
         if (_kind == ReportKind.Scenarios)
         {
-            await ScenarioStepsAsync(ct);
+            await ScenarioStepsAsync(ct, resetFirst: false);
             return;
         }
 
@@ -192,6 +192,11 @@ internal sealed partial class GateRun
         await SignedOutStepsAsync(ct);
         await RoleStepsAsync(ct);
         AddLint();
+
+        // Scenarios after the smoke's own checks, on data reset again (W3.6); before step 7,
+        // which leaves the app stopped.
+        if (_scenarios.Count > 0)
+            await ScenarioStepsAsync(ct, resetFirst: true);
 
         // Step 7 last: it restarts the app as Production.
         if (_scope.Includes(7))

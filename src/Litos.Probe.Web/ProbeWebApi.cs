@@ -82,10 +82,13 @@ public interface IProbeWeb
     /// <summary>Tries a stack profile's defaults on a repository that has no contract, and reports the real gaps.</summary>
     Task<ProbeWebReport> DryRunAsync(string repoRoot, StackProfile profile, ProbeWebOptions o, CancellationToken ct, string? appDirectory = null);
 
-    Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract c, GateScope scope, ProbeWebOptions o, CancellationToken ct);
+    /// <param name="scenarios">Run after the Gate's own checks and before step 7, in the same app start.</param>
+    Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract c, GateScope scope, ProbeWebOptions o, CancellationToken ct,
+        IReadOnlyList<Core.Scenarios.WebScenario>? scenarios = null);
 
-    /// <summary>Gate steps 1–6, as the factory runs them on every task.</summary>
-    Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract c, ProbeWebOptions o, CancellationToken ct);
+    /// <summary>Gate steps 1–6, as the factory runs them on every task; then any <paramref name="scenarios"/>, in the same app start.</summary>
+    Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract c, ProbeWebOptions o, CancellationToken ct,
+        IReadOnlyList<Core.Scenarios.WebScenario>? scenarios = null);
 
     /// <summary>
     /// Fixed-step scenarios (README §6.2): build, start and reset the app, then each scenario on
