@@ -666,6 +666,66 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.ToTable("project_members", (string)null);
                 });
 
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ProjectScenario", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ApprovedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Criterion")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("RetiredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RetiredBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ScenarioId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ScenarioJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ScenarioId", "Revision")
+                        .IsUnique();
+
+                    b.ToTable("project_scenarios", (string)null);
+                });
+
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.RepositorySkill", b =>
                 {
                     b.Property<Guid>("ProjectId")
@@ -1875,6 +1935,15 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ProjectMember", b =>
+                {
+                    b.HasOne("Litos.SoftwareFactory.Core.Store.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Litos.SoftwareFactory.Core.Store.ProjectScenario", b =>
                 {
                     b.HasOne("Litos.SoftwareFactory.Core.Store.Project", null)
                         .WithMany()

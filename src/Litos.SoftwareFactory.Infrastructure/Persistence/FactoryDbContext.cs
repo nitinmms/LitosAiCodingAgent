@@ -57,6 +57,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
     public DbSet<ThreadAttachment> Attachments => Set<ThreadAttachment>();
     public DbSet<RunArtifact> RunArtifacts => Set<RunArtifact>();
     public DbSet<TestabilityCheck> TestabilityChecks => Set<TestabilityCheck>();
+    public DbSet<ProjectScenario> ProjectScenarios => Set<ProjectScenario>();
     public DbSet<ThreadArtifact> Artifacts => Set<ThreadArtifact>();
     public DbSet<ThreadArtifactVersion> ArtifactVersions => Set<ThreadArtifactVersion>();
 
@@ -333,6 +334,19 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             Json(e.Property(c => c.ReportJson));
             e.HasIndex(c => new { c.ProjectId, c.CreatedAt });
             e.HasOne<Project>().WithMany().HasForeignKey(c => c.ProjectId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Browser scenarios with revisions and approval (README_Litos.Probe.Web.md W3.6).
+        model.Entity<ProjectScenario>(e =>
+        {
+            e.ToTable("project_scenarios");
+            e.Property(s => s.ScenarioId).HasMaxLength(ProjectScenario.MaxScenarioIdLength);
+            e.Property(s => s.Title).HasMaxLength(ProjectScenario.MaxTitleLength);
+            e.Property(s => s.Criterion).HasMaxLength(ProjectScenario.MaxCriterionLength);
+            e.Property(s => s.Status).HasConversion<string>().HasMaxLength(20);
+            Json(e.Property(s => s.ScenarioJson));
+            e.HasIndex(s => new { s.ProjectId, s.ScenarioId, s.Revision }).IsUnique();
+            e.HasOne<Project>().WithMany().HasForeignKey(s => s.ProjectId).OnDelete(DeleteBehavior.Cascade);
         });
 
         model.Entity<RunArtifact>(e =>

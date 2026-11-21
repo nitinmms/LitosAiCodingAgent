@@ -253,6 +253,54 @@ public sealed class TestabilityCheck
     public DateTimeOffset CreatedAt { get; set; }
 }
 
+/// <summary>Where a scenario revision stands (README_Litos.Probe.Web.md W3.6).</summary>
+public enum ScenarioStatus
+{
+    /// <summary>Written, not yet approved: never run by a task.</summary>
+    Draft,
+
+    /// <summary>The revision tasks run; at most one per scenario.</summary>
+    Approved,
+
+    /// <summary>Approved once, then replaced by a later approved revision.</summary>
+    Superseded,
+
+    /// <summary>The scenario was removed; a new revision brings it back as a draft.</summary>
+    Retired,
+}
+
+/// <summary>
+/// One revision of a project's browser scenario (README_Litos.Probe.Web.md W3.6). Revisions are
+/// never edited: a change is a new revision, and only an approved one runs, after the smoke on
+/// every task and in main's Gate baseline. The approved copy lives here, not in the repository,
+/// so a task's agent can never change what it is tested by.
+/// </summary>
+public sealed class ProjectScenario
+{
+    public Guid Id { get; set; }
+    public Guid ProjectId { get; set; }
+
+    /// <summary>The scenario's own id, stable across revisions: <c>cancel-upcoming</c>.</summary>
+    public required string ScenarioId { get; set; }
+    public int Revision { get; set; }
+
+    /// <summary>The <c>WebScenario</c> as JSON, its id and revision matching this row's.</summary>
+    public required string ScenarioJson { get; set; }
+    public string? Title { get; set; }
+    public string? Criterion { get; set; }
+    public ScenarioStatus Status { get; set; }
+    public Guid? CreatedBy { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public Guid? ApprovedBy { get; set; }
+    public DateTimeOffset? ApprovedAt { get; set; }
+    public Guid? RetiredBy { get; set; }
+    public DateTimeOffset? RetiredAt { get; set; }
+
+    public const int MaxScenarioIdLength = 64;
+    public const int MaxTitleLength = 200;
+    public const int MaxCriterionLength = 2000;
+}
+
 /// <summary>What a stored browser-test file is (README_Litos.Probe.Web.md §7).</summary>
 public enum RunArtifactKind { Screenshot, Trace, Log, Report, Email }
 

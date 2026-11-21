@@ -571,6 +571,33 @@ public interface IFactoryStore
 
     Task<TestabilityCheck?> LatestTestabilityCheckAsync(Guid projectId, CancellationToken ct);
 
+    /// <summary>
+    /// Adds a draft revision of a project scenario (README_Litos.Probe.Web.md W3.6): one more than
+    /// the scenario's highest revision, retired or not. <paramref name="scenarioJson"/> is written
+    /// with that revision by <paramref name="withRevision"/>.
+    /// </summary>
+    /// <exception cref="StoreNotFoundException">No project has its id.</exception>
+    Task<ProjectScenario> AddScenarioRevisionAsync(
+        Guid projectId, string scenarioId, Func<int, string> withRevision, string? title, string? criterion, Guid? createdBy, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Every revision of every scenario of a project, newest revision first within a scenario.</summary>
+    Task<IReadOnlyList<ProjectScenario>> ListScenariosAsync(Guid projectId, CancellationToken ct);
+
+    /// <summary>The approved revision of each of a project's scenarios, by scenario id: what tasks run.</summary>
+    Task<IReadOnlyList<ProjectScenario>> ApprovedScenariosAsync(Guid projectId, CancellationToken ct);
+
+    /// <summary>
+    /// Approves a draft revision; the scenario's earlier approved revision, if any, becomes
+    /// <see cref="ScenarioStatus.Superseded"/>.
+    /// </summary>
+    /// <exception cref="StoreNotFoundException">No such revision.</exception>
+    /// <exception cref="StoreConflictException">The revision is not a draft.</exception>
+    Task<ProjectScenario> ApproveScenarioAsync(Guid projectId, string scenarioId, int revision, Guid? approvedBy, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Retires every revision of a scenario that is not retired yet; returns how many.</summary>
+    /// <exception cref="StoreNotFoundException">The project has no such scenario.</exception>
+    Task<int> RetireScenarioAsync(Guid projectId, string scenarioId, Guid? retiredBy, DateTimeOffset now, CancellationToken ct);
+
     /// <summary>Records a file the browser checks produced (README_Litos.Probe.Web.md §7).</summary>
     /// <exception cref="StoreNotFoundException">No project has its id.</exception>
     Task<RunArtifact> AddRunArtifactAsync(RunArtifact artifact, CancellationToken ct);
