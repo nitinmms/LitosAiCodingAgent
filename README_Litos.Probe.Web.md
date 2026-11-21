@@ -485,6 +485,35 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
 
 **Still open, in clinic-portal rather than the factory:** finding 13, since its reset still seeds no appointments, so neither the smoke screenshots nor a cancel scenario can show the data. Finding 16 too: the agent's own local runs still failed the four tests that share an in-memory SQLite database. A Make-testable or follow-up task on the repo would fix both under the W3.2 brief.
 
+**W3.6 as built (the scenario store, 2026-11-21).** The user's answers: store and run them in this slice; written in the factory UI; anyone on the project approves, audited; failures treated like the smoke's.
+- **Engine (step 1, `6b7cb35`).** `SmokeAsync` and `GateAsync` take optional scenarios. They run after the route visits and lint, on data reset again, before step 7, in the same app start. The baseline rule (`SmokeComparison`) now compares a scenario by id **and revision**. A project's approved scenario that main already fails is pre-existing, while a scenario main never ran (W3.7's per-task scenarios) is always the task's, so new-feature scenarios still can't "pass" by failing on main.
+- **Store (step 2, `0df770b`).** Table `project_scenarios` (migration `ProjectScenarios`): one immutable row per revision, with who wrote it, approved it and retired it, and when.
+  - A new revision is `Draft`.
+  - Approving one makes the earlier approved revision `Superseded`.
+  - Retiring retires every revision; a new revision brings the scenario back as a draft.
+  - The index on (project, scenario, revision) is unique.
+- **API (step 3, `d7911ce`), `/api/projects/{id}/scenarios`,** open to anyone on the project. Everything needs an adopted contract.
+  - **list:** the newest revision of each scenario, checked against the adopted contract, with its history;
+  - **`validate`:** checks a scenario without saving it;
+  - **save:** stores a new draft. Problems are saved too, so an author can come back to them, but a bad id is refused;
+  - **`…/revisions/{n}/approve`:** refused until the revision validates; audited as `project.scenario_approve`;
+  - **`…/retire`**;
+  - **`…/revisions/{n}/run`:** "Run on main", one revision alone on the default branch's head, with the check's reading copy, dependency install and permit.
+
+  Approving or retiring re-runs main's Gate baseline with the approved set.
+- **Tasks and main.**
+  - **On a task,** `RunUiTests` hands the approved scenarios to the smoke, and the thread line says how many. The run then treats them as it treats the smoke: an ApplicationDefect the task caused goes to a repair (shared cycles, then Blocked); a TestDefect or AuthenticationFailure is disclosed for a person; one main already fails is pre-existing; Flaky is noted.
+  - **On main,** the baseline status ignores scenario checks. A failing scenario is a gap on the panel, not *Broken on main*.
+  - **On the handoff,** `UiCheck` carries the scenario (revision, criterion) and its steps.
+- **Web (step 4, `d2a94e9`).**
+  - **Testability panel:** a Scenarios section once a contract is adopted. New from a template, *Check*, *Save as a new draft*, *Approve rev n* (disabled while it has problems), *Run rev n on main* with its steps, *Retire*, and *Show retired*.
+  - **Handoff card:** a Scenarios block lists each scenario the task ran, with its criterion, revision, result, numbered steps and screenshots. Those leave the by-role gallery.
+- **Tests.**
+  - **Probe.Web:** unit 271 (the comparison by revision); integration, the smoke and three scenarios in one start (clean data, an invalid one as a TestDefect).
+  - **Infrastructure:** the store on SQLite and Postgres (revisions, approve and supersede, only a draft can be approved, retire and revive, per project).
+  - **Host:** 12 new in `ScenariosApiTests`: save and revise; refusals; problems saved but not approvable; no contract; a Member approves, audited, and main's baseline runs it; retire; Run on main; a task runs it and the handoff carries its steps; repair versus "needs a person"; one main already fails is pre-existing and a gap.
+  - **Web:** 594 (6 new).
+
 **Finding 12, the proposal as discussed (2026-11-19; only item 1 was adopted, above).**
 
 The question: does page markup still count toward changed-line coverage once the browser checks cover those pages?
