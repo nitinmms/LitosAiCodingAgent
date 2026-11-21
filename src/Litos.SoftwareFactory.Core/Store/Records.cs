@@ -394,6 +394,12 @@ public sealed class Specification
     public string AffectedAreasJson { get; set; } = "[]";
     public string TestPlan { get; set; } = "";
     public string OpenQuestionsJson { get; set; } = "[]";
+
+    /// <summary>
+    /// The revision's browser scenarios as a JSON array of scenario objects (README_Litos.Probe.Web.md
+    /// W3.7): approved with the specification, then run by the task like a project's own.
+    /// </summary>
+    public string ScenariosJson { get; set; } = "[]";
     public Guid? ApprovedBy { get; set; }
     public DateTimeOffset? ApprovedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

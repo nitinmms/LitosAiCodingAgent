@@ -160,6 +160,7 @@ public sealed class FactoryDbContext(DbContextOptions<FactoryDbContext> options)
             Json(e.Property(s => s.AcceptanceCriteriaJson));
             Json(e.Property(s => s.AffectedAreasJson));
             Json(e.Property(s => s.OpenQuestionsJson));
+            Json(e.Property(s => s.ScenariosJson));
             e.HasOne<TaskThread>().WithMany().HasForeignKey(s => s.ThreadId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(s => new { s.ThreadId, s.Revision }).IsUnique();
         });

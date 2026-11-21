@@ -1848,6 +1848,36 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task ProposeSpec_KeepsItsScenarios_AndThePayloadShowsThemInWords()
+    {
+        // README_Litos.Probe.Web.md W3.7: approved with the specification.
+        var (thread, run) = await SpecRunningAsync();
+        var proposal = Proposal with
+        {
+            Scenarios = ["{\"id\":\"export\",\"criterion\":\"An Export button is shown to administrators.\",\"role\":\"admin\",\"start\":\"/orders\","
+                + "\"steps\":[{\"type\":\"expectVisible\",\"target\":{\"role\":\"button\",\"name\":\"Export\"}}]}"],
+        };
+
+        var spec = await Store.ProposeSpecAsync(run.Run.Id, proposal, T0, default);
+
+        var stored = JsonDocument.Parse((await Store.GetThreadAsync(thread.Id, default))!.LatestSpec!.ScenariosJson).RootElement;
+        Assert.Equal("export", Assert.Single(stored.EnumerateArray()).GetProperty("id").GetString());
+        var message = (await Store.GetThreadAsync(thread.Id, default))!.Messages.OrderBy(m => m.Sequence).Last();
+        var scenario = Assert.Single(JsonDocument.Parse(message.PayloadJson!).RootElement.GetProperty("scenarios").EnumerateArray());
+        Assert.Equal(("An Export button is shown to administrators.", "admin"), (scenario.GetProperty("criterion").GetString(), scenario.GetProperty("role").GetString()));
+        Assert.Equal("expect button \"Export\" visible", Assert.Single(scenario.GetProperty("steps").EnumerateArray()).GetString());
+        Assert.Equal(1, spec.Revision);
+    }
+
+    [SkippableFact]
+    public async Task ProposeSpec_WithoutScenarios_StoresAnEmptyList()
+    {
+        var (thread, run) = await SpecRunningAsync();
+        await Store.ProposeSpecAsync(run.Run.Id, Proposal, T0, default);
+        Assert.Equal(0, JsonDocument.Parse((await Store.GetThreadAsync(thread.Id, default))!.LatestSpec!.ScenariosJson).RootElement.GetArrayLength());
+    }
+
+    [SkippableFact]
     public async Task ProposeSpec_ByAnythingButARunningSpecRun_IsAConflict()
     {
         var running = await RunningAsync();

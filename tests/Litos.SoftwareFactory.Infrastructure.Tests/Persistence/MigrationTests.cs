@@ -124,10 +124,30 @@ public sealed class MigrationTests : IAsyncLifetime
         await MigrateToAsync("M2Spec");
 
         await using var db = Context();
-        var spec = await db.Specifications.SingleAsync();
+        // Only the columns M2Spec added: today's model has specification columns this schema does not.
+        var spec = await db.Specifications.Select(x => new { x.AffectedAreasJson, x.OpenQuestionsJson, x.TestPlan, x.RunId }).SingleAsync();
         Assert.Equal(("[]", "[]", "", (Guid?)null), (spec.AffectedAreasJson.Replace(" ", ""), spec.OpenQuestionsJson.Replace(" ", ""), spec.TestPlan, spec.RunId));
         // Only the column M2Spec added: today's model has run columns this schema does not.
         Assert.Null(await db.Runs.Select(r => r.SpecificationRevision).FirstOrDefaultAsync());
+    }
+
+    /// <summary>A specification from before W3.7 has no browser scenarios: an empty list, which jsonb accepts.</summary>
+    [SkippableFact]
+    public async Task SpecificationScenarios_GivesEarlierSpecificationsAnEmptyList()
+    {
+        Skip.If(_database is null, $"Set {PostgresFactoryStoreTests.Variable} to run the migration tests against PostgreSQL.");
+        await MigrateToAsync("20261121064447_ProjectScenarios");
+        var thread = Guid.NewGuid();
+        await ExecuteAsync("ALTER TABLE specifications DROP CONSTRAINT IF EXISTS \"FK_specifications_task_threads_ThreadId\";");
+        await ExecuteAsync($$"""
+            INSERT INTO specifications ("Id", "ThreadId", "Revision", "Summary", "AcceptanceCriteriaJson", "AffectedAreasJson", "TestPlan", "OpenQuestionsJson", "CreatedAt")
+            VALUES ('{{Guid.NewGuid()}}', '{{thread}}', 1, 'Export orders.', '["One row per order."]', '[]', '', '[]', '2026-10-01T09:00:00Z');
+            """);
+
+        await MigrateToAsync("SpecificationScenarios");
+
+        await using var db = Context();
+        Assert.Equal("[]", (await db.Specifications.Select(x => x.ScenariosJson).SingleAsync()).Replace(" ", ""));
     }
 
     /// <summary>

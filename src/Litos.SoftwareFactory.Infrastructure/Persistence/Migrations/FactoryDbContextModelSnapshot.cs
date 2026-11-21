@@ -946,6 +946,10 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("RunId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ScenariosJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("Summary")
                         .IsRequired()
                         .HasColumnType("text");

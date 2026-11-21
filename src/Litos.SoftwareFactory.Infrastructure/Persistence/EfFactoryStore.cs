@@ -486,6 +486,8 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             AffectedAreasJson = JsonSerializer.Serialize(Clean(submission.AffectedAreas), FactoryWire.Json),
             TestPlan = submission.TestPlan.Trim(),
             OpenQuestionsJson = JsonSerializer.Serialize(Clean(submission.OpenQuestions), FactoryWire.Json),
+            // Each is a JSON object the host already checked: kept as written, in one array.
+            ScenariosJson = "[" + string.Join(",", submission.Scenarios ?? []) + "]",
             CreatedAt = now,
         };
         db.Specifications.Add(spec);
@@ -516,8 +518,29 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             AffectedAreas = JsonSerializer.Deserialize<List<string>>(spec.AffectedAreasJson, FactoryWire.Json),
             spec.TestPlan,
             OpenQuestions = JsonSerializer.Deserialize<List<string>>(spec.OpenQuestionsJson, FactoryWire.Json),
+            // Each scenario in words under its criterion, as the person approves it (W3.7).
+            Scenarios = SpecScenarios(spec.ScenariosJson),
         },
         FactoryWire.Json);
+
+    private static List<object> SpecScenarios(string json)
+    {
+        try
+        {
+            return [.. Litos.Probe.Web.Core.Scenarios.WebScenario.Parse(json).Select(s => (object)new
+            {
+                s.Id,
+                s.Criterion,
+                s.Role,
+                s.Start,
+                Steps = s.Steps.Select(Litos.Probe.Web.Core.Scenarios.ScenarioText.Describe).ToList(),
+            })];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
 
     public async Task<Specification> ApproveSpecAsync(Guid threadId, int revision, Guid userId, DateTimeOffset now, CancellationToken ct)
     {
