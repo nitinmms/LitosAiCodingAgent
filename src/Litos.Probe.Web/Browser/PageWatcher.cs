@@ -88,8 +88,17 @@ internal sealed class PageWatcher
         }
 
         var path = PathOf(url).Split('?', 2)[0];
-        return ignored.FirstOrDefault(r => path.EndsWith(r.Source, StringComparison.OrdinalIgnoreCase));
+        return ignored.FirstOrDefault(r => SourcePattern(r.Source).IsMatch(path));
     }
+
+    /// <summary>
+    /// The end of a script's path, where <c>*</c> stands for any characters but <c>/</c>: a
+    /// bundler's fingerprint sits inside the name (.NET serves <c>PasskeySubmit.pr21mg9rrw.razor.js</c>
+    /// for <c>PasskeySubmit.razor.js</c>), so a profile writes <c>PasskeySubmit*.razor.js</c>.
+    /// </summary>
+    internal static System.Text.RegularExpressions.Regex SourcePattern(string source) =>
+        new("(^|/)" + string.Join("[^/]*", source.Split('*').Select(System.Text.RegularExpressions.Regex.Escape)) + "$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     internal static string PathOf(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.PathAndQuery : url;
 

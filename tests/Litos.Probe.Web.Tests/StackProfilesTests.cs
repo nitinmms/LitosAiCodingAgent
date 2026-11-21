@@ -89,18 +89,22 @@ public class StackProfilesTests
 /// <summary>Finding 9: known framework console noise is ignored by the profile, never hidden in the app.</summary>
 public class IgnoredConsoleTests
 {
-    private static readonly IReadOnlyList<IgnoredConsole> Passkey = [new("PasskeySubmit.razor.js", "headless passkey autofill")];
+    private static readonly IReadOnlyList<IgnoredConsole> Passkey = [new("PasskeySubmit*.razor.js", "headless passkey autofill")];
 
     [Theory]
     [InlineData("http://localhost:5123/Components/Account/Shared/PasskeySubmit.razor.js:102:20")]
     [InlineData("http://localhost:5123/_content/App/Components/Account/Shared/PasskeySubmit.razor.js?v=abc:14:9")]
     [InlineData("http://localhost:5123/Components/Account/Shared/passkeysubmit.razor.js")]
+    // The live check (2026-11-21): MapStaticAssets serves the module under a fingerprinted name.
+    [InlineData("http://localhost:55093/Components/Account/Shared/PasskeySubmit.pr21mg9rrw.razor.js:103:21")]
     public void A_console_error_from_the_named_script_is_ignored(string location) =>
         Assert.Same(Passkey[0], Litos.Probe.Web.Browser.PageWatcher.IgnoredBy(location, Passkey));
 
     [Theory]
     [InlineData("http://localhost:5123/js/app.js:10:2")]
     [InlineData("http://localhost:5123/PasskeySubmit.razor.js.map:1:1")]
+    [InlineData("http://localhost:5123/js/NotPasskeySubmit/other.razor.js:1:1")]
+    [InlineData("http://localhost:5123/js/MyPasskeySubmit.razor.js:1:1")]
     [InlineData("")]
     [InlineData(null)]
     public void Anything_else_still_counts(string? location) =>
@@ -111,7 +115,7 @@ public class IgnoredConsoleTests
     {
         var blazor = Samples.Profiles.Find("aspnet-blazor-server")!;
 
-        Assert.Equal("PasskeySubmit.razor.js", Assert.Single(blazor.IgnoreConsole).Source);
+        Assert.Equal("PasskeySubmit*.razor.js", Assert.Single(blazor.IgnoreConsole).Source);
         Assert.DoesNotContain(blazor.Quirks, q => q.Contains("PasskeySubmit", StringComparison.Ordinal));
         Assert.All(StackProfiles.Embedded().All.Where(p => p.Id != blazor.Id), p => Assert.Empty(p.IgnoreConsole));
     }

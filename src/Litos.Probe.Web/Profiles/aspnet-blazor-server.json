@@ -24,7 +24,7 @@
     { "textVisible": "An unhandled exception occurred while processing the request" }
   ],
   "ignoreConsole": [
-    { "source": "PasskeySubmit.razor.js", "reason": "the Identity template's passkey autofill logs an error in a headless browser, which has no passkey" }
+    { "source": "PasskeySubmit*.razor.js", "reason": "the Identity template's passkey autofill logs an error in a headless browser, which has no passkey" }
   ],
   "logErrorPattern": "^\\s*(fail|crit):",
   "stderrIsError": true,

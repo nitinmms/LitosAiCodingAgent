@@ -59,7 +59,7 @@ public sealed record StackProfile
         JsonSerializer.Deserialize<StackProfile>(json, ProbeWebJson.Options) ?? throw new JsonException("Empty stack profile");
 }
 
-/// <summary>Console errors from a script whose URL path ends with <see cref="Source"/>, and why they are ignored.</summary>
+/// <summary>Console errors from a script whose URL path ends with <see cref="Source"/> (<c>*</c> matches within a name, for a fingerprint), and why they are ignored.</summary>
 public sealed record IgnoredConsole(string Source, string Reason);
 
 /// <summary>Markers matched against the repository. <see cref="All"/> must all match, one of <see cref="Any"/> (when given), and none of <see cref="None"/>.</summary>
