@@ -219,6 +219,98 @@ describe('adopting the contract on main', () => {
   });
 });
 
+describe('project scenarios (W3.6)', () => {
+  const adopted = (host: FakeHost, projectId: string) =>
+    host.testability.set(projectId, gapsView(host, projectId, { status: 'TestReady', adopted: true, gaps: [], run: null }));
+
+  async function openScenarios(host: FakeHost) {
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+    return { user, section: within(await panel().findByRole('group', { name: 'Scenarios' })) };
+  }
+
+  it('asks for an adopted contract before scenarios can be written', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    host.testability.set(project.id, gapsView(host, project.id));
+    const user = await onProjects(host);
+    await user.click(screen.getByRole('button', { name: 'Testability of SalesApp' }));
+    await panel().findByText('What to fix');
+
+    expect(panel().queryByRole('group', { name: 'Scenarios' })).not.toBeInTheDocument();
+  });
+
+  it('writes a scenario from the template, checks it, saves it as a draft and approves it', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    adopted(host, project.id);
+    const { user, section } = await openScenarios(host);
+    expect(section.getByText('No scenarios yet.')).toBeInTheDocument();
+
+    await user.click(section.getByRole('button', { name: 'New scenario' }));
+    const editor = section.getByLabelText('Scenario (JSON)');
+    expect((editor as HTMLTextAreaElement).value).toContain('"id": "my-scenario"');
+    await user.click(section.getByRole('button', { name: 'Check' }));
+    expect(section.queryByRole('list', { name: 'Scenario problems' })).not.toBeInTheDocument();
+
+    await user.click(section.getByRole('button', { name: 'Save as a new draft' }));
+    expect(await section.findByText(/Saved my-scenario as draft revision 1\./)).toBeInTheDocument();
+    expect(section.getByText('Not approved · draft rev 1')).toBeInTheDocument();
+
+    await user.click(section.getByRole('button', { name: 'Approve rev 1' }));
+    expect(await section.findByText(/Approved my-scenario revision 1/)).toBeInTheDocument();
+    expect(section.getByText('Approved rev 1')).toBeInTheDocument();
+    expect(host.scenarioApprovals).toEqual([{ projectId: project.id, scenarioId: 'my-scenario', revision: 1 }]);
+  });
+
+  it('keeps a scenario with problems as a draft it cannot approve', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    adopted(host, project.id);
+    host.scenarioProblems = () => ['role: the app has no login (auth.type: none)'];
+    const { user, section } = await openScenarios(host);
+
+    await user.click(section.getByRole('button', { name: 'New scenario' }));
+    await user.click(section.getByRole('button', { name: 'Save as a new draft' }));
+
+    expect(await section.findByText(/with problems to fix before it can be approved/)).toBeInTheDocument();
+    expect(within(section.getByRole('list', { name: 'Scenario problems' })).getByText(/the app has no login/)).toBeInTheDocument();
+    expect(section.getByRole('button', { name: 'Approve rev 1' })).toBeDisabled();
+  });
+
+  it('runs a revision on main and shows its steps', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    adopted(host, project.id);
+    const { user, section } = await openScenarios(host);
+    await user.click(section.getByRole('button', { name: 'New scenario' }));
+    await user.click(section.getByRole('button', { name: 'Save as a new draft' }));
+
+    await user.click(await section.findByRole('button', { name: 'Run rev 1 on main' }));
+
+    const trial = within(await section.findByRole('group', { name: 'Run on main' }));
+    expect(trial.getByText(/: Passed in 12s/)).toBeInTheDocument();
+    expect(within(trial.getByRole('list', { name: 'Steps' })).getByText('open /')).toBeInTheDocument();
+    expect(host.scenarioRuns).toEqual([{ projectId: project.id, scenarioId: 'my-scenario', revision: 1 }]);
+  });
+
+  it('retires a scenario and hides it until asked', async () => {
+    const host = new FakeHost();
+    const project = host.addProject();
+    adopted(host, project.id);
+    const { user, section } = await openScenarios(host);
+    await user.click(section.getByRole('button', { name: 'New scenario' }));
+    await user.click(section.getByRole('button', { name: 'Save as a new draft' }));
+
+    await user.click(await section.findByRole('button', { name: 'Retire' }));
+
+    expect(await section.findByText(/Retired my-scenario/)).toBeInTheDocument();
+    expect(section.queryByText('my-scenario')).not.toBeInTheDocument();
+    await user.click(section.getByRole('button', { name: 'Show 1 retired' }));
+    expect(section.getByText('Retired')).toBeInTheDocument();
+  });
+});
+
 describe('starting a Make-testable task', () => {
   it('creates a testability task for the project and delegates it with the gaps', async () => {
     const host = new FakeHost();

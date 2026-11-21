@@ -501,6 +501,48 @@ export interface UiCheck {
   screenshots: string[];
   trace: string | null;
   log: string[];
+  /** A scenario's check: which revision ran, and the criterion it checks (W3.6). */
+  scenario?: { id: string; revision: number; title: string | null; criterion: string | null } | null;
+  /** A scenario's steps, in order; the ones after a failure are Skipped. */
+  steps?: ScenarioStep[] | null;
+}
+
+export interface ScenarioStep {
+  index: number;
+  description: string;
+  status: 'Passed' | 'Failed' | 'Skipped';
+  message: string | null;
+  durationMs: number;
+  /** A run-artifact id on a handoff; a download URL in "Run on main". */
+  screenshot: string | null;
+}
+
+/** One of a project's browser scenarios on the Testability panel (Api/ScenariosApi.cs). */
+export interface ProjectScenario {
+  scenarioId: string;
+  title: string | null;
+  criterion: string | null;
+  role: string | null;
+  approvedRevision: number | null;
+  retired: boolean;
+  latest: { revision: number; status: 'Draft' | 'Approved' | 'Superseded' | 'Retired'; json: string; createdAt: string };
+  /** The newest revision's problems against the adopted contract; it cannot be approved until there are none. */
+  problems: string[];
+  revisions: { revision: number; status: string; createdAt: string; approvedAt: string | null; retiredAt: string | null }[];
+}
+
+export interface ProjectScenarios {
+  adopted: boolean;
+  scenarios: ProjectScenario[];
+}
+
+/** "Run on main": one scenario on the default branch's head. */
+export interface ScenarioTrial {
+  outcome: string;
+  commit: string | null;
+  wallSeconds: number;
+  findings: string[];
+  checks: { id: string; kind: string; status: string; classification: string | null; message: string | null; steps: ScenarioStep[] | null; screenshots: string[]; log: string[] }[];
 }
 
 /** The browser evidence a handoff carries (testability-architecture.md §6.5). */

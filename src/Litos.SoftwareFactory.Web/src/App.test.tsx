@@ -725,6 +725,34 @@ describe('a handoff', () => {
     expect(card.getByText(/The factory checked the app in a browser/)).toBeInTheDocument();
   });
 
+  it('shows each scenario the task ran with its criterion, steps and screenshots, apart from the screenshots by role', async () => {
+    const scenario = {
+      id: 'scenario:cancel-upcoming', kind: 'Scenario', role: 'patient', route: '/my/appointments', status: 'Failed' as const,
+      classification: 'TestDefect', message: 'Step 1 of 2, click button "Cancel": No button named "Cancel" on /my/appointments.',
+      screenshots: ['s-scn'], trace: null, log: [],
+      scenario: { id: 'cancel-upcoming', revision: 2, title: 'Cancel', criterion: 'A patient can cancel an upcoming appointment.' },
+      steps: [
+        { index: 0, description: 'open /my/appointments', status: 'Passed' as const, message: null, durationMs: 300, screenshot: null },
+        { index: 1, description: 'click button "Cancel"', status: 'Failed' as const, message: 'No button named "Cancel".', durationMs: 900, screenshot: 's-scn' },
+        { index: 2, description: 'expect [data-testid=status] to show "Cancelled"', status: 'Skipped' as const, message: null, durationMs: 0, screenshot: null },
+      ],
+    };
+    const { card } = await handedOff({ ...onGitHub, uiTesting: browserChecks({ status: 'Failed', checks: [...browserChecks().checks, scenario] }) });
+
+    const scenarios = within(card.getByRole('region', { name: 'Scenarios' }));
+    expect(scenarios.getByText('cancel-upcoming')).toBeInTheDocument();
+    expect(scenarios.getByText('A patient can cancel an upcoming appointment.')).toBeInTheDocument();
+    expect(scenarios.getByText(/rev 2/)).toBeInTheDocument();
+    const steps = within(scenarios.getByRole('list', { name: 'Steps' }));
+    expect(steps.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      expect.stringContaining('open /my/appointments'),
+      expect.stringContaining('click button "Cancel"'),
+      expect.stringContaining('Skipped'),
+    ]);
+    expect(steps.getByRole('img', { name: 'Screenshot after click button "Cancel"' })).toHaveAttribute('src', '/api/run-artifacts/s-scn');
+    expect(within(card.getByRole('region', { name: 'Screenshots' })).queryByRole('img', { name: /scenario:/ })).not.toBeInTheDocument();
+  });
+
   it('says application testing is the tester’s when the project is not set up for it', async () => {
     const { card } = await handedOff({ uiTesting: browserChecks({ status: 'NotSetUp', checks: [] }) });
 

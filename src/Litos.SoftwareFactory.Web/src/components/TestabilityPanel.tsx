@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ApiError, type FactoryApi } from '../api/client';
 import type { AdoptionPreview, Project, ProjectSecrets, TestabilitySummary, TestabilityView } from '../api/types';
 import { ErrorNote } from './bits';
+import { ScenariosSection } from './ScenariosSection';
 
 /** How often the panel looks again while a check is under way. */
 export const TESTABILITY_POLL_MS = 3_000;
@@ -208,6 +209,7 @@ export function TestabilityPanel({ api, project, onClose }: { api: FactoryApi; p
         <p className="muted">Loading…</p>
       )}
 
+      {view?.adopted ? <ScenariosSection api={api} projectId={project.id} /> : null}
       {secrets ? <RoleSecrets api={api} projectId={project.id} secrets={secrets} onChanged={load} /> : null}
     </section>
   );

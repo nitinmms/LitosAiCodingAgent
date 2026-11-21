@@ -328,6 +328,17 @@ export class FakeHost {
   readonly adopted: { projectId: string; commit: string }[] = [];
   /** The projects a "Check again" was asked for, in order. */
   readonly testabilityChecks: string[] = [];
+  /** Project scenarios (W3.6), by project: every revision, newest first per scenario. */
+  readonly scenarios = new Map<string, import('../api/types').ProjectScenario[]>();
+  /** What "Check" and approve answer for a scenario JSON: its problems against the contract. */
+  scenarioProblems: (json: string) => string[] = () => [];
+  readonly scenarioApprovals: { projectId: string; scenarioId: string; revision: number }[] = [];
+  readonly scenarioRuns: { projectId: string; scenarioId: string; revision: number }[] = [];
+  scenarioTrial: import('../api/types').ScenarioTrial = {
+    outcome: 'Passed', commit: '9f3c2e1aa0', wallSeconds: 12, findings: [],
+    checks: [{ id: 'scenario:x', kind: 'Scenario', status: 'Passed', classification: null, message: null, screenshots: [], log: [],
+      steps: [{ index: 0, description: 'open /', status: 'Passed', message: null, durationMs: 30, screenshot: '/api/run-artifacts/s0' }] }],
+  };
   readonly threads = new Map<string, ThreadDetails>();
   readonly usage = new Map<string, UsageCall[]>();
   /** Where each thread's pull request stands "on GitHub"; a draft unless a test says otherwise. */
@@ -827,6 +838,52 @@ export class FakeHost {
         return [202];
       }
       if (!testabilityPath[2] && method === 'GET') return [200, current];
+    }
+    const scenariosPath = /^\/api\/projects\/([^/]+)\/scenarios(?:\/(validate)|\/([^/]+)\/(retire)|\/([^/]+)\/revisions\/(\d+)\/(approve|run))?$/.exec(path);
+    if (scenariosPath && this.projects.some((p) => p.id === scenariosPath[1])) {
+      const projectId = scenariosPath[1]!;
+      const all = this.scenarios.get(projectId) ?? [];
+      this.scenarios.set(projectId, all);
+      const adopted = this.testability.get(projectId)?.adopted ?? false;
+      const [, , validate, retireId, retire, revisionId, revisionText, verb] = scenariosPath;
+      if (!validate && !retire && !verb && method === 'GET') return [200, { adopted, scenarios: all }];
+      if (!adopted) return [409, { error: 'Adopt a testability contract first: a scenario signs in and visits pages as the contract describes them.' }];
+      if (validate) return [200, { problems: this.scenarioProblems(String(data.json)) }];
+      if (!retire && !verb && method === 'POST') {
+        const json = String(data.json ?? '');
+        let parsed: { id?: string; title?: string; criterion?: string; role?: string };
+        try { parsed = JSON.parse(json); } catch { return [400, { error: 'Not a scenario: invalid JSON.' }]; }
+        const id = parsed.id ?? '';
+        const problems = this.scenarioProblems(json);
+        const existing = all.find((x) => x.scenarioId === id);
+        const revision = (existing?.revisions[0]?.revision ?? 0) + 1;
+        const row: import('../api/types').ProjectScenario = {
+          scenarioId: id, title: parsed.title ?? null, criterion: parsed.criterion ?? null, role: parsed.role ?? null,
+          approvedRevision: existing?.approvedRevision ?? null, retired: false,
+          latest: { revision, status: 'Draft', json, createdAt: this.now.toISOString() }, problems,
+          revisions: [{ revision, status: 'Draft', createdAt: this.now.toISOString(), approvedAt: null, retiredAt: null }, ...(existing?.revisions ?? [])],
+        };
+        this.scenarios.set(projectId, [...all.filter((x) => x.scenarioId !== id), row]);
+        return [200, { scenarioId: id, revision, status: 'Draft', problems }];
+      }
+      const scenario = all.find((x) => x.scenarioId === decodeURIComponent(retireId ?? revisionId ?? ''));
+      if (!scenario) return [404, { error: 'No such scenario.' }];
+      if (retire) {
+        scenario.retired = true;
+        scenario.approvedRevision = null;
+        return [200, { scenarioId: scenario.scenarioId, retired: 1 }];
+      }
+      const revision = Number(revisionText);
+      if (verb === 'approve') {
+        if (scenario.problems.length) return [400, { error: 'Fix its problems first: only a scenario that runs against the adopted contract can be approved.', problems: scenario.problems }];
+        if (scenario.latest.revision !== revision || scenario.latest.status !== 'Draft') return [409, { error: 'Only a draft can be approved.' }];
+        scenario.approvedRevision = revision;
+        scenario.latest = { ...scenario.latest, status: 'Approved' };
+        this.scenarioApprovals.push({ projectId, scenarioId: scenario.scenarioId, revision });
+        return [200, { scenarioId: scenario.scenarioId, revision, status: 'Approved' }];
+      }
+      this.scenarioRuns.push({ projectId, scenarioId: scenario.scenarioId, revision });
+      return [200, this.scenarioTrial];
     }
     const secretsPath = /^\/api\/projects\/([^/]+)\/secrets(?:\/([^/]+))?$/.exec(path);
     if (secretsPath) {

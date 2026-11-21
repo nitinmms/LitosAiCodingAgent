@@ -1,5 +1,7 @@
 import type {
   AccessToken,
+  ProjectScenarios,
+  ScenarioTrial,
   AccountRole,
   AdminSettings,
   Attachment,
@@ -106,6 +108,14 @@ export interface FactoryApi {
   projectSecrets(projectId: string): Promise<ProjectSecrets>;
   setProjectSecret(projectId: string, name: string, value: string): Promise<void>;
   clearProjectSecret(projectId: string, name: string): Promise<void>;
+  /** A project's browser scenarios (W3.6): write, check, approve, retire, try on main. */
+  scenarios(projectId: string): Promise<ProjectScenarios>;
+  validateScenario(projectId: string, json: string): Promise<{ problems: string[] }>;
+  /** Saves a new draft revision. */
+  saveScenario(projectId: string, json: string): Promise<{ scenarioId: string; revision: number; status: string; problems: string[] }>;
+  approveScenario(projectId: string, scenarioId: string, revision: number): Promise<void>;
+  retireScenario(projectId: string, scenarioId: string): Promise<void>;
+  runScenario(projectId: string, scenarioId: string, revision: number): Promise<ScenarioTrial>;
   threads(): Promise<Thread[]>;
   /** The thread list with where the board's live stream starts, read before the list. */
   threadList(): Promise<{ threads: Thread[]; cursor: number }>;
@@ -307,6 +317,16 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
       void (await send<unknown>('PUT', `/api/projects/${projectId}/secrets/${encodeURIComponent(name)}`, { value })),
     clearProjectSecret: async (projectId, name) =>
       void (await send<unknown>('DELETE', `/api/projects/${projectId}/secrets/${encodeURIComponent(name)}`)),
+    scenarios: (projectId) => send<ProjectScenarios>('GET', `/api/projects/${projectId}/scenarios`),
+    validateScenario: (projectId, json) => send<{ problems: string[] }>('POST', `/api/projects/${projectId}/scenarios/validate`, { json }),
+    saveScenario: (projectId, json) =>
+      send<{ scenarioId: string; revision: number; status: string; problems: string[] }>('POST', `/api/projects/${projectId}/scenarios`, { json }),
+    approveScenario: async (projectId, scenarioId, revision) =>
+      void (await send<unknown>('POST', `/api/projects/${projectId}/scenarios/${encodeURIComponent(scenarioId)}/revisions/${revision}/approve`)),
+    retireScenario: async (projectId, scenarioId) =>
+      void (await send<unknown>('POST', `/api/projects/${projectId}/scenarios/${encodeURIComponent(scenarioId)}/retire`)),
+    runScenario: (projectId, scenarioId, revision) =>
+      send<ScenarioTrial>('POST', `/api/projects/${projectId}/scenarios/${encodeURIComponent(scenarioId)}/revisions/${revision}/run`),
     threads: () => send<Thread[]>('GET', '/api/threads'),
     async threadList() {
       const { json, headers } = await request<Thread[]>('GET', '/api/threads');

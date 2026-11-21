@@ -4,6 +4,7 @@ import { fmt, pct, shortSha, words } from '../domain/format';
 import { pullRequestLabel, suggestedAllowance } from '../domain/task';
 import { tryItGuide } from '../domain/tryIt';
 import { SafeLink } from './bits';
+import { Steps } from './ScenariosSection';
 import { TryItYourself } from './TryIt';
 
 interface DecisionPayload {
@@ -149,9 +150,50 @@ export function uiTestLine(ui: UiTestEvidence | null | undefined): string {
   return `${passed} passed${failed ? `, ${failed} failed` : ''}${already} (contract revision ${ui.contractRevision ?? '?'})`;
 }
 
-/** Screenshots grouped by role, as the browser took them. */
+/**
+ * The project's scenarios as this task ran them (README_Litos.Probe.Web.md W3.6): each with its
+ * criterion, revision, result and steps, and the screenshots it took.
+ */
+function ScenarioResults({ ui }: { ui: UiTestEvidence }) {
+  const scenarios = [...ui.checks, ...ui.preExisting].filter((c) => c.kind === 'Scenario');
+  if (!scenarios.length) return null;
+  return (
+    <section aria-label="Scenarios">
+      <h3>Scenarios</h3>
+      <ul className="checks">
+        {scenarios.map((c) => {
+          const already = ui.preExisting.some((p) => p.id === c.id);
+          return (
+            <li key={c.id}>
+              <span className={`pill ${c.status === 'Passed' ? 'done' : c.status === 'Failed' ? 'bad' : 'neutral'}`}>{c.status}</span>{' '}
+              <span className="mono">{c.scenario?.id ?? c.id.replace(/^scenario:/, '')}</span>
+              {c.scenario ? <span className="small muted"> rev {c.scenario.revision}</span> : null}
+              {c.role ? <span className="small muted"> · as {c.role}</span> : null}
+              {c.classification && c.status !== 'Passed' ? <span className="small muted"> · {c.classification}</span> : null}
+              {already ? <span className="small muted"> · already failing on the default branch</span> : null}
+              {c.scenario?.criterion ? <div className="small">{c.scenario.criterion}</div> : null}
+              {c.message && c.status !== 'Passed' ? <div className="small error">{c.message}</div> : null}
+              {c.steps?.length ? <Steps steps={c.steps} screenshot={(s) => (s.screenshot ? runArtifactUrl(s.screenshot) : null)} /> : null}
+              {c.screenshots.length ? (
+                <div className="att-sent">
+                  {c.screenshots.map((id) => (
+                    <a key={id} href={runArtifactUrl(id)} target="_blank" rel="noreferrer">
+                      <img className="att-thumb" src={runArtifactUrl(id)} alt={`${c.id}: ${c.status}`} loading="lazy" />
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** Screenshots grouped by role, as the browser took them; a scenario's are with the scenario. */
 function Screenshots({ ui }: { ui: UiTestEvidence }) {
-  const shots = ui.checks.filter((c) => c.screenshots.length);
+  const shots = ui.checks.filter((c) => c.screenshots.length && c.kind !== 'Scenario');
   if (!shots.length) return null;
   const roles = [...new Set(shots.map((c) => c.role ?? 'Signed out'))];
   return (
@@ -445,6 +487,7 @@ export function HandoffCard({
         </dd>
       </dl>
 
+      {e.uiTesting ? <ScenarioResults ui={e.uiTesting} /> : null}
       {e.uiTesting ? <Screenshots ui={e.uiTesting} /> : null}
 
       {e.criteria.length ? (
