@@ -586,11 +586,19 @@ public static class FactoryApi
 
         // Accepting also queues a lesson reflection within the allowance, or defers it (m4-architecture.md §5.1).
         threadRoutes.MapPost("/accept", async (
-            Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, FactorySignals signals, IClock clock, CancellationToken ct) =>
+            Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySettings settings, FactorySignals signals, IClock clock,
+            Testability.ScenarioPromotion promotion, CancellationToken ct) =>
         {
             var result = await ActAsync(signals, () =>
                 store.ApplyUserActionAsync(id, user.UserId(), LifecycleTrigger.Accept, clock.UtcNow, ct, settings.Budgets.ReflectionAllowanceTokens));
             signals.WorkQueued();
+            // The task's scenarios that passed become the project's drafts (W3.7), once it is accepted.
+            if (await store.GetThreadAsync(id, ct) is { Thread.State: LifecycleState.Accepted })
+            {
+                await promotion.PromoteAsync(id, user.UserId(), CancellationToken.None);
+                signals.EventsWritten();
+            }
+
             return result;
         });
 

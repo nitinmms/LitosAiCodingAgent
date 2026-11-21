@@ -31,7 +31,24 @@ public sealed record UiCheck(
     string? Trace,
     IReadOnlyList<string> Log,
     ScenarioInfo? Scenario = null,
-    IReadOnlyList<StepResult>? Steps = null);
+    IReadOnlyList<StepResult>? Steps = null,
+    string? Source = null);
+
+/// <summary>Where a scenario a task ran came from (W3.7): <see cref="UiCheck.Source"/>.</summary>
+public static class ScenarioSources
+{
+    /// <summary>An approved project scenario: run on every task.</summary>
+    public const string Project = "project";
+
+    /// <summary>The task's approved specification's: run like a project's own.</summary>
+    public const string Spec = "spec";
+
+    /// <summary>Drafted by the task's work turn, not approved: run for evidence, never repaired.</summary>
+    public const string Drafted = "drafted";
+}
+
+/// <summary>One of a task's own scenarios as it ran, kept so Accept can copy it into the project's drafts.</summary>
+public sealed record TaskScenario(string Source, string Json);
 
 /// <summary>
 /// The browser evidence a task's handoff carries (HandoffEvidence.UiTesting): what was checked,
@@ -59,6 +76,9 @@ public sealed record UiTestEvidence
     public string? Problem { get; init; }
 
     public double WallSeconds { get; init; }
+
+    /// <summary>The task's own scenarios (spec and drafted) as JSON, for Accept to copy into the project's drafts (W3.7).</summary>
+    public IReadOnlyList<TaskScenario> TaskScenarios { get; init; } = [];
 
     public static UiTestEvidence NotSetUp { get; } = new() { Status = UiTestingStatus.NotSetUp };
 

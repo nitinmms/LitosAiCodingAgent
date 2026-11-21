@@ -32,7 +32,7 @@ public static class WorkerCallbacks
             return Results.Ok();
         });
 
-        runs.MapPost("/submissions", async (string runId, HttpRequest request, RunRegistry registry, CancellationToken ct) =>
+        runs.MapPost("/submissions", async (string runId, HttpRequest request, RunRegistry registry, Testability.ScenarioSubmissionCheck scenarios, CancellationToken ct) =>
         {
             if (Authenticate(runId, request, registry) is not { } active)
                 return Results.Unauthorized();
@@ -49,6 +49,10 @@ public static class WorkerCallbacks
 
             if (submission is null)
                 return Results.Json(new SubmissionResponse(false, "The submission was empty."), FactoryWire.Json);
+
+            // Scenarios are checked against the contract here, so the agent fixes them at once (W3.7).
+            if (await scenarios.ProblemAsync(active.ThreadId, submission.Submission, ct) is { } scenarioProblem)
+                return Results.Json(new SubmissionResponse(false, scenarioProblem), FactoryWire.Json);
 
             var response = active.Accept(submission.SessionId, submission.Submission);
             if (response.Accepted && submission.Submission is DecisionSubmission)

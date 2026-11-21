@@ -97,7 +97,17 @@ public sealed class FakeTestabilityEngine : ITestabilityEngine
     {
         Smokes.Add((workingCopy, options));
         ScenarioRuns.Add(("smoke", scenarios ?? []));
-        return Task.FromResult(SmokeReports.TryDequeue(out var report) ? report : PassingSmoke());
+        if (SmokeReports.TryDequeue(out var report))
+            return Task.FromResult(report);
+        // Nothing scripted: the smoke passes, and so does every scenario it was given.
+        var passing = PassingSmoke();
+        return Task.FromResult(passing with
+        {
+            Checks = [.. passing.Checks, .. (scenarios ?? []).Select(sc => CheckResult.Pass($"scenario:{sc.Id}", CheckKind.Scenario) with
+            {
+                Scenario = new ScenarioInfo(sc.Id, sc.Revision, sc.Title, sc.Criterion),
+            })],
+        });
     }
 
     /// <summary>What "Run on main" answers; a passing scenario check once the queue is empty.</summary>

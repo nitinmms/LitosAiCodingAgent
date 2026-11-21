@@ -253,6 +253,9 @@ public static partial class BriefComposer
             parts.Add("**Test plan.** " + spec.TestPlan.Trim());
         if (spec.OpenQuestions.Count > 0)
             parts.Add("**Open questions.**\n" + Bullets(spec.OpenQuestions.Select(q => q.Trim())));
+        // As JSON, so a revision can keep the ones the person did not ask to change (W3.7).
+        if (spec.Scenarios is { Count: > 0 } scenarios)
+            parts.Add("**Browser scenarios.**\n" + string.Join('\n', scenarios.Select(s => $"```json\n{s}\n```")));
         return string.Join("\n\n", parts);
     }
 

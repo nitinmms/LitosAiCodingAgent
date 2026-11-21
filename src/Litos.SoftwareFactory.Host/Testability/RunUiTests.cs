@@ -14,19 +14,45 @@ namespace Litos.SoftwareFactory.Host.Testability;
 public sealed class RunUiTests(IFactoryStore store, ITestabilityEngine engine, TestabilityRuntime runtime, VerificationGate gate)
 {
     /// <param name="note">Posts a line to the task's thread.</param>
-    public async Task<UiTestResult> RunAsync(Project project, Guid runId, string workingCopy, WebAppContract contract, Func<string, Task> note, CancellationToken ct)
+    /// <param name="task">The task's own scenarios (W3.7): its approved spec's, and the ones its work turn drafted.</param>
+    public async Task<UiTestResult> RunAsync(Project project, Guid runId, string workingCopy, WebAppContract contract, Func<string, Task> note, CancellationToken ct,
+        TaskScenarios? task = null)
     {
         var baseline = await BaselineAsync(project, ct);
-        var scenarios = await ProjectScenarios.ApprovedAsync(store, project.Id, ct);
+        task ??= TaskScenarios.None;
+        var projectScenarios = await ProjectScenarios.ApprovedAsync(store, project.Id, ct);
+        // An id is run once: a project's approved scenario first, then the spec's, then a draft.
+        var taken = projectScenarios.Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+        var spec = task.Spec.Where(s => taken.Add(s.Id)).ToList();
+        var drafted = task.Drafted.Where(s => taken.Add(s.Id)).ToList();
+        IReadOnlyList<Probe.Web.Core.Scenarios.WebScenario> scenarios = [.. projectScenarios, .. spec, .. drafted];
+        var sources = projectScenarios.Select(s => (s.Id, ScenarioSources.Project))
+            .Concat(spec.Select(s => (s.Id, ScenarioSources.Spec)))
+            .Concat(drafted.Select(s => (s.Id, ScenarioSources.Drafted)))
+            .ToDictionary(p => $"scenario:{p.Id}", p => p.Item2, StringComparer.Ordinal);
         ProbeWebReport report;
         using (await gate.EnterAsync(() => note("Waiting for another task's verification to finish before the browser checks."), ct))
         {
-            await note("Starting the app for the browser checks: start, reset, sign in, routes and access control"
-                + (scenarios.Count == 0 ? "." : $", then the project's {(scenarios.Count == 1 ? "approved scenario" : $"{scenarios.Count} approved scenarios")}."));
+            await note("Starting the app for the browser checks: start, reset, sign in, routes and access control" + ScenarioCounts(projectScenarios.Count, spec.Count, drafted.Count));
             report = await engine.SmokeAsync(workingCopy, contract, runtime.OptionsFor(project, runId), ct, scenarios);
         }
 
-        var result = Interpret(report, baseline.Report, baseline.Healthy, project.ProfileRevision, RunCommands(contract));
+        var evidenceOnly = drafted.Select(s => $"scenario:{s.Id}").ToHashSet(StringComparer.Ordinal);
+        var result = Interpret(report, baseline.Report, baseline.Healthy, project.ProfileRevision, RunCommands(contract), evidenceOnly: evidenceOnly);
+        UiCheck Tag(UiCheck c) => sources.TryGetValue(c.Id, out var source) ? c with { Source = source } : c;
+        result = result with
+        {
+            Evidence = result.Evidence with
+            {
+                Checks = [.. result.Evidence.Checks.Select(Tag)],
+                PreExisting = [.. result.Evidence.PreExisting.Select(Tag)],
+                TaskScenarios =
+                [
+                    .. spec.Select(s => new TaskScenario(ScenarioSources.Spec, s.ToJson())),
+                    .. drafted.Select(s => new TaskScenario(ScenarioSources.Drafted, s.ToJson())),
+                ],
+            },
+        };
         await note(Summary(result));
         return result;
     }
@@ -40,9 +66,12 @@ public sealed class RunUiTests(IFactoryStore store, ITestabilityEngine engine, T
     /// A Make-testable task's own draft contract (finding 4): the contract and the test users are
     /// the task's work, so a test or sign-in failure is repaired too, never handed off.
     /// </param>
+    /// <param name="evidenceOnly">Check ids of scenarios the task's work turn drafted (W3.7): not approved, so a failure is disclosed, never repaired.</param>
     internal static UiTestResult Interpret(
-        ProbeWebReport report, ProbeWebReport? baseline, bool baselineHealthy, int revision, IReadOnlyList<string> runCommands, bool draft = false)
+        ProbeWebReport report, ProbeWebReport? baseline, bool baselineHealthy, int revision, IReadOnlyList<string> runCommands, bool draft = false,
+        IReadOnlySet<string>? evidenceOnly = null)
     {
+        evidenceOnly ??= new HashSet<string>();
         var compared = SmokeComparison.Compare(report, baseline);
         var fresh = compared.NewFailures;
 
@@ -55,14 +84,17 @@ public sealed class RunUiTests(IFactoryStore store, ITestabilityEngine engine, T
                 ? "The adopted contract no longer validates: " + string.Join(" ", report.Findings)
                 : null;
 
-        bool Blamed(CheckResult c) => draft ? c.Classification != Classification.EnvironmentFailure : c.Classification == Classification.ApplicationDefect;
+        bool Blamed(CheckResult c) => !evidenceOnly.Contains(c.Id)
+            && (draft ? c.Classification != Classification.EnvironmentFailure : c.Classification == Classification.ApplicationDefect);
         var defects = fresh.Where(Blamed).Concat(theTasks)
             .Select(c => new UiDefect(c.Id, c.Message ?? c.Id, c.Evidence.Log))
             .ToList();
 
         var notes = new List<string>();
-        notes.AddRange(fresh.Where(c => !draft && c.Classification is Classification.TestDefect or Classification.AuthenticationFailure)
+        notes.AddRange(fresh.Where(c => !draft && !evidenceOnly.Contains(c.Id) && c.Classification is Classification.TestDefect or Classification.AuthenticationFailure)
             .Select(c => $"Browser check {c.Id} needs a person, not a code change: {c.Message}"));
+        notes.AddRange(fresh.Where(c => evidenceOnly.Contains(c.Id))
+            .Select(c => $"The agent's drafted scenario {c.Id["scenario:".Length..]} failed ({c.Classification}): {c.Message} It is not approved, so it was not sent back for repair."));
         notes.AddRange(compared.PreExisting.Select(c => $"Browser check {c.Id} already fails on the default branch, so it is not blamed on this task."));
         notes.AddRange(compared.Report.Checks.Where(c => c.Classification == Classification.Flaky)
             .Select(c => $"Browser check {c.Id} was flaky: it failed once and passed on its rerun."));
@@ -112,6 +144,18 @@ public sealed class RunUiTests(IFactoryStore store, ITestabilityEngine engine, T
             .. (effective.Application.Build ?? []).Select(b => string.Join(' ', b.Command)),
             .. effective.Application.Processes.Select(p => string.Join(' ', p.Command)),
         ];
+    }
+
+    private static string ScenarioCounts(int project, int spec, int drafted)
+    {
+        var parts = new List<string>();
+        if (project > 0)
+            parts.Add(project == 1 ? "the project's approved scenario" : $"the project's {project} approved scenarios");
+        if (spec > 0)
+            parts.Add(spec == 1 ? "the specification's scenario" : $"the specification's {spec} scenarios");
+        if (drafted > 0)
+            parts.Add(drafted == 1 ? "the agent's drafted scenario" : $"the agent's {drafted} drafted scenarios");
+        return parts.Count == 0 ? "." : $", then {string.Join(" and ", parts)}.";
     }
 
     private static string Summary(UiTestResult result)

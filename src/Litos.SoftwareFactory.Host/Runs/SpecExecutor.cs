@@ -5,6 +5,7 @@ using Litos.SoftwareFactory.Core.Lifecycle;
 using Litos.SoftwareFactory.Core.Orchestration;
 using Litos.SoftwareFactory.Core.Ports;
 using Litos.SoftwareFactory.Core.Store;
+using Litos.SoftwareFactory.Core.Verification;
 
 namespace Litos.SoftwareFactory.Host.Runs;
 
@@ -54,7 +55,11 @@ public sealed class SpecExecutor(
             var given = await attachments.PrepareAsync(thread, workspace.Path, newSince: null, ct);
             var brief = given.AppendTo(BriefComposer.Spec(new SpecContext(
                 project.Name, $"the default branch `{project.DefaultBranch}`", thread.Title, run.Request,
-                Draft(details.LatestSpec), ReadingWorker.Conversation(details, $"spec {run.Request}"))));
+                Draft(details.LatestSpec), ReadingWorker.Conversation(details, $"spec {run.Request}"))
+            {
+                // With an adopted contract, one browser scenario per criterion a person can check (W3.7).
+                Scenarios = thread.TypeLabel == TaskTypes.Testability ? null : Testability.TaskScenarios.Guide(VerificationProfile.Parse(project.VerificationProfileJson), []),
+            }));
             var turnToken = active.BeginTurn(TurnKind.Spec, TurnKind.Spec, sessionId, ct, phase: "Spec");
             var result = await worker.Client.RunTurnAsync(sessionId, TurnKind.Spec, brief, options.SpecMaxToolCalls, turnToken, images: given.Images);
 
@@ -147,7 +152,8 @@ public sealed class SpecExecutor(
 
     /// <summary>The newest revision as the brief shows it, when the spec is being revised.</summary>
     internal static SpecDraft? Draft(Specification? spec) => spec is null ? null : new SpecDraft(
-        spec.Revision, spec.Summary, List(spec.AcceptanceCriteriaJson), List(spec.AffectedAreasJson), spec.TestPlan, List(spec.OpenQuestionsJson));
+        spec.Revision, spec.Summary, List(spec.AcceptanceCriteriaJson), List(spec.AffectedAreasJson), spec.TestPlan, List(spec.OpenQuestionsJson),
+        Testability.TaskScenarios.Split(spec.ScenariosJson));
 
     internal static IReadOnlyList<string> List(string json) =>
         string.IsNullOrWhiteSpace(json) ? [] : JsonSerializer.Deserialize<List<string>>(json, FactoryWire.Json) ?? [];

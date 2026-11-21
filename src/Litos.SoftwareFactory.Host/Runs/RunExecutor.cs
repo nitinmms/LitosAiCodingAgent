@@ -115,7 +115,7 @@ public sealed class RunExecutor(
                     PreflightStep => PreflightAsync(context, state, step, hostStopping),
                     StartTurnStep turn => RunTurnAsync(context, session, state, turn, step, hostStopping),
                     VerifyStep => VerifyAsync(context, state, step),
-                    UiTestStep => UiTestAsync(context, step),
+                    UiTestStep => UiTestAsync(context, state, step),
                     HandoffStep => HandoffAsync(context, state, step),
                     _ => throw new InvalidOperationException($"Unknown step {transition.Step.GetType().Name}."),
                 });
@@ -689,6 +689,8 @@ public sealed class RunExecutor(
             SpecificationSummary = spec?.Summary,
             AcceptanceCriteria = spec?.AcceptanceCriteria ?? [],
             TaskType = data.Thread.TypeLabel,
+            // With an adopted contract: draft scenarios, or keep the approved spec's working (W3.7).
+            Scenarios = IsMakeTestable(data.Thread) ? null : Testability.TaskScenarios.Guide(data.Profile, Testability.TaskScenarios.Read(spec?.Scenarios)),
         };
         if (IsMakeTestable(data.Thread) && await store.LatestTestabilityCheckAsync(data.Project.Id, ct) is { } check)
         {
@@ -788,13 +790,16 @@ public sealed class RunExecutor(
     private static bool IsMakeTestable(TaskThread thread) => thread.TypeLabel == TaskTypes.Testability;
 
     /// <summary>The browser smoke on the task's working copy (testability-architecture.md §6.4), or a Make-testable task's Gate on its draft.</summary>
-    private async Task<StepOutcome> UiTestAsync(RunData data, CancellationToken ct)
+    private async Task<StepOutcome> UiTestAsync(RunData data, RunState state, CancellationToken ct)
     {
         if (IsMakeTestable(data.Thread) && draftChecks is not null)
             return new UiTested(await draftChecks.GateDraftAsync(data.Project, data.Run.Id, data.Workspace.Path, text => NoteAsync(data, text), ct));
         if (uiTests is null || data.Profile.WebApp() is not { } contract)
             return new UiTested(new Core.Testability.UiTestResult { Evidence = Core.Testability.UiTestEvidence.NotSetUp });
-        return new UiTested(await uiTests.RunAsync(data.Project, data.Run.Id, data.Workspace.Path, contract, text => NoteAsync(data, text), ct));
+        // The task's own scenarios (W3.7): its approved spec's, and the ones its work turn drafted.
+        var spec = ApprovedSpec(await store.GetThreadAsync(data.Thread.Id, ct), data.Run);
+        var task = Testability.TaskScenarios.From(spec?.Scenarios, state.LastSubmission?.Scenarios);
+        return new UiTested(await uiTests.RunAsync(data.Project, data.Run.Id, data.Workspace.Path, contract, text => NoteAsync(data, text), ct, task));
     }
 
     private static VerificationRecord Record(RunData data, VerificationKind kind, string commit, VerificationOutcome outcome, Guid? runId) => new()

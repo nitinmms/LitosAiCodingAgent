@@ -101,6 +101,8 @@ public static class FactoryHostApp
             sp.GetRequiredService<VerificationGate>(), sp.GetRequiredService<Testability.RunUiTests>(), sp.GetRequiredService<Testability.DraftChecks>()));
         services.AddSingleton<Testability.RunUiTests>();
         services.AddSingleton<Testability.DraftChecks>();
+        services.AddSingleton<Testability.ScenarioSubmissionCheck>();
+        services.AddSingleton<Testability.ScenarioPromotion>();
         services.AddSingleton<VerificationGate>();
         services.AddSingleton<ReadingCopies>();
         // A project's first baseline, measured on registration and on a new profile (m3-architecture.md §8).
