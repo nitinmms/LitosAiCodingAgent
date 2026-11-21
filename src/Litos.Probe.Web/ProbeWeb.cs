@@ -1,6 +1,7 @@
 using Litos.Probe.Web.Core.Contract;
 using Litos.Probe.Web.Core.Profiles;
 using Litos.Probe.Web.Core.Reports;
+using Litos.Probe.Web.Core.Scenarios;
 using Litos.Probe.Web.Processes;
 using Litos.Probe.Web.Profiles;
 using Litos.Probe.Web.Running;
@@ -43,6 +44,53 @@ public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher 
     public Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract c, ProbeWebOptions o, CancellationToken ct) =>
         RunAsync(workingCopy, c, GateScope.Smoke, ReportKind.Smoke, o, ct);
 
+    public async Task<ProbeWebReport> ScenariosAsync(
+        string workingCopy, WebAppContract c, IReadOnlyList<WebScenario> scenarios, ProbeWebOptions o, CancellationToken ct)
+    {
+        var invalid = new List<CheckResult>();
+        var valid = new List<WebScenario>();
+        foreach (var group in scenarios.GroupBy(s => s.Id, StringComparer.Ordinal))
+        {
+            foreach (var (scenario, index) in group.Select((s, i) => (s, i)))
+            {
+                var problems = ScenarioValidator.Validate(scenario, c).ToList();
+                if (index > 0)
+                    problems.Insert(0, $"id: \"{scenario.Id}\" is used by more than one scenario in this run");
+                if (problems.Count == 0)
+                    valid.Add(scenario);
+                else
+                    invalid.Add(Invalid(scenario, problems));
+            }
+        }
+
+        if (valid.Count == 0)
+        {
+            return new ProbeWebReport
+            {
+                Kind = ReportKind.Scenarios,
+                Outcome = invalid.Count > 0 ? ProbeWebOutcome.Failed : ProbeWebOutcome.Inconclusive,
+                Contract = new ContractInfo { Source = o.ContractSource, Revision = o.ContractRevision, Stack = c.Application.Stack },
+                Checks = invalid,
+                Findings = invalid.Count > 0 ? [] : ["No scenarios to run."],
+            };
+        }
+
+        var report = await RunAsync(workingCopy, c, new GateScope(new HashSet<int> { 1, 2 }), ReportKind.Scenarios, o, ct, valid);
+        if (invalid.Count == 0)
+            return report;
+        var checks = report.Checks.Concat(invalid).ToList();
+        return report with { Checks = checks, Outcome = report.Outcome == ProbeWebOutcome.InvalidContract ? report.Outcome : ReportOutcome.Compute(checks) };
+    }
+
+    private static CheckResult Invalid(WebScenario s, IReadOnlyList<string> problems) =>
+        Classifier.Fail($"scenario:{s.Id}", CheckKind.Scenario, FailureCause.ScenarioInvalid,
+            $"The scenario does not run as written: {string.Join("; ", problems)}.") with
+        {
+            Role = s.Role,
+            Route = s.Start,
+            Scenario = new ScenarioInfo(s.Id, s.Revision, s.Title, s.Criterion),
+        };
+
     /// <summary>The contract's problems against its stack profile; empty when it can run.</summary>
     public IReadOnlyList<string> Validate(WebAppContract c)
     {
@@ -52,7 +100,8 @@ public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher 
             : ContractValidator.Validate(c, profile, services);
     }
 
-    private Task<ProbeWebReport> RunAsync(string workingCopy, WebAppContract c, GateScope scope, ReportKind kind, ProbeWebOptions o, CancellationToken ct)
+    private Task<ProbeWebReport> RunAsync(
+        string workingCopy, WebAppContract c, GateScope scope, ReportKind kind, ProbeWebOptions o, CancellationToken ct, IReadOnlyList<WebScenario>? scenarios = null)
     {
         var errors = Validate(c);
         if (errors.Count > 0)
@@ -68,6 +117,6 @@ public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher 
 
         var profile = profiles.ForContract(c.Application.Stack);
         var effective = ContractDefaults.Apply(c, profile);
-        return new GateRun(workingCopy, effective, profile, scope, kind, o, _launcher, services).RunAsync(ct);
+        return new GateRun(workingCopy, effective, profile, scope, kind, o, _launcher, services, scenarios).RunAsync(ct);
     }
 }

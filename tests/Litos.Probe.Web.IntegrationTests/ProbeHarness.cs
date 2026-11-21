@@ -47,6 +47,18 @@ internal static class ProbeHarness
         return (report, folder);
     }
 
+    /// <summary>Scenarios on a test app, with its own contract.</summary>
+    public static async Task<(ProbeWebReport Report, string Artifacts)> ScenariosAsync(
+        string app, IReadOnlyList<Core.Scenarios.WebScenario> scenarios, IReadOnlyDictionary<string, string>? secrets = null)
+    {
+        var contract = ContractYaml.Load(Path.Combine(app, ContractYaml.FileName));
+        var folder = Path.Combine(Path.GetTempPath(), "probe-web-it", $"scenarios-{Path.GetFileName(app)}-{Guid.NewGuid().ToString("N")[..8]}");
+        var options = new ProbeWebOptions(
+            new EnvironmentSecretResolver(secrets ?? new Dictionary<string, string>()), new FolderArtifactSink(folder), HostEnvironment(), TimeSpan.FromMinutes(10));
+        var report = await new ProbeWeb(StackProfiles.Embedded()).ScenariosAsync(app, contract, scenarios, options, CancellationToken.None);
+        return (report, folder);
+    }
+
     /// <summary>Skips the test when Docker is not running here.</summary>
     public static async Task RequireDockerAsync()
     {

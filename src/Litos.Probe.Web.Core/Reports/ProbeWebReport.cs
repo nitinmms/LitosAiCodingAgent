@@ -106,6 +106,12 @@ public sealed record CheckResult
     /// <summary>Set by <see cref="SmokeComparison"/>: it also fails on the default branch, so it is disclosed, not blamed.</summary>
     public bool PreExisting { get; init; }
 
+    /// <summary>A scenario check's scenario: which revision ran, and the criterion it checks.</summary>
+    public ScenarioInfo? Scenario { get; init; }
+
+    /// <summary>A scenario check's steps, in order: the ones after a failure are Skipped.</summary>
+    public IReadOnlyList<StepResult>? Steps { get; init; }
+
     public static CheckResult Pass(string id, CheckKind kind) => new() { Id = id, Kind = kind, Status = CheckStatus.Passed };
 
     public static CheckResult Fail(string id, CheckKind kind, Classification classification, string message) =>
@@ -117,6 +123,13 @@ public sealed record CheckResult
     [JsonIgnore]
     public bool Failed => Status == CheckStatus.Failed;
 }
+
+/// <summary>The scenario a check ran (README §6.2).</summary>
+public sealed record ScenarioInfo(string Id, int Revision, string? Title, string? Criterion);
+
+/// <param name="Index">1-based.</param>
+/// <param name="Description">What the step did, in words: "click button \"Add note\"".</param>
+public sealed record StepResult(int Index, string Description, CheckStatus Status, string? Message, long DurationMs, string? Screenshot = null);
 
 public sealed record Evidence
 {

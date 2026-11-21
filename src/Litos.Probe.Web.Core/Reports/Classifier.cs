@@ -28,6 +28,15 @@ public enum FailureCause
     UnnamedElement,
     LocatorNotFound,
     Timeout,
+
+    /// <summary>A scenario's target matched several elements and it said neither within nor nth.</summary>
+    LocatorAmbiguous,
+
+    /// <summary>A scenario that does not validate against the contract.</summary>
+    ScenarioInvalid,
+
+    /// <summary>A scenario's assertion found its element, but the condition did not hold.</summary>
+    AssertionFailed,
 }
 
 /// <summary>
@@ -46,7 +55,7 @@ public static class Classifier
         FailureCause.SecretMissing or FailureCause.SignInNotReached => Classification.AuthenticationFailure,
 
         // The contract or a scenario no longer matches the app: a person decides which is right.
-        FailureCause.RouteNotFound or FailureCause.LocatorNotFound => Classification.TestDefect,
+        FailureCause.RouteNotFound or FailureCause.LocatorNotFound or FailureCause.LocatorAmbiguous or FailureCause.ScenarioInvalid => Classification.TestDefect,
 
         // Everything else is the app behaving wrongly, including being untestable: an app that
         // ignores its port, forces HTTPS, or drops a field label broke the contract it agreed to.

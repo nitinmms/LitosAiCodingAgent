@@ -43,5 +43,14 @@ gate.SetAction((r, ct) => new CliCommands(Console.Out, Settings(r)).GateAsync(r.
 var smoke = WithCommon(new Command("smoke", "Run Gate steps 1-6, as the factory does on every task.") { repo, contract });
 smoke.SetAction((r, ct) => new CliCommands(Console.Out, Settings(r)).GateAsync(r.GetValue(repo)!.FullName, r.GetValue(contract)?.FullName, "1-6", smoke: true, ct));
 
-var root = new RootCommand("Deterministic browser verification of web apps (Litos.Probe.Web).") { detect, dryRun, gate, smoke };
+var scenarioFiles = new Option<string[]>("--scenarios")
+{
+    Description = "Scenario JSON files, folders of them, or a pattern such as scenarios/*.json.",
+    Required = true,
+    AllowMultipleArgumentsPerToken = true,
+};
+var scenarios = WithCommon(new Command("scenarios", "Run fixed-step scenarios: does this change work?") { repo, contract, scenarioFiles });
+scenarios.SetAction((r, ct) => new CliCommands(Console.Out, Settings(r)).ScenariosAsync(r.GetValue(repo)!.FullName, r.GetValue(contract)?.FullName, r.GetValue(scenarioFiles)!, ct));
+
+var root = new RootCommand("Deterministic browser verification of web apps (Litos.Probe.Web).") { detect, dryRun, gate, smoke, scenarios };
 return await root.Parse(args).InvokeAsync();

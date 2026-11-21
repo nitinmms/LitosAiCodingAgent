@@ -231,7 +231,7 @@ public interface IProbeWeb
     Task<ProbeWebReport> DryRunAsync(string repoRoot, StackProfile profile, ProbeWebOptions o, CancellationToken ct);
     Task<ProbeWebReport> GateAsync(string workingCopy, WebAppContract c, GateScope scope, ProbeWebOptions o, CancellationToken ct);
     Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract c, ProbeWebOptions o, CancellationToken ct);
-    Task<ProbeWebReport> ScenariosAsync(string workingCopy, WebAppContract c, IReadOnlyList<WebScenario> s, ProbeWebOptions o, CancellationToken ct);   // W3: not in W1's interface
+    Task<ProbeWebReport> ScenariosAsync(string workingCopy, WebAppContract c, IReadOnlyList<WebScenario> s, ProbeWebOptions o, CancellationToken ct);   // W3.5
 }
 public sealed record ProbeWebOptions(
     ISecretResolver Secrets, IArtifactSink Artifacts,
@@ -250,7 +250,7 @@ litos-probe-web detect   <repo>                               # which stack prof
 litos-probe-web dry-run  <repo> [--profile node-express-spa]  # try the profile defaults: real gaps
 litos-probe-web gate     <repo> [--contract litos.test.yaml] [--steps 1-8]
 litos-probe-web smoke    <repo> [--contract …] [--headed]
-litos-probe-web scenarios <repo> --scenarios scenarios/*.json                         # W3: not in W1's CLI
+litos-probe-web scenarios <repo> --scenarios scenarios/*.json                         # W3.5: files, folders or a pattern
 ```
 
 - **Secrets** come from environment variables with the same names, e.g. `TEST_STAFF_PASS`.
@@ -427,6 +427,44 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
 - **Where the detour began.** clinic-portal's feature task went into bUnit to cover uncovered `.razor` lines. When a coverage repair lists uncovered lines in a `.razor`, `.cshtml`, `.vue`, `.svelte`, `.jsx` or `.tsx` file (`BriefComposer.IsPageFile`), the repair brief adds: move any rule those lines hold into a plain function or method and test that, and don't add a component-test library for the markup itself. Markup lines still uncovered after that are disclosed to the tester, not held against the work. That is what the orchestrator already does with coverage that stays short after the repair cycles.
 - **Revisit** once measured browser coverage (proposal item 4) exists.
 - **Tests:** Core 1,378 (the rule in the implement, Make-testable and rework briefs; the page note for four view types, and its absence for plain code).
+
+**W3.5 as built (the `WebScenario` model and runner, 2026-11-21).** The user's answers: engine and CLI only (the factory runs scenarios once W3.6 stores approved ones); one ordered step list; reset and a fresh sign-in before each scenario; a missing target is always a TestDefect, with what the page has instead.
+- **The format, `Core/Scenarios/WebScenario.cs`.** JSON, camelCase, one scenario or an array per file; comments and trailing commas allowed, misspelt fields refused, `type` required:
+
+  ```jsonc
+  {
+    "id": "cancel-upcoming", "revision": 2, "role": "patient",
+    "criterion": "A patient can cancel an upcoming appointment.",
+    "start": "/my/appointments",
+    "steps": [
+      { "type": "click", "target": { "role": "button", "name": "Cancel", "within": { "role": "row", "name": "Dr Smith 10:00" } } },
+      { "type": "expectResponse", "method": "POST", "path": "/api/appointments/*", "status": 200 },
+      { "type": "expectText", "target": { "testId": "status" }, "text": "Cancelled" },
+      { "type": "screenshot", "name": "cancelled" }
+    ]
+  }
+  ```
+
+  - **Actions:** `navigate`, `click`, `fill`, `select`, `check`, `uncheck`, `waitFor`, `screenshot`.
+  - **Assertions:** `expectVisible`, `expectHidden`, `expectText` (contains, whitespace normalised), `expectUrl` (path contains), `expectState` (enabled, disabled, checked, unchecked), `expectError` (default target: role `alert`), `expectResponse` (a request made since the last action, by method, path or prefix, and status). Each waits up to its `timeoutSeconds` (default 10, at most 60).
+  - **Targets:** exactly one of `role` (with an exact `name`), `label`, `testId`, `text` or `css`. `within` (a unique container, up to two levels) or, as a last resort, `nth` pick one of several matches.
+  - **Values:** literal, `{run}` (unique per run) and `{secret:NAME}`.
+- **Validation, `ScenarioValidator`.** Before anything starts: id, role (one of the contract's, and none without a login), routes on the app only (no other origin), at least one assertion, each step's fields, ARIA role names, placeholders. A scenario that fails is a TestDefect check (`ScenarioInvalid`) and never runs. If none is valid, the app is not even built.
+- **The runner, `Running/GateRun.Scenarios.cs`.** `ScenariosAsync` brings the app up (build, services, start, reset), then for each scenario:
+  - **Clean data:** the contract's reset (a sqlite snapshot means stop, restore, start).
+  - **A fresh sign-in** as its role, then its own browser context, which opens `start`.
+  - **Its steps**, with the page's signals, error markers and server error lines checked after each one.
+  - **Isolation:** order never matters.
+- **Classification.**
+  - **TestDefect:** a target that matches nothing (`LocatorNotFound`) or several (`LocatorAmbiguous`), and a 404 route. The message lists what is there instead: *No button named "Save note" on /. Buttons on the page: "Add note".*
+  - **ApplicationDefect:** a target that is found but whose condition doesn't hold (`AssertionFailed`), a page signal, a server error line, or a 5xx. These are rerun once on clean data; passing then makes them Flaky.
+  - **AuthenticationFailure:** a failed sign-in or a missing secret.
+  - **EnvironmentFailure:** a reset between scenarios that fails stops the rest.
+- **The report.** A `scenario:<id>` check per scenario carries `Scenario` (id, revision, title, criterion) and `Steps`: each with its words ("click button \"Add note\""), status (later steps Skipped after a failure), message, time and screenshot. Screenshots come from each `screenshot` step, the failing step and the end; there is one trace per scenario, except that a scenario that fills a secret is never traced. Secret values are redacted everywhere.
+- **CLI.** `litos-probe-web scenarios <repo> [--contract …] --scenarios <files, folders or a pattern>`, with the step count and criterion in the summary.
+- **Tests:** Probe.Web unit 265 (format, validator, targets in words, the classifier, no app started for invalid scenarios, CLI file matching). Integration, in a real browser:
+  - **notes app:** add a note with `expectResponse` 201; the next scenario finds the seeded list again; the renamed button gives a TestDefect naming *Add note*; wrong text gives an ApplicationDefect; a role on a login-less app is never run;
+  - **broken app `scenarios`:** each role signed in afresh; form sign-in with a typed secret, not traced and not in any artifact; `expectError`.
 
 **Finding 12, the proposal as discussed (2026-11-19; only item 1 was adopted, above).**
 

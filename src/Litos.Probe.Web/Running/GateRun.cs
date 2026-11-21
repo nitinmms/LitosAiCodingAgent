@@ -11,12 +11,12 @@ using Microsoft.Playwright;
 namespace Litos.Probe.Web.Running;
 
 /// <summary>
-/// One run of the Gate (README §6.1), in any of its scopes: all 8 steps, smoke (1–6), or a dry
-/// run of a stack profile's defaults. It owns the app and the browser for the run's lifetime, and
+/// One run of the Gate (README §6.1), in any of its scopes: all 8 steps, smoke (1–6), a dry run
+/// of a stack profile's defaults, or a batch of scenarios (GateRun.Scenarios.cs). It owns the app and the browser for the run's lifetime, and
 /// whatever happens (a failure, its time limit, the caller cancelling) they are stopped before it
 /// returns.
 /// </summary>
-internal sealed class GateRun
+internal sealed partial class GateRun
 {
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(400);
 
@@ -48,9 +48,10 @@ internal sealed class GateRun
     private CancellationToken _limit;
 
     public GateRun(string workingCopy, WebAppContract effectiveContract, StackProfile profile, GateScope scope, ReportKind kind, ProbeWebOptions options, IProcessLauncher launcher,
-        ServiceCatalog? services = null)
+        ServiceCatalog? services = null, IReadOnlyList<Core.Scenarios.WebScenario>? scenarios = null)
     {
         _services = services;
+        _scenarios = scenarios ?? [];
         _workingCopy = Path.GetFullPath(workingCopy);
         _contract = effectiveContract;
         _profile = profile;
@@ -178,6 +179,12 @@ internal sealed class GateRun
         catch (BrowserUnavailableException ex)
         {
             Add(Classifier.Fail("browser", CheckKind.Start, FailureCause.NotReady, ex.Message));
+            return;
+        }
+
+        if (_kind == ReportKind.Scenarios)
+        {
+            await ScenarioStepsAsync(ct);
             return;
         }
 
@@ -741,6 +748,7 @@ internal sealed class GateRun
         public string? Role { get; } = role;
         public string Label => Role ?? "anonymous";
         public IPage Page { get; } = page;
+        public IBrowserContext Context { get; } = context;
         public PageWatcher Watcher { get; } = new(page, url => run._env.AppOrigins.Contains(BrowserHost.OriginOf(url)), run._contract.Testability.ConsoleErrors,
             run._profile.IgnoreConsole, run.CountIgnored);
         public List<int> CheckIndexes { get; } = [];
@@ -752,7 +760,7 @@ internal sealed class GateRun
                 if (traced)
                 {
                     var path = Path.Combine(run._scratch, $"trace-{ArtifactName(Label)}.zip");
-                    await context.Tracing.StopAsync(new TracingStopOptions { Path = path });
+                    await Context.Tracing.StopAsync(new TracingStopOptions { Path = path });
                     string id;
                     await using (var file = File.OpenRead(path))
                         id = await run._o.Artifacts.SaveAsync(ArtifactKind.Trace, $"trace-{ArtifactName(Label)}.zip", file, CancellationToken.None);
@@ -760,7 +768,7 @@ internal sealed class GateRun
                         run._checks[index] = run._checks[index] with { Evidence = run._checks[index].Evidence with { Trace = id } };
                 }
 
-                await context.CloseAsync();
+                await Context.CloseAsync();
             }
             catch (Exception ex) when (IsBrowserError(ex))
             {

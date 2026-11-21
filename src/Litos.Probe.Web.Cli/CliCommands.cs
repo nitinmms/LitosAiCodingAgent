@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Text.Json;
 using Litos.Probe.Web.Core.Reports;
+using Litos.Probe.Web.Core.Scenarios;
 using Litos.Probe.Web.Detection;
 using Litos.Probe.Web.Profiles;
 
@@ -78,9 +80,87 @@ internal sealed class CliCommands(TextWriter output, CliSettings settings)
             return Fail($"--steps: {ex.Message}", BadContract);
         }
 
+        if (LoadContract(repo, contractPath) is not { } loaded)
+            return BadContract;
+        var (contract, path) = loaded;
+        contractPath = path;
+        var engine = new ProbeWeb(_profiles);
+
+        output.WriteLine($"{(smoke ? "Smoke" : "Gate")} of {repo} with {contractPath}");
+        var (options, sink) = Options("file");
+        var report = smoke
+            ? await engine.SmokeAsync(repo, contract, options, ct)
+            : await engine.GateAsync(repo, contract, scope, options, ct);
+        return await FinishAsync(report, sink, ct);
+    }
+
+    /// <summary>
+    /// <c>scenarios</c>: each of <paramref name="scenarioPaths"/> is a JSON file (one scenario or an
+    /// array), a folder (every <c>*.json</c> in it) or a file pattern such as <c>scenarios/*.json</c>,
+    /// since a Windows shell does not expand patterns for a program.
+    /// </summary>
+    public async Task<int> ScenariosAsync(string repo, string? contractPath, IReadOnlyList<string> scenarioPaths, CancellationToken ct)
+    {
+        if (!Directory.Exists(repo))
+            return Fail($"No such folder: {repo}", BadContract);
+        if (LoadContract(repo, contractPath) is not { } loaded)
+            return BadContract;
+        var (contract, path) = loaded;
+
+        var files = new List<string>();
+        foreach (var given in scenarioPaths)
+        {
+            var found = ScenarioFiles(given);
+            if (found.Count == 0)
+                return Fail($"--scenarios: nothing matches {given}", BadContract);
+            files.AddRange(found);
+        }
+
+        if (files.Count == 0)
+            return Fail("--scenarios: give at least one scenario file or folder.", BadContract);
+
+        var scenarios = new List<WebScenario>();
+        foreach (var file in files.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                scenarios.AddRange(WebScenario.Parse(await File.ReadAllTextAsync(file, ct)));
+            }
+            catch (JsonException ex)
+            {
+                return Fail($"{file}: not a scenario: {ex.Message}", BadContract);
+            }
+        }
+
+        output.WriteLine($"{scenarios.Count} scenario(s) on {repo} with {path}");
+        var (options, sink) = Options("file");
+        var report = await new ProbeWeb(_profiles).ScenariosAsync(repo, contract, scenarios, options, ct);
+        return await FinishAsync(report, sink, ct);
+    }
+
+    internal static IReadOnlyList<string> ScenarioFiles(string given)
+    {
+        if (Directory.Exists(given))
+            return [.. Directory.GetFiles(given, "*.json").Order(StringComparer.OrdinalIgnoreCase)];
+        if (File.Exists(given))
+            return [given];
+
+        var folder = Path.GetDirectoryName(given) is { Length: > 0 } d ? d : ".";
+        var pattern = Path.GetFileName(given);
+        return pattern.Contains('*') || pattern.Contains('?')
+            ? Directory.Exists(folder) ? [.. Directory.GetFiles(folder, pattern).Order(StringComparer.OrdinalIgnoreCase)] : []
+            : [];
+    }
+
+    /// <summary>The contract the gate, smoke and scenarios commands run against, or null once its problems are printed.</summary>
+    private (Core.Contract.WebAppContract Contract, string Path)? LoadContract(string repo, string? contractPath)
+    {
         contractPath ??= Path.Combine(repo, ContractYaml.FileName);
         if (!File.Exists(contractPath))
-            return Fail($"No contract at {contractPath}. Write one, or try the stack's defaults with: litos-probe-web dry-run {repo}", BadContract);
+        {
+            Fail($"No contract at {contractPath}. Write one, or try the stack's defaults with: litos-probe-web dry-run {repo}", BadContract);
+            return null;
+        }
 
         Core.Contract.WebAppContract contract;
         try
@@ -89,25 +169,20 @@ internal sealed class CliCommands(TextWriter output, CliSettings settings)
         }
         catch (ContractFormatException ex)
         {
-            return Fail(ex.Message, BadContract);
+            Fail(ex.Message, BadContract);
+            return null;
         }
 
-        var engine = new ProbeWeb(_profiles);
-        var errors = engine.Validate(contract);
+        var errors = new ProbeWeb(_profiles).Validate(contract);
         if (errors.Count > 0)
         {
             output.WriteLine($"The contract {contractPath} has {errors.Count} problem(s):");
             foreach (var error in errors)
                 output.WriteLine($"  - {error}");
-            return BadContract;
+            return null;
         }
 
-        output.WriteLine($"{(smoke ? "Smoke" : "Gate")} of {repo} with {contractPath}");
-        var (options, sink) = Options("file");
-        var report = smoke
-            ? await engine.SmokeAsync(repo, contract, options, ct)
-            : await engine.GateAsync(repo, contract, scope, options, ct);
-        return await FinishAsync(report, sink, ct);
+        return (contract, contractPath);
     }
 
     private (ProbeWebOptions Options, FolderArtifactSink Sink) Options(string source)
@@ -172,6 +247,8 @@ internal static class Summary
                 output.WriteLine($"      {check.Message}");
             foreach (var line in check.Failed ? check.Evidence.Log.Take(5) : [])
                 output.WriteLine($"      | {line}");
+            if (check.Kind == CheckKind.Scenario && check.Steps is { Count: > 0 } steps)
+                output.WriteLine($"      {steps.Count(s => s.Status == CheckStatus.Passed)} of {steps.Count} steps passed{(check.Scenario?.Criterion is { } criterion ? $" · {criterion}" : "")}");
         }
 
         if (report.Lint is { } lint)

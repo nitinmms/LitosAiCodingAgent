@@ -86,6 +86,13 @@ public interface IProbeWeb
 
     /// <summary>Gate steps 1–6, as the factory runs them on every task.</summary>
     Task<ProbeWebReport> SmokeAsync(string workingCopy, WebAppContract c, ProbeWebOptions o, CancellationToken ct);
+
+    /// <summary>
+    /// Fixed-step scenarios (README §6.2): build, start and reset the app, then each scenario on
+    /// clean data, signed in afresh as its role. A scenario that does not validate is a TestDefect
+    /// and does not run.
+    /// </summary>
+    Task<ProbeWebReport> ScenariosAsync(string workingCopy, WebAppContract c, IReadOnlyList<Core.Scenarios.WebScenario> scenarios, ProbeWebOptions o, CancellationToken ct);
 }
 
 /// <summary>The service containers Probe.Web starts, from outside a run (README §10).</summary>

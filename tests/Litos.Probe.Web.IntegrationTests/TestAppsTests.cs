@@ -5,6 +5,7 @@ using static Litos.Probe.Web.IntegrationTests.ProbeHarness;
 namespace Litos.Probe.Web.IntegrationTests;
 
 /// <summary>README §11 W1 exit check: the Gate passes on both tier-1 test apps.</summary>
+[Collection(NodeExpressSpaCollection.Name)]
 public class NodeExpressSpaTests
 {
     [SkippableFact]
