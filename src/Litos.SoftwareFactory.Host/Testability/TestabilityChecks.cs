@@ -222,7 +222,8 @@ public sealed class TestabilityChecks(
         if (onMain is { Valid: true } && ContractAdoption.Differs(root, adopted))
             gaps.Add($"litos.test.yaml on the default branch differs from the adopted contract (revision {project.ProfileRevision}): adopt it to use it.");
         gaps.AddRange(gateRun.Checks.Where(c => c.Failed).Select(c => $"{c.Id}: {c.Message}"));
-        gaps.AddRange(gateRun.Findings);
+        // The profile's known console noise is a note in the report, not something to fix.
+        gaps.AddRange(gateRun.Findings.Where(f => !f.StartsWith("Ignored ", StringComparison.Ordinal)));
 
         // A failing scenario is a gap, not a broken main: the Gate's own checks say whether the app is test-ready.
         var outcome = gateRun.Outcome == Probe.Web.Core.Reports.ProbeWebOutcome.InvalidContract

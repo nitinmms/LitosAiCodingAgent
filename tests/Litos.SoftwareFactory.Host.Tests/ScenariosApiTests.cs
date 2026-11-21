@@ -281,11 +281,14 @@ public sealed class ScenariosApiTests : IAsyncLifetime
                     Scenario = new ScenarioInfo("add-a-note", 1, null, null),
                 },
             ],
+            Findings = ["Ignored 3 console.error lines from PasskeySubmit*.razor.js (aspnet-blazor-server profile): headless passkey autofill"],
         };
         var projectId = await ApprovedAsync();
 
         var view = await _host.GetAsync($"api/projects/{projectId}/testability");
         Assert.Equal("TestReady", view.GetProperty("status").GetString());
+        // Ignored console noise is a note in the report, not a gap (seen live on clinic-portal, 2026-11-21).
+        Assert.DoesNotContain(view.GetProperty("gaps").EnumerateArray(), g => g.GetString()!.StartsWith("Ignored ", StringComparison.Ordinal));
         Assert.Contains(view.GetProperty("gaps").EnumerateArray(), g => g.GetString()!.StartsWith("scenario:add-a-note", StringComparison.Ordinal));
 
         _engine.SmokeReports.Enqueue(SmokeWithScenario(CheckResult.Fail("scenario:add-a-note", CheckKind.Scenario, Classification.ApplicationDefect, "it shows \"\".")));
