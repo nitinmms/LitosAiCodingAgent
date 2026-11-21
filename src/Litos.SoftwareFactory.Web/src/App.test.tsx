@@ -753,6 +753,38 @@ describe('a handoff', () => {
     expect(within(card.getByRole('region', { name: 'Screenshots' })).queryByRole('img', { name: /scenario:/ })).not.toBeInTheDocument();
   });
 
+  it('marks each criterion verified in the browser, and an unapproved draft as passed but not approved (W3.7)', async () => {
+    const scenario = (id: string, criterion: string, source: 'spec' | 'drafted', status: 'Passed' | 'Failed') => ({
+      id: `scenario:${id}`, kind: 'Scenario', role: null, route: '/', status, classification: status === 'Failed' ? 'ApplicationDefect' : null,
+      message: null, screenshots: [`s-${id}`], trace: null, log: [], source,
+      scenario: { id, revision: 1, title: null, criterion },
+      steps: [{ index: 0, description: 'open /', status, message: null, durationMs: 10, screenshot: null }],
+    });
+    const { card } = await handedOff({
+      ...onGitHub,
+      criteria: [
+        { criterion: 'Administrators can export.', tests: ['Export_Works'], manualOnly: false },
+        { criterion: 'Others get a 403.', tests: ['Export_Refused'], manualOnly: false },
+        { criterion: 'The file opens in Excel.', tests: [], manualOnly: true },
+      ],
+      uiTesting: browserChecks({ checks: [...browserChecks().checks, scenario('export', 'Administrators can export', 'spec', 'Passed'), scenario('refused', 'Others get a 403.', 'drafted', 'Passed')] }),
+    });
+
+    const table = within(card.getByRole('table'));
+    expect(table.getByRole('columnheader', { name: 'In the browser' })).toBeInTheDocument();
+    const rows = table.getAllByRole('row').slice(1);
+    expect(within(rows[0]!).getByText('Verified in browser')).toBeInTheDocument();
+    expect(within(rows[0]!).getByRole('img', { name: 'scenario:export: Passed' })).toHaveAttribute('src', '/api/run-artifacts/s-export');
+    expect(within(rows[1]!).getByText('Passed (not approved)')).toBeInTheDocument();
+    expect(within(rows[2]!).getByText('Not checked in the browser')).toBeInTheDocument();
+    expect(within(card.getByRole('region', { name: 'Scenarios' })).getByText(/drafted by the agent, not approved/)).toBeInTheDocument();
+  });
+
+  it('has no browser column when no scenario ran', async () => {
+    const { card } = await handedOff({ ...onGitHub, criteria: [{ criterion: 'A', tests: ['T'], manualOnly: false }], uiTesting: browserChecks() });
+    expect(within(card.getByRole('table')).queryByRole('columnheader', { name: 'In the browser' })).not.toBeInTheDocument();
+  });
+
   it('says application testing is the tester’s when the project is not set up for it', async () => {
     const { card } = await handedOff({ uiTesting: browserChecks({ status: 'NotSetUp', checks: [] }) });
 

@@ -140,6 +140,16 @@ const count = (n: number, noun: string) => `${fmt(n)} ${noun}${n === 1 ? '' : 's
 /** Where a run artifact is downloaded from (Api/TestabilityApi.cs). */
 export const runArtifactUrl = (id: string) => `/api/run-artifacts/${id}`;
 
+/** Whether a scenario checks a criterion: case, spacing and a closing full stop do not matter (as the host matches them). */
+export function sameCriterion(a: string | null | undefined, b: string): boolean {
+  const normal = (t: string) => t.trim().split(/\s+/).join(' ').replace(/\.$/, '').toLowerCase();
+  return !!a && normal(a) === normal(b);
+}
+
+/** A scenario's origin in a few words. */
+const sourceLabel = (source: string | null | undefined) =>
+  source === 'drafted' ? 'drafted by the agent, not approved' : source === 'spec' ? 'from the approved specification' : source === 'project' ? "project's scenario" : null;
+
 /** The handoff's browser-checks line: what ran, and what did not pass. */
 export function uiTestLine(ui: UiTestEvidence | null | undefined): string {
   if (!ui || ui.status === 'NotSetUp') return 'Not set up: application testing is yours';
@@ -164,10 +174,11 @@ function ScenarioResults({ ui }: { ui: UiTestEvidence }) {
         {scenarios.map((c) => {
           const already = ui.preExisting.some((p) => p.id === c.id);
           return (
-            <li key={c.id}>
+            <li key={c.id} id={`handoff-${c.id.replace(/[^a-z0-9-]/gi, '-')}`}>
               <span className={`pill ${c.status === 'Passed' ? 'done' : c.status === 'Failed' ? 'bad' : 'neutral'}`}>{c.status}</span>{' '}
               <span className="mono">{c.scenario?.id ?? c.id.replace(/^scenario:/, '')}</span>
-              {c.scenario ? <span className="small muted"> rev {c.scenario.revision}</span> : null}
+              {c.scenario && c.source !== 'drafted' && c.source !== 'spec' ? <span className="small muted"> rev {c.scenario.revision}</span> : null}
+              {sourceLabel(c.source) ? <span className="small muted"> · {sourceLabel(c.source)}</span> : null}
               {c.role ? <span className="small muted"> · as {c.role}</span> : null}
               {c.classification && c.status !== 'Passed' ? <span className="small muted"> · {c.classification}</span> : null}
               {already ? <span className="small muted"> · already failing on the default branch</span> : null}
@@ -188,6 +199,36 @@ function ScenarioResults({ ui }: { ui: UiTestEvidence }) {
         })}
       </ul>
     </section>
+  );
+}
+
+/**
+ * The criteria table's browser cell (W3.7): each scenario that checks the criterion, with its
+ * result, where it came from, and its last screenshot; a link to its steps under Scenarios.
+ */
+function InTheBrowser({ checks }: { checks: UiTestEvidence['checks'] }) {
+  if (!checks.length) return <span className="muted">Not checked in the browser</span>;
+  return (
+    <>
+      {checks.map((c) => {
+        const shot = c.screenshots[c.screenshots.length - 1];
+        const verified = c.status === 'Passed' && c.source !== 'drafted';
+        return (
+          <div key={c.id}>
+            <a href={`#handoff-${c.id.replace(/[^a-z0-9-]/gi, '-')}`}>
+              <span className={`pill ${c.status === 'Passed' ? 'done' : c.status === 'Failed' ? 'bad' : 'neutral'}`}>
+                {verified ? 'Verified in browser' : c.status === 'Passed' ? 'Passed (not approved)' : c.status}
+              </span>
+            </a>{' '}
+            {shot ? (
+              <a href={runArtifactUrl(shot)} target="_blank" rel="noreferrer">
+                <img className="att-thumb" src={runArtifactUrl(shot)} alt={`${c.id}: ${c.status}`} loading="lazy" />
+              </a>
+            ) : null}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -307,10 +348,32 @@ export function SpecCard({
       <p>{spec.summary}</p>
       <h3>Acceptance criteria</h3>
       <ol>
-        {spec.acceptanceCriteria.map((criterion, i) => (
-          <li key={i}>{criterion}</li>
-        ))}
+        {spec.acceptanceCriteria.map((criterion, i) => {
+          const scenarios = (spec.scenarios ?? []).filter((s) => sameCriterion(s.criterion, criterion));
+          return (
+            <li key={i}>
+              {criterion}
+              {scenarios.map((s) => (
+                <div key={s.id} className="small" role="group" aria-label={`Browser scenario ${s.id}`}>
+                  <span className="pill neutral">In the browser</span> <span className="mono">{s.id}</span>
+                  <span className="muted">
+                    {' '}
+                    · {s.role ? `as ${s.role}` : 'signed out'}, open {s.start}
+                  </span>
+                  <ol className="muted">
+                    {s.steps.map((step, j) => (
+                      <li key={j}>{step}</li>
+                    ))}
+                  </ol>
+                </div>
+              ))}
+            </li>
+          );
+        })}
       </ol>
+      {spec.scenarios?.length ? (
+        <p className="small muted">Approving the specification approves its browser scenarios: the task runs them before it hands off.</p>
+      ) : null}
       {spec.affectedAreas.length ? (
         <>
           <h3>Affected areas</h3>
@@ -428,6 +491,7 @@ export function HandoffCard({
     </div>
   ) : null;
 
+  const browserChecks = e.uiTesting ? [...e.uiTesting.checks, ...e.uiTesting.preExisting].filter((c) => c.kind === 'Scenario') : [];
   return (
     <div className={`panel${active ? ' you' : accepted ? ' okp' : ''}`} role="group" aria-label="Handoff">
       <div className="panel-head">
@@ -499,6 +563,7 @@ export function HandoffCard({
                 <tr>
                   <th>Criterion</th>
                   <th>Covered by</th>
+                  {browserChecks.length ? <th>In the browser</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -508,6 +573,7 @@ export function HandoffCard({
                     <td className={c.tests.length ? 'mono' : ''}>
                       {c.tests.length ? c.tests.join(', ') : c.manualOnly ? 'Manual testing only' : 'No test named'}
                     </td>
+                    {browserChecks.length ? <td><InTheBrowser checks={browserChecks.filter((b) => sameCriterion(b.scenario?.criterion, c.criterion))} /></td> : null}
                   </tr>
                 ))}
               </tbody>

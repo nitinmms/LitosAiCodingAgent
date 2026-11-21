@@ -505,6 +505,8 @@ export interface UiCheck {
   scenario?: { id: string; revision: number; title: string | null; criterion: string | null } | null;
   /** A scenario's steps, in order; the ones after a failure are Skipped. */
   steps?: ScenarioStep[] | null;
+  /** Where a scenario came from (W3.7): the project's, the approved spec's, or drafted by the agent and not approved. */
+  source?: 'project' | 'spec' | 'drafted' | null;
 }
 
 export interface ScenarioStep {
@@ -581,6 +583,16 @@ export interface SpecPayload {
   affectedAreas: string[];
   testPlan: string;
   openQuestions: string[];
+  /** The browser scenarios drafted with it, each in words; approved with the specification (W3.7). */
+  scenarios?: SpecScenario[];
+}
+
+export interface SpecScenario {
+  id: string;
+  criterion: string | null;
+  role: string | null;
+  start: string;
+  steps: string[];
 }
 
 /** The newest specification revision of a thread, and whether it is approved. */

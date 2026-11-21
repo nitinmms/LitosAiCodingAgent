@@ -85,6 +85,24 @@ describe('a proposed specification', () => {
     expect(screen.getAllByText('Awaiting you').length).toBeGreaterThan(0);
   });
 
+  it('shows each criterion’s browser scenario under it, approved with the specification (W3.7)', async () => {
+    const context = await withThread();
+    await context.user.type(composer(), '@factory spec Export the orders list.{Enter}');
+    await waitFor(() => expect(context.host.details(context.thread.id).thread.state).toBe('Queued'));
+    act(() => void context.host.proposeSpec(context.thread.id, {
+      scenarios: [{ id: 'export', criterion: 'administrators see an export button', role: 'admin', start: '/orders', steps: ['open /orders', 'expect button "Export" visible'] }],
+    }));
+    const card = within(await screen.findByRole('group', { name: 'Specification revision 1' }));
+
+    const scenario = within(card.getByRole('group', { name: 'Browser scenario export' }));
+    expect(scenario.getByText(/as admin, open \/orders/)).toBeInTheDocument();
+    expect(scenario.getByText('expect button "Export" visible')).toBeInTheDocument();
+    expect(card.getByText(/Approving the specification approves its browser scenarios/)).toBeInTheDocument();
+    // Under the criterion it checks, matched as the host matches them, and not under the other.
+    const items = card.getAllByRole('listitem').filter((li) => li.textContent?.startsWith('Others get a 403.'));
+    expect(within(items[0]!).queryByRole('group')).not.toBeInTheDocument();
+  });
+
   it('shows open questions when it has them', async () => {
     const { host, thread, user } = await withThread();
     await user.type(composer(), '@factory spec Export.{Enter}');
