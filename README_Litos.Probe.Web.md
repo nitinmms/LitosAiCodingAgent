@@ -514,6 +514,39 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
   - **Host:** 12 new in `ScenariosApiTests`: save and revise; refusals; problems saved but not approvable; no contract; a Member approves, audited, and main's baseline runs it; retire; Run on main; a task runs it and the handoff carries its steps; repair versus "needs a person"; one main already fails is pre-existing and a gap.
   - **Web:** 594 (6 new).
 
+**W3.7 as built (a task's own scenarios and the criteria table, 2026-11-21).** The user's answers:
+- **Where they come from:** the spec turn and the implement turn. A task without a spec, which is most of them (PR #3 had none), still gets evidence of its own.
+- **Approval:** with the spec, in one Approve.
+- **After the task:** on Accept, the task's scenarios that passed become project drafts.
+
+How it works:
+- **Drafting (step 1, `d3ccbc8`).** `submit_spec` and `submit_work` take `scenarios`: raw JSON objects in the W3.5 format.
+  - **When a contract is adopted,** the spec brief asks for one scenario per criterion a person can check in the app. A work brief without an approved spec asks for them in `submit_work`, for evidence only: "not approved, so one that fails is reported, not sent back to you; fix the app, not the scenario". A work brief that builds an approved spec's scenarios names them and says to keep their routes, labels and test ids.
+  - **The brief's guide** comes from the contract: its roles, its routes, the format and an example.
+  - **The run** keeps drafted scenarios across a repair that doesn't repeat them, as it keeps `HowToRun`.
+  - **Step descriptions** moved to `Probe.Web.Core` (`ScenarioText`) for briefs and the spec card.
+- **Storing (step 2, `68ee2bf`).** `specifications.ScenariosJson` (migration `SpecificationScenarios`; earlier rows get `[]`, since `jsonb` refuses `""`). The Spec message's payload shows each scenario in words under its criterion.
+- **Running (step 3, `167909e`).**
+  - **Checked when submitted:** `ScenarioSubmissionCheck` validates against the adopted contract. It also checks the criterion is one of the task's, copied exactly; the id is unique and not one of the project's approved scenarios; and a contract exists. Problems go back to the agent at once, so a person never meets them as a TestDefect.
+  - **A task runs three kinds,** each id once: the project's approved scenarios; its approved spec's, which run like the project's (an ApplicationDefect is repaired); and its work turn's drafts, which run for evidence only (a failure is disclosed, never repaired).
+  - **Each check** carries its `Source` (`project`, `spec` or `drafted`), and `UiTestEvidence.TaskScenarios` keeps the task's scenario JSON.
+  - **On Accept,** `ScenarioPromotion` copies the task's scenarios that passed into the project's scenarios as **draft** revisions. That's audited, and a thread note says which; a person approves the ones to keep on the Testability panel.
+- **Showing (step 4, `959c4d7`).**
+  - **The spec card** shows each criterion's scenario in words under it, and that approving the spec approves them.
+  - **The handoff's criteria table** gets an **In the browser** column when any scenario ran: *Verified in browser* with its last screenshot for an approved scenario that passed, *Passed (not approved)* for the agent's draft, the failure otherwise, or *Not checked in the browser*. Each links to the scenario's steps under Scenarios, which also says where it came from.
+  - **Matching** a scenario to a criterion is by text, with case, spacing and a closing full stop ignored, as the host matches.
+- **Tests:**
+  - **Core 1,386:** the spec, work, approved and rework sections, an app without sign-in, no section without a contract, drafts kept across a repair.
+  - **Worker 422:** both tools post their scenarios, refuse non-objects, and send none for an empty list.
+  - **Infrastructure 1,125 on Postgres:** the spec keeps its scenarios and its payload shows them in words; the migration gives earlier specs `[]`.
+  - **Host 948 (6 Postgres-only skipped), 5 new:**
+    - the spec path: a bad scenario refused, the approved one named in the work brief, run, repaired, with source `spec`;
+    - the draft path: run, a failure disclosed and not repaired, source `drafted`;
+    - refusals: an id clash with the project's scenarios and a bad id;
+    - no contract: no section, and scenarios refused;
+    - Accept copies only the scenarios that passed.
+  - **Web 597:** the spec card and the criteria column.
+
 **Finding 12, the proposal as discussed (2026-11-19; only item 1 was adopted, above).**
 
 The question: does page markup still count toward changed-line coverage once the browser checks cover those pages?
