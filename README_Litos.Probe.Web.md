@@ -381,7 +381,7 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
   | W3.5 | `WebScenario` model and runner (fixed steps) |
   | W3.6 | Scenario store with revisions and approval |
   | W3.7 | Spec turn drafts scenarios; results in the handoff criteria table |
-  | W3.8 | Live check: one scenario-verified task on each repo |
+  | W3.8 | Live check: one scenario-verified task on each repo (**done 2026-11-22**, §11.5) |
 
 **W3.1 as built (run guards and budget).** For work turns only (implement, rework, repair, and their nudges), never for a review or a scan. `FACTORY_RUN_GUARDS=off` turns the guards off.
 - **Progress guard (finding 2), `Core/Orchestration/RunGuards.cs` `ProgressGuard`.** After each settled call the gateway counts, from the conversation it already holds, the model calls since the last one that changed the working copy:
@@ -448,7 +448,7 @@ W3 starts by fixing the open findings from §11.3, before the scenario work, bec
   - **Actions:** `navigate`, `click`, `fill`, `select`, `check`, `uncheck`, `waitFor`, `screenshot`.
   - **Assertions:** `expectVisible`, `expectHidden`, `expectText` (contains, whitespace normalised), `expectUrl` (path contains), `expectState` (enabled, disabled, checked, unchecked), `expectError` (default target: role `alert`), `expectResponse` (a request made since the last action, by method, path or prefix, and status). Each waits up to its `timeoutSeconds` (default 10, at most 60).
   - **Targets:** exactly one of `role` (with an exact `name`), `label`, `testId`, `text` or `css`. `within` (a unique container, up to two levels) or, as a last resort, `nth` pick one of several matches.
-  - **Values:** literal, `{run}` (unique per run) and `{secret:NAME}`.
+  - **Values:** literal, `{run}` (unique per run) and `{secret:NAME}`. `{run}` is replaced everywhere a step names text (expected text, URLs and targets too), so what a `fill` typed is what the next step expects; `{secret:NAME}` only where it is typed. (Until W3.8, `d9eb133`, only `fill` values were replaced.)
 - **Validation, `ScenarioValidator`.** Before anything starts: id, role (one of the contract's, and none without a login), routes on the app only (no other origin), at least one assertion, each step's fields, ARIA role names, placeholders. A scenario that fails is a TestDefect check (`ScenarioInvalid`) and never runs. If none is valid, the app is not even built.
 - **The runner, `Running/GateRun.Scenarios.cs`.** `ScenariosAsync` brings the app up (build, services, start, reset), then for each scenario:
   - **Clean data:** the contract's reset (a sqlite snapshot means stop, restore, start).
@@ -546,6 +546,40 @@ How it works:
     - no contract: no section, and scenarios refused;
     - Accept copies only the scenarios that passed.
   - **Web 597:** the spec card and the criteria column.
+
+### 11.5 W3.8 live check (2026-11-22)
+
+**Set-up.** Dev host from source (`:5180`, dev database), W3.7 build; the installed factory (`:5181`) was not touched. Every task ran on `anthropic/claude-haiku-5-5`. *Check again* first: clinic-portal Test-ready on main `0832e95` (PR #3 merged), insta-story-generator Test-ready on `d7db706`. On clinic-portal a third project scenario, `patient-can-log-out` (patient clicks the nav button "Logout"), was saved, approved and passed main's baseline, as the tripwire for the renamed-button check.
+
+| Task | Path | Result | Tokens |
+|---|---|---|---|
+| insta: "Try an example" button on the brief form | `@factory spec` → spec rev 1, 10 criteria, 4 scenarios → approved → 1 decision → handoff | Draft **PR #12**. 191 unit tests (11 new), 100% changed lines, review not needed. Browser 7 of 8: **3 spec scenarios passed**, 1 TestDefect (below), disclosed, not repaired. Criteria table: **3 × Verified in browser** with screenshots. | 159k (spec 30k) |
+| clinic: patients book an appointment on My appointments | spec rev 1 (one scenario impossible, below) → *ask for changes* → rev 2, 12 criteria, 6 scenarios → approved → 3 decisions → handoff | Draft **PR #4**. 67 unit tests (23 new), 100%. Browser **26 of 26**: all 6 spec scenarios and the 3 project scenarios. Criteria table: **6 × Verified in browser** with screenshots. Cost inflated by the `{run}` bug and a false-positive review finding (below). | 454k of a 300k budget raised to 520k |
+| clinic: rename the nav button Logout to Sign out | plain `@factory`, no spec | Draft **PR #5**, 1 file. The approved `patient-can-log-out` failed as a **TestDefect**: *No button named "Logout" on /my/appointments. Buttons on the page: "Sign out".* **No repair, the rename stands**; the handoff says "needs a person, not a code change". The agent's 2 drafted Sign out scenarios passed (project drafts on Accept). | 38k |
+
+**W3 exit check: met.** A task's criteria show *Verified in browser* with screenshots, on both repositories; a renamed button gives a TestDefect, not a code change.
+
+**Found and fixed during the check:**
+- **`d9eb133` (W3.5): `{run}` was replaced only in `fill` values.** clinic's `patient-books-and-sees-it` filled "Booking {run}" and expected "Booking {run}"; the app showed "Booking e8973cc05b51", so a working app failed as an ApplicationDefect and went to a repair. The agent rightly asked instead of bending the app. `WebScenario.WithRunId` now replaces `{run}` in the start, paths, values, expected text and URLs and every target (containers too) before the steps run; the step words keep the placeholder. The integration test had hidden it: it filled "Probe {run}" but expected only "Probe". Probe.Web unit 273 (2 new), integration 36. After the fix: 26 of 26.
+
+**Findings for a follow-up slice** (none fixed yet; the user chose to finish the check first):
+
+| # | Finding | Seen | Proposed fix |
+|---|---|---|---|
+| 1 | **No step checks a field's value.** `expectText` reads `innerText`, which an input does not have, so "fills the four fields" and "tone left as it was" cannot be checked. The drafted step `text "/ 500"` found nothing, as a text target must match the whole text ("273 / 500"). | insta | `expectValue` (inputs, textareas, selects: contains or equals), in the format, validator, runner, `ScenarioText` and the scenario guide. |
+| 2 | **Spec scenarios cover only some criteria**, and the rest read *Not checked in the browser* with no reason. insta: 4 scenarios for 10 criteria; 3 more were checkable (enabled state, reload, Start over). | both | Spec brief: for each criterion, a scenario **or** a one-line reason why the browser can't check it; the column shows the reason. |
+| 3 | **A TestDefect shows as a red "Failed" pill** in the *In the browser* column, which reads as "the app is broken". | insta | Show "Scenario needs fixing (test defect)" in a neutral colour, with the message. |
+| 4 | **The test plan is one paragraph** on the spec card. | clinic | `testPlan` as three lists (unit tests with the criteria they cover, browser scenarios, by hand), shown as lists. |
+| 5 | **A scenario that depends on another scenario's data.** `staff-sees-patient-booking` expected a booking made in another scenario, although the brief says the data is reset before each one. Approved, it would have been an ApplicationDefect sent to a repair. Caught only by the person reviewing the spec; the validator can't see it. | clinic | Stronger wording in the scenario guide ("a scenario sees only what it creates itself; one role per scenario, so what another role sees after a change is a unit test"), plus a spec-review hint in the card. |
+| 6 | **One criterion per scenario.** `patient-books-and-sees-it` asserts "1 upcoming appointment", yet the count criterion reads *Not checked in the browser*. | clinic | Let a scenario name several criteria (`criteria: []`), or match a step's assertion to a criterion. |
+| 7 | ***Covered by* says "Manual testing only"** next to *Verified in browser*. | clinic | Name the scenario in *Covered by* when one passed. |
+| 8 | **The reviewer trusted the agent's stale limitation over the factory's measurement.** The first verification had 4 failures (finding 16's flake), the re-run 67 of 67; the limitation still said "4 tests still failing", and the light review made that a *blocking* finding. With no cycles left the run was *Blocked*; *Resume* started a repair turn that changed nothing and cost about 90k (calls at ~60k context). | clinic | Review brief: the factory's measured results win over the agent's notes; a claim they contradict is `minor` at most. A person may also dismiss a blocking finding ("Wrong") and hand off without a repair. |
+| 9 | **Stale limitations survive repairs.** The handoff kept "step 5 expects the literal 'Booking {run}'" and "No coverage report was produced; the 80% … is unverified" (coverage was 100%). The contradicted-test flag (W3.3, 14) fired, but listed classes twice ("TestDataTests (13 tests) and TestData (13 tests)", from `ba9c3a7`'s suffix match). | clinic | Ask for limitations afresh in the last submit; extend the contradiction check to coverage; de-duplicate class names. |
+| 10 | **The spec missed choices the work turn then asked:** double booking, a reason length limit (and a third settled by recommendation at the decision limit). | clinic | The spec brief's grill should cover validation limits and clashes for a create form. |
+| 11 | **clinic-portal's own flake (16) still costs cycles:** 4 `TestData`/`TestingEnvironment` tests fail intermittently with `IdentityUserPasskey is not included in the model` in `ResetAsync`. | clinic | In the repo: a Make-testable or chore task (map passkeys, or stop the reset touching them). |
+| 12 | The rename task's limitation says "the project has no component-test library"; clinic-portal has had bUnit since PR #2. | clinic | Minor; part of 9. |
+
+**Cost.** insta 159k and the rename 38k are in line with W3.5's 78k feature. clinic's 454k is not: about 30k of it is the spec revision, about 50k the turn resumed after the `{run}` answer, and about 90k the repair of finding 8's false positive.
 
 **Finding 12, the proposal as discussed (2026-11-19; only item 1 was adopted, above).**
 
