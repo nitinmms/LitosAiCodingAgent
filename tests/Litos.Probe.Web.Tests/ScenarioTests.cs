@@ -94,6 +94,53 @@ public class ScenarioTests
     public void Secrets_and_run_tokens_are_fine_in_a_value() =>
         Assert.Empty(Problems("""{ "id": "a", "steps": [ { "type": "fill", "target": { "label": "Password" }, "value": "{secret:TEST_ADMIN_PASS}-{run}" }, { "type": "expectUrl", "url": "/" } ] }"""));
 
+    [Fact]
+    public void Run_id_replaces_run_everywhere_a_step_names_text_so_what_is_typed_is_what_is_expected()
+    {
+        // W3.8: clinic-portal's spec scenario filled "Booking {run}" and then expected "Booking {run}",
+        // but only the fill was substituted, so a working app failed as an ApplicationDefect.
+        var scenario = WebScenario.Parse("""
+            { "id": "a", "start": "/notes?tag={run}", "steps": [
+              { "type": "fill", "target": { "label": "Note {run}" }, "value": "{secret:PASS}-{run}" },
+              { "type": "select", "target": { "testId": "pick-{run}" }, "value": "Opt {run}" },
+              { "type": "navigate", "path": "/n/{run}" },
+              { "type": "click", "target": { "role": "button", "name": "Open {run}", "within": { "role": "row", "name": "Row {run}", "within": { "css": "#t-{run}" } } } },
+              { "type": "expectText", "target": { "text": "Booking {run}" }, "text": "Booking {run}" },
+              { "type": "expectUrl", "url": "/done/{run}" },
+              { "type": "expectResponse", "path": "/api/{run}/*", "status": 200 }
+            ] }
+            """)[0];
+
+        var running = scenario.WithRunId("abc123");
+        var json = running.ToJson();
+
+        Assert.DoesNotContain("{run}", json, StringComparison.Ordinal);
+        Assert.Equal("/notes?tag=abc123", running.Start);
+        Assert.Equal("{secret:PASS}-abc123", running.Steps[0].Value);    // secrets stay for the runner
+        Assert.Equal("Note abc123", running.Steps[0].Target!.Label);
+        Assert.Equal("pick-abc123", running.Steps[1].Target!.TestId);
+        Assert.Equal("Opt abc123", running.Steps[1].Value);
+        Assert.Equal("/n/abc123", running.Steps[2].Path);
+        Assert.Equal("Open abc123", running.Steps[3].Target!.Name);
+        Assert.Equal("Row abc123", running.Steps[3].Target!.Within!.Name);
+        Assert.Equal("#t-abc123", running.Steps[3].Target!.Within!.Within!.Css);
+        Assert.Equal("Booking abc123", running.Steps[4].Text);
+        Assert.Equal("Booking abc123", running.Steps[4].Target!.Text);
+        Assert.Equal("/done/abc123", running.Steps[5].Url);
+        Assert.Equal("/api/abc123/*", running.Steps[6].Path);
+
+        // The scenario as written is unchanged: its words and its stored JSON keep the placeholder.
+        Assert.Equal("Booking {run}", scenario.Steps[4].Text);
+        Assert.Equal("expect the text \"Booking {run}\" to show \"Booking {run}\"", ScenarioText.Describe(scenario.Steps[4]));
+    }
+
+    [Fact]
+    public void A_scenario_without_run_is_the_same_scenario_once_run_is_replaced()
+    {
+        var scenario = WebScenario.Parse(Cancel)[0];
+        Assert.Equal(scenario.ToJson(), scenario.WithRunId("abc123").ToJson());
+    }
+
     [Theory]
     [InlineData("""{ "role": "button", "name": "Add note" }""", "button \"Add note\"")]
     [InlineData("""{ "role": "row" }""", "a row")]

@@ -20,7 +20,8 @@ public class NodeExpressSpaScenarioTests
               { "type": "fill", "target": { "label": "New note" }, "value": "Probe {run}" },
               { "type": "click", "target": { "role": "button", "name": "Add note" } },
               { "type": "expectResponse", "method": "POST", "path": "/api/notes", "status": 201 },
-              { "type": "expectText", "target": { "testId": "notes" }, "text": "Probe" },
+              { "type": "expectText", "target": { "testId": "notes" }, "text": "Probe {run}" },
+              { "type": "expectVisible", "target": { "text": "Probe {run}", "within": { "testId": "notes" } } },
               { "type": "screenshot", "name": "added" }
             ]
           },
@@ -68,11 +69,14 @@ public class NodeExpressSpaScenarioTests
         var added = Check(report, "scenario:add-a-note");
         Assert.True(added.Status == CheckStatus.Passed, Describe(report));
         Assert.Equal("A person can add a note and sees it in the list.", added.Scenario!.Criterion);
-        Assert.Equal(6, added.Steps!.Count);
+        Assert.Equal(7, added.Steps!.Count);
         Assert.Equal("open /", added.Steps[0].Description);
         Assert.Equal("click button \"Add note\"", added.Steps[2].Description);
+        // W3.8: what the fill typed ("Probe {run}") is what the expectations look for, and the
+        // words keep the placeholder.
+        Assert.Contains("{run}", added.Steps[4].Description, StringComparison.Ordinal);
         Assert.All(added.Steps, s => Assert.Equal(CheckStatus.Passed, s.Status));
-        Assert.NotNull(added.Steps[5].Screenshot);
+        Assert.NotNull(added.Steps[6].Screenshot);
         Assert.Equal(2, added.Evidence.Screenshots.Count);
         Assert.NotNull(added.Evidence.Trace);
         Assert.All(added.Evidence.Screenshots, id => Assert.True(File.Exists(Path.Combine(artifacts, id))));

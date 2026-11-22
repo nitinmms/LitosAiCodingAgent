@@ -204,11 +204,15 @@ internal sealed partial class GateRun
             };
 
             (FailureCause, string)? failure = null;
+            // The words keep "{run}", so a step reads the same in every report; the steps that run
+            // have it replaced everywhere, so what a fill typed is what the next step expects.
+            var running = scenario.WithRunId(run._runId);
             var steps = new List<(string Description, Func<Task<(FailureCause, string)?>> Act, ScenarioStep? Step)>
             {
-                ($"open {scenario.Start}", () => NavigateAsync(scenario.Start), null),
+                ($"open {scenario.Start}", () => NavigateAsync(running.Start), null),
             };
-            steps.AddRange(scenario.Steps.Select(s => (ScenarioText.Describe(s), (Func<Task<(FailureCause, string)?>>)(() => StepAsync(s)), (ScenarioStep?)s)));
+            steps.AddRange(scenario.Steps.Zip(running.Steps).Select(p =>
+                (ScenarioText.Describe(p.First), (Func<Task<(FailureCause, string)?>>)(() => StepAsync(p.Second)), (ScenarioStep?)p.Second)));
 
             for (var i = 0; i < steps.Count; i++)
             {
@@ -331,9 +335,9 @@ internal sealed partial class GateRun
 
         private async Task<(FailureCause, string)?> FillAsync(ScenarioStep step, TimeSpan timeout)
         {
-            var value = step.Value!.Replace("{run}", run._runId, StringComparison.Ordinal);
-            // Secrets go through the run's values, so the redactor has them before anything is written.
-            value = Placeholders.Resolve(value, new RunValues(new Dictionary<string, int>(), run._o.Secrets, run._redactor));
+            // {run} is already replaced (WithRunId). Secrets go through the run's values, so the
+            // redactor has them before anything is written.
+            var value = Placeholders.Resolve(step.Value!, new RunValues(new Dictionary<string, int>(), run._o.Secrets, run._redactor));
             return await ActAsync(step, timeout, l => l.FillAsync(value, new LocatorFillOptions { Timeout = Ms(timeout) }));
         }
 

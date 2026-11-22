@@ -41,6 +41,30 @@ public sealed record WebScenario
     }
 
     public string ToJson() => JsonSerializer.Serialize(this, ProbeWebJson.Indented);
+
+    /// <summary>The placeholder for a value unique to one run: typed in a <c>fill</c>, then expected on the page.</summary>
+    public const string RunPlaceholder = "{run}";
+
+    /// <summary>
+    /// The scenario as it runs: <c>{run}</c> replaced by <paramref name="runId"/> everywhere a step
+    /// names text (start, paths, values, expected text and URLs, and every target, containers
+    /// included), so a value typed in one step is the value the next step expects. <c>{secret:NAME}</c>
+    /// is left for the runner, which resolves it only where it is typed.
+    /// </summary>
+    public WebScenario WithRunId(string runId)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        string? R(string? s) => s?.Replace(RunPlaceholder, runId, StringComparison.Ordinal);
+        Target? T(Target? t) => t is null ? null : t with
+        {
+            Name = R(t.Name), Label = R(t.Label), TestId = R(t.TestId), Text = R(t.Text), Css = R(t.Css), Within = T(t.Within),
+        };
+        return this with
+        {
+            Start = R(Start)!,
+            Steps = [.. Steps.Select(s => s with { Target = T(s.Target), Path = R(s.Path), Value = R(s.Value), Text = R(s.Text), Url = R(s.Url) })],
+        };
+    }
 }
 
 public enum StepType
