@@ -174,6 +174,8 @@ export interface FactoryApi {
   pause(id: string): Promise<StopResult>;
   cancel(id: string): Promise<StopResult>;
   resume(id: string): Promise<Thread>;
+  /** W3.8 finding 8: hands off a task blocked on review findings, with them dismissed as mistaken. */
+  dismissFindings(id: string): Promise<Thread>;
   /** Takes back a change request made after a handoff. */
   withdraw(id: string): Promise<Thread>;
   pullRequest(id: string): Promise<PullRequestInfo>;
@@ -380,6 +382,7 @@ export function createApi(fetcher: Fetch = (...args) => fetch(...args), onSigned
     pause: async (id) => stopResult(await send<unknown>('POST', `${thread(id)}/pause`)),
     cancel: async (id) => stopResult(await send<unknown>('POST', `${thread(id)}/cancel`)),
     resume: (id) => send<Thread>('POST', `${thread(id)}/resume`),
+    dismissFindings: (id) => send<Thread>('POST', `${thread(id)}/dismiss-findings`),
     withdraw: (id) => send<Thread>('POST', `${thread(id)}/withdraw`),
     pullRequest: (id) => send<PullRequestInfo>('GET', `${thread(id)}/pull-request`),
     answerDecision: (decisionId, answer) =>

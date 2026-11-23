@@ -488,6 +488,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             OpenQuestionsJson = JsonSerializer.Serialize(Clean(submission.OpenQuestions), FactoryWire.Json),
             // Each is a JSON object the host already checked: kept as written, in one array.
             ScenariosJson = "[" + string.Join(",", submission.Scenarios ?? []) + "]",
+            NotInBrowserJson = JsonSerializer.Serialize(submission.NotInBrowser ?? [], FactoryWire.Json),
             CreatedAt = now,
         };
         db.Specifications.Add(spec);
@@ -520,8 +521,22 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             OpenQuestions = JsonSerializer.Deserialize<List<string>>(spec.OpenQuestionsJson, FactoryWire.Json),
             // Each scenario in words under its criterion, as the person approves it (W3.7).
             Scenarios = SpecScenarios(spec.ScenariosJson),
+            // And, for each criterion no scenario checks, why not (W3.8 finding 2).
+            NotInBrowser = SpecNotInBrowser(spec.NotInBrowserJson),
         },
         FactoryWire.Json);
+
+    public static List<NotInBrowser> SpecNotInBrowser(string json)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(json) ? [] : JsonSerializer.Deserialize<List<NotInBrowser>>(json, FactoryWire.Json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
 
     private static List<object> SpecScenarios(string json)
     {
@@ -531,6 +546,7 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             {
                 s.Id,
                 s.Criterion,
+                Criteria = s.CriteriaChecked().ToList(),
                 s.Role,
                 s.Start,
                 Steps = s.Steps.Select(Litos.Probe.Web.Core.Scenarios.ScenarioText.Describe).ToList(),
@@ -1480,6 +1496,49 @@ public sealed partial class EfFactoryStore(IDbContextFactory<FactoryDbContext> c
             .OrderBy(x => x.CreatedAt)
             .Select(x => x.Finding)
             .ToListAsync(ct);
+    }
+
+    public async Task<TaskThread> DismissBlockingFindingsAsync(Guid threadId, Guid userId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var write = await BeginWriteAsync(ct);
+        var db = write.Db;
+        var thread = await LockThreadAsync(db, threadId, ct);
+
+        var run = thread.State == LifecycleState.Blocked ? await ActiveRunAsync(db, threadId, ct) : null;
+        var state = run?.StateJson is { Length: > 0 } json ? RunStateJson.Deserialize(json) : null;
+        if (run is null || state is null || !RunOrchestrator.CanDismissBlockingFindings(state)
+            || !TaskLifecycle.TryApply(thread.State, LifecycleTrigger.ResolveBlocker, out var next))
+        {
+            throw new StoreConflictException(
+                "Only a task blocked on review findings it had no repair cycle left for can be handed off with them dismissed.");
+        }
+
+        var blocking = await db.ReviewFindings
+            .Where(f => f.RunId == run.Id && f.Severity == FindingSeverity.Blocking && f.Status == FindingStatus.Open)
+            .ToListAsync(ct);
+        foreach (var finding in blocking)
+        {
+            Audit(db, userId, AuditActions.FindingVerdict, AuditTargets.Finding, finding.Id, thread.ProjectId,
+                new { From = finding.Verdict?.ToString(), To = FindingVerdict.Wrong.ToString() }, now);
+            finding.Status = FindingStatus.Dismissed;
+            finding.Verdict = FindingVerdict.Wrong;
+            finding.VerdictBy = userId;
+            finding.VerdictAt = now;
+        }
+
+        Audit(db, userId, AuditActions.ThreadDismissFindings, AuditTargets.Thread, threadId, thread.ProjectId,
+            new { RunId = run.Id, Findings = blocking.Select(f => f.Id).ToArray() }, now);
+        Enqueue(run, now);
+        run.Entry = RunEntry.DismissFindings;
+        thread.State = next;
+        thread.StateReason = null;
+        var count = blocking.Count == 0 ? state.Findings.Count(f => f.Severity == FindingSeverity.Blocking) : blocking.Count;
+        AddMessage(db, thread, MessageAuthor.User, userId, MessageKind.Status,
+            $"Dismissed the review's blocking finding{(count == 1 ? "" : "s")} as mistaken. Handing off without a repair.", now);
+        await DropHeldSteersAsync(db, thread, next, now, ct);
+        Touch(db, thread, now);
+        await write.CommitAsync(ct);
+        return thread;
     }
 
     public async Task<TaskThread> SetFindingVerdictAsync(Guid findingId, FindingVerdict? verdict, Guid userId, DateTimeOffset now, CancellationToken ct)

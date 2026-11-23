@@ -78,7 +78,8 @@ public sealed record RunContext(string Project, string Branch, string BaseBranch
 /// <param name="Scenarios">The revision's browser scenarios, as JSON objects (W3.7).</param>
 public sealed record SpecDraft(
     int Revision, string Summary, IReadOnlyList<string> AcceptanceCriteria, IReadOnlyList<string> AffectedAreas,
-    string TestPlan, IReadOnlyList<string> OpenQuestions, IReadOnlyList<string>? Scenarios = null);
+    string TestPlan, IReadOnlyList<string> OpenQuestions, IReadOnlyList<string>? Scenarios = null,
+    IReadOnlyList<NotInBrowser>? NotInBrowser = null);
 
 /// <summary>What a spec turn is told: the task, what was asked, the draft it revises, if any,
 /// and the thread so far.</summary>
@@ -187,7 +188,7 @@ public static partial class BriefComposer
             : "",
         ["conversation"] = Conversation(context.Conversation),
         ["scenarios"] = ScenarioSection(context.Scenarios, forSpec: true),
-        ["scenariosField"] = context.Scenarios is null ? "" : " and `scenarios` (a list of scenario objects)",
+        ["scenariosField"] = context.Scenarios is null ? "" : ", `scenarios` (a list of scenario objects) and `notInBrowser` (a list of { criterion, reason } objects)",
     });
 
     /// <summary>
@@ -208,8 +209,9 @@ public static partial class BriefComposer
 
         var intro = forSpec
             ? "The factory tests this app in a browser. For each acceptance criterion a person could check by using the app, add one scenario to "
-              + "`scenarios`. It is approved with the specification and run against the finished work. Leave out criteria that only a unit test, "
-              + "or a person reading the code, can check."
+              + "`scenarios`. It is approved with the specification and run against the finished work. Every other criterion goes in `notInBrowser` "
+              + "with its reason, in one sentence (\"what another role sees needs a second sign-in\", \"the slow path needs a slow provider\"): "
+              + "each criterion has a scenario or a reason, and the person testing sees which."
             : "The factory tests this app in a browser. In `submit_work`, add a scenario to `scenarios` for each acceptance criterion a person could "
               + "check by using the app. The factory runs them after verification and shows the person testing your work what each step did, with "
               + "screenshots. They are not approved, so one that fails is reported, not sent back to you. If the app does not do what a scenario "
@@ -224,9 +226,10 @@ public static partial class BriefComposer
             - `criterion`: the criterion's text, copied exactly.
             - {{roles}}
             - `start`: the route it opens first, such as `{{start}}`.
-            - `steps`, in order. Actions: `navigate` (`path`), `click`, `fill` (`value`), `select` (`value`), `check`, `uncheck`, `waitFor`, `screenshot` (`name`). Checks: `expectVisible`, `expectHidden`, `expectText` (`text`), `expectUrl` (`url`), `expectState` (`state`: enabled, disabled, checked or unchecked), `expectError` (`text`), `expectResponse` (`method`, `path`, `status`).
-            - A step's `target` is exactly one of `role` with its exact `name`, `label`, `testId` or `text`; add `within` (a container such as the row) when several elements match. Take labels, names and test ids from the code, never guess them: a target that matches nothing is reported for a person.
-            - The data is reset before each scenario, so a scenario that needs a record creates it first. Use `{run}` in a value for something unique.
+            - `steps`, in order. Actions: `navigate` (`path`), `click`, `fill` (`value`), `select` (`value`), `check`, `uncheck`, `waitFor`, `screenshot` (`name`). Checks: `expectVisible`, `expectHidden`, `expectText` (`text`), `expectUrl` (`url`), `expectState` (`state`: enabled, disabled, checked or unchecked), `expectError` (`text`), `expectResponse` (`method`, `path`, `status`), `expectValue` (`value`: what a field holds exactly, `""` when empty; or `text`: what it contains). `expectText` reads only the text a page shows, never what an input, text area or select holds: check a field with `expectValue`.
+            - A step's `target` is exactly one of `role` with its exact `name`, `label`, `testId` or `text`; add `within` (a container such as the row) when several elements match. A `text` target matches an element's whole text exactly, so target the element by its test id or role when its text changes (a counter such as "12 / 500"). Take labels, names and test ids from the code, never guess them: a target that matches nothing is reported for a person.
+            - The data is reset and each role signs in afresh before every scenario, so a scenario sees only what it creates itself, never what another scenario made. A scenario that needs a record creates it first. What a second role sees after the first one's change needs two sign-ins, which a scenario cannot do: leave that to a unit test. Use `{run}` in a value for something unique, and the same `{run}` in a later step to find it.
+            - When the same steps also check another criterion (booking shows the new count too), list it in `criteria`, copied exactly, beside `criterion`.
             - Check the outcome a person would see, then end with a `screenshot`.
 
             For example:
@@ -236,7 +239,8 @@ public static partial class BriefComposer
               "steps": [
                 { "type": "fill", "target": { "label": "New note" }, "value": "Probe {run}" },
                 { "type": "click", "target": { "role": "button", "name": "Add note" } },
-                { "type": "expectText", "target": { "testId": "notes" }, "text": "Probe" },
+                { "type": "expectValue", "target": { "label": "New note" }, "value": "" },
+                { "type": "expectText", "target": { "testId": "notes" }, "text": "Probe {run}" },
                 { "type": "screenshot", "name": "added" } ] }
             ```
             """;
@@ -493,7 +497,7 @@ public static partial class BriefComposer
             ["specification"] = Specification(context),
             ["decisions"] = DecisionsForReview(state),
             ["verification"] = VerificationResult(state),
-            ["claims"] = Claims(state.LastSubmission),
+            ["claims"] = Claims(state.LastSubmission, state.LastVerification),
             ["change"] = change,
             ["scope"] = scope,
             ["gate"] = state.UiTestEnabled ? GateRules : "",
@@ -523,7 +527,7 @@ public static partial class BriefComposer
     /// reviewer to check rather than rediscover. Labelled as claims: the verification result is
     /// the host's measurement, and this is only the agent's account.
     /// </summary>
-    private static string Claims(WorkSubmission? submission)
+    private static string Claims(WorkSubmission? submission, VerificationOutcome? verification)
     {
         if (submission is null)
             return "";
@@ -545,9 +549,12 @@ public static partial class BriefComposer
         }
 
         if (submission.KnownLimitations.Count > 0)
-            text.AppendLine("Known limitations it reports:").AppendLine().AppendLine(Bullets(submission.KnownLimitations.Select(l => l.Trim()))).AppendLine();
+            text.AppendLine("Known limitations it reports:").AppendLine()
+                .AppendLine(Bullets(submission.KnownLimitations.Select(l => HandoffComposer.Contradicted(l.Trim(), verification)))).AppendLine();
 
-        text.Append("Check these against the change. A criterion it calls covered may not be, and a limitation it reports may break the request.");
+        text.Append("Check these against the change. A criterion it calls covered may not be, and a limitation it reports may break the request. "
+            + "Where this account and the verification result above disagree (tests it says fail, coverage it says was not measured), the verification result is right: the factory ran them on this code. "
+            + "Such a stale claim is at most a `minor` finding asking to correct the account, never `blocking`.");
         return text.ToString().TrimEnd();
     }
 
@@ -569,6 +576,7 @@ public static partial class BriefComposer
         - Work economically: every call re-sends this whole conversation and everything printed in it. Find code with `search_code`, then read only the lines you need (`read_file` takes `offset` and `limit`) rather than whole files; print only the summary and the failures of a build or test run; do several things in one script, and make related edits together.
         - Every call to a completion tool is acted on at once: never call one to test it or to find out its parameters. From kernel code, pass their arguments as name and value pairs (`submit_work("summary", "...", "testsAdded", new[] { "..." })`); named C# arguments do not compile.
         - `submit_work` takes `summary`; `criteria`, a list of objects, each `new { criterion = "...", tests = new[] { "TestName" } }` or `new { criterion = "...", manualOnly = true }`, never plain strings; `testsAdded`, `knownLimitations`, `manualTestSteps` and `prerequisites`, each a list of strings; `runSteps`, a list of objects, each `new { text = "...", command = "..." }`, for a tester who has only just cloned the branch; and `setupChanges`, a sentence. A repair or rework that changes nothing about running the application can leave out the last three.
+        - Each `submit_work` replaces the lists you sent before: write `knownLimitations` afresh for the code as it is now. Leave out a test failure, a missing report or a factory problem from an earlier attempt once it is gone; the factory reports its own measurements to the tester.
         """;
 
     private static string Nudge(RunState state)

@@ -95,7 +95,7 @@ internal sealed partial class GateRun
         Kind = CheckKind.Scenario,
         Role = s.Role,
         Route = s.Start,
-        Scenario = new ScenarioInfo(s.Id, s.Revision, s.Title, s.Criterion),
+        Scenario = new ScenarioInfo(s.Id, s.Revision, s.Title, s.Criterion, [.. s.CriteriaChecked()]),
     };
 
     /// <summary>A scenario that types a secret is never traced: a trace would record the value being typed.</summary>
@@ -291,6 +291,7 @@ internal sealed partial class GateRun
                     StepType.ExpectUrl => await ExpectUrlAsync(step.Url!, timeout),
                     StepType.ExpectState => await ExpectStateAsync(step.Target!, step.State!.Value, timeout),
                     StepType.ExpectResponse => await ExpectResponseAsync(step, timeout),
+                    StepType.ExpectValue => await ExpectValueAsync(step.Target!, step.Value, step.Text, timeout),
                     _ => (FailureCause.ScenarioInvalid, $"{step.Type} is not a step Probe.Web runs."),
                 };
             }
@@ -390,6 +391,44 @@ internal sealed partial class GateRun
                 return actual.Contains(wanted, StringComparison.Ordinal);
             });
             return ok ? null : (FailureCause.AssertionFailed, $"{target} shows \"{Clip(actual)}\", which does not contain \"{wanted}\".");
+        }
+
+        /// <summary>
+        /// What a field holds (W3.8 finding 1): an input's, a textarea's or a select's value, which
+        /// innerText never shows. A select also matches on its chosen option's label, as a person
+        /// reads it. A target that is not a field is the scenario's mistake, not the app's.
+        /// </summary>
+        private async Task<(FailureCause, string)?> ExpectValueAsync(Target target, string? exact, string? contains, TimeSpan timeout)
+        {
+            var found = await ResolveAsync(target, timeout);
+            if (found.Failure is { } failure)
+                return failure;
+
+            const string Read = """
+                e => (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement)
+                    ? [e.value]
+                    : e instanceof HTMLSelectElement
+                        ? [e.value, ...[...e.selectedOptions].map(o => o.label)]
+                        : null
+                """;
+            if (await found.Locator!.EvaluateAsync<string[]?>(Read) is null)
+            {
+                var tag = await found.Locator.EvaluateAsync<string>("e => e.tagName.toLowerCase()");
+                return (FailureCause.LocatorNotFound, $"{target} is a <{tag}>, not a field: expectValue reads inputs, text areas and selects. Use expectText for other elements.");
+            }
+
+            var wanted = Normalise(exact ?? contains!);
+            string[] actual = [];
+            var ok = await PollAsync(timeout, async () =>
+            {
+                actual = [.. (await found.Locator.EvaluateAsync<string[]?>(Read) ?? []).Select(Normalise)];
+                return exact is not null
+                    ? actual.Any(a => a == wanted)
+                    : actual.Any(a => a.Contains(wanted, StringComparison.Ordinal));
+            });
+            var holds = actual.Length == 0 ? "nothing" : $"\"{Clip(actual[0])}\"";
+            return ok ? null : (FailureCause.AssertionFailed,
+                exact is not null ? $"{target} holds {holds}, not \"{wanted}\"." : $"{target} holds {holds}, which does not contain \"{wanted}\".");
         }
 
         private async Task<(FailureCause, string)?> ExpectUrlAsync(string url, TimeSpan timeout) =>

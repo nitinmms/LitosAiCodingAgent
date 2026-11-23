@@ -746,10 +746,34 @@ public class CompletionToolTests
         Assert.Equal(["Which columns?"], spec.OpenQuestions);
     }
 
+    [Fact]
+    public async Task SubmitSpec_TakesTheTestPlanAsThreeLists_AndTheCriteriaTheBrowserCannotCheck()
+    {
+        // W3.8 findings 2 and 4: the plan reads as lists on the spec card, and each criterion with
+        // no scenario says why.
+        var (tool, handler) = Create((h, s) => new SubmitSpecTool(h, s));
+
+        var result = await tool.InvokeAsync(Args("""
+            {"summary":"s","acceptanceCriteria":["Patients can book.","Staff see it."],
+             "testPlan":{"unitTests":["Booking saves (1).","Staff list shows it (2)."],"browser":["Booking (1)."],"byHand":[]},
+             "notInBrowser":[{"criterion":"Staff see it.","reason":"a second sign-in"}]}
+            """), default);
+
+        Assert.False(result.IsError, result.Text);
+        var spec = Assert.IsType<SpecSubmission>(Posted(handler).Submission);
+        Assert.Equal("Unit tests:\n- Booking saves (1).\n- Staff list shows it (2).\n\nIn the browser:\n- Booking (1).", spec.TestPlan);
+        Assert.Equal([new NotInBrowser("Staff see it.", "a second sign-in")], spec.NotInBrowser);
+    }
+
     [Theory]
     [InlineData("""{"acceptanceCriteria":["a"],"testPlan":"t"}""", "'summary' is required")]
     [InlineData("""{"summary":"s","testPlan":"t"}""", "at least one criterion")]
     [InlineData("""{"summary":"s","acceptanceCriteria":["a"]}""", "'testPlan' is required")]
+    [InlineData("""{"summary":"s","acceptanceCriteria":["a"],"testPlan":{"unitTests":[],"byHand":[]}}""", "at least one item")]
+    [InlineData("""{"summary":"s","acceptanceCriteria":["a"],"testPlan":{"unitTests":"all of it"}}""", "'testPlan.unitTests' must be a list of strings")]
+    [InlineData("""{"summary":"s","acceptanceCriteria":["a"],"testPlan":["a"]}""", "'testPlan' must be an object")]
+    [InlineData("""{"summary":"s","acceptanceCriteria":["a"],"testPlan":"t","notInBrowser":["a"]}""", "with a non-empty 'criterion' and 'reason'")]
+    [InlineData("""{"summary":"s","acceptanceCriteria":["a"],"testPlan":"t","notInBrowser":[{"criterion":"a"}]}""", "with a non-empty 'criterion' and 'reason'")]
     public async Task SubmitSpec_BadArguments_AreRejected(string json, string expected)
     {
         var (tool, handler) = Create((h, s) => new SubmitSpecTool(h, s));

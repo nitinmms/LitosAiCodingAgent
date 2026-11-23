@@ -1870,6 +1870,22 @@ public abstract partial class FactoryStoreContract : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task ProposeSpec_KeepsTheCriteriaTheBrowserCannotCheck_AndThePayloadShowsWhy()
+    {
+        // README_Litos.Probe.Web.md W3.8 finding 2.
+        var (thread, run) = await SpecRunningAsync();
+        var proposal = Proposal with { NotInBrowser = [new NotInBrowser("Others get a 403.", "a refused API call has no page")] };
+
+        await Store.ProposeSpecAsync(run.Run.Id, proposal, T0, default);
+
+        var details = (await Store.GetThreadAsync(thread.Id, default))!;
+        var stored = Assert.Single(JsonDocument.Parse(details.LatestSpec!.NotInBrowserJson).RootElement.EnumerateArray());
+        Assert.Equal(("Others get a 403.", "a refused API call has no page"), (stored.GetProperty("criterion").GetString(), stored.GetProperty("reason").GetString()));
+        var payload = JsonDocument.Parse(details.Messages.OrderBy(m => m.Sequence).Last().PayloadJson!).RootElement;
+        Assert.Equal("a refused API call has no page", Assert.Single(payload.GetProperty("notInBrowser").EnumerateArray()).GetProperty("reason").GetString());
+    }
+
+    [SkippableFact]
     public async Task ProposeSpec_WithoutScenarios_StoresAnEmptyList()
     {
         var (thread, run) = await SpecRunningAsync();

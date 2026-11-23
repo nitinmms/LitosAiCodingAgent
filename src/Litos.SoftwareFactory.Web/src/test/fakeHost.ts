@@ -1140,6 +1140,13 @@ export class FakeHost {
         if (!resumable.includes(state)) return [409, { error: `A task that is ${state} has nothing to resume.` }];
         return [200, this.change(id, { state: 'Queued', stateReason: null })];
       }
+      case 'POST dismiss-findings': {
+        if (!this.details(id).canDismissFindings)
+          return [409, { error: 'Only a task blocked on review findings it had no repair cycle left for can be handed off with them dismissed.' }];
+        this.details(id).canDismissFindings = false;
+        this.say(id, { author: 'User', text: "Dismissed the review's blocking finding as mistaken. Handing off without a repair." });
+        return [200, this.change(id, { state: 'Queued', stateReason: null })];
+      }
       default:
         return [404];
     }

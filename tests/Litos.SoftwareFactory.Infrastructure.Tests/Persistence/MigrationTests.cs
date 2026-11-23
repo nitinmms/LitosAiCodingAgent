@@ -150,6 +150,25 @@ public sealed class MigrationTests : IAsyncLifetime
         Assert.Equal("[]", (await db.Specifications.Select(x => x.ScenariosJson).SingleAsync()).Replace(" ", ""));
     }
 
+    /// <summary>A specification from before W3.8 names no criteria the browser cannot check: an empty list.</summary>
+    [SkippableFact]
+    public async Task SpecificationNotInBrowser_GivesEarlierSpecificationsAnEmptyList()
+    {
+        Skip.If(_database is null, $"Set {PostgresFactoryStoreTests.Variable} to run the migration tests against PostgreSQL.");
+        await MigrateToAsync("SpecificationScenarios");
+        var thread = Guid.NewGuid();
+        await ExecuteAsync("ALTER TABLE specifications DROP CONSTRAINT IF EXISTS \"FK_specifications_task_threads_ThreadId\";");
+        await ExecuteAsync($$"""
+            INSERT INTO specifications ("Id", "ThreadId", "Revision", "Summary", "AcceptanceCriteriaJson", "AffectedAreasJson", "TestPlan", "OpenQuestionsJson", "ScenariosJson", "CreatedAt")
+            VALUES ('{{Guid.NewGuid()}}', '{{thread}}', 1, 'Export orders.', '["One row per order."]', '[]', '', '[]', '[]', '2026-10-01T09:00:00Z');
+            """);
+
+        await MigrateToAsync("SpecificationNotInBrowser");
+
+        await using var db = Context();
+        Assert.Equal("[]", (await db.Specifications.Select(x => x.NotInBrowserJson).SingleAsync()).Replace(" ", ""));
+    }
+
     /// <summary>
     /// A thread from before run order (run-order-architecture.md) has no rank, waits for nothing and
     /// needs nobody: the claim takes it first, first in, first out, as before.

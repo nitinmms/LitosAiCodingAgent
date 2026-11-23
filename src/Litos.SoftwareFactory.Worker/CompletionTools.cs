@@ -448,9 +448,30 @@ public sealed class SubmitSpecTool(FactoryHostClient host, string sessionId) : C
             summary = new { type = "string", description = "What will be built." },
             acceptanceCriteria = StringArray("Numbered-list items, each one checkable."),
             affectedAreas = StringArray("Parts of the code or product that will change."),
-            testPlan = new { type = "string", description = "Which criteria unit tests will cover and which are manual-only." },
+            testPlan = new
+            {
+                type = "object",
+                description = "How each criterion is checked, in three lists (a plain string is accepted too).",
+                properties = new
+                {
+                    unitTests = StringArray("What unit tests will cover, each naming the criteria it covers."),
+                    browser = StringArray("What the browser scenarios check."),
+                    byHand = StringArray("What a person checks by hand, and how."),
+                },
+            },
             openQuestions = StringArray("Anything a person must answer before implementation."),
             scenarios = ScenarioArray("One browser scenario per criterion a person can check in the app, as the brief describes; leave out when the brief has no Browser scenarios section."),
+            notInBrowser = new
+            {
+                type = "array",
+                description = "Each criterion no scenario checks, with why the browser cannot check it; leave out when the brief has no Browser scenarios section.",
+                items = new
+                {
+                    type = "object",
+                    properties = new { criterion = new { type = "string" }, reason = new { type = "string" } },
+                    required = new[] { "criterion", "reason" },
+                },
+            },
         },
         required = new[] { "summary", "acceptanceCriteria", "testPlan" },
     });
@@ -463,16 +484,67 @@ public sealed class SubmitSpecTool(FactoryHostClient host, string sessionId) : C
             return (null, "'summary' is required.");
         if (Strings(arguments, "acceptanceCriteria") is not { Count: > 0 } criteria)
             return (null, "'acceptanceCriteria' must list at least one criterion.");
-        if (Text(arguments, "testPlan") is not { } testPlan)
-            return (null, "'testPlan' is required.");
+        var (testPlan, planProblem) = TestPlan(arguments);
+        if (planProblem is not null)
+            return (null, planProblem);
         if (Strings(arguments, "affectedAreas") is not { } areas || Strings(arguments, "openQuestions") is not { } questions)
             return (null, "'affectedAreas' and 'openQuestions' must be arrays of strings.");
 
         var (scenarios, scenariosProblem) = Scenarios(arguments);
         if (scenariosProblem is not null)
             return (null, scenariosProblem);
+        var (notInBrowser, reasonsProblem) = NotInBrowserReasons(arguments);
+        if (reasonsProblem is not null)
+            return (null, reasonsProblem);
 
-        return (new SpecSubmission(summary, criteria, areas, testPlan, questions, scenarios), null);
+        return (new SpecSubmission(summary, criteria, areas, testPlan!, questions, scenarios, notInBrowser), null);
+    }
+
+    /// <summary>W3.8 finding 4: three lists, or the text earlier prompts asked for.</summary>
+    private static (string? Plan, string? Problem) TestPlan(JsonElement arguments)
+    {
+        if (!arguments.TryGetProperty("testPlan", out var value) || value.ValueKind == JsonValueKind.Null)
+            return (null, "'testPlan' is required.");
+        if (value.ValueKind == JsonValueKind.String)
+            return string.IsNullOrWhiteSpace(value.GetString()) ? (null, "'testPlan' is required.") : (value.GetString()!.Trim(), null);
+        if (value.ValueKind != JsonValueKind.Object)
+            return (null, "'testPlan' must be an object with the lists 'unitTests', 'browser' and 'byHand'.");
+
+        var lists = new List<IReadOnlyList<string>>();
+        foreach (var name in new[] { "unitTests", "browser", "byHand" })
+        {
+            if (!value.TryGetProperty(name, out var list) || list.ValueKind == JsonValueKind.Null)
+            {
+                lists.Add([]);
+                continue;
+            }
+
+            if (list.ValueKind != JsonValueKind.Array || list.EnumerateArray().Any(i => i.ValueKind != JsonValueKind.String))
+                return (null, $"'testPlan.{name}' must be a list of strings.");
+            lists.Add([.. list.EnumerateArray().Select(i => i.GetString()!)]);
+        }
+
+        var plan = SpecTestPlan.Format(lists[0], lists[1], lists[2]);
+        return plan.Length == 0 ? (null, "'testPlan' needs at least one item in 'unitTests', 'browser' or 'byHand'.") : (plan, null);
+    }
+
+    private static (IReadOnlyList<NotInBrowser>? Reasons, string? Problem) NotInBrowserReasons(JsonElement arguments)
+    {
+        if (!arguments.TryGetProperty("notInBrowser", out var value) || value.ValueKind == JsonValueKind.Null)
+            return (null, null);
+        if (value.ValueKind != JsonValueKind.Array)
+            return (null, "'notInBrowser' must be a list of objects, each with 'criterion' and 'reason'.");
+
+        var reasons = new List<NotInBrowser>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object
+                || Text(item, "criterion") is not { Length: > 0 } criterion || Text(item, "reason") is not { Length: > 0 } reason)
+                return (null, "every entry in 'notInBrowser' must be an object with a non-empty 'criterion' and 'reason'.");
+            reasons.Add(new NotInBrowser(criterion.Trim(), reason.Trim()));
+        }
+
+        return (reasons, null);
     }
 }
 

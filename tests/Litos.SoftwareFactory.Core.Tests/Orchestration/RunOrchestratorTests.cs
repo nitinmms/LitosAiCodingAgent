@@ -420,6 +420,42 @@ public class RunOrchestratorTests
     }
 
     [Fact]
+    public void BlockedOnReviewFindings_Dismissed_HandsOffWithoutARepair_AndSaysSo()
+    {
+        // W3.8 finding 8: the reviewer believed the agent's stale note over the factory's own
+        // measurement, and a person judged the finding mistaken.
+        var run = new Run(limits: new RunLimits { MaxRepairCycles = 0 }).AtReview();
+        AssertStopped(run.ReviewWith(Blocking("Four tests still fail."), Minor()), LifecycleTrigger.Block, StopReason.RepairCyclesExhausted);
+        Assert.True(RunOrchestrator.CanDismissBlockingFindings(run.State));
+
+        Assert.IsType<PreflightStep>(run.Report(new Resumed { DismissBlockingFindings = true }));
+        Assert.IsType<HandoffStep>(run.Report(new PreflightCompleted(true)));
+
+        Assert.False(run.State.ReviewRepairPending);
+        Assert.Equal(ReviewStatus.FindingsOpen, run.State.Review);
+        Assert.DoesNotContain(run.Steps, s => s is StartTurnStep { Brief: BriefKind.Repair });
+        var disclosure = Assert.Single(run.State.Disclosures, d => d.StartsWith("A person judged", StringComparison.Ordinal));
+        Assert.Equal("A person judged the review's blocking finding mistaken, so it was handed off without a repair: “Four tests still fail.”", disclosure);
+    }
+
+    [Fact]
+    public void Only_a_stop_on_review_findings_can_be_ended_by_dismissing_them()
+    {
+        // A test failure with no cycle left is the same stop reason, but nothing to dismiss.
+        var failing = new Run(limits: new RunLimits { MaxRepairCycles = 0 }).Started();
+        failing.Submit();
+        AssertStopped(failing.Verify(Failing("T.A")), LifecycleTrigger.Block, StopReason.RepairCyclesExhausted);
+        Assert.False(RunOrchestrator.CanDismissBlockingFindings(failing.State));
+        Assert.Throws<InvalidOperationException>(() => failing.Report(new Resumed { DismissBlockingFindings = true }));
+
+        // A run still going, or one whose findings are minor, neither.
+        Assert.False(RunOrchestrator.CanDismissBlockingFindings(new Run().AtReview().State));
+        var minor = new Run(limits: new RunLimits { MaxRepairCycles = 0 }).AtReview();
+        minor.ReviewWith(Minor());
+        Assert.False(RunOrchestrator.CanDismissBlockingFindings(minor.State));
+    }
+
+    [Fact]
     public void MinorFindings_WithNoRepairCyclesLeft_StillHandOff()
     {
         var run = new Run(limits: new RunLimits { MaxRepairCycles = 0 }).AtReview();

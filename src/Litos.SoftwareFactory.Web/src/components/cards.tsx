@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Decision, HandoffEvidence, Message, PullRequestState, SpecPayload, SpecStatus, Thread, UiTestEvidence } from '../api/types';
+import type { Decision, HandoffEvidence, Message, PullRequestState, NotInBrowser, SpecPayload, SpecStatus, Thread, UiTestEvidence } from '../api/types';
 import { fmt, pct, shortSha, words } from '../domain/format';
 import { pullRequestLabel, suggestedAllowance } from '../domain/task';
 import { tryItGuide } from '../domain/tryIt';
@@ -146,6 +146,39 @@ export function sameCriterion(a: string | null | undefined, b: string): boolean 
   return !!a && normal(a) === normal(b);
 }
 
+/** Whether a scenario checks a criterion, by its main criterion or any other it names (W3.8 finding 6). */
+export function checksCriterion(s: { criterion?: string | null; criteria?: string[] | null } | null | undefined, criterion: string): boolean {
+  return !!s && [s.criterion, ...(s.criteria ?? [])].some((c) => sameCriterion(c, criterion));
+}
+
+/** The reason a criterion is not checked in the browser, when the spec gave one (W3.8 finding 2). */
+const reasonFor = (reasons: NotInBrowser[] | null | undefined, criterion: string) =>
+  (reasons ?? []).find((r) => sameCriterion(r.criterion, criterion))?.reason ?? null;
+
+/**
+ * A test plan as the host writes one given in parts ("Unit tests:", "In the browser:", "By hand:",
+ * each followed by "- " items): headed lists. Any other text is shown as it was written (W3.8 finding 4).
+ */
+export function TestPlan({ text }: { text: string }) {
+  const blocks = text.split(/\n\s*\n/).map((b) => b.split('\n').map((l) => l.trim()).filter(Boolean));
+  const listed = blocks.every((b) => b.length > 1 && b[0]!.endsWith(':') && b.slice(1).every((l) => l.startsWith('- ')));
+  if (!listed) return <p className="ev-text">{text}</p>;
+  return (
+    <>
+      {blocks.map((b, i) => (
+        <div key={i} role="group" aria-label={b[0]!.replace(/:$/, '')}>
+          <h4>{b[0]!.replace(/:$/, '')}</h4>
+          <ul>
+            {b.slice(1).map((l, j) => (
+              <li key={j}>{l.slice(2)}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** A scenario's origin in a few words. */
 const sourceLabel = (source: string | null | undefined) =>
   source === 'drafted' ? 'drafted by the agent, not approved' : source === 'spec' ? 'from the approved specification' : source === 'project' ? "project's scenario" : null;
@@ -206,18 +239,27 @@ function ScenarioResults({ ui }: { ui: UiTestEvidence }) {
  * The criteria table's browser cell (W3.7): each scenario that checks the criterion, with its
  * result, where it came from, and its last screenshot; a link to its steps under Scenarios.
  */
-function InTheBrowser({ checks }: { checks: UiTestEvidence['checks'] }) {
-  if (!checks.length) return <span className="muted">Not checked in the browser</span>;
+function InTheBrowser({ checks, reason }: { checks: UiTestEvidence['checks']; reason?: string | null }) {
+  if (!checks.length)
+    return <span className="muted">{reason ? `Not checked in the browser: ${reason}` : 'Not checked in the browser'}</span>;
   return (
     <>
       {checks.map((c) => {
         const shot = c.screenshots[c.screenshots.length - 1];
         const verified = c.status === 'Passed' && c.source !== 'drafted';
+        // A scenario that cannot run as written is for a person to fix, not a sign the app is broken (W3.8 finding 3).
+        const testDefect = c.status === 'Failed' && c.classification === 'TestDefect';
         return (
           <div key={c.id}>
             <a href={`#handoff-${c.id.replace(/[^a-z0-9-]/gi, '-')}`}>
-              <span className={`pill ${c.status === 'Passed' ? 'done' : c.status === 'Failed' ? 'bad' : 'neutral'}`}>
-                {verified ? 'Verified in browser' : c.status === 'Passed' ? 'Passed (not approved)' : c.status}
+              <span className={`pill ${c.status === 'Passed' ? 'done' : c.status === 'Failed' && !testDefect ? 'bad' : 'neutral'}`}>
+                {verified
+                  ? 'Verified in browser'
+                  : c.status === 'Passed'
+                    ? 'Passed (not approved)'
+                    : testDefect
+                      ? 'Scenario needs fixing (test defect)'
+                      : c.status}
               </span>
             </a>{' '}
             {shot ? (
@@ -349,7 +391,8 @@ export function SpecCard({
       <h3>Acceptance criteria</h3>
       <ol>
         {spec.acceptanceCriteria.map((criterion, i) => {
-          const scenarios = (spec.scenarios ?? []).filter((s) => sameCriterion(s.criterion, criterion));
+          const scenarios = (spec.scenarios ?? []).filter((s) => checksCriterion(s, criterion));
+          const reason = scenarios.length ? null : reasonFor(spec.notInBrowser, criterion);
           return (
             <li key={i}>
               {criterion}
@@ -367,6 +410,11 @@ export function SpecCard({
                   </ol>
                 </div>
               ))}
+              {reason ? (
+                <div className="small muted">
+                  <span className="pill neutral">Not in the browser</span> {reason}
+                </div>
+              ) : null}
             </li>
           );
         })}
@@ -389,7 +437,7 @@ export function SpecCard({
       {spec.testPlan ? (
         <>
           <h3>Test plan</h3>
-          <p>{spec.testPlan}</p>
+          <TestPlan text={spec.testPlan} />
         </>
       ) : null}
       {spec.openQuestions.length ? (
@@ -567,15 +615,30 @@ export function HandoffCard({
                 </tr>
               </thead>
               <tbody>
-                {e.criteria.map((c, i) => (
-                  <tr key={i}>
-                    <td>{c.criterion}</td>
-                    <td className={c.tests.length ? 'mono' : ''}>
-                      {c.tests.length ? c.tests.join(', ') : c.manualOnly ? 'Manual testing only' : 'No test named'}
-                    </td>
-                    {browserChecks.length ? <td><InTheBrowser checks={browserChecks.filter((b) => sameCriterion(b.scenario?.criterion, c.criterion))} /></td> : null}
-                  </tr>
-                ))}
+                {e.criteria.map((c, i) => {
+                  const checks = browserChecks.filter((b) => checksCriterion(b.scenario, c.criterion));
+                  // W3.8 finding 7: a criterion with no unit test but a passing approved scenario is covered by that scenario.
+                  const verifiedBy = checks.filter((b) => b.status === 'Passed' && b.source !== 'drafted').map((b) => b.scenario?.id ?? b.id);
+                  return (
+                    <tr key={i}>
+                      <td>{c.criterion}</td>
+                      <td className={c.tests.length || verifiedBy.length ? 'mono' : ''}>
+                        {c.tests.length
+                          ? c.tests.join(', ')
+                          : verifiedBy.length
+                            ? `Browser scenario ${verifiedBy.join(', ')}`
+                            : c.manualOnly
+                              ? 'Manual testing only'
+                              : 'No test named'}
+                      </td>
+                      {browserChecks.length ? (
+                        <td>
+                          <InTheBrowser checks={checks} reason={reasonFor(e.notInBrowser, c.criterion)} />
+                        </td>
+                      ) : null}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

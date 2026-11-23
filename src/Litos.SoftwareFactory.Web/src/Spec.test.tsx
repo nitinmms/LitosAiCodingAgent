@@ -103,6 +103,38 @@ describe('a proposed specification', () => {
     expect(within(items[0]!).queryByRole('group')).not.toBeInTheDocument();
   });
 
+  it('shows a scenario under every criterion it checks, the reason under the rest, and the test plan as lists (W3.8)', async () => {
+    const context = await withThread();
+    await context.user.type(composer(), '@factory spec Export the orders list.{Enter}');
+    await waitFor(() => expect(context.host.details(context.thread.id).thread.state).toBe('Queued'));
+    act(() => void context.host.proposeSpec(context.thread.id, {
+      scenarios: [{
+        id: 'export', criterion: 'Administrators see an Export button.', criteria: ['Administrators see an Export button.', 'Others get a 403.'],
+        role: 'admin', start: '/orders', steps: ['open /orders'],
+      }],
+      acceptanceCriteria: ['Administrators see an Export button.', 'Others get a 403.', 'The file has a header row.'],
+      notInBrowser: [{ criterion: 'The file has a header row.', reason: 'a downloaded file is checked by a unit test' }],
+      testPlan: 'Unit tests:\n- The header row (criterion 2).\n\nBy hand:\n- Open the file in Excel.',
+    }));
+    const card = within(await screen.findByRole('group', { name: 'Specification revision 1' }));
+
+    const item = (start: string) => within(card.getAllByRole('listitem').find((li) => li.textContent?.startsWith(start))!);
+    expect(item('Administrators see an Export button.').getByRole('group', { name: 'Browser scenario export' })).toBeInTheDocument();
+    expect(item('Others get a 403.').getByRole('group', { name: 'Browser scenario export' })).toBeInTheDocument();
+    expect(item('The file has a header row.').getByText('a downloaded file is checked by a unit test')).toBeInTheDocument();
+
+    const unit = within(card.getByRole('group', { name: 'Unit tests' }));
+    expect(unit.getByRole('heading', { name: 'Unit tests' })).toBeInTheDocument();
+    expect(unit.getByRole('listitem')).toHaveTextContent('The header row (criterion 2).');
+    expect(within(card.getByRole('group', { name: 'By hand' })).getByRole('listitem')).toHaveTextContent('Open the file in Excel.');
+  });
+
+  it('shows a test plan written as plain text as it was written', async () => {
+    const { card } = await proposed();
+    expect(card.getByText('Unit tests cover the 403; the button is checked by hand.')).toBeInTheDocument();
+    expect(card.queryByRole('group', { name: 'Unit tests' })).not.toBeInTheDocument();
+  });
+
   it('shows open questions when it has them', async () => {
     const { host, thread, user } = await withThread();
     await user.type(composer(), '@factory spec Export.{Enter}');

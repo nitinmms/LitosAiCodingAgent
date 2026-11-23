@@ -83,6 +83,41 @@ public class EvidenceAndReviewTests
         Assert.Equal("TestDataTests fail.", HandoffComposer.Contradicted("TestDataTests fail.", null));
 
     [Fact]
+    public void A_class_named_in_full_and_by_its_bare_name_and_its_methods_is_listed_once()
+    {
+        // The W3.8 handoff (2026-11-22), shortened: it named TestDataTests, a method of it, and the
+        // file Testing/TestData.cs, and the note listed the same tests three times.
+        const string limitation = "NOT FIXED: TestDataTests.Reset_clears_the_data and TestingEnvironmentTests.Reset_is_gone_in_Production "
+            + "still fail ('IdentityUserPasskey is not included in the model', Testing/TestData.cs ResetAsync).";
+
+        Assert.EndsWith(
+            "(Not what the factory measured: its verification ran TestDataTests (3 tests) and TestingEnvironmentTests (1 test), and all passed.)",
+            HandoffComposer.Contradicted(limitation, W27));
+    }
+
+    private static readonly VerificationOutcome Covered = W27 with { ChangedLines = new ChangedLineCoverage(9, 10, []) };
+
+    [Theory]
+    [InlineData("No coverage report was produced; the 80% line-coverage requirement is unverified.")]
+    [InlineData("Coverage was not measured.")]
+    public void A_limitation_that_says_coverage_was_not_measured_is_answered_with_the_figure(string limitation) =>
+        Assert.Equal($"{limitation} (Not what the factory measured: it measured changed-line coverage at 90%.)", HandoffComposer.Contradicted(limitation, Covered));
+
+    [Fact]
+    public void Both_answers_go_in_one_note() =>
+        Assert.EndsWith(
+            "(Not what the factory measured: its verification ran TestDataTests (3 tests), and all passed; it measured changed-line coverage at 90%.)",
+            HandoffComposer.Contradicted("TestDataTests fail, and no coverage report was produced.", Covered));
+
+    [Theory]
+    // Coverage was not measured at all: the limitation is true.
+    [InlineData(false, "No coverage report was produced.")]
+    // About coverage, but not saying it was missing.
+    [InlineData(true, "Coverage of the export path is 90%.")]
+    public void A_coverage_limitation_the_factory_cannot_contradict_is_left_as_written(bool measured, string limitation) =>
+        Assert.Equal(limitation, HandoffComposer.Contradicted(limitation, measured ? Covered : W27));
+
+    [Fact]
     public void A_method_name_counts_too() =>
         Assert.Contains("Reset_is_gone_in_Production (1 test), and all passed",
             HandoffComposer.Contradicted("Reset_is_gone_in_Production fails on Linux.", W27));

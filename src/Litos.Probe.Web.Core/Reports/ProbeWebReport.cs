@@ -125,7 +125,8 @@ public sealed record CheckResult
 }
 
 /// <summary>The scenario a check ran (README §6.2).</summary>
-public sealed record ScenarioInfo(string Id, int Revision, string? Title, string? Criterion);
+/// <param name="Criteria">Every criterion the scenario checks, its main <paramref name="Criterion"/> first (W3.8 finding 6).</param>
+public sealed record ScenarioInfo(string Id, int Revision, string? Title, string? Criterion, IReadOnlyList<string>? Criteria = null);
 
 /// <param name="Index">1-based.</param>
 /// <param name="Description">What the step did, in words: "click button \"Add note\"".</param>

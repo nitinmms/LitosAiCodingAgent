@@ -780,6 +780,45 @@ describe('a handoff', () => {
     expect(within(card.getByRole('region', { name: 'Scenarios' })).getByText(/drafted by the agent, not approved/)).toBeInTheDocument();
   });
 
+  it('matches a scenario to every criterion it names, gives the reason for the rest, and calls a test defect what it is (W3.8)', async () => {
+    const scenario = (id: string, criteria: string[], status: 'Passed' | 'Failed', classification: string | null = null) => ({
+      id: `scenario:${id}`, kind: 'Scenario', role: 'patient', route: '/', status, classification,
+      message: status === 'Failed' ? 'Step 1 of 1, expect [data-testid=x] to show "y": nothing matches.' : null,
+      screenshots: [`s-${id}`], trace: null, log: [], source: 'spec' as const,
+      scenario: { id, revision: 1, title: null, criterion: criteria[0]!, criteria },
+      steps: [{ index: 0, description: 'open /', status, message: null, durationMs: 10, screenshot: null }],
+    });
+    const { card } = await handedOff({
+      ...onGitHub,
+      criteria: [
+        { criterion: 'A patient can book.', tests: [], manualOnly: true },
+        { criterion: 'The upcoming count goes up.', tests: ['Count_goes_up'], manualOnly: false },
+        { criterion: 'Staff see the booking.', tests: ['Staff_see_it'], manualOnly: false },
+        { criterion: 'The form fills in.', tests: ['Fills'], manualOnly: false },
+      ],
+      notInBrowser: [{ criterion: 'Staff see the booking.', reason: 'what staff see needs a second sign-in' }],
+      uiTesting: browserChecks({
+        checks: [
+          ...browserChecks().checks,
+          scenario('books', ['A patient can book.', 'The upcoming count goes up.'], 'Passed'),
+          scenario('fills', ['The form fills in.'], 'Failed', 'TestDefect'),
+        ],
+      }),
+    });
+
+    const rows = within(card.getByRole('table')).getAllByRole('row').slice(1);
+    // Covered by the scenario, not "Manual testing only", when no unit test is named.
+    expect(within(rows[0]!).getByText('Browser scenario books')).toBeInTheDocument();
+    expect(within(rows[0]!).getByText('Verified in browser')).toBeInTheDocument();
+    // The same scenario's second criterion.
+    expect(within(rows[1]!).getByText('Verified in browser')).toBeInTheDocument();
+    expect(within(rows[1]!).getByText('Count_goes_up')).toBeInTheDocument();
+    expect(within(rows[2]!).getByText('Not checked in the browser: what staff see needs a second sign-in')).toBeInTheDocument();
+    const defect = within(rows[3]!).getByText('Scenario needs fixing (test defect)');
+    expect(defect).toHaveClass('neutral');
+    expect(defect).not.toHaveClass('bad');
+  });
+
   it('has no browser column when no scenario ran', async () => {
     const { card } = await handedOff({ ...onGitHub, criteria: [{ criterion: 'A', tests: ['T'], manualOnly: false }], uiTesting: browserChecks() });
     expect(within(card.getByRole('table')).queryByRole('columnheader', { name: 'In the browser' })).not.toBeInTheDocument();
@@ -1431,6 +1470,32 @@ describe('stopping and restarting', () => {
 
     await waitFor(() => expect(host.details(thread.id).thread.state).toBe('Queued'));
     await waitFor(() => expect(screen.queryByRole('group', { name: state })).not.toBeInTheDocument());
+  });
+
+  it('offers to dismiss blocking findings when the host says it can, and hands off without resuming', async () => {
+    // W3.8 finding 8: a stale-claim finding blocked a verified task with no repair cycle left.
+    const host = new FakeHost();
+    const thread = host.addThread(host.addProject(), {
+      state: 'Blocked',
+      stage: 'Review',
+      stateReason: 'The review found 1 blocking issue, and no repair cycles are left to fix it.',
+    });
+    host.details(thread.id).canDismissFindings = true;
+    const user = start(host);
+
+    await user.click(await screen.findByRole('button', { name: 'Dismiss findings and hand off' }));
+
+    expect(host.sent('POST', '/dismiss-findings')).toHaveLength(1);
+    expect(host.sent('POST', '/resume')).toHaveLength(0);
+    await waitFor(() => expect(host.details(thread.id).thread.state).toBe('Queued'));
+    expect(await screen.findByText("Dismissed the review's blocking finding as mistaken. Handing off without a repair.")).toBeInTheDocument();
+  });
+
+  it('offers no dismissal for any other block', async () => {
+    await withThread({ state: 'Blocked', stage: 'Verify', stateReason: 'Verification failed and no repair cycles are left.' });
+
+    expect(screen.getAllByRole('button', { name: 'Resume' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Dismiss findings and hand off' })).not.toBeInTheDocument();
   });
 
   it("shows the host's refusal when the task has moved on, and catches up", async () => {

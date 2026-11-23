@@ -71,7 +71,7 @@ public static partial class ScenarioValidator
     private static IEnumerable<string> StepProblems(ScenarioStep step)
     {
         var needsTarget = step.Type is StepType.Click or StepType.Fill or StepType.Select or StepType.Check or StepType.Uncheck
-            or StepType.WaitFor or StepType.ExpectVisible or StepType.ExpectHidden or StepType.ExpectText or StepType.ExpectState;
+            or StepType.WaitFor or StepType.ExpectVisible or StepType.ExpectHidden or StepType.ExpectText or StepType.ExpectState or StepType.ExpectValue;
         var mayHaveTarget = needsTarget || step.Type is StepType.ExpectError;
 
         if (needsTarget && step.Target is null)
@@ -112,6 +112,14 @@ public static partial class ScenarioValidator
                 if (string.IsNullOrWhiteSpace(step.Text))
                     yield return "text is required";
                 break;
+            case StepType.ExpectValue:
+                if ((step.Value is null) == (step.Text is null))
+                    yield return "value or text is required, not both: value is what the field holds exactly (\"\" for empty), text what it contains";
+                else if (step.Text is { } contains && string.IsNullOrWhiteSpace(contains))
+                    yield return "text: what the field's value contains; use value \"\" for an empty field";
+                if (Placeholders.Find(step.Value).Concat(Placeholders.Find(step.Text)).Any())
+                    yield return "value and text may use {run} only: a secret is never read back from the page";
+                break;
             case StepType.ExpectUrl:
                 if (string.IsNullOrWhiteSpace(step.Url))
                     yield return "url is required: text the page's path contains, such as /my/appointments";
@@ -134,8 +142,8 @@ public static partial class ScenarioValidator
                 break;
         }
 
-        if (step.Type is not (StepType.Fill or StepType.Select) && step.Value is not null)
-            yield return "value is only for fill and select";
+        if (step.Type is not (StepType.Fill or StepType.Select or StepType.ExpectValue) && step.Value is not null)
+            yield return "value is only for fill, select and expectValue";
     }
 
     private static IEnumerable<string> TargetProblems(Target t, int depth)

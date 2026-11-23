@@ -114,7 +114,7 @@ public sealed class ProbeWeb(StackProfiles profiles, IProcessLauncher? launcher 
         {
             Role = s.Role,
             Route = s.Start,
-            Scenario = new ScenarioInfo(s.Id, s.Revision, s.Title, s.Criterion),
+            Scenario = new ScenarioInfo(s.Id, s.Revision, s.Title, s.Criterion, [.. s.CriteriaChecked()]),
         };
 
     /// <summary>The contract's problems against its stack profile; empty when it can run.</summary>

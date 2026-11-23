@@ -487,6 +487,8 @@ export interface HandoffEvidence {
   howToRun?: RunInstructions | null;
   /** The browser checks before handoff (Core/Testability/UiTesting.cs); absent on a handoff from before W2.5. */
   uiTesting?: UiTestEvidence | null;
+  /** The approved spec's criteria that no scenario checks, and why (W3.8 finding 2); absent from an older host. */
+  notInBrowser?: NotInBrowser[] | null;
 }
 
 /** One browser check, with its screenshots and trace as run-artifact ids. */
@@ -502,7 +504,7 @@ export interface UiCheck {
   trace: string | null;
   log: string[];
   /** A scenario's check: which revision ran, and the criterion it checks (W3.6). */
-  scenario?: { id: string; revision: number; title: string | null; criterion: string | null } | null;
+  scenario?: { id: string; revision: number; title: string | null; criterion: string | null; criteria?: string[] | null } | null;
   /** A scenario's steps, in order; the ones after a failure are Skipped. */
   steps?: ScenarioStep[] | null;
   /** Where a scenario came from (W3.7): the project's, the approved spec's, or drafted by the agent and not approved. */
@@ -585,11 +587,21 @@ export interface SpecPayload {
   openQuestions: string[];
   /** The browser scenarios drafted with it, each in words; approved with the specification (W3.7). */
   scenarios?: SpecScenario[];
+  /** Each criterion no scenario checks, and why (W3.8 finding 2). */
+  notInBrowser?: NotInBrowser[];
+}
+
+/** An acceptance criterion the browser does not check, and why. */
+export interface NotInBrowser {
+  criterion: string;
+  reason: string;
 }
 
 export interface SpecScenario {
   id: string;
   criterion: string | null;
+  /** Every criterion it checks, the main one first (W3.8 finding 6). */
+  criteria?: string[];
   role: string | null;
   start: string;
   steps: string[];
@@ -639,6 +651,8 @@ export interface ThreadDetails {
   spec: SpecStatus | null;
   /** After a handoff, the tokens Request changes adds to the cap; null with no cap, absent from an older host. */
   reworkTopUp?: number | null;
+  /** Blocked on review findings with no repair cycle left: a person may dismiss them and hand off. Absent from an older host. */
+  canDismissFindings?: boolean;
 }
 
 /** What a chat answer in progress has done so far (the host's ChatProgress). */

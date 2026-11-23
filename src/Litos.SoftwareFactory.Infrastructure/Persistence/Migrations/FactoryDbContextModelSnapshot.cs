@@ -936,6 +936,10 @@ namespace Litos.SoftwareFactory.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("NotInBrowserJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("OpenQuestionsJson")
                         .IsRequired()
                         .HasColumnType("jsonb");

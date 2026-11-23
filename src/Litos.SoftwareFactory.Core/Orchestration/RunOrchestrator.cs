@@ -31,6 +31,7 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
         var transition = outcome switch
         {
             RunStarted => OnStarted(state, now),
+            Resumed { DismissBlockingFindings: true } => OnFindingsDismissed(state, now),
             Resumed => OnResumed(state, now),
             PreflightCompleted preflight => OnPreflight(state, preflight),
             TurnEnded turn => OnTurnEnded(state, turn),
@@ -89,6 +90,35 @@ public sealed class RunOrchestrator(RunLimits? limits = null)
             FailuresBeforeRepair = afterBlock ? null : state.FailuresBeforeRepair,
         };
         return Preflight(resumed, state.ResumePoint!);
+    }
+
+    /// <summary>True when the run is stopped on review findings it had no repair cycle left for:
+    /// the only stop a person may end by dismissing them (W3.8 finding 8).</summary>
+    public static bool CanDismissBlockingFindings(RunState state) =>
+        state is { Phase: RunPhase.Stopped, ReviewRepairPending: true, LastStop.Reason: StopReason.RepairCyclesExhausted }
+        && state.ResumePoint is StartTurnStep { Brief: BriefKind.Repair }
+        && state.Findings.Any(f => f.Severity == FindingSeverity.Blocking);
+
+    /// <summary>
+    /// A person judged the review's blocking findings mistaken (W3.8 finding 8: a reviewer that
+    /// believed the agent's stale note over the factory's own measurement). Verification, and the
+    /// browser checks with a contract, already passed on this working copy, and the review is never
+    /// repeated, so the run hands off as it is. The tester is told who decided and what was dismissed.
+    /// </summary>
+    private static RunTransition OnFindingsDismissed(RunState state, DateTimeOffset now)
+    {
+        Require(CanDismissBlockingFindings(state), state, "hand off with its blocking findings dismissed");
+
+        var dismissed = state.Findings.Where(f => f.Severity == FindingSeverity.Blocking).Select(f => $"“{f.Text.Trim()}”");
+        var dismissedState = state with
+        {
+            ActiveSince = now,
+            ReviewRepairPending = false,
+            FailuresBeforeRepair = null,
+            Disclosures = [.. state.Disclosures,
+                $"A person judged the review's blocking finding{(state.Findings.Count(f => f.Severity == FindingSeverity.Blocking) == 1 ? "" : "s")} mistaken, so it was handed off without a repair: {string.Join("; ", dismissed)}"],
+        };
+        return Preflight(dismissedState, new HandoffStep());
     }
 
     /// <summary>

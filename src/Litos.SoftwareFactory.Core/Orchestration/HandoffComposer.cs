@@ -33,6 +33,9 @@ public sealed record HandoffFacts(string Branch, string? CommitSha, int? PullReq
     /// <summary>That revision's acceptance criteria, each of which the work must report on.</summary>
     public IReadOnlyList<string> ApprovedCriteria { get; init; } = [];
 
+    /// <summary>The approved spec's criteria that no scenario checks, and why (W3.8 finding 2).</summary>
+    public IReadOnlyList<NotInBrowser> NotInBrowser { get; init; } = [];
+
     /// <summary>The repository's page on GitHub, which the tester gets the branch from.</summary>
     public string? RepositoryUrl { get; init; }
 
@@ -80,7 +83,8 @@ public sealed record HandoffEvidence(
     string? CloneUrl = null,
     string? DefaultBranch = null,
     RunInstructions? HowToRun = null,
-    Testability.UiTestEvidence? UiTesting = null);
+    Testability.UiTestEvidence? UiTesting = null,
+    IReadOnlyList<NotInBrowser>? NotInBrowser = null);
 
 /// <summary>
 /// Composes the handoff (ReadMe_LitosSoftwareFactory_V1.md §11) deterministically, with no
@@ -135,7 +139,8 @@ public static class HandoffComposer
             CloneUrl: facts.CloneUrl,
             DefaultBranch: facts.DefaultBranch,
             HowToRun: submission?.HowToRun ?? facts.PreviousHowToRun,
-            UiTesting: state.UiTestEnabled ? UiTestingAt(state, facts.CommitSha) : Testability.UiTestEvidence.NotSetUp);
+            UiTesting: state.UiTestEnabled ? UiTestingAt(state, facts.CommitSha) : Testability.UiTestEvidence.NotSetUp,
+            NotInBrowser: state.UiTestEnabled ? facts.NotInBrowser : []);
     }
 
     /// <summary>
@@ -153,24 +158,51 @@ public static class HandoffComposer
     /// green (finding 14), is kept but answered with what the factory measured. A name counts when
     /// it is a test's class or method, as a whole word of eight characters or more.
     /// </summary>
+    /// <remarks>
+    /// W3.8 finding 9: a name whose tests another named match already covers is left out, so a
+    /// class named both in full and by its bare name ("TestDataTests" and "Testing/TestData.cs"), or
+    /// a class and its methods, are listed once. A limitation that says coverage was not measured is
+    /// answered with the changed-line figure the factory did measure. The review brief shows these
+    /// notes too, so a reviewer does not take a stale claim for a defect (finding 8).
+    /// </remarks>
     internal static string Contradicted(string limitation, VerificationOutcome? verification)
     {
-        if (verification is not { Tests.Count: > 0 } || !FailWords.IsMatch(limitation))
+        if (verification is null)
             return limitation;
 
-        var named = verification.Tests
-            .SelectMany(t => NameParts(t.Name).Select(part => (Part: part, Test: t)))
-            .Where(p => p.Part.Length >= 8 && Regex.IsMatch(limitation, $@"\b{Regex.Escape(p.Part)}\b"))
-            .GroupBy(p => p.Part, p => p.Test)
-            .ToList();
-        if (named.Count == 0 || named.Any(g => g.Any(t => t.Outcome != TestOutcome.Passed)))
-            return limitation;
+        var notes = new List<string>();
+        if (verification.Tests.Count > 0 && FailWords.IsMatch(limitation))
+        {
+            var named = verification.Tests
+                .SelectMany(t => NameParts(t.Name).Select(part => (Part: part, Test: t)))
+                .Where(p => p.Part.Length >= 8 && Regex.IsMatch(limitation, $@"\b{Regex.Escape(p.Part)}\b"))
+                .GroupBy(p => p.Part, p => p.Test)
+                .Select(g => (Name: g.Key, Tests: g.Distinct().ToList()))
+                .ToList();
+            if (named.Count > 0 && named.All(g => g.Tests.All(t => t.Outcome == TestOutcome.Passed)))
+            {
+                var kept = new List<(string Name, List<TestCaseResult> Tests)>();
+                foreach (var g in named.OrderByDescending(g => g.Tests.Count))
+                {
+                    if (!kept.Any(k => g.Tests.All(k.Tests.Contains)))
+                        kept.Add(g);
+                }
 
-        var ran = string.Join(" and ", named.Select(g => $"{g.Key} ({g.Count()} test{(g.Count() == 1 ? "" : "s")})"));
-        return $"{limitation.TrimEnd()} (Not what the factory measured: its verification ran {ran}, and all passed.)";
+                var ran = string.Join(" and ", named.Where(kept.Contains).Select(g => $"{g.Name} ({g.Tests.Count} test{(g.Tests.Count == 1 ? "" : "s")})"));
+                notes.Add($"its verification ran {ran}, and all passed");
+            }
+        }
+
+        if (verification.ChangedLines is { } coverage && CoverageWords.IsMatch(limitation) && UnmeasuredWords.IsMatch(limitation))
+            notes.Add($"it measured changed-line coverage at {coverage.Percent:0.#}%");
+
+        return notes.Count == 0 ? limitation : $"{limitation.TrimEnd()} (Not what the factory measured: {string.Join("; ", notes)}.)";
     }
 
     private static readonly Regex FailWords = new(@"\bfail", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex CoverageWords = new(@"\bcoverage\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex UnmeasuredWords = new(
+        @"\b(no|not|never|without|missing|unverified|unmeasured|unknown|could not)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     /// <summary>
     /// A test's class and method names: "Shop.Tests.CartTests.Adds_an_item(x: 1)" gives CartTests and

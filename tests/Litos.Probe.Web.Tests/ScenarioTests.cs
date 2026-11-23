@@ -73,7 +73,7 @@ public class ScenarioTests
     [InlineData("""{ "id": "a", "steps": [ { "type": "click", "target": { "text": "x", "within": { "css": "tr", "label": "y" } } }, { "type": "expectUrl", "url": "/" } ] }""", "target.within: give exactly one")]
     [InlineData("""{ "id": "a", "steps": [ { "type": "fill", "target": { "label": "Email" } }, { "type": "expectUrl", "url": "/" } ] }""", "steps[1] (fill): value is required")]
     [InlineData("""{ "id": "a", "steps": [ { "type": "fill", "target": { "label": "Email" }, "value": "{port:web}" }, { "type": "expectUrl", "url": "/" } ] }""", "{port:web} is not allowed here")]
-    [InlineData("""{ "id": "a", "steps": [ { "type": "click", "target": { "text": "x" }, "value": "y" }, { "type": "expectUrl", "url": "/" } ] }""", "value is only for fill and select")]
+    [InlineData("""{ "id": "a", "steps": [ { "type": "click", "target": { "text": "x" }, "value": "y" }, { "type": "expectUrl", "url": "/" } ] }""", "value is only for fill, select and expectValue")]
     [InlineData("""{ "id": "a", "steps": [ { "type": "expectText", "target": { "text": "x" } } ] }""", "steps[1] (expectText): text is required")]
     [InlineData("""{ "id": "a", "steps": [ { "type": "expectState", "target": { "text": "x" } } ] }""", "state is required")]
     [InlineData("""{ "id": "a", "steps": [ { "type": "expectResponse", "path": "api", "status": 999 } ] }""", "path is required")]
@@ -133,6 +133,29 @@ public class ScenarioTests
         Assert.Equal("Booking {run}", scenario.Steps[4].Text);
         Assert.Equal("expect the text \"Booking {run}\" to show \"Booking {run}\"", ScenarioText.Describe(scenario.Steps[4]));
     }
+
+    [Theory]
+    [InlineData("""{ "type": "expectValue", "target": { "label": "Topic" }, "value": "" }""", "expect the field labelled \"Topic\" to hold \"\"")]
+    [InlineData("""{ "type": "expectValue", "target": { "label": "Topic" }, "text": "sourdough" }""", "expect the field labelled \"Topic\" to contain \"sourdough\"")]
+    public void ExpectValue_reads_as_words(string step, string words) =>
+        Assert.Equal(words, ScenarioText.Describe(JsonSerializer.Deserialize<ScenarioStep>(step, Core.ProbeWebJson.Options)!));
+
+    [Theory]
+    [InlineData("""{ "type": "expectValue", "target": { "label": "Topic" }, "value": "a" }""")]
+    [InlineData("""{ "type": "expectValue", "target": { "label": "Topic" }, "value": "" }""")]
+    [InlineData("""{ "type": "expectValue", "target": { "label": "Topic" }, "text": "My story {run}" }""")]
+    public void ExpectValue_takes_a_value_or_a_text(string step) =>
+        Assert.Empty(Problems($$"""{ "id": "a", "steps": [ {{step}} ] }"""));
+
+    [Theory]
+    [InlineData("""{ "type": "expectValue", "target": { "label": "Topic" } }""", "value or text is required, not both")]
+    [InlineData("""{ "type": "expectValue", "target": { "label": "Topic" }, "value": "a", "text": "a" }""", "value or text is required, not both")]
+    [InlineData("""{ "type": "expectValue", "value": "a" }""", "target is required")]
+    [InlineData("""{ "type": "expectValue", "target": { "label": "Topic" }, "text": " " }""", "use value \"\" for an empty field")]
+    [InlineData("""{ "type": "expectValue", "target": { "label": "Password" }, "value": "{secret:TEST_ADMIN_PASS}" }""", "a secret is never read back")]
+    [InlineData("""{ "type": "expectText", "target": { "label": "Topic" }, "text": "a", "value": "a" }""", "value is only for fill, select and expectValue")]
+    public void ExpectValue_problems_say_what_it_needs(string step, string problem) =>
+        Assert.Contains(Problems($$"""{ "id": "a", "steps": [ {{step}} ] }"""), p => p.Contains(problem, StringComparison.Ordinal));
 
     [Fact]
     public void A_scenario_without_run_is_the_same_scenario_once_run_is_replaced()

@@ -21,6 +21,7 @@ public static class ScenarioText
         StepType.ExpectError => $"expect the error \"{s.Text}\"",
         StepType.ExpectUrl => $"expect the URL to contain \"{s.Url}\"",
         StepType.ExpectState => $"expect {s.Target} {s.State.ToString()!.ToLowerInvariant()}",
+        StepType.ExpectValue => s.Value is not null ? $"expect {s.Target} to hold \"{s.Value}\"" : $"expect {s.Target} to contain \"{s.Text}\"",
         StepType.ExpectResponse => $"expect {s.Method ?? "a request to"} {s.Path} to answer {s.Status}",
         _ => s.Type.ToString(),
     };

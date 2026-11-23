@@ -23,6 +23,16 @@ public sealed record WebScenario
     /// <summary>The acceptance criterion's text, as the spec states it.</summary>
     public string? Criterion { get; init; }
 
+    /// <summary>
+    /// W3.8 finding 6: further criteria the same steps check (booking a slot also shows the count
+    /// going up), each copied exactly. Optional; <see cref="Criterion"/> stays the main one.
+    /// </summary>
+    public IReadOnlyList<string>? Criteria { get; init; }
+
+    /// <summary>Every criterion this scenario checks: <see cref="Criterion"/>, then <see cref="Criteria"/>.</summary>
+    public IEnumerable<string> CriteriaChecked() =>
+        new[] { Criterion }.Concat(Criteria ?? []).OfType<string>().Where(c => !string.IsNullOrWhiteSpace(c)).Distinct(StringComparer.Ordinal);
+
     /// <summary>The route the scenario opens first.</summary>
     public string Start { get; init; } = "/";
 
@@ -87,6 +97,9 @@ public enum StepType
     [JsonStringEnumMemberName("expectState")] ExpectState,
     [JsonStringEnumMemberName("expectError")] ExpectError,
     [JsonStringEnumMemberName("expectResponse")] ExpectResponse,
+
+    /// <summary>W3.8 finding 1: what a field holds (an input's, a textarea's or a select's value), which <c>expectText</c> cannot see.</summary>
+    [JsonStringEnumMemberName("expectValue")] ExpectValue,
 }
 
 public enum ElementState
@@ -108,10 +121,11 @@ public sealed record ScenarioStep
     /// <summary><c>navigate</c>: the route. <c>expectResponse</c>: the request path, a prefix when it ends with <c>*</c>.</summary>
     public string? Path { get; init; }
 
-    /// <summary><c>fill</c> and <c>select</c>. May hold <c>{run}</c> (unique per run) and <c>{secret:NAME}</c>.</summary>
+    /// <summary><c>fill</c> and <c>select</c>: what to type or choose. May hold <c>{run}</c> (unique per run) and <c>{secret:NAME}</c>.
+    /// <c>expectValue</c>: what the field holds, exactly (whitespace normalised; empty for an empty field).</summary>
     public string? Value { get; init; }
 
-    /// <summary><c>expectText</c> and <c>expectError</c>: text the element contains.</summary>
+    /// <summary><c>expectText</c> and <c>expectError</c>: text the element contains. <c>expectValue</c>: text the field's value contains.</summary>
     public string? Text { get; init; }
 
     /// <summary><c>expectUrl</c>: text the page's path and query contain.</summary>

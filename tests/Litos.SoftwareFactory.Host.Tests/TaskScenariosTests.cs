@@ -77,20 +77,29 @@ public sealed class TaskScenariosTests : IAsyncLifetime
     {
         var projectId = await TestableProjectAsync();
         var threadId = await _host.CreateThreadAsync(projectId);
-        SubmissionResponse? refused = null;
+        SubmissionResponse? refused = null, uncovered = null;
         _host.Workers.Script.Enqueue(async call =>
         {
             refused = await call.Worker.SubmitAsync(call.SessionId, TestHost.DefaultSpec with
             {
                 Scenarios = ["""{"id":"export","criterion":"Exports work.","role":"admin","steps":[{"type":"expectUrl","url":"/"}]}"""],
             });
-            await call.Worker.SubmitAsync(call.SessionId, TestHost.DefaultSpec with { Scenarios = [Export] });
+            uncovered = await call.Worker.SubmitAsync(call.SessionId, TestHost.DefaultSpec with { Scenarios = [Export] });
+            await call.Worker.SubmitAsync(call.SessionId, TestHost.DefaultSpec with
+            {
+                Scenarios = [Export],
+                NotInBrowser = [new NotInBrowser("Others get a 403.", "a refused API call has no page to check")],
+            });
             return FakeWorkerLauncher.Done();
         });
 
         await _host.DelegateAsync(threadId, "@factory spec Export the orders list as CSV.");
         await WaitForSpecAsync(threadId);
 
+        // W3.8 finding 2: every criterion has a scenario or a reason.
+        Assert.False(uncovered!.Accepted);
+        Assert.Contains("\"Others get a 403.\": no scenario checks it. Add one, or name it in notInBrowser", uncovered.Message);
+        Assert.Contains("a refused API call has no page to check", (await _host.ThreadAsync(threadId)).LatestSpec!.NotInBrowserJson);
         Assert.False(refused!.Accepted);
         Assert.Contains("Fix them and call submit_spec again", refused.Message);
         Assert.Contains("role: the app has no login", refused.Message);
@@ -113,6 +122,48 @@ public sealed class TaskScenariosTests : IAsyncLifetime
         var check = UiTestingOf(details).Checks.Single(c => c.Id == "scenario:export");
         Assert.Equal(ScenarioSources.Spec, check.Source);
         Assert.Equal(ScenarioSources.Spec, Assert.Single(UiTestingOf(details).TaskScenarios).Source);
+        // The reason reaches the handoff, for the criteria table.
+        var evidence = JsonSerializer.Deserialize<HandoffEvidence>(details.LatestHandoff!.EvidenceJson, FactoryWire.Json)!;
+        Assert.Equal([new NotInBrowser("Others get a 403.", "a refused API call has no page to check")], evidence.NotInBrowser);
+    }
+
+    [Fact]
+    public async Task A_spec_scenario_may_check_several_criteria_and_a_reason_must_name_a_real_one()
+    {
+        // W3.8 findings 2 and 6.
+        var projectId = await TestableProjectAsync();
+        var threadId = await _host.CreateThreadAsync(projectId);
+        const string Both = """
+            {"id":"export","criterion":"Administrators can export.","criteria":["Others get a 403."],"start":"/orders",
+             "steps":[{"type":"expectText","target":{"testId":"status"},"text":"Exported"}]}
+            """;
+        const string Wrong = """
+            {"id":"export","criterion":"Administrators can export.","criteria":["Nobody else can."],"start":"/orders",
+             "steps":[{"type":"expectText","target":{"testId":"status"},"text":"Exported"}]}
+            """;
+        SubmissionResponse? badReason = null, badCriteria = null, none = null;
+        _host.Workers.Script.Enqueue(async call =>
+        {
+            none = await call.Worker.SubmitAsync(call.SessionId, TestHost.DefaultSpec);
+            badReason = await call.Worker.SubmitAsync(call.SessionId, TestHost.DefaultSpec with
+            {
+                Scenarios = [Export],
+                NotInBrowser = [new NotInBrowser("Refused users.", "an API call")],
+            });
+            badCriteria = await call.Worker.SubmitAsync(call.SessionId, TestHost.DefaultSpec with { Scenarios = [Wrong] });
+            await call.Worker.SubmitAsync(call.SessionId, TestHost.DefaultSpec with { Scenarios = [Both] });
+            return FakeWorkerLauncher.Done();
+        });
+
+        await _host.DelegateAsync(threadId, "@factory spec Export the orders list as CSV.");
+        await WaitForSpecAsync(threadId);
+
+        Assert.Contains("\"Administrators can export.\": no scenario checks it", none!.Message);
+        Assert.Contains("\"Others get a 403.\": no scenario checks it", none.Message);
+        Assert.Contains("notInBrowser: \"Refused users.\" is not one of this task's acceptance criteria", badReason!.Message);
+        Assert.Contains("criteria: \"Nobody else can.\" is not one of this task's acceptance criteria", badCriteria!.Message);
+        var payload = (await _host.ThreadAsync(threadId)).Messages.Last(m => m.Kind == MessageKind.Spec).PayloadJson!;
+        Assert.Contains("\"criteria\":[\"Administrators can export.\",\"Others get a 403.\"]", payload);
     }
 
     private async Task WaitForSpecAsync(Guid threadId)

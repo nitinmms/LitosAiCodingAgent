@@ -21,7 +21,7 @@ How things are now (what the code does, which library is used, how a similar fea
 - One choice per question.
 
 ## 4. Test the edges, from what you have read
-For each criterion ask: empty input, the largest input, a duplicate, a failure halfway, a user without permission, data that existed before this change. Don't read further just to hunt for edges. Each edge left open becomes a choice or a criterion.
+For each criterion ask: empty input, the largest input, a duplicate, a failure halfway, a user without permission, data that existed before this change. For a form that creates or changes records, ask of every input whether it is required, how long or large it may be, and what format or range it takes, and ask what a clash with an existing record does (a duplicate, a double booking). Don't read further just to hunt for edges. Each edge left open becomes a choice or a criterion.
 
 ## 5. Write it up
 - `submit_plan`: list choices parents first; the factory decides which to ask. Never settle one quietly.

@@ -344,6 +344,35 @@ public class BriefComposerTests
         Assert.True(brief.IndexOf("## Verification result", StringComparison.Ordinal) < brief.IndexOf("The implementing agent's account", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(ReviewDepth.Full)]
+    [InlineData(ReviewDepth.Light)]
+    public void ReviewBrief_AnswersAStaleLimitation_AndSaysTheMeasurementWins(ReviewDepth depth)
+    {
+        // W3.8 finding 8: the light review made "four tests still fail" blocking although the
+        // verification it was given had run them all green.
+        var work = new WorkSubmission("Booking.", [], [], ["ExportTests still fail on a clean checkout."], []);
+        var state = Submitted(work) with
+        {
+            LastVerification = new VerificationOutcome(
+                BuildStatus.Passed, UnitTestStatus.Passed, CoverageStatus.Met,
+                [new("Orders.Tests.ExportTests.Quotes_commas", TestOutcome.Passed)], null, [], []),
+        };
+
+        var brief = Compose(BriefKind.Review, state, Context with { Diff = "+x", ChangedLineCount = 1, ReviewDepth = depth }, kind: TurnKind.Review);
+
+        Assert.Contains("- ExportTests still fail on a clean checkout. (Not what the factory measured: its verification ran ExportTests (1 test), and all passed.)", brief);
+        Assert.Contains("the verification result is right: the factory ran them on this code", brief);
+        Assert.Contains("at most a `minor` finding asking to correct the account, never `blocking`", brief);
+    }
+
+    [Fact]
+    public void WorkBriefs_AskForLimitationsAfreshOnEverySubmit()
+    {
+        foreach (var kind in new[] { BriefKind.Run, BriefKind.Repair, BriefKind.Rework })
+            Assert.Contains("Each `submit_work` replaces the lists you sent before: write `knownLimitations` afresh", Compose(kind, State(), Context));
+    }
+
     [Fact]
     public void ReviewBrief_WithNoSubmission_HasNoAccountSection()
     {
@@ -1214,6 +1243,26 @@ public class BriefComposerTests
 
     private static SpecContext SpecFor(SpecDraft? previous = null, IReadOnlyList<ChatLine>? conversation = null) => new(
         "SalesApp", "the default branch `main`", "Add CSV export", "Export the orders list.", previous, conversation ?? []);
+
+    [Fact]
+    public void Spec_AsksForTheTestPlanInThreeLists_AndForEveryInputsRules()
+    {
+        // W3.8 findings 4 and 10: the plan read as one paragraph, and the work turn had to ask about
+        // double bookings and a reason's length the spec had not settled.
+        var brief = BriefComposer.Spec(SpecFor());
+
+        Assert.Contains("`testPlan`: an object of three lists: `unitTests`", brief);
+        Assert.Contains("`testPlan` (an object with the lists `unitTests`, `browser` and `byHand`)", brief);
+        Assert.Contains("\"testPlan\", new { unitTests = new[]", brief);
+        Assert.Contains("settle every input's rules (required, length, range, format, past or future)", brief);
+        Assert.Contains("a duplicate, a double booking", brief);
+    }
+
+    [Fact]
+    public void A_test_plan_in_three_lists_is_written_as_headed_lists_leaving_out_the_empty_ones() =>
+        Assert.Equal(
+            "Unit tests:\n- Rows (1).\n\nBy hand:\n- Open it in Excel.",
+            SpecTestPlan.Format(["Rows (1).", " "], [], ["  Open it in Excel. "]));
 
     [Fact]
     public void Spec_StatesTheTaskWhatWasAsked_AndThatNothingIsBuiltYet()

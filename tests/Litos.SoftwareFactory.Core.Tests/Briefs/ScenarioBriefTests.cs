@@ -29,8 +29,26 @@ public class ScenarioBriefTests
         Assert.Contains("`role`: one of `admin`, `staff`, `patient`; leave it out for a signed-out visitor.", brief);
         Assert.Contains("such as `/my/appointments`", brief);
         Assert.Contains("Take labels, names and test ids from the code, never guess them", brief);
-        Assert.Contains("`openQuestions` (a list of strings) and `scenarios` (a list of scenario objects).", brief);
+        Assert.Contains("`openQuestions` (a list of strings), `scenarios` (a list of scenario objects) and `notInBrowser` (a list of { criterion, reason } objects).", brief);
+        // W3.8 finding 2: a scenario or a reason for every criterion.
+        Assert.Contains("Every other criterion goes in `notInBrowser` with its reason", brief);
+        // W3.8 finding 5: a scenario sees only what it creates.
+        Assert.Contains("a scenario sees only what it creates itself, never what another scenario made", brief);
+        Assert.Contains("list it in `criteria`, copied exactly", brief);
         Assert.DoesNotContain("{{", brief);
+    }
+
+    [Fact]
+    public void The_guide_says_how_to_check_a_field_and_that_a_text_target_is_the_whole_text()
+    {
+        // W3.8 finding 1: insta's "fills the four fields" scenario had no way to read a field, and
+        // its text target "/ 500" matched nothing on a counter showing "273 / 500".
+        foreach (var brief in new[] { Spec(Clinic), Run(Clinic) })
+        {
+            Assert.Contains("`expectValue` (`value`: what a field holds exactly, `\"\"` when empty; or `text`: what it contains)", brief);
+            Assert.Contains("check a field with `expectValue`", brief);
+            Assert.Contains("A `text` target matches an element's whole text exactly", brief);
+        }
     }
 
     [Fact]

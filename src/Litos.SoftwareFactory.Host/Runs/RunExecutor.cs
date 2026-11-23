@@ -78,6 +78,9 @@ public sealed class RunExecutor(
                 // resumed run continues: from its stop, or — when it was interrupted mid-step
                 // and so has no stop — from the step that was under way.
                 RunEntry.Resume when state.Phase != RunPhase.NotStarted => new Resumed(),
+                // Only from its stop: a run lost mid-handoff after the dismissal recovers like any other.
+                RunEntry.DismissFindings when state.Phase == RunPhase.Stopped => new Resumed { DismissBlockingFindings = true },
+                RunEntry.DismissFindings => new Resumed(),
                 _ => new RunStarted(),
             };
 
@@ -889,6 +892,7 @@ public sealed class RunExecutor(
                 Notes = notes,
                 SpecificationRevision = spec?.Revision,
                 ApprovedCriteria = spec?.AcceptanceCriteria ?? [],
+                NotInBrowser = spec?.NotInBrowser ?? [],
                 RepositoryUrl = repository.WebUrl,
                 CloneUrl = repository.CloneUrl,
                 DefaultBranch = data.Project.DefaultBranch,

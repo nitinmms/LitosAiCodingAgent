@@ -80,10 +80,11 @@ public sealed class ScenarioSubmissionCheck(IFactoryStore store)
 {
     public async Task<string?> ProblemAsync(Guid threadId, Submission submission, CancellationToken ct)
     {
+        var spec = submission as SpecSubmission;
         var (scenarios, criteria, tool) = submission switch
         {
             WorkSubmission { Scenarios.Count: > 0 } w => (w.Scenarios, (IReadOnlyList<string>)[.. w.Criteria.Select(c => c.Criterion)], "submit_work"),
-            SpecSubmission { Scenarios.Count: > 0 } s => (s.Scenarios, s.AcceptanceCriteria, "submit_spec"),
+            SpecSubmission s => (s.Scenarios ?? [], s.AcceptanceCriteria, "submit_spec"),
             _ => (null, (IReadOnlyList<string>)[], ""),
         };
         if (scenarios is null)
@@ -92,7 +93,12 @@ public sealed class ScenarioSubmissionCheck(IFactoryStore store)
         if (await store.GetThreadAsync(threadId, ct) is not { } details || await store.GetProjectAsync(details.Thread.ProjectId, ct) is not { } project)
             return null;
         if (VerificationProfile.Parse(project.VerificationProfileJson).WebApp() is not { } contract)
-            return "This project is not tested in a browser (no contract is adopted): leave 'scenarios' out and call " + tool + " again.";
+        {
+            // Without a contract a spec has nothing to cover in the browser: its reasons are moot.
+            return scenarios.Count == 0
+                ? null
+                : "This project is not tested in a browser (no contract is adopted): leave 'scenarios' out and call " + tool + " again.";
+        }
 
         var projectIds = (await store.ApprovedScenariosAsync(project.Id, ct)).Select(s => s.ScenarioId).ToHashSet(StringComparer.Ordinal);
         var wanted = criteria.Select(Normal).ToHashSet(StringComparer.Ordinal);
@@ -127,11 +133,49 @@ public sealed class ScenarioSubmissionCheck(IFactoryStore store)
                 problems.Add($"{where}: criterion: copy the acceptance criterion it checks.");
             else if (wanted.Count > 0 && !wanted.Contains(Normal(scenario.Criterion)))
                 problems.Add($"{where}: criterion: \"{scenario.Criterion}\" is not one of this task's acceptance criteria: copy one exactly.");
+            foreach (var other in (scenario.Criteria ?? []).Where(c => wanted.Count > 0 && !wanted.Contains(Normal(c))))
+                problems.Add($"{where}: criteria: \"{other}\" is not one of this task's acceptance criteria: copy one exactly.");
         }
+
+        if (spec is not null)
+            problems.AddRange(CoverageProblems(spec, wanted, scenarios));
 
         return problems.Count == 0
             ? null
             : $"Some scenarios cannot run as written. Fix them and call {tool} again with all of its arguments:\n" + string.Join("\n", problems.Select(p => "- " + p));
+    }
+
+    /// <summary>
+    /// W3.8 finding 2: with a contract adopted, every criterion of a spec is either checked by a
+    /// scenario or named in <c>notInBrowser</c> with a reason, so the criteria table never shows a
+    /// bare "Not checked in the browser" for a spec's criterion.
+    /// </summary>
+    private static IEnumerable<string> CoverageProblems(SpecSubmission spec, HashSet<string> wanted, IReadOnlyList<string> scenarios)
+    {
+        var checkedByScenario = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var json in scenarios)
+        {
+            try
+            {
+                foreach (var scenario in WebScenario.Parse(json))
+                {
+                    foreach (var criterion in scenario.CriteriaChecked())
+                        checkedByScenario.Add(Normal(criterion));
+                }
+            }
+            catch (JsonException)
+            {
+                // Reported above.
+            }
+        }
+
+        var reasons = spec.NotInBrowser ?? [];
+        foreach (var reason in reasons.Where(r => !wanted.Contains(Normal(r.Criterion))))
+            yield return $"notInBrowser: \"{reason.Criterion}\" is not one of this task's acceptance criteria: copy one exactly.";
+
+        var explained = reasons.Select(r => Normal(r.Criterion)).ToHashSet(StringComparer.Ordinal);
+        foreach (var criterion in spec.AcceptanceCriteria.Where(c => !checkedByScenario.Contains(Normal(c)) && !explained.Contains(Normal(c))))
+            yield return $"\"{criterion}\": no scenario checks it. Add one, or name it in notInBrowser with why the browser cannot check it.";
     }
 
     /// <summary>A criterion as matched: case, spacing and a closing full stop are not held against it.</summary>

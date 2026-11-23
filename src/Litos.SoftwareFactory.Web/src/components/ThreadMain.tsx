@@ -474,6 +474,18 @@ export function ThreadMain({
               {thread.state === 'Interrupted' ? 'Recover and resume' : 'Resume'}
             </button>
           ) : null}
+          {details.canDismissFindings ? (
+            <button
+              className="btn"
+              onClick={() =>
+                void act(() => api.dismissFindings(thread.id), 'Blocking findings dismissed. The task hands off without a repair.')
+              }
+              disabled={busy}
+              title="The review's blocking findings are mistaken (for example a stale note the verification contradicts): hand off as it is, without a repair turn. The handoff says you decided this."
+            >
+              Dismiss findings and hand off
+            </button>
+          ) : null}
           {canRequestChanges(thread.state) && !requestingChanges ? (
             <button className="btn" onClick={beginChangeRequest} disabled={busy}>
               Request changes

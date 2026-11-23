@@ -153,7 +153,8 @@ public sealed class SpecExecutor(
     /// <summary>The newest revision as the brief shows it, when the spec is being revised.</summary>
     internal static SpecDraft? Draft(Specification? spec) => spec is null ? null : new SpecDraft(
         spec.Revision, spec.Summary, List(spec.AcceptanceCriteriaJson), List(spec.AffectedAreasJson), spec.TestPlan, List(spec.OpenQuestionsJson),
-        Testability.TaskScenarios.Split(spec.ScenariosJson));
+        Testability.TaskScenarios.Split(spec.ScenariosJson),
+        Infrastructure.Persistence.EfFactoryStore.SpecNotInBrowser(spec.NotInBrowserJson));
 
     internal static IReadOnlyList<string> List(string json) =>
         string.IsNullOrWhiteSpace(json) ? [] : JsonSerializer.Deserialize<List<string>>(json, FactoryWire.Json) ?? [];

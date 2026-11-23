@@ -54,7 +54,7 @@ Call `submit_work` with these fields, using exactly these names:
 - `summary`: a short account of what changed;
 - `criteria`: one object per acceptance criterion, each `{ criterion, tests }` where `tests` is a list of the unit test names that cover it, or `{ criterion, manualOnly: true }` when it can only be checked by hand;
 - `testsAdded`: a list of the tests you added or changed;
-- `knownLimitations`: a list of anything left undone, unverified or assumed;
+- `knownLimitations`: a list of anything left undone, unverified or assumed. Each `submit_work` replaces the lists you sent before: write `knownLimitations` afresh for the code as it is now, leaving out a failure or problem from an earlier attempt once it is gone;
 - `manualTestSteps`: a list of steps a person can follow, with expected results;
 - `prerequisites`: a list of what the tester must have installed to run the application, such as `Node.js 20 or later`;
 - `runSteps`: one object per step, each `{ text, command }`, saying how to start the application and reach the change; leave out `command` for a step that has none, such as opening a page;

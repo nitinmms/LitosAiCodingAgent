@@ -247,6 +247,14 @@ public interface IFactoryStore
         Guid threadId, Guid userId, LifecycleTrigger trigger, DateTimeOffset now, CancellationToken ct, long reflectionAllowance = 0);
 
     /// <summary>
+    /// W3.8 finding 8: a person judges the review's blocking findings mistaken on a task Blocked
+    /// because no repair cycle was left for them. Each is marked Dismissed with the verdict Wrong,
+    /// audited, and the run is queued to hand off without the repair. Throws
+    /// <see cref="StoreConflictException"/> for any other state or stop.
+    /// </summary>
+    Task<TaskThread> DismissBlockingFindingsAsync(Guid threadId, Guid userId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
     /// Takes back a change request: the thread's unfinished rework run is ended as Withdrawn and
     /// the thread returns to awaiting human testing on its last handoff. Throws
     /// <see cref="StoreConflictException"/> when the run is executing, when the thread's run is

@@ -400,6 +400,9 @@ public sealed class Specification
     /// W3.7): approved with the specification, then run by the task like a project's own.
     /// </summary>
     public string ScenariosJson { get; set; } = "[]";
+
+    /// <summary>W3.8 finding 2: the criteria no scenario checks, each with why, as a JSON array of { criterion, reason }.</summary>
+    public string NotInBrowserJson { get; set; } = "[]";
     public Guid? ApprovedBy { get; set; }
     public DateTimeOffset? ApprovedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -424,6 +427,9 @@ public enum RunEntry
     Start,
     Resume,
     DecisionAnswered,
+
+    /// <summary>Resume by handing off with the review's blocking findings dismissed (W3.8 finding 8).</summary>
+    DismissFindings,
 }
 
 public sealed class TaskRun
@@ -976,6 +982,7 @@ public static class AuditActions
 
     /// <summary>Back into the queue: a resume, a recovery, a resolved blocker or a raised budget.</summary>
     public const string ThreadResume = "thread.resume";
+    public const string ThreadDismissFindings = "thread.dismiss_findings";
     public const string ThreadWithdraw = "thread.withdraw";
 
     /// <summary>A queued task was moved in its project's run order (run-order-architecture.md).</summary>

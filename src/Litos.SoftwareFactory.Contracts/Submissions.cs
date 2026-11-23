@@ -78,15 +78,43 @@ public enum FindingSeverity
 public sealed record ReviewFinding(FindingSeverity Severity, string File, int? Line, string Text);
 
 /// <summary>submit_spec: a spec turn's proposed specification, for the user to approve.</summary>
+/// <param name="TestPlan">The plan as text. A plan given in parts (unit tests, browser, by hand) arrives
+/// as headed lists (<see cref="SpecTestPlan"/>), which the spec card shows as lists.</param>
 /// <param name="Scenarios">One browser scenario per criterion a person can check in the app, each a
 /// JSON object (W3.7). Approved with the specification; then run like a project's own.</param>
+/// <param name="NotInBrowser">W3.8 finding 2: each criterion with no scenario, and why the browser
+/// cannot check it. With a contract adopted every criterion has one or the other.</param>
 public sealed record SpecSubmission(
     string Summary,
     IReadOnlyList<string> AcceptanceCriteria,
     IReadOnlyList<string> AffectedAreas,
     string TestPlan,
     IReadOnlyList<string> OpenQuestions,
-    IReadOnlyList<string>? Scenarios = null) : Submission;
+    IReadOnlyList<string>? Scenarios = null,
+    IReadOnlyList<NotInBrowser>? NotInBrowser = null) : Submission;
+
+/// <summary>An acceptance criterion that no browser scenario checks, and why (W3.8 finding 2).</summary>
+public sealed record NotInBrowser(string Criterion, string Reason);
+
+/// <summary>
+/// W3.8 finding 4: a test plan in three parts, written as headed lists so that it reads as lists on
+/// the spec card and stays plain text everywhere else (briefs, the database).
+/// </summary>
+public static class SpecTestPlan
+{
+    public const string UnitTests = "Unit tests:";
+    public const string Browser = "In the browser:";
+    public const string ByHand = "By hand:";
+
+    public static string Format(IReadOnlyList<string> unitTests, IReadOnlyList<string> browser, IReadOnlyList<string> byHand)
+    {
+        var parts = new[] { (Heading: UnitTests, Items: unitTests), (Heading: Browser, Items: browser), (Heading: ByHand, Items: byHand) }
+            .Select(p => (p.Heading, Items: p.Items.Where(i => !string.IsNullOrWhiteSpace(i)).Select(i => "- " + i.Trim()).ToList()))
+            .Where(p => p.Items.Count > 0)
+            .Select(p => p.Heading + "\n" + string.Join("\n", p.Items));
+        return string.Join("\n\n", parts);
+    }
+}
 
 /// <summary>
 /// submit_plan: the decision scan's result. The approach and the files it expects to change, and

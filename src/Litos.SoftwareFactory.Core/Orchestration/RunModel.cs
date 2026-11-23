@@ -286,7 +286,15 @@ public sealed record RunStarted : StepOutcome;
 
 /// <summary>A stopped run was resumed: by the user, after a budget raise, after a blocker was
 /// resolved or after recovery from an interruption.</summary>
-public sealed record Resumed : StepOutcome;
+public sealed record Resumed : StepOutcome
+{
+    /// <summary>
+    /// W3.8 finding 8: a person judged the review's blocking findings mistaken. Allowed only when
+    /// the run stopped because no repair cycle was left for them; the run then hands off without
+    /// the repair, and the handoff says so.
+    /// </summary>
+    public bool DismissBlockingFindings { get; init; }
+}
 
 public sealed record PreflightCompleted(bool Succeeded, string? Failure = null) : StepOutcome;
 

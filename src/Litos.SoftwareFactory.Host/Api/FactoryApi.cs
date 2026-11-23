@@ -697,6 +697,17 @@ public static class FactoryApi
             return result;
         });
 
+        // W3.8 finding 8: the review's blocking findings judged mistaken, on a task blocked because
+        // no repair cycle was left for them: hand off as it is, audited, the dismissal disclosed.
+        threadRoutes.MapPost("/dismiss-findings", async (Guid id, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
+        {
+            if (await store.GetThreadAsync(id, ct) is null)
+                return Results.NotFound();
+            var result = await ActAsync(signals, () => store.DismissBlockingFindingsAsync(id, user.UserId(), clock.UtcNow, ct));
+            signals.WorkQueued();
+            return result;
+        });
+
         // A person's verdict on a review finding: what review yield is measured from.
         findingRoutes.MapPost("/verdict", (Guid id, FindingVerdictRequest request, ClaimsPrincipal user, IFactoryStore store, FactorySignals signals, IClock clock, CancellationToken ct) =>
         {
@@ -1018,6 +1029,11 @@ public static class FactoryApi
         EventCursor = eventCursor,
         // After a handoff: the tokens Request changes adds to the cap; null with no cap or before a handoff.
         ReworkTopUp = reworkTopUp,
+        // W3.8 finding 8: Blocked on review findings with no repair cycle left, so a person may
+        // judge them mistaken and hand off without the repair (POST .../dismiss-findings).
+        CanDismissFindings = details.Thread.State == LifecycleState.Blocked
+            && details.LatestRun is { Status: not RunStatus.Finished, StateJson: { Length: > 0 } json }
+            && RunOrchestrator.CanDismissBlockingFindings(RunStateJson.Deserialize(json)),
         Thread = ThreadView(details.Thread),
         Project = ProjectView(details.Project),
         // A plain message is being answered: the composer waits for the reply.
