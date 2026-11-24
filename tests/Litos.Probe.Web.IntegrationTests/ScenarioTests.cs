@@ -48,6 +48,51 @@ public class NodeExpressSpaScenarioTests
             "steps": [ { "type": "expectText", "target": { "testId": "notes" }, "text": "Walk the dog", "timeoutSeconds": 2 } ]
           },
           {
+            "id": "field-values",
+            "steps": [
+              { "type": "expectValue", "target": { "label": "New note" }, "value": "" },
+              { "type": "fill", "target": { "label": "New note" }, "value": "Draft {run}" },
+              { "type": "expectValue", "target": { "label": "New note" }, "value": "Draft {run}" },
+              { "type": "expectValue", "target": { "label": "New note" }, "text": "Draft" },
+              { "type": "click", "target": { "role": "button", "name": "Add note" } },
+              { "type": "expectValue", "target": { "label": "New note" }, "value": "" }
+            ]
+          },
+          {
+            "id": "textarea-label-after-fill",
+            "criterion": "A textarea that holds text is still found by the label wrapping it.",
+            "steps": [
+              { "type": "fill", "target": { "label": "Note detail" }, "value": "A long detail {run}" },
+              { "type": "expectVisible", "target": { "label": "Note detail" } },
+              { "type": "expectValue", "target": { "label": "Note detail" }, "value": "A long detail {run}" },
+              { "type": "fill", "target": { "label": "Note detail" }, "value": "Retyped {run}" },
+              { "type": "expectValue", "target": { "label": "Note detail" }, "value": "Retyped {run}" },
+              { "type": "expectVisible", "target": { "label": "New note" } }
+            ]
+          },
+          {
+            "id": "textarea-label-cleared-again",
+            "criterion": "Clearing the textarea makes its label resolve again.",
+            "steps": [
+              { "type": "fill", "target": { "label": "Note detail" }, "value": "Draft {run}" },
+              { "type": "expectVisible", "target": { "label": "Note detail" } },
+              { "type": "fill", "target": { "label": "Note detail" }, "value": "" },
+              { "type": "expectVisible", "target": { "label": "Note detail" } },
+              { "type": "expectValue", "target": { "label": "Note detail" }, "value": "" }
+            ]
+          },
+          {
+            "id": "wrong-value",
+            "steps": [
+              { "type": "fill", "target": { "label": "New note" }, "value": "x" },
+              { "type": "expectValue", "target": { "label": "New note" }, "value": "y", "timeoutSeconds": 2 }
+            ]
+          },
+          {
+            "id": "value-of-a-list",
+            "steps": [ { "type": "expectValue", "target": { "testId": "notes" }, "value": "" } ]
+          },
+          {
             "id": "not-a-role-here",
             "role": "admin",
             "steps": [ { "type": "expectUrl", "url": "/" } ]
@@ -93,6 +138,21 @@ public class NodeExpressSpaScenarioTests
         var wrong = Check(report, "scenario:wrong-text");
         Assert.Equal(Classification.ApplicationDefect, wrong.Classification);
         Assert.Contains("[data-testid=notes] shows \"Buy flour Feed the starter Book the oven\", which does not contain \"Walk the dog\"", wrong.Message);
+
+        // W3.8 finding 14: a textarea's value is a child text node of the label wrapping it, so
+        // the label's Playwright name reads label + value and stops matching. A plain input cannot
+        // do this, so the field the same test app labels with for= is the control.
+        Assert.True(Check(report, "scenario:textarea-label-after-fill").Status == CheckStatus.Passed, Describe(report));
+        Assert.True(Check(report, "scenario:textarea-label-cleared-again").Status == CheckStatus.Passed, Describe(report));
+
+        // W3.8 finding 1: what a field holds, which expectText cannot see.
+        Assert.True(Check(report, "scenario:field-values").Status == CheckStatus.Passed, Describe(report));
+        var wrongValue = Check(report, "scenario:wrong-value");
+        Assert.Equal(Classification.ApplicationDefect, wrongValue.Classification);
+        Assert.Contains("the field labelled \"New note\" holds \"x\", not \"y\".", wrongValue.Message);
+        var list = Check(report, "scenario:value-of-a-list");
+        Assert.Equal(Classification.TestDefect, list.Classification);
+        Assert.Contains("[data-testid=notes] is a <ul>, not a field", list.Message);
 
         // Never started: the app has no login.
         var invalid = Check(report, "scenario:not-a-role-here");

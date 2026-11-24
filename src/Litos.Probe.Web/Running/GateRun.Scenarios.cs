@@ -347,7 +347,7 @@ internal sealed partial class GateRun
             var found = await ResolveAsync(target, timeout);
             if (found.Failure is { } failure)
                 return failure;
-            return await PollAsync(timeout, () => found.Locator!.IsVisibleAsync())
+            return await PollAsync(timeout, async () => await found.Locator!.IsVisibleAsync())
                 ? null
                 : (FailureCause.AssertionFailed, $"{target} is on the page but not visible.");
         }
@@ -492,9 +492,15 @@ internal sealed partial class GateRun
                 scope = container.Locator!;
             }
 
-            var all = Raw(scope, target);
+            ILocator? all = null;
             var count = 0;
-            await PollAsync(timeout, async () => (count = await all.CountAsync()) > 0);
+            await PollAsync(timeout, async () =>
+            {
+                all = await RawAsync(scope, target);
+                return all is not null && (count = await all.CountAsync()) > 0;
+            });
+            if (all is null)
+                all = Raw(scope, target);
 
             if (count == 0)
                 return new Found(null, (FailureCause.LocatorNotFound, await NotFoundAsync(target)));
@@ -510,6 +516,46 @@ internal sealed partial class GateRun
                 : new Found(null, (FailureCause.LocatorAmbiguous,
                     $"{target} matches {count} elements. Add within (a container such as its row) or nth to say which one."));
         }
+
+        /// <summary>
+        /// A label's field, falling back to the label's own text when Playwright's name does not match (W3.8 finding 14).
+        /// </summary>
+        /// <remarks>
+        /// A textarea's value is a child text node of the label wrapping it, so Playwright's name for
+        /// that label reads the label followed by the value with nothing in between: React writes the
+        /// node for a controlled value, and page markup with text between the tags does too. Only a
+        /// textarea can, since an input is void, which is why a plain input's label always resolves, and
+        /// a label with for= sits outside its field and keeps its own text, so it resolves too. The
+        /// label's own text is what a person reads and what innerText gives, which is why a failure's
+        /// list of the labels on the page holds the very label the name no longer finds.
+        /// </remarks>
+        private static async Task<ILocator?> ByLabelAsync(ILocator scope, string label)
+        {
+            var straight = scope.GetByLabel(label, new LocatorGetByLabelOptions { Exact = true });
+            if (await straight.CountAsync() > 0)
+                return straight;
+
+            // Exact, so a label "Audience" does not also answer for "Audience type": HasText is a
+            // substring test and would match both, which reads as an ambiguous target. The index of
+            // the match is used rather than a marker attribute, so the page is left as the app made it.
+            var labels = scope.Locator("label");
+            var matches = await labels.EvaluateAllAsync<int[]>(MatchLabelScript, label);
+            var index = Array.IndexOf(matches, 1);
+            if (index < 0)
+                return null;
+
+            var own = labels.Nth(index).Locator("xpath=.//*[self::input or self::textarea or self::select]");
+            return await own.CountAsync() > 0 ? own : null;
+        }
+
+        /// <summary>Whether each label's own text, as innerText gives it, is exactly the label asked for.</summary>
+        private const string MatchLabelScript =
+            "(labels, wanted) => { wanted = wanted.trim(); "
+          + "return labels.map(el => ((el.innerText || '').trim() === wanted ? 1 : 0)); }";
+
+        /// <summary>Raw, but a label may be a wrapping label whose name a textarea's text has spoiled.</summary>
+        private static async Task<ILocator?> RawAsync(ILocator scope, Target t) =>
+            t.Label is { } label ? await ByLabelAsync(scope, label) : Raw(scope, t);
 
         private static ILocator Raw(ILocator scope, Target t) =>
             t.Role is { } role ? scope.GetByRole(Enum.Parse<AriaRole>(role, ignoreCase: true), new LocatorGetByRoleOptions { Name = t.Name, Exact = t.Name is not null })

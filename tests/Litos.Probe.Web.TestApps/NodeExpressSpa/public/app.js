@@ -8,9 +8,14 @@ async function notes() {
     <ul data-testid="notes"></ul>
     <form id="add">
       <label for="text">New note</label>
+      <label class="detail"><span>Note detail</span><textarea id="detail" name="detail"></textarea></label>
       <input id="text" name="text" required>
       <button type="submit">Add note</button>
     </form>`;
+  // A controlled textarea's value is its child text node, as React writes it, so the wrapping
+  // label's textContent reads the label followed by the value (Probe.Web W3.8 finding 14).
+  const detail = view.querySelector("#detail");
+  detail.addEventListener("input", () => { detail.textContent = detail.value; });
   const list = view.querySelector("ul");
   const render = (items) => { list.innerHTML = items.map((n) => `<li>${n.text.replace(/</g, "&lt;")}</li>`).join(""); };
   render(await (await fetch("/api/notes")).json());

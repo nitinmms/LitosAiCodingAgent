@@ -593,6 +593,20 @@ The user's order: F4, F1, F2, F3, all at once, after pushing W3.8. Decisions tak
 | **F3 Criteria table** | 3, 6, 7 | **Several criteria.** A scenario's optional `criteria` lists further criteria its steps check (`WebScenario.CriteriaChecked`); the host checks each, `ScenarioInfo.Criteria` carries them, and the spec card and the table match on any of them. **Test defect.** A TestDefect reads *Scenario needs fixing (test defect)*, in neutral, not red. **Covered by.** A criterion with no unit test and a passing approved scenario reads *Browser scenario &lt;id&gt;*, not "Manual testing only". |
 
 
+**Finding 14, a label's field once a textarea holds text (2026-11-23).** `getByLabel(label, Exact)`
+stopped finding a `<textarea>` as soon as it held text, while the same target kept working against a
+plain `<input>`, `css` and `role=textbox`. The cause is the value itself: a textarea's value is a child
+text node, React writes one for a controlled `value` and page markup with text between the tags does
+too, and Playwright builds a wrapping label's name from its `textContent`. The name therefore reads the
+label followed by the value with nothing in between ("What is the story about?Sourdough"), so no
+typing target matches any more. An input is void and a label with `for=` sits outside its field, which
+is why neither broke. `GateRun.ByLabelAsync` now takes Playwright's answer when it has one and falls
+back to the label whose own text, as `innerText` gives it, is exactly the label asked for. It is why a
+failure could list "What is the story about?" among the labels on the page while calling it missing:
+the list is read with `innerText`, which omits the value, and the match was made with `textContent`,
+which keeps it. `NodeExpressSpa` gained a React-style textarea in a wrapping label as the regression,
+and its `for=` input is the control. 284 unit, 36 integration.
+
 **Tests:** Core 1,400 (orchestrator: dismiss and hand off, only from that stop; the answer note's de-duplication and coverage; the review rule in both depths; limitations afresh in three briefs; the spec brief's lists and input rules; the guide's `expectValue`, reset and `criteria` wording; `SpecTestPlan`). Worker 428 (the plan's three lists and bad shapes, `notInBrowser`). Probe.Web unit 284 and integration 36 (`expectValue` in a real browser: while typing, after adding, a wrong value as an ApplicationDefect, a list as a TestDefect). Infrastructure on Postgres (the spec keeps its reasons; the migration gives earlier specs `[]`). Host: `DismissFindingsTests` (dismiss and hand off with no repair, audited; Resume still repairs; any other stop refused) and `TaskScenariosTests` (a criterion with neither is refused; a reason or `criteria` naming a criterion that isn't the task's is refused; reasons reach the handoff). Web 599 plus the spec card's reasons, lists and `criteria`, and the table's reason, test-defect pill and *Covered by*.
 
 **Finding 12, the proposal as discussed (2026-11-19; only item 1 was adopted, above).**
