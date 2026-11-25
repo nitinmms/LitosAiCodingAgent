@@ -17,9 +17,11 @@ using Litos.Agent.Providers;
 using Litos.Agent.Session;
 using Litos.Agent.Streaming;
 using Litos.Agent.Tools;
+using Litos.Hosting.Files;
 using Litos.Kernel;
 using Litos.Tools.Attachments;
 using Litos.Tools.Mcp;
+using Litos.Tools.Shell;
 using Litos.Tools.Skills;
 using MarkView.Avalonia;
 using ContentBlock = Litos.Agent.Messages.ContentBlock;
@@ -46,15 +48,10 @@ public sealed partial class MainWindow : Window
     private static readonly IBrush ToolErrorBrush = new SolidColorBrush(Color.Parse("#F48771"));
     private static readonly IBrush ErrorBubbleBrush = new SolidColorBrush(Color.Parse("#5A1F1F"));
     private static readonly IBrush DimTextBrush = new SolidColorBrush(Color.Parse("#9A9A9A"));
-    private static readonly IBrush KernelOnBrush = new SolidColorBrush(Color.Parse("#D7BA7D"));
+    private static readonly IBrush PtcOnBrush = new SolidColorBrush(Color.Parse("#D7BA7D"));
 
     private readonly MainWindowSession _session;
     private Transcript _transcript;
-    // Deliberately process-lifetime, not per-session: the consent dialog's purpose is making sure
-    // the user has SEEN what enabling kernel mode means at least once, not re-litigating it every
-    // time a session's toggle flips ON again within the same run — the toggle's own persisted
-    // per-session state (KernelModeEnabled, §5.3) already gates whether the capability is active.
-    private bool _kernelModeConsentShownThisProcess;
     private string _sessionId = Guid.NewGuid().ToString("n");
     // Populated once ObserveUpdateCheckAsync's startup check completes with a real update; null
     // means either "still checking", "up to date", or "check failed" — HandleUpdateAsync re-checks
@@ -77,6 +74,12 @@ public sealed partial class MainWindow : Window
     private Border? _workingIndicator;
     private Border? _layoutNudgePhantom;
     private readonly Dictionary<string, Queue<ToolCallRow>> _toolRows = new();
+    // Rows created at ToolCallStarted whose arguments haven't arrived yet (ToolCallCompleted),
+    // keyed and queued the same way as _toolRows.
+    private readonly Dictionary<string, Queue<ToolCallRow>> _sendingToolRows = new();
+    // Open "Approval needed" cards by PendingApproval id, so the store's Resolved/TimedOut events
+    // (raised off the UI thread, and possibly after the user's own click) settle the right card.
+    private readonly Dictionary<Guid, ApprovalCard> _approvalCards = new();
 
     private const string SkillsTrigger = "/skills ";
     private bool _suppressInputBoxTextChanged;
@@ -116,8 +119,8 @@ public sealed partial class MainWindow : Window
 
         SendButton.Click += async (_, _) =>
         {
-            if (_turnCts is { IsCancellationRequested: false } cts)
-                cts.Cancel();
+            if (_turnCts is { IsCancellationRequested: false })
+                CancelTurn();
             else
                 await SubmitAsync();
         };
@@ -143,8 +146,8 @@ public sealed partial class MainWindow : Window
                 e.Handled = true;
                 await SubmitAsync();
             }
-            else if (e.Key == Key.Escape && _turnCts is { IsCancellationRequested: false } cts)
-                cts.Cancel();
+            else if (e.Key == Key.Escape && _turnCts is { IsCancellationRequested: false })
+                CancelTurn();
         }, RoutingStrategies.Tunnel);
         InputBox.TextChanged += async (_, _) =>
         {
@@ -156,7 +159,7 @@ public sealed partial class MainWindow : Window
         ChangeDirectoryButton.Click += async (_, _) => await ChangeWorkingDirectoryAsync();
         ProviderButton.Click += async (_, _) => await HandleProviderAsync(argument: null);
         ModelButton.Click += async (_, _) => await HandleModelAsync(argument: null);
-        KernelToggleButton.Click += async (_, _) => await ToggleKernelModeAsync();
+        KernelToggleButton.Click += async (_, _) => await ShowPtcWindowAsync();
         UpdateButton.Click += async (_, _) => await HandleUpdateAsync();
         ContextUsagePanel.DoubleTapped += async (_, _) => await ShowContextBreakdownAsync();
         CommandMenuButton.Click += (_, _) => OpenCommandMenu(openedByTyping: false);
@@ -169,7 +172,26 @@ public sealed partial class MainWindow : Window
         // was connected — worse with more servers enabled, since McpToolProvider.ShutdownAsync
         // disposes them one at a time). A lingering child process for a few seconds after the
         // window is gone is harmless — mirrors how most desktop apps close.
-        Closing += (_, _) => _ = _session.McpToolProvider.ShutdownAsync();
+        Closing += (_, _) =>
+        {
+            _ = _session.McpRefreshService.StopAsync(CancellationToken.None);
+            _ = _session.McpToolProvider.ShutdownAsync();
+            _ = _session.LoopbackServer.StopAsync();
+        };
+
+        // Raised from inside McpAwareApprovalGate on whatever thread the tool call runs on, hence
+        // the Post. Litos.Gui runs one session per window, so every pending approval belongs to
+        // the turn on screen — no per-session routing (PendingApprovalRelay) is needed here.
+        _session.PendingApprovals.Added += approval => Dispatcher.UIThread.Post(() => AddApprovalCard(approval));
+        _session.PendingApprovals.TimedOut += id => Dispatcher.UIThread.Post(() => SettleApprovalCard(id, ApprovalOutcome.TimedOut));
+        _session.PendingApprovals.Resolved += id => Dispatcher.UIThread.Post(() => SettleApprovalCard(id, ApprovalOutcome.Denied));
+
+        if (string.IsNullOrEmpty(_session.Model))
+            AddToolLine(_session.StartupModelListError is { } listError
+                ? $"Couldn't load {_session.ProviderName}'s models ({listError}). {NoModelSelectedMessage}"
+                : NoModelSelectedMessage);
+        if (_session.LoopbackServer.StartError is { } loopbackError)
+            AddToolLine($"Artifact and file-share links are unavailable this run: {loopbackError}");
 
         if (resumeSessionId is not null)
             _ = ResumeSessionAsync(resumeSessionId, announce: false);
@@ -208,7 +230,7 @@ public sealed partial class MainWindow : Window
     private void UpdateProviderModelText()
     {
         ProviderText.Text = _session.ProviderName;
-        ModelText.Text = _session.Model;
+        ModelText.Text = string.IsNullOrEmpty(_session.Model) ? "(no model)" : _session.Model;
     }
 
     private static readonly IBrush ContextUsageNormalBrush = DimTextBrush;
@@ -222,11 +244,13 @@ public sealed partial class MainWindow : Window
     // separately: every one of them already means "resync UI state to the current _transcript,"
     // which is exactly when the toggle display (backed by _transcript.KernelModeEnabled, §5.3)
     // can also have changed — same reasoning, same call sites.
-    private void RefreshContextUsage()
+    // pendingEstimatedTokens: content already seen on screen but not yet in _transcript — see
+    // ContextUsage.Compute's additionalEstimatedTokens.
+    private void RefreshContextUsage(int pendingEstimatedTokens = 0)
     {
         RefreshKernelToggleButton();
 
-        var snapshot = ContextUsage.Compute(_transcript, _session.ContextLength);
+        var snapshot = ContextUsage.Compute(_transcript, _session.ContextLength, additionalEstimatedTokens: pendingEstimatedTokens);
         if (snapshot is null)
         {
             ContextUsageBar.Value = 0;
@@ -248,42 +272,51 @@ public sealed partial class MainWindow : Window
         ToolTip.SetTip(ContextUsagePanel, $"Context used: {snapshot.UsedTokens:N0} / {snapshot.ContextLength:N0} tokens — double-click for details");
     }
 
+    private bool IsPtcAvailable => _session.KernelSessionManager is not null;
+
+    // The session the "PTC on but unavailable" notice was last shown for, so it appears once per
+    // session rather than on every turn.
+    private string? _ptcUnavailableNoticeSessionId;
+
     private void RefreshKernelToggleButton()
     {
-        KernelToggleText.Text = _transcript.KernelModeEnabled ? "Kernel: On" : "Kernel: Off";
-        KernelToggleText.Foreground = _transcript.KernelModeEnabled ? KernelOnBrush : DimTextBrush;
+        var (label, isOn) = PtcStatusLabel(IsPtcAvailable, _transcript.KernelModeEnabled);
+        KernelToggleText.Text = label;
+        KernelToggleText.Foreground = isOn ? PtcOnBrush : DimTextBrush;
     }
 
+    /// <summary>The status-bar PTC label and whether it should render highlighted. Pure and
+    /// internal so it's testable without an Avalonia Application.</summary>
+    internal static (string Label, bool IsOn) PtcStatusLabel(bool available, bool enabled) =>
+        !available ? ("PTC: unavailable", false)
+        : enabled ? ("PTC: On", true)
+        : ("PTC: Off", false);
+
     /// <summary>
-    /// Flipping the toggle ON is the explicit, visible consent moment for kernel mode's ungated
-    /// local-code-execution capability (ReadMe_PTCPersistentKernel.md §5.1/§5.3) — a one-time
-    /// confirmation dialog the first time a session turns it on, per §5.3's "either is consistent
-    /// with this decision" note. Persisted per-chat-session via a "kernel_toggle" TranscriptEntry
-    /// (§5.3), not a global app preference — a second, unrelated session does not inherit this
-    /// choice, and /new starts a new session back at the OFF default (§5.3).
+    /// /ptc and the status-bar PTC button: opens the Programmatic Tool Calling switch (PtcWindow),
+    /// the Gui counterpart of the VS Code extension's /ptc popup. Its always-visible warning is the
+    /// consent moment for PTC's ungated local code execution (ReadMe_PTCPersistentKernel.md
+    /// §5.1/§5.3), replacing the separate once-per-process confirmation dialog kernel mode used to
+    /// show. The state is persisted per chat session via a "kernel_toggle" TranscriptEntry (§5.3),
+    /// not a global preference — /new starts back at the OFF default.
     /// </summary>
-    private async Task ToggleKernelModeAsync()
+    private Task ShowPtcWindowAsync() =>
+        PtcWindow.ShowAsync(this, _transcript.KernelModeEnabled, IsPtcAvailable, SetPtcEnabledAsync);
+
+    private async Task<bool> SetPtcEnabledAsync(bool enabled)
     {
-        var next = !_transcript.KernelModeEnabled;
+        if (!IsPtcAvailable || enabled == _transcript.KernelModeEnabled)
+            return _transcript.KernelModeEnabled;
 
-        if (next && !_kernelModeConsentShownThisProcess)
-        {
-            var confirmed = await ConfirmationDialog.ShowAsync(
-                this,
-                "Enable kernel mode?",
-                "When ON, the model's only tool is a persistent C# code kernel. Code the model writes " +
-                "runs with your full local user permissions — file, network, and subprocess access are " +
-                "NOT gated by an approval prompt (see ReadMe_PTCPersistentKernel.md §5). Only enable " +
-                "this if you trust the model to run local code unsupervised for this session.");
-            if (!confirmed)
-                return;
-            _kernelModeConsentShownThisProcess = true;
-        }
-
-        _transcript.SetKernelModeEnabled(next);
-        await _session.TranscriptStore.AppendAsync(SessionOwner.Local, _sessionId, TranscriptEntry.KernelToggle(next), CancellationToken.None);
+        // Persisted first: if the write throws (PtcWindow reports it), the in-memory state hasn't
+        // changed, so the session and the file still agree.
+        await _session.TranscriptStore.AppendAsync(SessionOwner.Local, _sessionId, TranscriptEntry.KernelToggle(enabled), CancellationToken.None);
+        _transcript.SetKernelModeEnabled(enabled);
         RefreshKernelToggleButton();
-        AddToolLine(next ? "Kernel mode enabled for this session." : "Kernel mode disabled for this session.");
+        AddToolLine(enabled
+            ? "Programmatic Tool Calling enabled for this session."
+            : "Programmatic Tool Calling disabled for this session.");
+        return enabled;
     }
 
     /// <summary>
@@ -294,13 +327,13 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task HandleKernelResetAsync()
     {
-        if (!_transcript.KernelModeEnabled)
+        if (_session.KernelSessionManager is not { } kernelSessionManager || !_transcript.KernelModeEnabled)
         {
-            AddToolLine("Kernel mode is not on for this session — nothing to reset.");
+            AddToolLine("Programmatic Tool Calling is not on for this session — nothing to reset.");
             return;
         }
 
-        await _session.KernelSessionManager.ResetAsync(_sessionId, CancellationToken.None);
+        await kernelSessionManager.ResetAsync(_sessionId, CancellationToken.None);
         AddToolLine("Kernel session reset — the next kernel call will start a fresh interpreter.");
     }
 
@@ -400,6 +433,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        if (RejectIfNoModel())
+        {
+            // Keep what they typed: nothing was sent, so nothing should be lost.
+            InputBox.Text = text;
+            return;
+        }
+
         await ResolveMentionsAsync(text);
 
         var attachedNames = _stagedChips.Select(c => c.DisplayName).ToList();
@@ -444,7 +484,15 @@ public sealed partial class MainWindow : Window
         // KernelCodeTool, so tools.Schemas genuinely has one entry, not one entry plus everything
         // else filtered client-side — "hidden from the model" happens here, at registry
         // construction, not by the model choosing to ignore other tools.
-        if (_transcript.KernelModeEnabled)
+        // A session resumed with PTC on, in a build whose kernel binary is missing, runs as a normal
+        // turn rather than failing on the first kernel call.
+        if (_transcript.KernelModeEnabled && !IsPtcAvailable && _ptcUnavailableNoticeSessionId != _sessionId)
+        {
+            _ptcUnavailableNoticeSessionId = _sessionId;
+            AddToolLine("Programmatic Tool Calling is on for this session but unavailable in this build — running without it.");
+        }
+
+        if (_transcript.KernelModeEnabled && IsPtcAvailable)
         {
             var bridgedTools = _session.ToolRegistryFactory.Create();
             _session.ToolRegistry = new ToolRegistry([new KernelCodeTool(bridgedTools.Schemas)]);
@@ -472,6 +520,12 @@ public sealed partial class MainWindow : Window
                         FinalizeReasoningText();
                         AppendAssistantText(delta.Text);
                         break;
+                    case ToolCallStarted started:
+                        HideWorkingIndicator();
+                        FinalizeReasoningText();
+                        FinalizeAssistantText();
+                        AddSendingToolCallRow(started.CallId, started.ToolName);
+                        break;
                     case ToolCallCompleted tool:
                         HideWorkingIndicator();
                         FinalizeReasoningText();
@@ -480,13 +534,17 @@ public sealed partial class MainWindow : Window
                         break;
                     case ToolCallResult result:
                         CompleteToolCallRow(result.CallId, result.Result);
+                        // Live meter during a tool-heavy turn (parity with the VS Code extension's
+                        // client-side estimate). AgentLoop appends this result to the transcript
+                        // only after yielding it, so it's counted here explicitly.
+                        RefreshContextUsage(ContextUsage.EstimateTextTokens(result.Result.Text));
                         break;
                     case ToolCallSkipped skipped:
-                        // A skipped call was never invoked, so it never got a ToolCallCompleted/
-                        // AddToolCallRow row in the first place — nothing to clean up here, even
-                        // if an earlier call sharing this CallId (see AgentLoop's tolerance for
-                        // duplicate CallIds) still has a row queued.
-                        AddToolLine($"⏩ skipped {skipped.CallId}: {skipped.Reason}");
+                        // A skipped call was never invoked, but its ToolCallCompleted already
+                        // arrived (the model emits a whole batch before any of it runs), so it has
+                        // a running row — settle that row rather than leave it "▶" with a
+                        // "still running" notice.
+                        SkipToolCallRow(skipped.CallId, skipped.Reason);
                         break;
                     case ErrorOccurred error:
                         HideWorkingIndicator();
@@ -531,7 +589,9 @@ public sealed partial class MainWindow : Window
             StatusBarWorkingIndicator.IsVisible = false;
             _turnCts?.Dispose();
             _turnCts = null;
-            _toolRows.Clear();
+            // Posted, like every row add/complete above it, so it runs after any still-queued
+            // row callback from this turn rather than racing it and leaving a timer running.
+            Dispatcher.UIThread.Post(StopToolRowTimers);
         }
     }
 
@@ -542,12 +602,69 @@ public sealed partial class MainWindow : Window
     /// directory comes from ITranscriptStore.GetScratchDirectory (§4.5, §8.5) so it lives under the
     /// session's own storage root, never inside the user's project.
     /// </summary>
+    // Scoped to the session's working directory (the DI singleton is frozen to the launch
+    // directory), and including the built-in skill root ~/.litos/builtin-skills — where
+    // AddLitosArtifacts installs artifact-design — exactly as Litos.VsCodeHost's /skills does.
+    private SkillDiscovery NewSkillDiscovery() =>
+        new(_transcript.WorkingDirectory, Litos.Artifacts.ArtifactSkills.UserRoots());
+
+    /// <summary>True (after telling the user) when no model is selected yet — every path that calls
+    /// the provider checks this first.</summary>
+    private bool RejectIfNoModel()
+    {
+        if (!string.IsNullOrEmpty(_session.Model))
+            return false;
+        AddToolLine(NoModelSelectedMessage);
+        return true;
+    }
+
+    internal const string NoModelSelectedMessage =
+        "No model is selected yet — pick one with /model or /provider before sending.";
+
+    /// <summary>
+    /// Escape / the Cancel button. Besides cancelling the turn's token, denies every approval still
+    /// waiting: an MCP call suspended in McpAwareApprovalGate awaits its PendingApprovalStore entry,
+    /// which ignores the turn's token, so without this a cancelled turn would sit until the store's
+    /// 10-minute timeout instead of stopping.
+    /// </summary>
+    private void CancelTurn()
+    {
+        _turnCts?.Cancel();
+        foreach (var pending in _session.PendingApprovals.List())
+            _session.PendingApprovals.Resolve(pending.Id, ApprovalDecision.Deny);
+    }
+
+    private void AddApprovalCard(PendingApproval approval)
+    {
+        // Already settled (resolved between Added firing and this Post running) — nothing to ask.
+        if (!_session.PendingApprovals.List().Any(p => p.Id == approval.Id))
+            return;
+
+        HideWorkingIndicator();
+        var card = new ApprovalCard(approval);
+        card.Decided += (id, decision) => _session.PendingApprovals.Resolve(id, decision);
+        _approvalCards[approval.Id] = card;
+        TranscriptPanel.Children.Add(card.Root);
+        ScrollToEndAfterLayout();
+        NudgeTranscriptLayout();
+    }
+
+    /// <summary>Settles a card the user didn't click: the store's Resolved event (raised for every
+    /// resolution, including the user's own click, which ApprovalCard.Settle then ignores) means a
+    /// cancel-time deny, and TimedOut — raised just before its Resolved — the 10-minute auto-deny.</summary>
+    private void SettleApprovalCard(Guid id, ApprovalOutcome outcome)
+    {
+        if (!_approvalCards.Remove(id, out var card))
+            return;
+        card.Settle(outcome);
+    }
+
     private Func<string, CancellationToken, Task<ToolResult>> BuildKernelRunner()
     {
         var workingDirectory = _transcript.WorkingDirectory ?? Environment.CurrentDirectory;
         return (code, ct) =>
         {
-            var kernelSession = _session.KernelSessionManager.GetOrCreate(
+            var kernelSession = _session.KernelSessionManager!.GetOrCreate(
                 _sessionId,
                 workingDirectory,
                 sid => _session.TranscriptStore.GetScratchDirectory(SessionOwner.Local, sid));
@@ -776,7 +893,8 @@ public sealed partial class MainWindow : Window
                 // kernel pointed at the old state would be actively wrong" precedent (§4.4's
                 // reset-trigger table). The NEW session's toggle starts at the stated OFF default
                 // (Transcript.CreateNew below), not inherited from whatever this one had (§5.3).
-                await _session.KernelSessionManager.DestroyAsync(_sessionId);
+                if (_session.KernelSessionManager is { } kernelSessionManager)
+                    await kernelSessionManager.DestroyAsync(_sessionId);
                 _sessionId = Guid.NewGuid().ToString("n");
                 // Environment.CurrentDirectory, not _transcript.WorkingDirectory: the old
                 // transcript's WorkingDirectory can be null (an older /resume-d session
@@ -847,6 +965,11 @@ public sealed partial class MainWindow : Window
                 await HandleUpdateAsync();
                 return;
 
+            case "/ptc":
+                await ShowPtcWindowAsync();
+                return;
+
+            case "/ptc-reset":
             case "/kernel-reset":
                 await HandleKernelResetAsync();
                 return;
@@ -999,6 +1122,9 @@ public sealed partial class MainWindow : Window
     // (ReadMe_PTCPersistentKernel.md §4.4's reset-trigger table). Not an oversight.
     private async Task HandleCompactAsync()
     {
+        if (RejectIfNoModel())
+            return;
+
         StatusBarWorkingIndicator.IsVisible = true;
         try
         {
@@ -1037,6 +1163,9 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task HandleReflectAsync()
     {
+        if (RejectIfNoModel())
+            return;
+
         StatusBarWorkingIndicator.IsVisible = true;
         try
         {
@@ -1063,11 +1192,25 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// /keys. Saved keys only take effect in a new process (providers are registered once, at
+    /// startup), so — like the VS Code extension's "Reload Window" button — this offers to restart
+    /// right away, reopening this same session and working directory.
+    /// </summary>
     private async Task HandleKeysAsync()
     {
-        var saved = await ApiKeysWindow.ShowAsync(this);
-        if (saved)
-            AddToolLine("API keys updated. Restart Litos for the change to take effect.");
+        if (!await ApiKeysWindow.ShowAsync(this))
+            return;
+
+        if (_turnCts is null && await ConfirmationDialog.ShowAsync(
+                this, "Restart Litos?", "Keys saved. Litos needs to restart to use them — this session will reopen. Restart now?")
+            && AppRelauncher.TryRelaunch(new SessionResumeArgs(_sessionId, _transcript.WorkingDirectory ?? Environment.CurrentDirectory)))
+        {
+            Close();
+            return;
+        }
+
+        AddToolLine("API keys updated. Restart Litos for the change to take effect.");
     }
 
     /// <summary>
@@ -1114,7 +1257,7 @@ public sealed partial class MainWindow : Window
             AddToolLine($"Downloading {result.LatestVersion}…");
             UpdateButtonText.Text = "Updating…";
             var resume = new SessionResumeArgs(_sessionId, _transcript.WorkingDirectory ?? Environment.CurrentDirectory);
-            await SelfUpdater.InstallAndRelaunchAsync(_session.UpdateHttpClient, result.Asset, resume, CancellationToken.None);
+            await SelfUpdater.InstallAndRelaunchAsync(_session.UpdateHttpClient, result.Asset, result.KernelAsset, resume, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -1252,6 +1395,11 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
         using var ms = new MemoryStream();
         bitmap.Save(ms, PngBitmapEncoderOptions.Default);
+        if (AttachHandler.SizeLimitWarning("Pasted image", ms.Length) is { } tooLarge)
+        {
+            AddToolLine(tooLarge);
+            return;
+        }
         var image = new ImageBlock("image/png", ms.ToArray());
         ApplyAttachResult(new AttachResult([], Document: null, Image: image), "Pasted image");
     }
@@ -1426,7 +1574,12 @@ public sealed partial class MainWindow : Window
 
     private void SaveLastUsedProviderAndModel()
     {
-        _session.Config = _session.Config with { DefaultProvider = _session.ProviderName, DefaultModel = _session.Model };
+        // No model (the provider listed none): keep the provider choice, never write DefaultModel "".
+        _session.Config = _session.Config with
+        {
+            DefaultProvider = _session.ProviderName,
+            DefaultModel = string.IsNullOrEmpty(_session.Model) ? _session.Config.DefaultModel : _session.Model,
+        };
         _session.Config.Save();
     }
 
@@ -1450,7 +1603,7 @@ public sealed partial class MainWindow : Window
     // project-level .litos/skills/ is found under the directory actually shown in the status bar.
     private async Task<SkillMetadata?> PickSkillAsync()
     {
-        var discovery = new SkillDiscovery(_transcript.WorkingDirectory);
+        var discovery = NewSkillDiscovery();
         var skills = await discovery.DiscoverAsync(CancellationToken.None);
         if (skills.Count == 0)
         {
@@ -1739,7 +1892,7 @@ public sealed partial class MainWindow : Window
     // skill. Returns null on success, or an error message to surface to the user.
     private async Task<string?> LoadSkillAsync(string name, string? args)
     {
-        var skillTool = new SkillTool(new SkillDiscovery(_transcript.WorkingDirectory));
+        var skillTool = new SkillTool(NewSkillDiscovery());
         var toolArgs = JsonSerializer.SerializeToElement(new { name });
         var result = await skillTool.InvokeAsync(toolArgs, CancellationToken.None);
         if (result.IsError)
@@ -1904,7 +2057,7 @@ public sealed partial class MainWindow : Window
     // more reliable than relying on MarkdownViewer's SelectAll/GetSelectedText, and it works the
     // same way whether the bubble came from live streaming or history replay. Shared by both
     // construction sites (FinalizeAssistantText, RenderTranscriptHistory) so they can't drift.
-    private static Control NewAssistantBubbleContent(string markdown, string? workingDirectory)
+    private Control NewAssistantBubbleContent(string markdown, string? workingDirectory)
     {
         var viewer = NewMarkdownViewer(markdown, workingDirectory);
 
@@ -1957,15 +2110,21 @@ public sealed partial class MainWindow : Window
     // wire that event or a rendered link is inert. Centralized here so both construction sites
     // (streamed text in FinalizeAssistantText, restored history in the transcript-load switch)
     // can't drift out of sync.
-    private static MarkdownViewer NewMarkdownViewer(string markdown, string? workingDirectory)
+    private MarkdownViewer NewMarkdownViewer(string markdown, string? workingDirectory)
     {
         var viewer = new MarkdownViewer { Markdown = markdown };
         viewer.LinkClicked += (_, e) => OpenUrl(e.Url, workingDirectory);
         return viewer;
     }
 
-    private static void OpenUrl(string url, string? workingDirectory)
+    // Share and artifact links embed the loopback port of whichever Litos process minted them —
+    // a link from an earlier run (resumed session, or one made by the VS Code extension's host)
+    // names a port nothing listens on any more, though the file behind it is still on disk.
+    // HostLinks.RewriteStale re-points exactly those links at this run's server; everything else
+    // passes through unchanged.
+    private void OpenUrl(string url, string? workingDirectory)
     {
+        url = HostLinks.RewriteStale(url, _session.LoopbackServer.BaseUrl);
         if (IsOpenableHttpUrl(url, out var uri))
             TryLaunch(uri);
         else if (IsOpenableLocalFile(url, workingDirectory, out var path))
@@ -2171,7 +2330,7 @@ public sealed partial class MainWindow : Window
         Dispatcher.UIThread.Post(() =>
         {
             TranscriptPanel.Children.Clear();
-            _toolRows.Clear();
+            StopToolRowTimers();
 
             // GroupBy+ToDictionary(g => g.Last()) rather than a straight ToDictionary: CallId is
             // only unique within one tool-call round in practice, and nothing stops a future
@@ -2199,10 +2358,11 @@ public sealed partial class MainWindow : Window
                         case Litos.Agent.Messages.ToolUseBlock toolUse:
                             var row = ToolCallRow.Create(toolUse.ToolName, toolUse.Arguments, ToolTextBrush, ToolErrorBrush);
                             row.Toggled += () => { ScrollToEndAfterLayout(); NudgeTranscriptLayout(); };
+                            row.LinkClicked += url => OpenUrl(url, _transcript.WorkingDirectory);
                             if (resultsByCallId.TryGetValue(toolUse.CallId, out var result))
                                 row.RenderCompleted(result);
                             else
-                                row.RenderRunning();
+                                row.RenderRunning(startSlowTimer: false); // restored, not running
                             TranscriptPanel.Children.Add(row.Root);
                             break;
                         case Litos.Agent.Messages.ToolResultBlock:
@@ -2228,11 +2388,58 @@ public sealed partial class MainWindow : Window
         TextWrapping = TextWrapping.Wrap,
     };
 
+    private ToolCallRow NewLiveToolCallRow(string toolName, JsonElement arguments)
+    {
+        var row = ToolCallRow.Create(toolName, arguments, ToolTextBrush, ToolErrorBrush);
+        row.Toggled += () => { ScrollToEndAfterLayout(); NudgeTranscriptLayout(); };
+        row.LinkClicked += url => OpenUrl(url, _transcript.WorkingDirectory);
+        return row;
+    }
+
+    // ToolCallStarted: the model has named the tool and is still sending its arguments. The row
+    // appears now (not at ToolCallCompleted) so a long, silent argument stream shows as a running
+    // row with a slow-call notice rather than as nothing at all.
+    private void AddSendingToolCallRow(string callId, string toolName) =>
+        Dispatcher.UIThread.Post(() =>
+        {
+            var row = NewLiveToolCallRow(toolName, EmptyArguments);
+            row.RenderSending();
+            if (!_sendingToolRows.TryGetValue(callId, out var queue))
+                _sendingToolRows[callId] = queue = new Queue<ToolCallRow>();
+            queue.Enqueue(row);
+            TranscriptPanel.Children.Add(row.Root);
+            ScrollToEndAfterLayout();
+        });
+
+    private static readonly JsonElement EmptyArguments = JsonDocument.Parse("{}").RootElement.Clone();
+
+    // Stops every live row's slow-call timer when the turn ends — a cancelled or failed turn
+    // leaves rows that never get a ToolCallResult.
+    private void StopToolRowTimers()
+    {
+        foreach (var row in _toolRows.Values.Concat(_sendingToolRows.Values).SelectMany(q => q))
+            row.StopSlowTimer();
+        _toolRows.Clear();
+        _sendingToolRows.Clear();
+    }
+
     private void AddToolCallRow(string callId, string toolName, JsonElement arguments) =>
         Dispatcher.UIThread.Post(() =>
         {
-            var row = ToolCallRow.Create(toolName, arguments, ToolTextBrush, ToolErrorBrush);
-            row.Toggled += () => { ScrollToEndAfterLayout(); NudgeTranscriptLayout(); };
+            // The row ToolCallStarted already put on screen, when the provider reports one;
+            // otherwise a fresh row, as before.
+            ToolCallRow row;
+            if (_sendingToolRows.TryGetValue(callId, out var sending) && sending.Count > 0)
+            {
+                row = sending.Dequeue();
+                if (sending.Count == 0)
+                    _sendingToolRows.Remove(callId);
+                row.SetArguments(arguments);
+                EnqueueRunningRow(callId, row);
+                return;
+            }
+
+            row = NewLiveToolCallRow(toolName, arguments);
             row.RenderRunning();
             // AgentLoop deliberately tolerates a provider emitting the same CallId more than
             // once in a round (see AgentLoopTests.RunTurnAsync_DuplicateToolCallIds_...), so a
@@ -2240,12 +2447,31 @@ public sealed partial class MainWindow : Window
             // the first row's entry — orphaning it mid-"running" and misattributing the later
             // result to the wrong row. A per-CallId queue keeps rows FIFO-ordered so
             // CompleteToolCallRow completes them in the same order AgentLoop invoked them.
-            if (!_toolRows.TryGetValue(callId, out var queue))
-                _toolRows[callId] = queue = new Queue<ToolCallRow>();
-            queue.Enqueue(row);
+            EnqueueRunningRow(callId, row);
             TranscriptPanel.Children.Add(row.Root);
             ScrollToEndAfterLayout();
         });
+
+    private void SkipToolCallRow(string callId, string reason) =>
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_toolRows.TryGetValue(callId, out var queue) || queue.Count == 0)
+            {
+                AddToolLine($"⏩ skipped {callId}: {reason}");
+                return;
+            }
+
+            queue.Dequeue().RenderSkipped(reason);
+            if (queue.Count == 0)
+                _toolRows.Remove(callId);
+        });
+
+    private void EnqueueRunningRow(string callId, ToolCallRow row)
+    {
+        if (!_toolRows.TryGetValue(callId, out var queue))
+            _toolRows[callId] = queue = new Queue<ToolCallRow>();
+        queue.Enqueue(row);
+    }
 
     private void CompleteToolCallRow(string callId, ToolResult result) =>
         Dispatcher.UIThread.Post(() =>

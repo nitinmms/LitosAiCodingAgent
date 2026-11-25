@@ -1,5 +1,12 @@
 # MCP Support in Litos.Gui — Findings & Design
 
+> **Superseded in part (2026-11-25, `ReadMe_GuiParity.md`):** Litos.Gui now gates MCP tools per
+> server exactly as Litos.VsCodeHost does — `McpAwareApprovalGate` wraps `GuiApprovalGate`, the
+> servers window has a Deny/Ask/Full control (new servers default to Full), and Ask shows an
+> Approve/Deny card in the transcript. `McpToolRefreshService` now runs in the background too. MCP
+> prompts as slash commands were also added after this document. The "no approval gating" and
+> "no background poller" decisions below describe the original design only.
+
 Extends MCP (Model Context Protocol) server support — already shipped in `Litos.Api` (see
 `ReadMe_LitosApi_Mcp.md`) — to `Litos.Gui`, the Avalonia desktop face. Written after a full
 codebase-exploration and clarifying-questions pass; no code has changed as a result of this

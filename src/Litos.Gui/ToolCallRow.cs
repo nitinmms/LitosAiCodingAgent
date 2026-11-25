@@ -2,8 +2,10 @@ using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Litos.Agent.Streaming;
 using Litos.Agent.Tools;
+using Litos.Hosting.Files;
 
 namespace Litos.Gui;
 
@@ -26,10 +28,12 @@ namespace Litos.Gui;
 internal sealed class ToolCallRow
 {
     private readonly string _toolName;
-    private readonly JsonElement _arguments;
+    private JsonElement _arguments;
     private readonly IBrush _runningAndSuccessBrush;
     private readonly IBrush _errorBrush;
 
+    // Non-null only for built-in-tool rows: their single summary line.
+    private readonly TextBlock? _lineText;
     // Non-null only for MCP rows — built-in-tool rows are a single TextBlock with no header/detail split.
     private readonly TextBlock? _headerText;
     private readonly TextBlock? _detailText;
@@ -45,6 +49,14 @@ internal sealed class ToolCallRow
     public Control Root { get; }
 
     /// <summary>
+    /// Raised when the user clicks an "Open ↗" link the row shows for a share or artifact link in
+    /// the tool's result (share_file, artifact) — the row's own text isn't clickable, and the model
+    /// doesn't always repeat the link in its reply. MainWindow routes it through the same OpenUrl
+    /// as markdown links (stale-port rewrite, http/https only).
+    /// </summary>
+    public event Action<string>? LinkClicked;
+
+    /// <summary>
     /// Raised after an MCP row's expand/collapse toggle changes Root's height — MainWindow hooks
     /// this to re-run its ScrollToEndAfterLayout/NudgeTranscriptLayout workaround (see that
     /// method's own remarks on Avalonia's ScrollViewer extent-staleness bug), the same fix already
@@ -53,17 +65,40 @@ internal sealed class ToolCallRow
     /// </summary>
     public event Action? Toggled;
 
+    private readonly StackPanel _panel;
+
+    // Slow-call notice, at parity with the VS Code webview (webviewContent.ts addToolEntry): a row
+    // can sit at "running" for minutes with nothing wrong, and two different waits cause it —
+    // the model still sending the call (ToolCallStarted -> ToolCallCompleted; some local servers
+    // send nothing until the whole argument blob is ready) or the tool itself executing
+    // (ToolCallCompleted -> ToolCallResult). The notice names which, and counts from the start.
+    internal static readonly TimeSpan SlowNoticeAfter = TimeSpan.FromSeconds(20);
+    private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
+    private readonly TextBlock _slowNotice = new()
+    {
+        FontStyle = FontStyle.Italic,
+        Opacity = 0.7,
+        Margin = new Avalonia.Thickness(16, 0, 4, 0),
+        TextWrapping = TextWrapping.Wrap,
+        IsVisible = false,
+    };
+    private DispatcherTimer? _slowTimer;
+    private bool _sending;
+
     private ToolCallRow(
         string toolName, JsonElement arguments, IBrush runningAndSuccessBrush, IBrush errorBrush,
-        Control root, TextBlock? headerText, TextBlock? detailText)
+        StackPanel panel, TextBlock? lineText, TextBlock? headerText, TextBlock? detailText)
     {
         _toolName = toolName;
         _arguments = arguments;
         _runningAndSuccessBrush = runningAndSuccessBrush;
         _errorBrush = errorBrush;
-        Root = root;
+        Root = _panel = panel;
+        _lineText = lineText;
         _headerText = headerText;
         _detailText = detailText;
+        _slowNotice.Foreground = runningAndSuccessBrush;
+        _panel.Children.Add(_slowNotice);
     }
 
     public static ToolCallRow Create(string toolName, JsonElement arguments, IBrush runningAndSuccessBrush, IBrush errorBrush)
@@ -72,7 +107,9 @@ internal sealed class ToolCallRow
         {
             var textBlock = NewMonospaceTextBlock();
             textBlock.Foreground = runningAndSuccessBrush;
-            return new ToolCallRow(toolName, arguments, runningAndSuccessBrush, errorBrush, textBlock, headerText: null, detailText: null);
+            var linePanel = new StackPanel { Spacing = 2 };
+            linePanel.Children.Add(textBlock);
+            return new ToolCallRow(toolName, arguments, runningAndSuccessBrush, errorBrush, linePanel, textBlock, headerText: null, detailText: null);
         }
 
         var header = NewMonospaceTextBlock();
@@ -88,7 +125,7 @@ internal sealed class ToolCallRow
         panel.Children.Add(header);
         panel.Children.Add(detail);
 
-        var row = new ToolCallRow(toolName, arguments, runningAndSuccessBrush, errorBrush, panel, header, detail);
+        var row = new ToolCallRow(toolName, arguments, runningAndSuccessBrush, errorBrush, panel, lineText: null, header, detail);
         header.PointerPressed += (_, _) => row.ToggleExpanded();
         return row;
     }
@@ -106,11 +143,75 @@ internal sealed class ToolCallRow
         TextWrapping = Avalonia.Media.TextWrapping.Wrap,
     };
 
-    public void RenderRunning()
+    /// <summary>
+    /// The row's state between ToolCallStarted and ToolCallCompleted: the model has named the tool
+    /// but is still sending its arguments. <see cref="SetArguments"/> moves it on to executing.
+    /// </summary>
+    public void RenderSending()
     {
-        if (_headerText is null)
+        _sending = true;
+        StartSlowTimer();
+        if (_lineText is not null)
+            _lineText.Text = $"▶ {_toolName}";
+        else
+            RenderMcpHeader(glyph: "▶", brush: _runningAndSuccessBrush);
+    }
+
+    /// <summary>The call has fully arrived (ToolCallCompleted) and the tool is now executing.</summary>
+    public void SetArguments(JsonElement arguments)
+    {
+        _arguments = arguments;
+        _sending = false;
+        RenderRunning();
+    }
+
+    /// <summary>Stops the slow-call timer and hides its notice — every exit from "running" (a
+    /// result, or the turn ending without one) must come through here.</summary>
+    public void StopSlowTimer()
+    {
+        _slowTimer?.Stop();
+        _slowTimer = null;
+        _slowNotice.IsVisible = false;
+    }
+
+    private void StartSlowTimer()
+    {
+        if (_slowTimer is not null)
+            return;
+        _slowTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) =>
         {
-            ((TextBlock)Root).Text = $"▶ {ToolCallSummary.DescribeCall(_toolName, _arguments)}";
+            if (SlowNoticeText(_sending, DateTimeOffset.UtcNow - _startedAt) is not { } text)
+                return;
+            _slowNotice.Text = text;
+            _slowNotice.IsVisible = true;
+        });
+        _slowTimer.Start();
+    }
+
+    /// <summary>The notice for a call <paramref name="elapsed"/> into running, or null while it's
+    /// still under <see cref="SlowNoticeAfter"/>. Same wording as the VS Code webview. Pure and
+    /// internal so it's testable without an Avalonia Application.</summary>
+    internal static string? SlowNoticeText(bool sending, TimeSpan elapsed)
+    {
+        if (elapsed < SlowNoticeAfter)
+            return null;
+
+        var total = (int)elapsed.TotalSeconds;
+        var formatted = total >= 60 ? $"{total / 60}m {total % 60}s" : $"{total}s";
+        return sending
+            ? $"waiting for the model to finish sending this tool call ({formatted})"
+            : $"still running ({formatted})";
+    }
+
+    /// <param name="startSlowTimer">False for a row restored from history (/resume, /branch) whose
+    /// call never got a result — nothing is running any more, so no "still running" notice.</param>
+    public void RenderRunning(bool startSlowTimer = true)
+    {
+        if (startSlowTimer)
+            StartSlowTimer();
+        if (_lineText is not null)
+        {
+            _lineText.Text = $"▶ {ToolCallSummary.DescribeCall(_toolName, _arguments)}";
             return;
         }
 
@@ -120,20 +221,53 @@ internal sealed class ToolCallRow
 
     public void RenderCompleted(ToolResult result)
     {
+        StopSlowTimer();
         var glyph = result.IsError ? "✗" : "✓";
         var brush = result.IsError ? _errorBrush : _runningAndSuccessBrush;
 
-        if (_headerText is null)
+        if (!result.IsError)
+            AddLinks(HostLinks.FindAll(result.Text));
+
+        if (_lineText is not null)
         {
             var outcome = ToolCallSummary.DescribeResult(_toolName, result);
-            ((TextBlock)Root).Text = $"{glyph} {ToolCallSummary.DescribeCall(_toolName, _arguments)}  ({outcome})";
-            ((TextBlock)Root).Foreground = brush;
+            _lineText.Text = $"{glyph} {ToolCallSummary.DescribeCall(_toolName, _arguments)}  ({outcome})";
+            _lineText.Foreground = brush;
             return;
         }
 
         _result = result;
         RenderMcpHeader(glyph, brush);
         RenderMcpDetail();
+    }
+
+    /// <summary>A call AgentLoop skipped because the user steered mid-batch: it already has a row
+    /// (its ToolCallCompleted arrived) but will never get a result.</summary>
+    public void RenderSkipped(string reason)
+    {
+        StopSlowTimer();
+        var text = $"⏩ {_toolName} skipped ({reason})";
+        if (_lineText is not null)
+            _lineText.Text = text;
+        else
+        {
+            _lastGlyph = "⏩";
+            _headerText!.Text = text;
+        }
+    }
+
+    private void AddLinks(IReadOnlyList<string> urls)
+    {
+        foreach (var url in urls)
+        {
+            var link = NewMonospaceTextBlock();
+            link.Text = $"  ↗ Open {url}";
+            link.Foreground = _runningAndSuccessBrush;
+            link.TextDecorations = TextDecorations.Underline;
+            link.Cursor = new Cursor(StandardCursorType.Hand);
+            link.PointerPressed += (_, _) => LinkClicked?.Invoke(url);
+            _panel.Children.Add(link);
+        }
     }
 
     private void ToggleExpanded()

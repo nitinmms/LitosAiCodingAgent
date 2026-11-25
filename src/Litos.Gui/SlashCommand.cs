@@ -31,6 +31,7 @@ internal static class SlashCommands
         new("/mcp", "Manage MCP servers"),
         new("/keys", "Add or update API keys"),
         new("/update", "Check for and install an update"),
-        new("/kernel-reset", "Restart the kernel session (kernel mode only)"),
+        new("/ptc", "Turn Programmatic Tool Calling on or off for this session"),
+        new("/ptc-reset", "Restart the PTC kernel (when PTC is on)"),
     ];
 }

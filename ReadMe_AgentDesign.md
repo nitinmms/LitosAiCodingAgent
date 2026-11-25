@@ -120,7 +120,7 @@ LitosAiAgent/
 │   │   ├── MainWindow.axaml/.cs         # transcript + pinned composer; consumes AgentEvent; session/
 │   │   │                                #   provider/model pickers, attachments, steering/abort, MCP
 │   │   ├── MainWindowSession.cs         # session state (provider, model, tool registry, MCP provider, config)
-│   │   ├── GuiApprovalGate.cs           # implements IToolApprovalGate — still auto-approve only (§7.7)
+│   │   ├── GuiApprovalGate.cs           # built-in tools auto-approve; MCP gated per server via McpAwareApprovalGate (§7.7)
 │   │   ├── McpServersWindow.axaml/.cs   # /mcp popup: add/enable/disable/remove servers, tool + prompt lists
 │   │   ├── CommandMenuPopup.cs/.axaml   # /-command and /mcp__server__prompt menu
 │   │   ├── McpPromptArguments.cs, McpPromptContentConverter.cs   # MCP prompt execution support
@@ -643,7 +643,7 @@ MCP shipped in `Litos.Api` first; extending it to `Litos.Gui` reused every type 
 
 | | `Litos.Api` | `Litos.Gui` |
 |---|---|---|
-| Approval gating | `McpAwareApprovalGate` wraps the face's gate — per-server Deny/Ask/Full, `Ask` surfaces on the same Approvals page Telegram elevation uses | None — `GuiApprovalGate` already auto-approves everything unconditionally, so MCP calls flow through it unmodified; no permission UI is shown, since showing Deny/Ask/Full controls that are never consulted would be misleading |
+| Approval gating | `McpAwareApprovalGate` wraps the face's gate — per-server Deny/Ask/Full, `Ask` surfaces on the same Approvals page Telegram elevation uses | Same as `Litos.VsCodeHost` since `ReadMe_GuiParity.md` (2026-11-25): `McpAwareApprovalGate` wraps `GuiApprovalGate` — per-server Deny/Ask/Full set in the MCP servers window, `Ask` surfaces as an Approve/Deny card in the transcript |
 | Reconciliation | `McpToolRefreshService` (`BackgroundService`), polling in the background | No poller — manual **Refresh**/**Refresh all** buttons in `McpServersWindow`, plus a fire-and-forget connect attempt at startup (the GUI must not block its window appearing on MCP handshakes) |
 | Admin surface | `/mcp` Blazor admin page (`McpServers.razor`) | `/mcp` slash command opens `McpServersWindow` (Avalonia), mirroring the Blazor page's single-page list-plus-add-form layout |
 | Child-process cleanup | Runs as a long-lived container; process lifetime = container lifetime | `Win32JobObject` assigns the process to a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` at startup, so Windows force-kills every MCP stdio child (and its own children) the instant `Litos.Gui` exits for any reason — a crash or Task Manager "End Task" previously left orphaned server processes running indefinitely. Windows-only; macOS has no equivalent single-syscall primitive (tracked as a follow-up, not bundled). |
@@ -964,7 +964,7 @@ Two corrections to the plan as originally written, discovered once real API acce
 
 **Feature-complete relative to `Litos.Console`, with two known gaps.** Session picker/resume/branch, provider/model pickers, `/attach` plus `@`-mention attachments (files, URLs, pasted images), full steering/follow-up/abort wiring (§7.2), `/compact` and a context-usage meter, and MCP server management (§4.6) are all built — see `src/Litos.Gui/` for the current file list (§3). Two items remain genuinely unbuilt:
 
-- **No real tool-approval dialog.** `GuiApprovalGate` unconditionally returns `ApprovalDecision.Approve` — every tool call, including `shell`, runs without confirmation. A real implementation would mirror `Litos.Console`'s `ApprovalDialog` as an Avalonia modal window, per §9's "each face supplies its own `IToolApprovalGate` binding."
+- **No approval prompt for built-in tools.** `GuiApprovalGate` returns `ApprovalDecision.Approve` for `shell`, `edit_file` and the rest — the accepted cross-face convention (`ReadMe_ConsoleParityPlan.md`), shared with `Litos.VsCodeHost`. MCP tools *are* gated per server (Deny/Ask/Full, with an in-transcript Approve/Deny card for Ask) since `ReadMe_GuiParity.md`.
 - **No diff rendering for `edit_file`.** Tool-call rows show a plain text summary, not a colored unified-diff view analogous to `Litos.Console`'s `DiffView`.
 
 **Rendering approach**: user/assistant/error turns render as role-colored `Border`-wrapped bubbles in a `StackPanel` inside one `ScrollViewer` (right-aligned blue for user, left-aligned dark gray for assistant, dark red for errors); tool calls render as a distinct row (`ToolCallRow`) between bubbles, mirroring §7.1's per-tool-file-visibility requirement, with MCP calls rendered collapsed-by-default and expandable given their dynamically-shaped results (§4.6.1); a "Thinking…" indicator is shown from the moment a turn starts and removed on the first `TextDelta`/`ToolCallCompleted`/`ErrorOccurred`, meeting §7.1's "never sit blank" requirement. Assistant text streams into a plain `TextBlock` during the turn (cheap, reliable per-token updates) and is swapped for a `MarkView.Avalonia` `MarkdownViewer` exactly once, when the turn completes — this renders fenced code blocks, headings, and lists properly rather than as raw markdown syntax, closing a gap `Litos.Console`'s own live-path rendering still has open (§7.6.1's last paragraph). The working directory is session-scoped per §4.5.1, resolved on startup and on `/resume` the same way `Litos.Console` does.

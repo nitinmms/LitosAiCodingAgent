@@ -1,6 +1,6 @@
-using Litos.Api.Channels.Telegram;
+using Litos.Tools.Attachments;
 
-namespace Litos.Api.Tests.Channels.Telegram;
+namespace Litos.Tools.Tests.Attachments;
 
 public class UntrustedContentTests
 {

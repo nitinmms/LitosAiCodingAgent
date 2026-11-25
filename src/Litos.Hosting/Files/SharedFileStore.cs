@@ -2,14 +2,13 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Litos.Agent.Session;
 
-namespace Litos.VsCodeHost.Files;
+namespace Litos.Hosting.Files;
 
 /// <summary>
-/// Local copy of Litos.Api's Files/SharedFileStore.cs, unchanged (same disk layout, same
+/// Copy of Litos.Api's Files/SharedFileStore.cs, unchanged (same disk layout, same
 /// ValidateSegment reject-don't-sanitize path safety, same 24h token lifetime, same v1 debt: no
-/// cleanup job for expired shares) — copied rather than shared for the same reason every other
-/// cross-face type in this project is (see AgentWorker.cs's own remarks), and because this project
-/// deliberately has no reference to Litos.Api. Root directory defaults to the same
+/// cleanup job for expired shares), shared here by the loopback faces (Litos.VsCodeHost,
+/// Litos.Gui) — Litos.Hosting deliberately has no reference to Litos.Api. Root directory defaults to the same
 /// ~/.litos/shared-files path Litos.Api uses, so a file shared via one face is resolvable by
 /// another's /files/{token} endpoint too, if both processes happen to run on the same machine —
 /// not a design goal here, just a natural consequence of both storing under the same shared

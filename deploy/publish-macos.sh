@@ -19,14 +19,21 @@ VERSION="${LITOS_VERSION:-1.0.0}"
 PUBLISH_DIR="$REPO_ROOT/deploy/out/macos/$RUNTIME/publish"
 BUNDLE_DIR="$REPO_ROOT/deploy/out/macos/$RUNTIME/$APP_NAME.app"
 
-dotnet publish "$PROJECT" \
-    -c Release \
-    -r "$RUNTIME" \
-    -o "$PUBLISH_DIR" \
-    --self-contained true \
-    -p:PublishSingleFile=true \
-    -p:Version="$VERSION" \
-    -p:InformationalVersion="$VERSION"
+# Two binaries into the SAME publish dir, which becomes Contents/MacOS: Litos.Gui, and the
+# Programmatic Tool Calling kernel (Litos.Kernel.Host) it spawns for /ptc. Same directory is
+# load-bearing — KernelHostLocator finds the kernel beside the launched executable. Shipping it
+# inside the bundle means deploy/install.sh and the in-app updater (both swap the whole .app)
+# carry it with no change of their own.
+for PROJ in "$PROJECT" "$REPO_ROOT/src/Litos.Kernel.Host/Litos.Kernel.Host.csproj"; do
+    dotnet publish "$PROJ" \
+        -c Release \
+        -r "$RUNTIME" \
+        -o "$PUBLISH_DIR" \
+        --self-contained true \
+        -p:PublishSingleFile=true \
+        -p:Version="$VERSION" \
+        -p:InformationalVersion="$VERSION"
+done
 
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$BUNDLE_DIR/Contents/MacOS"
@@ -34,6 +41,7 @@ mkdir -p "$BUNDLE_DIR/Contents/Resources"
 
 cp -R "$PUBLISH_DIR/." "$BUNDLE_DIR/Contents/MacOS/"
 chmod +x "$BUNDLE_DIR/Contents/MacOS/Litos.Gui"
+chmod +x "$BUNDLE_DIR/Contents/MacOS/Litos.Kernel.Host"
 
 sed "s/__VERSION__/$VERSION/g" "$REPO_ROOT/deploy/Info.plist.template" > "$BUNDLE_DIR/Contents/Info.plist"
 
@@ -54,6 +62,15 @@ if [ -z "${APPLE_SIGN_IDENTITY:-}" ]; then
 fi
 
 echo "Signing with identity: $APPLE_SIGN_IDENTITY"
+# The kernel first, explicitly, with the same hardened-runtime entitlements: --deep is not relied
+# on for a plain helper executable in Contents/MacOS, and a kernel left unsigned (or signed
+# without allow-jit) is killed by Gatekeeper/hardened runtime only when /ptc first spawns it —
+# see deploy/publish-vscodehost-macos.sh's header for that exact failure. Inside-out: the bundle
+# signature below then seals the already-signed kernel.
+codesign --force --options runtime \
+    --entitlements "$REPO_ROOT/deploy/entitlements.plist" \
+    --sign "$APPLE_SIGN_IDENTITY" \
+    "$BUNDLE_DIR/Contents/MacOS/Litos.Kernel.Host"
 codesign --force --deep --options runtime \
     --entitlements "$REPO_ROOT/deploy/entitlements.plist" \
     --sign "$APPLE_SIGN_IDENTITY" \

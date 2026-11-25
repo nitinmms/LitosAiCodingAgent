@@ -24,7 +24,10 @@ public static partial class SelfUpdater
     private const string Repo = "nitinmms/LitosAiCodingAgent";
     private static readonly Uri LatestReleaseUri = new($"https://api.github.com/repos/{Repo}/releases/latest");
 
-    public sealed record UpdateCheckResult(bool IsUpdateAvailable, string? LatestVersion, GitHubAsset? Asset, string? Error)
+    /// <param name="KernelAsset">Windows only: the release's separate PTC kernel asset
+    /// (Litos.Kernel.Host-{tag}-win-x64.zip), or null when the release has none. On macOS the
+    /// kernel ships inside the .app bundle, so the bundle asset already carries it.</param>
+    public sealed record UpdateCheckResult(bool IsUpdateAvailable, string? LatestVersion, GitHubAsset? Asset, string? Error, GitHubAsset? KernelAsset = null)
     {
         public static UpdateCheckResult UpToDate() => new(false, null, null, null);
         public static UpdateCheckResult Failed(string error) => new(false, null, null, error);
@@ -78,7 +81,8 @@ public static partial class SelfUpdater
         if (!IsNewerVersion(CurrentVersion, release.TagName))
             return UpdateCheckResult.UpToDate();
 
-        return new UpdateCheckResult(IsUpdateAvailable: true, release.TagName, asset, Error: null);
+        var kernelAsset = OperatingSystem.IsWindows() ? release.Assets.FirstOrDefault(IsWindowsKernelAsset) : null;
+        return new UpdateCheckResult(IsUpdateAvailable: true, release.TagName, asset, Error: null, kernelAsset);
     }
 
     /// <summary>
@@ -93,6 +97,16 @@ public static partial class SelfUpdater
         OperatingSystem.IsWindows()
             ? asset.Name.StartsWith("Litos.Gui-", StringComparison.Ordinal) && asset.Name.EndsWith("-win-x64.zip", StringComparison.Ordinal)
             : asset.Name == $"Litos-{(RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "osx-arm64" : "osx-x64")}.zip";
+
+    /// <summary>
+    /// The Windows release's PTC kernel (Litos.Kernel.Host.exe), shipped as its own asset rather
+    /// than inside the Litos.Gui zip. Deliberately named so it matches neither
+    /// IsCurrentPlatformAsset nor deploy/install.ps1's "Litos.Gui-*-win-x64.zip" glob: Litos.Gui
+    /// builds released before the kernel shipped pick "the first .exe" out of the zip they match,
+    /// so a second exe in that zip could have been installed in place of Litos.Gui.exe.
+    /// </summary>
+    internal static bool IsWindowsKernelAsset(GitHubAsset asset) =>
+        asset.Name.StartsWith("Litos.Kernel.Host-", StringComparison.Ordinal) && asset.Name.EndsWith("-win-x64.zip", StringComparison.Ordinal);
 
     /// <summary>
     /// Pure string comparison, no network/filesystem — same shape as Program.ResolveStartupWorkingDirectory
@@ -116,10 +130,10 @@ public static partial class SelfUpdater
     /// SelfUpdater.Windows.cs / SelfUpdater.Mac.cs for why they differ). Never returns on success:
     /// both platform paths end by exiting the current process once the new one has been started.
     /// </summary>
-    public static Task InstallAndRelaunchAsync(HttpClient http, GitHubAsset asset, SessionResumeArgs resume, CancellationToken ct)
+    public static Task InstallAndRelaunchAsync(HttpClient http, GitHubAsset asset, GitHubAsset? kernelAsset, SessionResumeArgs resume, CancellationToken ct)
     {
         if (OperatingSystem.IsWindows())
-            return InstallAndRelaunchWindowsAsync(http, asset, resume, ct);
+            return InstallAndRelaunchWindowsAsync(http, asset, kernelAsset, resume, ct);
         if (OperatingSystem.IsMacOS())
             return InstallAndRelaunchMacAsync(http, asset, resume, ct);
 

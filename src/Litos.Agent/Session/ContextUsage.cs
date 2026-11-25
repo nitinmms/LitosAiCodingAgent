@@ -36,6 +36,10 @@ public static class ContextUsage
 
     private static readonly CompactionSettings DefaultCompactionSettings = new();
 
+    /// <summary>The same chars/4 approximation CompactionPlanner.EstimatedTokensUsed applies to
+    /// content since the last real usage report (and liveContextUsage.ts's estimateTokens mirrors).</summary>
+    public static int EstimateTextTokens(string text) => (text.Length + 3) / 4;
+
     /// <summary>
     /// Bands are measured against the same TriggerAtTokens the Compactor itself uses to decide
     /// when to fire (scaled to this specific contextLength via CompactionSettings.ForContextWindow,
@@ -51,10 +55,16 @@ public static class ContextUsage
     /// e.g. a local model's typical 8K-16K window — would push the threshold negative and make the
     /// meter report Critical from the very first token, which is why the default path derives
     /// everything from ForContextWindow instead.
+    ///
+    /// additionalEstimatedTokens adds content a live meter has seen but the transcript doesn't hold
+    /// yet — AgentLoop yields ToolCallResult before appending that result to the transcript, so a
+    /// meter refreshed on the event alone would always trail by the newest result. Litos.Gui passes
+    /// <see cref="EstimateTextTokens"/> of that result; it is only ever added to a real usage report,
+    /// never a substitute for one (no report yet still means null).
     /// </summary>
-    public static ContextUsageSnapshot? Compute(Transcript transcript, int contextLength, int? reserveTokens = null)
+    public static ContextUsageSnapshot? Compute(Transcript transcript, int contextLength, int? reserveTokens = null, int additionalEstimatedTokens = 0)
     {
-        var usedTokens = CompactionPlanner.EstimatedTokensUsed(transcript);
+        var usedTokens = CompactionPlanner.EstimatedTokensUsed(transcript) + Math.Max(0, additionalEstimatedTokens);
         if (usedTokens is null)
             return null;
 

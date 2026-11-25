@@ -24,17 +24,38 @@ namespace Litos.Gui;
 public static partial class SelfUpdater
 {
     [SupportedOSPlatform("windows")]
-    public static async Task InstallAndRelaunchWindowsAsync(HttpClient http, GitHubAsset asset, SessionResumeArgs resume, CancellationToken ct)
+    public static async Task InstallAndRelaunchWindowsAsync(HttpClient http, GitHubAsset asset, GitHubAsset? kernelAsset, SessionResumeArgs resume, CancellationToken ct)
     {
         var extractDir = await DownloadAndExtractAsync(http, asset, ct);
-        var newExePath = Directory.GetFiles(extractDir, "*.exe").FirstOrDefault()
+        // By name first: a zip holding any other .exe must never have it installed as Litos.Gui.exe.
+        var newExePath = PickExe(extractDir, "Litos.Gui.exe")
             ?? throw new InvalidOperationException($"No .exe found in downloaded asset '{asset.Name}'.");
 
         var targetExePath = Environment.ProcessPath
             ?? throw new InvalidOperationException("Could not resolve the running executable's path.");
 
+        // The PTC kernel, swapped in beside the app by the same helper script. Best-effort: a
+        // release without the kernel asset, or a failed download, still updates the app itself —
+        // PTC then keeps the kernel already installed, or reports itself unavailable, rather than
+        // blocking the update.
+        string? newKernelExePath = null;
+        if (kernelAsset is not null)
+        {
+            try
+            {
+                newKernelExePath = PickExe(await DownloadAndExtractAsync(http, kernelAsset, ct), KernelExeName, allowFallback: false);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException)
+            {
+                newKernelExePath = null;
+            }
+        }
+        var targetKernelExePath = newKernelExePath is null
+            ? null
+            : Path.Combine(Path.GetDirectoryName(targetExePath)!, KernelExeName);
+
         var scriptPath = Path.Combine(Path.GetTempPath(), $"litos-update-{Guid.NewGuid():n}.ps1");
-        File.WriteAllText(scriptPath, BuildRelaunchScript(Environment.ProcessId, newExePath, targetExePath, resume.ToArgv()));
+        File.WriteAllText(scriptPath, BuildRelaunchScript(Environment.ProcessId, newExePath, targetExePath, resume.ToArgv(), newKernelExePath, targetKernelExePath));
 
         var arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"";
         if (!StartProcessBreakingAwayFromJob("powershell.exe", arguments))
@@ -49,7 +70,9 @@ public static partial class SelfUpdater
     /// so exit-to-lock-release timing isn't guaranteed instant), replaces it, relaunches with the
     /// same resume args this update started with, then deletes itself.
     /// </summary>
-    internal static string BuildRelaunchScript(int oldPid, string newExePath, string targetExePath, string[] resumeArgv)
+    internal static string BuildRelaunchScript(
+        int oldPid, string newExePath, string targetExePath, string[] resumeArgv,
+        string? newKernelExePath = null, string? targetKernelExePath = null)
     {
         // Every interpolated path/arg goes through the same single-quote doubling PowerShell
         // expects inside a '...' literal — newExePath/targetExePath come from Path.GetTempPath()
@@ -66,6 +89,17 @@ public static partial class SelfUpdater
         script.AppendLine($"    try {{ Move-Item -Path '{quotedNewExePath}' -Destination '{quotedTargetExePath}' -Force; break }}");
         script.AppendLine("    catch { Start-Sleep -Milliseconds 500 }");
         script.AppendLine("}");
+        // The kernel runs inside the old process's kill-on-close job, so it is gone once the
+        // Wait-Process above returns; the same retry loop covers a slow lock release.
+        if (newKernelExePath is not null && targetKernelExePath is not null)
+        {
+            var quotedNewKernel = EscapeForSingleQuotedPowerShellString(newKernelExePath);
+            var quotedTargetKernel = EscapeForSingleQuotedPowerShellString(targetKernelExePath);
+            script.AppendLine("for ($i = 0; $i -lt 20; $i++) {");
+            script.AppendLine($"    try {{ Move-Item -Path '{quotedNewKernel}' -Destination '{quotedTargetKernel}' -Force; break }}");
+            script.AppendLine("    catch { Start-Sleep -Milliseconds 500 }");
+            script.AppendLine("}");
+        }
         script.AppendLine($"Start-Process -FilePath '{quotedTargetExePath}' -ArgumentList @({quotedResumeArgs})");
         script.AppendLine($"Remove-Item -Path '{MyScriptPathToken}' -Force -ErrorAction SilentlyContinue");
         // $MyInvocation.MyCommand.Path can't be interpolated ahead of time (it only resolves once
@@ -74,6 +108,20 @@ public static partial class SelfUpdater
     }
 
     private static string EscapeForSingleQuotedPowerShellString(string value) => value.Replace("'", "''");
+
+    private const string KernelExeName = "Litos.Kernel.Host.exe";
+
+    /// <summary><paramref name="preferredName"/> if the directory has it; otherwise, when
+    /// <paramref name="allowFallback"/>, its first .exe (older Gui release zips are only ever
+    /// expected to hold Litos.Gui.exe). Null when nothing qualifies. The kernel passes false: some
+    /// other exe must never be installed under the kernel's name.</summary>
+    internal static string? PickExe(string directory, string preferredName, bool allowFallback = true)
+    {
+        var preferred = Path.Combine(directory, preferredName);
+        if (File.Exists(preferred))
+            return preferred;
+        return allowFallback ? Directory.GetFiles(directory, "*.exe").FirstOrDefault() : null;
+    }
 
     private const string MyScriptPathToken = "__SELF_PATH__";
 
@@ -84,7 +132,7 @@ public static partial class SelfUpdater
     /// CreateProcess fails for any reason (caller surfaces this as an update failure, same tone as
     /// every other SelfUpdater failure path).
     /// </summary>
-    private static bool StartProcessBreakingAwayFromJob(string fileName, string arguments)
+    internal static bool StartProcessBreakingAwayFromJob(string fileName, string arguments)
     {
         var commandLine = $"\"{fileName}\" {arguments}";
         var startupInfo = new STARTUPINFO();

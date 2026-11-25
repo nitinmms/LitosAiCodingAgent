@@ -1,6 +1,6 @@
-namespace Litos.VsCodeHost.Files;
+namespace Litos.Hosting.Files;
 
-/// <summary>Local copy of Litos.Api's Files/SharedFileMeta.cs — see SharedFileStore's own note on why each face keeps its own copy.</summary>
+/// <summary>Copy of Litos.Api's Files/SharedFileMeta.cs — see SharedFileStore's own note.</summary>
 public sealed record SharedFileMeta(string Owner, string FileName, string? ContentType, DateTimeOffset ExpiresAt);
 
 public sealed record SharedFileToken(string Token, DateTimeOffset ExpiresAt);

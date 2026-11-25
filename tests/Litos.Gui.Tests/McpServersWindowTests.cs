@@ -10,7 +10,7 @@ public class McpServersWindowTests
     public void BuildDefinition_BlankName_ReturnsNullWithError()
     {
         var definition = McpServersWindow.BuildDefinition(
-            name: "  ", isStdio: true, command: "npx", args: null, url: null, enabled: true, out var error);
+            name: "  ", isStdio: true, command: "npx", args: null, url: null, enabled: true, ToolPermission.Full, out var error);
 
         Assert.Null(definition);
         Assert.Equal("A server name is required.", error);
@@ -20,7 +20,7 @@ public class McpServersWindowTests
     public void BuildDefinition_NullName_ReturnsNullWithError()
     {
         var definition = McpServersWindow.BuildDefinition(
-            name: null, isStdio: true, command: "npx", args: null, url: null, enabled: true, out var error);
+            name: null, isStdio: true, command: "npx", args: null, url: null, enabled: true, ToolPermission.Full, out var error);
 
         Assert.Null(definition);
         Assert.NotNull(error);
@@ -36,6 +36,7 @@ public class McpServersWindowTests
             args: "-y @modelcontextprotocol/server-filesystem /workspace",
             url: null,
             enabled: true,
+            ToolPermission.Full,
             out var error);
 
         Assert.Null(error);
@@ -52,7 +53,7 @@ public class McpServersWindowTests
     public void BuildDefinition_Stdio_EmptyArgsProducesEmptyList()
     {
         var definition = McpServersWindow.BuildDefinition(
-            name: "srv", isStdio: true, command: "npx", args: "", url: null, enabled: true, out _);
+            name: "srv", isStdio: true, command: "npx", args: "", url: null, enabled: true, ToolPermission.Full, out _);
 
         Assert.NotNull(definition);
         Assert.Empty(definition!.Args!);
@@ -63,7 +64,7 @@ public class McpServersWindowTests
     {
         var definition = McpServersWindow.BuildDefinition(
             name: "remote", isStdio: false, command: null, args: null, url: "  https://example.com/mcp  ",
-            enabled: false, out var error);
+            enabled: false, ToolPermission.Full, out var error);
 
         Assert.Null(error);
         Assert.NotNull(definition);
@@ -74,16 +75,39 @@ public class McpServersWindowTests
         Assert.False(definition.Enabled);
     }
 
-    [Fact]
-    public void BuildDefinition_AlwaysSetsFullPermissionAndNoOverrides()
+    [Theory]
+    [InlineData(ToolPermission.Deny)]
+    [InlineData(ToolPermission.Ask)]
+    [InlineData(ToolPermission.Full)]
+    public void BuildDefinition_UsesTheChosenPermission_AndNoOverrides(ToolPermission permission)
     {
         var definition = McpServersWindow.BuildDefinition(
-            name: "srv", isStdio: true, command: "npx", args: null, url: null, enabled: true, out _);
+            name: "srv", isStdio: true, command: "npx", args: null, url: null, enabled: true, permission, out _);
 
         Assert.NotNull(definition);
-        Assert.Equal(ToolPermission.Full, definition!.DefaultPermission);
+        Assert.Equal(permission, definition!.DefaultPermission);
         Assert.Null(definition.ToolOverrides);
     }
+
+    [Fact]
+    public void PermissionChoices_MatchTheVsCodePanelOrder() =>
+        Assert.Equal([ToolPermission.Deny, ToolPermission.Ask, ToolPermission.Full], McpServersWindow.PermissionChoices);
+
+    [Theory]
+    [InlineData(ToolPermission.Deny, 0)]
+    [InlineData(ToolPermission.Ask, 1)]
+    [InlineData(ToolPermission.Full, 2)]
+    public void PermissionIndex_AndPermissionAt_RoundTrip(ToolPermission permission, int index)
+    {
+        Assert.Equal(index, McpServersWindow.PermissionIndex(permission));
+        Assert.Equal(permission, McpServersWindow.PermissionAt(index));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(3)]
+    public void PermissionAt_OutOfRange_FallsBackToFull(int index) =>
+        Assert.Equal(ToolPermission.Full, McpServersWindow.PermissionAt(index));
 
     [Theory]
     [InlineData(McpConnectionStatus.Connected, "Connected")]

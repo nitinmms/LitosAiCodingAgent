@@ -38,7 +38,20 @@
         <TextBox Name="NewUrlBox" PlaceholderText="URL (e.g. https://example.com/mcp)" />
       </StackPanel>
 
-      <CheckBox Name="NewEnabledCheckBox" Content="Enabled" IsChecked="True" />
+      <StackPanel Orientation="Horizontal" Spacing="16">
+        <CheckBox Name="NewEnabledCheckBox" Content="Enabled" IsChecked="True" />
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <TextBlock Text="Permission:" VerticalAlignment="Center" Foreground="#9A9A9A" />
+          <!-- Same order as the VS Code panel. Full (index 2) by default: a newly added server's
+               tools run without asking, as they always have in Litos.Gui. -->
+          <ComboBox Name="NewPermissionCombo" SelectedIndex="2" MinWidth="90"
+                    ToolTip.Tip="Deny: never call. Ask: show an Approve/Deny card for each call. Full: call without asking.">
+            <ComboBoxItem Content="Deny" />
+            <ComboBoxItem Content="Ask" />
+            <ComboBoxItem Content="Full" />
+          </ComboBox>
+        </StackPanel>
+      </StackPanel>
 
       <Button Name="AddServerButton" Content="Add server" HorizontalAlignment="Left" />
 

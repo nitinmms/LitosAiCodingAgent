@@ -3,8 +3,8 @@
 Lets the Litos agent publish a self-contained HTML page — a report, a design proposal, a
 diagram, a small interactive tool — that the user opens in their browser from a link in the
 chat. Modelled on Claude Code's Artifacts feature, scoped down to "test the waters" in the VS Code
-extension only. Litos.Gui and the Software Factory are deliberately out of scope for v1; §9
-records how each would follow.
+extension only. Litos.Gui and the Software Factory were out of scope for v1; §10 records how each
+would follow. Litos.Gui has since adopted it (`ReadMe_GuiParity.md`, 2026-11-25).
 
 ## 1. Decisions (agreed 2026-11-05)
 
@@ -247,8 +247,10 @@ Changed
 
 ## 10. Later (not v1)
 
-- **Litos.Gui:** reuse `Litos.Artifacts` unchanged; Gui needs a small loopback Kestrel to serve
-  the route (it has none) or `Avalonia.Controls.WebView` 12.1.x (licence to verify).
+- **Litos.Gui:** built 2026-11-25 (`ReadMe_GuiParity.md`). `Litos.Artifacts` reused unchanged; Gui
+  runs a minimal in-process loopback server (`GuiLoopbackServer`) for `/artifacts` and `/files`,
+  and re-points stale-port links on click (`HostLinks.RewriteStale`, the C# port of
+  `shareLinks.ts`). No in-app viewer — links open in the browser, as in VS Code.
 - **Software Factory:** side chats are built (§11). Work runs (Implement/Repair/Review…), an
   in-app viewer, deleting, an Admin switch and the `@factory` path are not.
 - Approach B (dedicated artifact origin), runtime capabilities, Markdown artifacts.

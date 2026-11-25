@@ -109,7 +109,7 @@ public static class McpServersDialog
 
             try
             {
-                store.Update(cfg => cfg with { Servers = [.. cfg.Servers, definition] });
+                store.AddServer(definition);
             }
             catch (McpConfigValidationException ex)
             {
@@ -133,7 +133,8 @@ public static class McpServersDialog
         {
             if (SelectedRow() is not { ServerName: { } name })
                 return;
-            store.Update(cfg => cfg with { Servers = [.. cfg.Servers.Select(s => s.Name == name ? s with { Enabled = !s.Enabled } : s)] });
+            if (store.Current.Servers.FirstOrDefault(s => s.Name == name) is { } server)
+                store.SetServerEnabled(name, !server.Enabled);
             _ = RefreshAllAsync();
         };
 
@@ -142,7 +143,7 @@ public static class McpServersDialog
         {
             if (SelectedRow() is not { ServerName: { } name })
                 return;
-            store.Update(cfg => cfg with { Servers = [.. cfg.Servers.Where(s => s.Name != name)] });
+            store.RemoveServer(name);
             _ = RefreshAllAsync();
         };
 

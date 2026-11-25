@@ -22,12 +22,9 @@ public sealed class McpEndpointsPermissionTests
         Name: name, Transport: McpTransportKind.Stdio, Command: "npx", Args: [], Env: null, Url: null,
         Enabled: true, DefaultPermission: defaultPermission, ToolOverrides: null);
 
-    // Mirrors the exact mutation McpEndpoints.cs's "/mcp/servers/{name}/permission" handler runs.
+    // The exact call McpEndpoints.cs's "/mcp/servers/{name}/permission" handler makes.
     private static void SetDefaultPermission(McpConfigStore configStore, string name, SetDefaultPermissionRequest request) =>
-        configStore.Update(cfg => cfg with
-        {
-            Servers = [.. cfg.Servers.Select(s => s.Name == name ? s with { DefaultPermission = request.DefaultPermission } : s)],
-        });
+        configStore.SetServerPermission(name, request.DefaultPermission);
 
     [Fact]
     public void ChangesAnExistingServersDefaultPermission()

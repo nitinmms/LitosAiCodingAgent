@@ -67,3 +67,19 @@ public class ToolCallRowTests
         Assert.Contains("Result:\nconnection refused", detail);
     }
 }
+
+/// <summary>Same wording and threshold as the VS Code webview's slow-tool notice.</summary>
+public class ToolCallRowSlowNoticeTests
+{
+    [Fact]
+    public void SlowNoticeText_UnderTwentySeconds_IsNull() =>
+        Assert.Null(ToolCallRow.SlowNoticeText(sending: true, TimeSpan.FromSeconds(19.9)));
+
+    [Theory]
+    [InlineData(true, 20, "waiting for the model to finish sending this tool call (20s)")]
+    [InlineData(true, 296, "waiting for the model to finish sending this tool call (4m 56s)")]
+    [InlineData(false, 65, "still running (1m 5s)")]
+    [InlineData(false, 59, "still running (59s)")]
+    public void SlowNoticeText_NamesWhichWaitItIs(bool sending, int seconds, string expected) =>
+        Assert.Equal(expected, ToolCallRow.SlowNoticeText(sending, TimeSpan.FromSeconds(seconds)));
+}

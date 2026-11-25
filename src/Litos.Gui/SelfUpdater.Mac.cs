@@ -45,8 +45,7 @@ public static partial class SelfUpdater
             throw;
         }
 
-        var resumeArgs = string.Join(' ', resume.ToArgv().Select(a => $"\"{a}\""));
-        Process.Start("open", $"-n \"{runningBundlePath}\" --args {resumeArgs}");
+        OpenBundle(runningBundlePath, resume.ToArgv());
 
         // Best-effort cleanup of the pre-update bundle; failure here doesn't affect the already-
         // relaunched new instance, so it's fire-and-forget rather than something worth surfacing.
@@ -60,7 +59,18 @@ public static partial class SelfUpdater
     /// root, the directory Directory.Move needs to operate on as a whole rather than just the
     /// executable inside Contents/MacOS.
     /// </summary>
-    private static string? ResolveRunningBundlePath()
+    /// <summary>Starts a new instance of the .app at <paramref name="bundlePath"/> via `open -n`,
+    /// passing <paramref name="argv"/> through to its Main. Shared by the updater and AppRelauncher.</summary>
+    internal static void OpenBundle(string bundlePath, IReadOnlyList<string> argv) =>
+        Process.Start("open", OpenBundleArguments(bundlePath, argv));
+
+    /// <summary>`open`'s argument string for <see cref="OpenBundle"/>. Pure, for testing.</summary>
+    internal static string OpenBundleArguments(string bundlePath, IReadOnlyList<string> argv) =>
+        argv.Count == 0
+            ? $"-n \"{bundlePath}\""
+            : $"-n \"{bundlePath}\" --args {string.Join(' ', argv.Select(a => $"\"{a}\""))}";
+
+    internal static string? ResolveRunningBundlePath()
     {
         var exeDir = Path.GetDirectoryName(Environment.ProcessPath);
         var contentsDir = exeDir is null ? null : Directory.GetParent(exeDir)?.FullName;

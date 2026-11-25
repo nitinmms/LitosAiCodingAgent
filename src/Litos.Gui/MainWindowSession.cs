@@ -5,6 +5,7 @@ using Litos.Agent.Tools;
 using Litos.Host;
 using Litos.Kernel;
 using Litos.Tools.Mcp;
+using Litos.Tools.Shell;
 
 namespace Litos.Gui;
 
@@ -37,14 +38,33 @@ public sealed class MainWindowSession(
     McpConfigStore mcpConfigStore,
     McpToolProvider mcpToolProvider,
     ISystemPromptProvider systemPromptProvider,
-    KernelSessionManager kernelSessionManager)
+    KernelSessionManager? kernelSessionManager,
+    PendingApprovalStore pendingApprovals,
+    McpToolRefreshService mcpRefreshService,
+    GuiLoopbackServer loopbackServer)
 {
     /// <summary>
     /// Owns this window's chatSessionId -> KernelSession map (ReadMe_PTCPersistentKernel.md §4.4,
     /// §8.2). GetOrCreate is called lazily, only on a kernel-mode round (§4.4 "born lazily on first
     /// kernel-mode round") — see MainWindow's kernelRunner closure passed to AgentLoopFactory.Create.
+    /// Null when PTC is unavailable in this build (Litos.Kernel.Host not found beside the exe —
+    /// see KernelHosting.TryCreateSessionManager); MainWindow then disables the PTC toggle.
     /// </summary>
-    public KernelSessionManager KernelSessionManager { get; } = kernelSessionManager;
+    public KernelSessionManager? KernelSessionManager { get; } = kernelSessionManager;
+
+    /// <summary>MCP tool calls on a server set to Ask wait here (via McpAwareApprovalGate) until
+    /// MainWindow's in-transcript approval card resolves them, or the store's timeout auto-denies.</summary>
+    public PendingApprovalStore PendingApprovals { get; } = pendingApprovals;
+
+    /// <summary>Background MCP reconcile (reconnects, config changes); stopped on window close.</summary>
+    public McpToolRefreshService McpRefreshService { get; } = mcpRefreshService;
+
+    /// <summary>Why startup couldn't list the provider's models, when it couldn't — shown alongside
+    /// the "pick a model" notice. Null when listing succeeded (or was only a best-effort upgrade).</summary>
+    public string? StartupModelListError { get; set; }
+
+    /// <summary>Serves artifact and share_file links; its BaseUrl re-points stale links on click.</summary>
+    public GuiLoopbackServer LoopbackServer { get; } = loopbackServer;
     public AgentLoopFactory LoopFactory { get; } = loopFactory;
 
     /// <summary>

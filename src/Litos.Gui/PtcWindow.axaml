@@ -1,0 +1,23 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Litos.Gui.PtcWindow"
+        Title="Programmatic Tool Calling"
+        Icon="avares://Litos.Gui/Assets/AppIcon.png"
+        Width="460" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E"
+        CanResize="False">
+  <!-- Same copy as the VS Code extension's /ptc popup (webviewContent.ts #ptcPopup). -->
+  <StackPanel Margin="16" Spacing="12">
+    <TextBlock Text="Programmatic Tool Calling" FontWeight="Bold" FontSize="16" Foreground="WhiteSmoke" />
+    <TextBlock TextWrapping="Wrap" Foreground="#9A9A9A"
+               Text="When on, the model's only tool is a persistent C# code kernel. It writes scripts that call your tools directly, so multi-step work collapses into one round instead of several." />
+    <ToggleSwitch Name="PtcSwitch" OnContent="On for this session" OffContent="Off for this session" />
+    <TextBlock Name="WarningText" TextWrapping="Wrap" Foreground="#D7BA7D"
+               Text="Code the model writes runs with your full local permissions — file, network, and subprocess access are not gated by an approval prompt. MCP tools are not prompted for approval either: servers set to Ask are called without asking. Servers set to Deny stay blocked. Turn this on only if you are comfortable letting the model run local code unsupervised in this session." />
+    <TextBlock Name="UnavailableText" TextWrapping="Wrap" Foreground="#F48771" IsVisible="False"
+               Text="Programmatic Tool Calling is unavailable in this build — the kernel host binary (Litos.Kernel.Host) is missing beside Litos.Gui. Reinstall Litos to restore it." />
+    <TextBlock Name="ErrorText" TextWrapping="Wrap" Foreground="#F48771" IsVisible="False" />
+    <Button Name="CloseButton" Content="Close" HorizontalAlignment="Right" />
+  </StackPanel>
+</Window>

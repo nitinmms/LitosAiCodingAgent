@@ -1,25 +1,23 @@
 using System.Text.Json;
 using Litos.Agent.Session;
 using Litos.Hosting;
-using Litos.VsCodeHost;
-using Litos.VsCodeHost.Files;
+using Litos.Hosting.Files;
 
-namespace Litos.VsCodeHost.Tests.Files;
+namespace Litos.Hosting.Tests.Files;
 
 /// <summary>
 /// Adapted from Litos.Api.Tests/Files/ShareFileToolTests.cs. No "PUBLIC_BASE_URL not configured"
-/// case here — unlike Litos.Api, this host is always loopback-only, so LoopbackBaseUrl.Value is
-/// always a real, known URL by the time any tool actually runs (see Program.cs's own remarks on
-/// why the DI-registration-before-StartAsync ordering is still safe).
+/// case here — unlike Litos.Api, the hosts using this tool are always loopback-only, so the base
+/// URL is always a real, known URL by the time any tool actually runs.
 /// </summary>
 public class ShareFileToolTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), $"litos-vscodehost-shared-files-tool-test-{Guid.NewGuid():n}");
-    private readonly string _tempFile = Path.Combine(Path.GetTempPath(), $"litos-vscodehost-test-{Guid.NewGuid():n}.txt");
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"litos-hosting-shared-files-tool-test-{Guid.NewGuid():n}");
+    private readonly string _tempFile = Path.Combine(Path.GetTempPath(), $"litos-hosting-test-{Guid.NewGuid():n}.txt");
 
     private static JsonElement Args(string path) => JsonSerializer.SerializeToElement(new { path });
 
-    private static LoopbackBaseUrl BaseUrl(string value = "http://127.0.0.1:54321") => new() { Value = value };
+    private static Func<string> BaseUrl(string value = "http://127.0.0.1:54321") => () => value;
 
     [Fact]
     public async Task InvokeAsync_FileDoesNotExist_ReturnsError()
@@ -73,18 +71,18 @@ public class ShareFileToolTests : IDisposable
         Assert.Equal("hello", await File.ReadAllTextAsync(resolved!.Value.FilePath));
     }
 
-    // Confirms the lazy-read-at-invocation design actually works: a ShareFileTool built with an
-    // as-yet-unpopulated LoopbackBaseUrl (mirroring DI registration happening before
-    // app.StartAsync() resolves the real port) still produces the right URL once .Value is set
-    // before InvokeAsync runs — exactly the sequencing Program.cs relies on.
+    // Confirms the lazy-read-at-invocation design actually works: a ShareFileTool built before the
+    // base URL is known (mirroring DI registration happening before the listener resolves its
+    // real port) still produces the right URL once it is set before InvokeAsync runs — exactly the
+    // sequencing both loopback hosts rely on.
     [Fact]
     public async Task InvokeAsync_BaseUrlSetAfterConstruction_StillUsesTheUpdatedValue()
     {
         await File.WriteAllTextAsync(_tempFile, "hello");
-        var baseUrl = new LoopbackBaseUrl(); // empty at construction, like before StartAsync() resolves the port
-        var tool = new ShareFileTool(new SharedFileStore(_root), baseUrl);
+        var baseUrl = ""; // empty at construction, like before the listener resolves its port
+        var tool = new ShareFileTool(new SharedFileStore(_root), () => baseUrl);
 
-        baseUrl.Value = "http://127.0.0.1:9999"; // populated later, like Program.cs does after StartAsync()
+        baseUrl = "http://127.0.0.1:9999"; // populated later, once the port is known
         var result = await tool.InvokeAsync(Args(_tempFile), CancellationToken.None);
 
         Assert.Contains("http://127.0.0.1:9999/files/", result.Text);

@@ -7,55 +7,48 @@ namespace Litos.VsCodeHost.Mcp;
 /// /mcp — server CRUD + live status + refresh, none of which has ever had a JSON API on any face
 /// (the only prior art, Litos.Api's McpServers.razor, is a server-rendered Blazor/SignalR page).
 /// McpConfigStore/McpToolProvider are the same face-agnostic Litos.Tools.Mcp types Litos.Api and
-/// Litos.Gui already use, unmodified.
+/// Litos.Gui already use, unmodified; the mutations themselves are McpServerAdmin's, shared with
+/// Litos.Gui's McpServersWindow.
 /// </summary>
 public static class McpEndpoints
 {
     public static IEndpointRouteBuilder MapMcpEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/mcp/servers", (McpConfigStore configStore, McpToolProvider toolProvider) =>
-        {
-            var connectionsByName = toolProvider.Connections.ToDictionary(c => c.ServerName);
-            var servers = configStore.Current.Servers.Select(server =>
+            Results.Ok(configStore.ListServers(toolProvider).Select(status => new
             {
-                connectionsByName.TryGetValue(server.Name, out var connection);
-                return new
-                {
-                    server.Name,
-                    server.Transport,
-                    server.Command,
-                    server.Args,
-                    server.Url,
-                    server.Enabled,
-                    server.DefaultPermission,
-                    status = connection?.Status.ToString() ?? "Disconnected",
-                    error = connection?.Error,
-                    toolCount = connection?.Tools.Count ?? 0,
-                    promptCount = connection?.Prompts.Count ?? 0,
-                };
-            });
-            return Results.Ok(servers);
-        });
+                status.Definition.Name,
+                status.Definition.Transport,
+                status.Definition.Command,
+                status.Definition.Args,
+                status.Definition.Url,
+                status.Definition.Enabled,
+                status.Definition.DefaultPermission,
+                status = status.Connection?.Status.ToString() ?? "Disconnected",
+                error = status.Connection?.Error,
+                toolCount = status.Connection?.Tools.Count ?? 0,
+                promptCount = status.Connection?.Prompts.Count ?? 0,
+            })));
 
         app.MapPost("/mcp/servers", (AddMcpServerRequest request, McpConfigStore configStore) =>
         {
             try
             {
-                configStore.Update(cfg => cfg with
-                {
-                    Servers = [.. cfg.Servers, new McpServerDefinition(
-                        Name: request.Name,
-                        Transport: request.Transport,
-                        Command: request.Command,
-                        Args: request.Args,
-                        Env: request.Env,
-                        Url: request.Url,
-                        Enabled: true,
-                        DefaultPermission: request.DefaultPermission,
-                        ToolOverrides: null)],
-                });
+                configStore.AddServer(new McpServerDefinition(
+                    Name: request.Name,
+                    Transport: request.Transport,
+                    Command: request.Command,
+                    Args: request.Args,
+                    Env: request.Env,
+                    Url: request.Url,
+                    Enabled: true,
+                    DefaultPermission: request.DefaultPermission,
+                    ToolOverrides: null));
             }
-            catch (ArgumentException ex)
+            // McpConfigStore.Update's validation (duplicate name, "__" in a name) throws
+            // McpConfigValidationException, not ArgumentException — catching only the latter
+            // turned a duplicate name into a 500 instead of the 400 + message the panel shows.
+            catch (Exception ex) when (ex is McpConfigValidationException or ArgumentException)
             {
                 return Results.BadRequest(ex.Message);
             }
@@ -64,25 +57,19 @@ public static class McpEndpoints
 
         app.MapPost("/mcp/servers/{name}/enabled", (string name, SetEnabledRequest request, McpConfigStore configStore) =>
         {
-            configStore.Update(cfg => cfg with
-            {
-                Servers = [.. cfg.Servers.Select(s => s.Name == name ? s with { Enabled = request.Enabled } : s)],
-            });
+            configStore.SetServerEnabled(name, request.Enabled);
             return Results.Ok();
         });
 
         app.MapPost("/mcp/servers/{name}/permission", (string name, SetDefaultPermissionRequest request, McpConfigStore configStore) =>
         {
-            configStore.Update(cfg => cfg with
-            {
-                Servers = [.. cfg.Servers.Select(s => s.Name == name ? s with { DefaultPermission = request.DefaultPermission } : s)],
-            });
+            configStore.SetServerPermission(name, request.DefaultPermission);
             return Results.Ok();
         });
 
         app.MapDelete("/mcp/servers/{name}", (string name, McpConfigStore configStore) =>
         {
-            configStore.Update(cfg => cfg with { Servers = [.. cfg.Servers.Where(s => s.Name != name)] });
+            configStore.RemoveServer(name);
             return Results.Ok();
         });
 

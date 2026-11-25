@@ -10,7 +10,7 @@ namespace Litos.Api.Turns;
 public static class TurnsEndpoints
 {
     /// <summary>Per-file cap — generous for typical documents/images/PDFs, small enough to bound context/memory impact of a single upload.</summary>
-    public const long MaxAttachmentBytes = 20 * 1024 * 1024;
+    public const long MaxAttachmentBytes = Litos.Tools.Attachments.AttachmentLimits.MaxFileBytes;
 
     /// <summary>Max files per request — bounds how much a single turn's context can grow from attachments.</summary>
     public const int MaxAttachmentCount = 5;

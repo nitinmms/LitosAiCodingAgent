@@ -20,11 +20,32 @@ public sealed record AttachResult(IReadOnlyList<string> Lines, DocumentMarkdown?
 /// recognized-but-unintended extensions, misroute the file into a structured-format sniffer
 /// that fails on it. Every other file type (plain text, source code, or a real document format)
 /// goes through IAttachmentConverter.
+///
+/// Same rules as Litos.VsCodeHost's /attachments endpoints: a 20MB cap on anything attached, and
+/// every converted document (file or URL) wrapped in UntrustedContent's boundary markers before it
+/// reaches the model — an attached file or fetched page is external content that can carry
+/// prompt-injection text, and the markers tell the model it is data, not instructions.
 /// </summary>
 public sealed class AttachHandler(IAttachmentConverter converter)
 {
+    public const long MaxAttachmentBytes = AttachmentLimits.MaxFileBytes;
+
+    /// <summary>The warning shown instead of attaching something over <see cref="MaxAttachmentBytes"/>,
+    /// or null when <paramref name="length"/> is within it.</summary>
+    internal static string? SizeLimitWarning(string displayName, long length) =>
+        length > MaxAttachmentBytes
+            ? $"Warning: skipped '{displayName}' — it is {length / (1024 * 1024)}MB, over the {MaxAttachmentBytes / (1024 * 1024)}MB attachment limit."
+            : null;
+
+    /// <summary>Marks converted document text as external content (see this type's remarks).</summary>
+    internal static DocumentMarkdown WrapUntrusted(DocumentMarkdown document, string source) =>
+        document with { Markdown = UntrustedContent.Wrap($"gui_attachment:{source}", document.Markdown) };
+
     public async Task<AttachResult> AttachPathAsync(string path, CancellationToken ct)
     {
+        if (File.Exists(path) && SizeLimitWarning(Path.GetFileName(path), new FileInfo(path).Length) is { } tooLarge)
+            return new AttachResult([tooLarge], Document: null, Image: null);
+
         if (ImageMedia.TryGetMimeType(path, out var mimeType))
         {
             var bytes = await File.ReadAllBytesAsync(path, ct);
@@ -43,7 +64,7 @@ public sealed class AttachHandler(IAttachmentConverter converter)
         }
 
         var converted = await converter.ConvertAsync(new FilePathSource(path), ct);
-        return new AttachResult(converted.Warnings.Select(w => $"Warning: {w}").ToList(), converted, Image: null);
+        return new AttachResult(converted.Warnings.Select(w => $"Warning: {w}").ToList(), WrapUntrusted(converted, Path.GetFileName(path)), Image: null);
     }
 
     /// <summary>
@@ -56,12 +77,15 @@ public sealed class AttachHandler(IAttachmentConverter converter)
         if (!isUrl)
         {
             var result = await AttachPathAsync(argument, ct);
-            return result with { Lines = [.. result.Lines, $"Attached '{argument}' — will be included in your next message."] };
+            // Skipped (binary, or over the size limit): its warning line already says so.
+            return result.Document is null && result.Image is null
+                ? result
+                : result with { Lines = [.. result.Lines, $"Attached '{argument}' — will be included in your next message."] };
         }
 
         var converted = await converter.ConvertAsync(new UrlSource(uri!), ct);
         List<string> lines = [.. converted.Warnings.Select(w => $"Warning: {w}"),
             $"Attached '{converted.Title}' ({converted.Markdown.Length} chars) — will be included in your next message."];
-        return new AttachResult(lines, converted, Image: null);
+        return new AttachResult(lines, WrapUntrusted(converted, uri!.Host), Image: null);
     }
 }

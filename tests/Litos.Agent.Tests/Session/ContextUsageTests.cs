@@ -224,4 +224,42 @@ public class ContextUsageTests
         Assert.Equal(21_000, snapshot!.UsedTokens);
         Assert.Equal(ContextUsageLevel.Normal, snapshot.Level);
     }
+
+    [Fact]
+    public void Compute_AdditionalEstimatedTokens_AreAddedToTheReportedUsage_AndCanRaiseTheLevel()
+    {
+        // reserveThreshold = 184_000: 180_000 alone is Warning; the not-yet-appended 4_000 tips it to Critical.
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(180_000, 0));
+
+        var snapshot = ContextUsage.Compute(transcript, contextLength: 200_000, reserveTokens: 16_000, additionalEstimatedTokens: 4_000);
+
+        Assert.Equal(184_000, snapshot!.UsedTokens);
+        Assert.Equal(ContextUsageLevel.Critical, snapshot.Level);
+    }
+
+    [Fact]
+    public void Compute_AdditionalEstimatedTokens_NeverInventUsage_WhenNoneWasReported()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.User("hi"));
+
+        Assert.Null(ContextUsage.Compute(transcript, contextLength: 200_000, additionalEstimatedTokens: 5_000));
+    }
+
+    [Fact]
+    public void Compute_NegativeAdditionalEstimatedTokens_AreIgnored()
+    {
+        var transcript = Transcript.CreateNew("/repo");
+        transcript.Append(ChatMessage.Assistant([new TextBlock("hi")]), new UsageInfo(10_000, 0));
+
+        Assert.Equal(10_000, ContextUsage.Compute(transcript, contextLength: 200_000, additionalEstimatedTokens: -50)!.UsedTokens);
+    }
+
+    [Theory]
+    [InlineData("", 0)]
+    [InlineData("abcd", 1)]
+    [InlineData("abcde", 2)] // rounds up, like liveContextUsage.ts's Math.ceil(len / 4)
+    public void EstimateTextTokens_IsCharsOverFourRoundedUp(string text, int expected) =>
+        Assert.Equal(expected, ContextUsage.EstimateTextTokens(text));
 }

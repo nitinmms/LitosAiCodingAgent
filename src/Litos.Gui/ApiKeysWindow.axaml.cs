@@ -55,9 +55,9 @@ public sealed partial class ApiKeysWindow : Window
         if (isFirstRun)
         {
             HeadingText.Text = "No API key was found for any provider.";
-            SubText.Text = $"Enter at least one key below. Saving writes it {storageDescription} — Litos will then close so you can restart it.";
+            SubText.Text = $"Enter at least one key below. Saving writes it {storageDescription}, then starts Litos.";
             CancelButton.Content = "Cancel and Exit";
-            SaveButton.Content = "Save and Exit";
+            SaveButton.Content = "Save and Start";
         }
         else
         {
@@ -113,7 +113,13 @@ public sealed partial class ApiKeysWindow : Window
         if (OperatingSystem.IsWindows())
         {
             foreach (var (_, envVar, value) in entries)
+            {
                 Environment.SetEnvironmentVariable(envVar, value, EnvironmentVariableTarget.User);
+                // And in this process too: a restart launched from here (AppRelauncher) inherits
+                // this process's environment, which predates the User-scope write above — without
+                // this the relaunched Litos would start without the key just saved.
+                Environment.SetEnvironmentVariable(envVar, value);
+            }
         }
 
         // LocalBaseUrl always goes to config.json — it isn't a secret, so (unlike the keys

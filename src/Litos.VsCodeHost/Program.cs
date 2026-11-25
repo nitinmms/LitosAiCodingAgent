@@ -2,9 +2,9 @@ using Litos.Agent.Tools;
 using Litos.Artifacts;
 using Litos.Host;
 using Litos.Hosting;
+using Litos.Hosting.Files;
 using Litos.Hosting.Turns;
 using Litos.Tools.Mcp;
-using Litos.VsCodeHost;
 using Litos.VsCodeHost.Config;
 using Litos.VsCodeHost.Files;
 using Litos.VsCodeHost.Mcp;
@@ -36,24 +36,19 @@ builder.Services.AddLitosAgent(config);
 // reconnect service — see AddLitosMcp for why initialization is not awaited here.
 builder.Services.AddLitosMcp();
 
-// LoopbackBaseUrl.Value is only known after app.StartAsync() resolves the OS-assigned port (see
-// below) — but ITool registrations, including ShareFileTool's, must happen before Build(). This
-// holder is registered now and populated after StartAsync(); ShareFileTool reads .Value lazily
-// inside InvokeAsync (never at construction), and no tool call can happen before StartAsync()
-// returns and this process reports its port, so by the time any turn actually runs, the real
-// value is always already set — unlike Litos.Api's ShareFileTool, this host is always
-// loopback-only, so its own base URL is always knowable and never "operator hasn't configured
-// PUBLIC_BASE_URL yet."
-var loopbackBaseUrl = new LoopbackBaseUrl();
-builder.Services.AddSingleton(loopbackBaseUrl);
-builder.Services.AddSingleton<SharedFileStore>();
-builder.Services.AddSingleton<ITool>(sp => new ShareFileTool(sp.GetRequiredService<SharedFileStore>(), loopbackBaseUrl));
+// The loopback base URL is only known after app.StartAsync() resolves the OS-assigned port (see
+// below) — but ITool registrations, including share_file's and the artifact tool's, must happen
+// before Build(). Both tools read it lazily inside InvokeAsync (never at construction), and no tool
+// call can happen before StartAsync() returns and this process reports its port, so by the time
+// any turn actually runs the real value is always already set.
+var loopbackBaseUrl = "";
+builder.Services.AddLitosSharedFiles(() => loopbackBaseUrl);
 
 // Agent-published HTML pages, opened in the user's browser from the tool result's link, plus the
 // built-in artifact-design skill (ReadMe_ArtifactsFeature.md). Same lazy base-URL reasoning as
-// ShareFileTool above. Must follow AddLitosAgent: it replaces that ISkillDiscovery with one that
+// share_file above. Must follow AddLitosAgent: it replaces that ISkillDiscovery with one that
 // also searches the built-in skill root.
-builder.Services.AddLitosArtifacts(() => loopbackBaseUrl.Value);
+builder.Services.AddLitosArtifacts(() => loopbackBaseUrl);
 
 // AgentWorker's constructor throws if no provider is configured (it resolves a default
 // provider/model eagerly) — only construct/register it, and only map the turns endpoints, once
@@ -85,7 +80,8 @@ static Litos.Kernel.KernelSessionManager? BuildKernelSessionManager(IServiceProv
 
 var app = builder.Build();
 app.MapConfigEndpoints();
-app.MapFilesEndpoints();
+app.MapSharedFileEndpoints();
+app.MapMentionEndpoints();
 app.MapArtifactEndpoints();
 app.MapSkillsEndpoints();
 app.MapAttachEndpoints();
@@ -102,17 +98,7 @@ if (isConfigured)
 
 // The base URL is set before the handshake is written, so it is already in place by the time
 // the extension can send its first request.
-await LoopbackHost.StartAndAnnounceAsync(app, port => loopbackBaseUrl.Value = $"http://127.0.0.1:{port}");
+await LoopbackHost.StartAndAnnounceAsync(app, port => loopbackBaseUrl = $"http://127.0.0.1:{port}");
 
 await app.WaitForShutdownAsync();
 return 0;
-
-namespace Litos.VsCodeHost
-{
-    /// <summary>Mutable holder for this process's own loopback base URL — see the wiring
-    /// comment above Program.cs's ShareFileTool registration for why this indirection exists.</summary>
-    public sealed class LoopbackBaseUrl
-    {
-        public string Value { get; set; } = "";
-    }
-}

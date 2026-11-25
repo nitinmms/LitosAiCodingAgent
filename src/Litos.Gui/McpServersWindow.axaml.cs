@@ -8,16 +8,17 @@ namespace Litos.Gui;
 
 /// <summary>
 /// MCP server management popup: server list (name, transport summary, live status, enable/
-/// disable, per-server refresh, remove) plus an add-server form — an Avalonia port of
-/// McpServers.razor's field set and behavior, minus the Deny/Ask/Full permission controls (never
-/// shown here: Litos.Gui's GuiApprovalGate auto-approves everything unconditionally, so surfacing
-/// permission controls that are never consulted would be misleading, see ReadMe_MCPSupportInLitosGUI.md §0).
-/// Plain Window opened via a static async factory, mirroring ListPickerWindow's convention — no
-/// ViewModel, no IDialogService, this codebase has neither.
+/// disable, per-server permission, per-server refresh, remove) plus an add-server form — an
+/// Avalonia port of McpServers.razor's field set and behavior, at parity with the VS Code
+/// extension's MCP panel. Permission (Deny/Ask/Full) is enforced by McpAwareApprovalGate, which
+/// reads it fresh per tool call, so a change applies to the next call with no reconnect; Ask shows
+/// an Approve/Deny card in the transcript. Mutations go through McpServerAdmin, shared with
+/// Litos.VsCodeHost's /mcp endpoints. Plain Window opened via a static async factory, mirroring
+/// ListPickerWindow's convention — no ViewModel, no IDialogService, this codebase has neither.
 ///
-/// Live status (Connecting…/Connected/Unreachable) is only ever refreshed right after a button
-/// click's Task completes — there's no background poller in Litos.Gui (§2.4/§3.3), so nothing
-/// changes while the window sits idle between clicks.
+/// Connections are reconciled in the background (McpToolRefreshService, started in Program.cs),
+/// but this list itself is redrawn only after a button click's Task completes — click Refresh to
+/// see a reconnect that happened while the window sat open.
 /// </summary>
 public sealed partial class McpServersWindow : Window
 {
@@ -89,13 +90,12 @@ public sealed partial class McpServersWindow : Window
     /// <summary>
     /// Pure form-values-to-definition mapping, split out so it's testable without an Avalonia
     /// control tree (same reasoning as MainWindow.DecideEnterAction / CommandMenuPopup.Filter).
-    /// DefaultPermission is always Full and never a form field — MCP tool calls in Litos.Gui
-    /// aren't gated at all, so DefaultPermission/ToolOverrides are stored but never consulted
-    /// (ReadMe_MCPSupportInLitosGUI.md §0). Returns null and a validation message when the name is
-    /// blank; McpConfigStore.Update itself catches the remaining cases (duplicate name, "__").
+    /// Returns null and a validation message when the name is blank; McpConfigStore.Update itself
+    /// catches the remaining cases (duplicate name, "__").
     /// </summary>
     internal static McpServerDefinition? BuildDefinition(
-        string? name, bool isStdio, string? command, string? args, string? url, bool enabled, out string? error)
+        string? name, bool isStdio, string? command, string? args, string? url, bool enabled,
+        ToolPermission permission, out string? error)
     {
         var trimmedName = name?.Trim() ?? "";
         if (trimmedName.Length == 0)
@@ -115,7 +115,7 @@ public sealed partial class McpServersWindow : Window
             Env: null,
             Url: isStdio ? null : (url?.Trim() ?? ""),
             Enabled: enabled,
-            DefaultPermission: ToolPermission.Full,
+            DefaultPermission: permission,
             ToolOverrides: null);
     }
 
@@ -123,7 +123,7 @@ public sealed partial class McpServersWindow : Window
     {
         var definition = BuildDefinition(
             NewNameBox.Text, IsStdioTransportSelected, NewCommandBox.Text, NewArgsBox.Text, NewUrlBox.Text,
-            NewEnabledCheckBox.IsChecked ?? true, out var validationError);
+            NewEnabledCheckBox.IsChecked ?? true, PermissionAt(NewPermissionCombo.SelectedIndex), out var validationError);
         if (definition is null)
         {
             ShowMessage(validationError!);
@@ -132,7 +132,7 @@ public sealed partial class McpServersWindow : Window
 
         try
         {
-            _store.Update(cfg => cfg with { Servers = [.. cfg.Servers, definition] });
+            _store.AddServer(definition);
         }
         catch (McpConfigValidationException ex)
         {
@@ -151,18 +151,27 @@ public sealed partial class McpServersWindow : Window
 
     private async Task RemoveServerAsync(string name)
     {
-        _store.Update(cfg => cfg with { Servers = [.. cfg.Servers.Where(s => s.Name != name)] });
+        _store.RemoveServer(name);
         await RefreshAllAsync();
     }
 
-    private async Task ToggleEnabledAsync(string name)
+    private async Task SetEnabledAsync(string name, bool enabled)
     {
-        _store.Update(cfg => cfg with
-        {
-            Servers = [.. cfg.Servers.Select(s => s.Name == name ? s with { Enabled = !s.Enabled } : s)],
-        });
+        _store.SetServerEnabled(name, enabled);
         await RefreshAllAsync();
     }
+
+    /// <summary>Same order as the VS Code panel's dropdown (mcpPanelContent.ts): Deny, Ask, Full.</summary>
+    internal static readonly IReadOnlyList<ToolPermission> PermissionChoices =
+        [ToolPermission.Deny, ToolPermission.Ask, ToolPermission.Full];
+
+    /// <summary>The combo-box index for <paramref name="permission"/>, and back. Pure and internal
+    /// so the mapping is testable without an Avalonia control tree.</summary>
+    internal static int PermissionIndex(ToolPermission permission) =>
+        Math.Max(0, PermissionChoices.ToList().IndexOf(permission));
+
+    internal static ToolPermission PermissionAt(int index) =>
+        index >= 0 && index < PermissionChoices.Count ? PermissionChoices[index] : ToolPermission.Full;
 
     private void ShowMessage(string text)
     {
@@ -187,12 +196,8 @@ public sealed partial class McpServersWindow : Window
             return;
         }
 
-        var connections = _provider.Connections;
-        foreach (var server in config.Servers)
-        {
-            var connection = connections.FirstOrDefault(c => c.ServerName == server.Name);
-            ServerListPanel.Children.Add(BuildServerRow(server, connection));
-        }
+        foreach (var server in _store.ListServers(_provider))
+            ServerListPanel.Children.Add(BuildServerRow(server.Definition, server.Connection));
     }
 
     private Control BuildServerRow(McpServerDefinition server, McpServerConnection? connection)
@@ -217,12 +222,25 @@ public sealed partial class McpServersWindow : Window
         // refresh "one" is not wasteful — see ReadMe_MCPSupportInLitosGUI.md §3.3.
         refreshButton.Click += async (_, _) => await RefreshAllAsync();
         var toggleButton = new Button { Content = server.Enabled ? "Disable" : "Enable" };
-        toggleButton.Click += async (_, _) => await ToggleEnabledAsync(server.Name);
+        toggleButton.Click += async (_, _) => await SetEnabledAsync(server.Name, !server.Enabled);
+
+        // Applies live (McpAwareApprovalGate re-reads the store per call), so unlike enable/remove
+        // there's no reconnect to wait for and no list redraw needed.
+        var permissionCombo = new ComboBox
+        {
+            ItemsSource = PermissionChoices.Select(p => p.ToString()).ToList(),
+            SelectedIndex = PermissionIndex(server.DefaultPermission),
+            MinWidth = 90,
+        };
+        ToolTip.SetTip(permissionCombo, "Deny: never call. Ask: show an Approve/Deny card for each call. Full: call without asking.");
+        permissionCombo.SelectionChanged += (_, _) => _store.SetServerPermission(server.Name, PermissionAt(permissionCombo.SelectedIndex));
         var removeButton = new Button { Content = "Remove" };
         removeButton.Click += async (_, _) => await RemoveServerAsync(server.Name);
         buttons.Children.Add(refreshButton);
         buttons.Children.Add(toggleButton);
         buttons.Children.Add(removeButton);
+        buttons.Children.Add(new TextBlock { Text = "Permission:", Foreground = DimTextBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Avalonia.Thickness(8, 0, 0, 0) });
+        buttons.Children.Add(permissionCombo);
 
         var panel = new StackPanel { Spacing = 2 };
         panel.Children.Add(header);

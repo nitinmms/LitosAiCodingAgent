@@ -141,3 +141,124 @@ public class SelfUpdaterRelaunchScriptTests
         Assert.Contains(@"C:\Litos\Litos.Gui.exe", script);
     }
 }
+
+/// <summary>
+/// The Windows PTC kernel ships as its own release asset (see SelfUpdater.IsWindowsKernelAsset).
+/// What matters most is that it can never be mistaken for the Litos.Gui asset — by this build's
+/// matcher, by older builds' matcher (the same IsCurrentPlatformAsset rule), or by
+/// deploy/install.ps1's "Litos.Gui-*-win-x64.zip" glob, which the same StartsWith/EndsWith
+/// shape stands in for here.
+/// </summary>
+public class SelfUpdaterKernelAssetTests
+{
+    [Fact]
+    public void IsWindowsKernelAsset_MatchesTheVersionedKernelAsset() =>
+        Assert.True(SelfUpdater.IsWindowsKernelAsset(new("Litos.Kernel.Host-v1.2.3-win-x64.zip", "https://example.com/k.zip")));
+
+    [Theory]
+    [InlineData("Litos.Kernel.Host-v1.2.3-win-x64.zip.sha256")]
+    [InlineData("Litos.Gui-v1.2.3-win-x64.zip")]
+    [InlineData("Litos-osx-arm64.zip")]
+    public void IsWindowsKernelAsset_RejectsEverythingElse(string name) =>
+        Assert.False(SelfUpdater.IsWindowsKernelAsset(new(name, "https://example.com/x")));
+
+    [Fact]
+    public void KernelAsset_IsNeverMistakenForTheAppAsset()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        Assert.False(SelfUpdater.IsCurrentPlatformAsset(new("Litos.Kernel.Host-v1.2.3-win-x64.zip", "https://example.com/k.zip")));
+    }
+}
+
+public class SelfUpdaterKernelRelaunchScriptTests
+{
+    [Fact]
+    public void BuildRelaunchScript_WithKernel_MovesItBeforeRelaunching()
+    {
+        var script = SelfUpdater.BuildRelaunchScript(
+            oldPid: 1,
+            newExePath: @"C:\Temp\a\Litos.Gui.exe",
+            targetExePath: @"C:\Litos\Litos.Gui.exe",
+            resumeArgv: [],
+            newKernelExePath: @"C:\Temp\b\Litos.Kernel.Host.exe",
+            targetKernelExePath: @"C:\Users\O'Brien\Litos\Litos.Kernel.Host.exe");
+
+        var kernelMove = script.IndexOf(@"-Path 'C:\Temp\b\Litos.Kernel.Host.exe'", StringComparison.Ordinal);
+        var relaunch = script.IndexOf("Start-Process", StringComparison.Ordinal);
+        Assert.True(kernelMove >= 0, script);
+        Assert.True(kernelMove < relaunch, "the kernel must be in place before the app relaunches");
+        Assert.Contains(@"O''Brien", script);
+    }
+
+    [Fact]
+    public void BuildRelaunchScript_WithoutKernel_TouchesOnlyTheApp()
+    {
+        var script = SelfUpdater.BuildRelaunchScript(1, @"C:\Temp\Litos.Gui.exe", @"C:\Litos\Litos.Gui.exe", []);
+
+        Assert.DoesNotContain("Kernel", script);
+    }
+}
+
+public sealed class SelfUpdaterPickExeTests : IDisposable
+{
+    private readonly string _dir = Directory.CreateTempSubdirectory("litos-pickexe-").FullName;
+
+    [Fact]
+    public void PickExe_PrefersTheNamedExe_EvenWhenAnotherSortsFirst()
+    {
+        File.WriteAllText(Path.Combine(_dir, "Aaa.exe"), "");
+        File.WriteAllText(Path.Combine(_dir, "Litos.Gui.exe"), "");
+
+        Assert.Equal(Path.Combine(_dir, "Litos.Gui.exe"), SelfUpdater.PickExe(_dir, "Litos.Gui.exe"));
+    }
+
+    [Fact]
+    public void PickExe_FallsBackToTheOnlyExe()
+    {
+        File.WriteAllText(Path.Combine(_dir, "Renamed.exe"), "");
+
+        Assert.Equal(Path.Combine(_dir, "Renamed.exe"), SelfUpdater.PickExe(_dir, "Litos.Gui.exe"));
+    }
+
+    [Fact]
+    public void PickExe_NoExe_ReturnsNull() => Assert.Null(SelfUpdater.PickExe(_dir, "Litos.Gui.exe"));
+
+    public void Dispose() => Directory.Delete(_dir, recursive: true);
+}
+
+public sealed class SelfUpdaterKernelPickTests : IDisposable
+{
+    private readonly string _dir = Directory.CreateTempSubdirectory("litos-pickkernel-").FullName;
+
+    [Fact]
+    public void PickExe_WithoutFallback_NeverReturnsAnotherExe()
+    {
+        File.WriteAllText(Path.Combine(_dir, "Something.exe"), "");
+
+        Assert.Null(SelfUpdater.PickExe(_dir, "Litos.Kernel.Host.exe", allowFallback: false));
+    }
+
+    [Fact]
+    public void PickExe_WithoutFallback_StillFindsTheNamedExe()
+    {
+        File.WriteAllText(Path.Combine(_dir, "Litos.Kernel.Host.exe"), "");
+
+        Assert.Equal(Path.Combine(_dir, "Litos.Kernel.Host.exe"), SelfUpdater.PickExe(_dir, "Litos.Kernel.Host.exe", allowFallback: false));
+    }
+
+    public void Dispose() => Directory.Delete(_dir, recursive: true);
+}
+
+public class SelfUpdaterOpenBundleTests
+{
+    [Fact]
+    public void OpenBundleArguments_NoArgs_OpensANewInstance() =>
+        Assert.Equal("-n \"/Applications/Litos.app\"", SelfUpdater.OpenBundleArguments("/Applications/Litos.app", []));
+
+    [Fact]
+    public void OpenBundleArguments_WithArgs_PassesThemThroughQuoted() =>
+        Assert.Equal("-n \"/Applications/Litos.app\" --args \"--resume-session\" \"abc\"",
+            SelfUpdater.OpenBundleArguments("/Applications/Litos.app", ["--resume-session", "abc"]));
+}

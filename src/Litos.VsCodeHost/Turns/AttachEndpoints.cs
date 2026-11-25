@@ -23,7 +23,7 @@ namespace Litos.VsCodeHost.Turns;
 /// </summary>
 public static class AttachEndpoints
 {
-    private const long MaxAttachmentBytes = 20 * 1024 * 1024; // Same cap Litos.Api's TurnsEndpoints/ShareFileTool use.
+    private const long MaxAttachmentBytes = AttachmentLimits.MaxFileBytes;
 
     public static IEndpointRouteBuilder MapAttachEndpoints(this IEndpointRouteBuilder app)
     {
