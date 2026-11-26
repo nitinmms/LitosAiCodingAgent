@@ -12,10 +12,13 @@ namespace Litos.Tools.Attachments;
 /// </summary>
 public static class UntrustedContent
 {
+    /// <summary>
+    /// Written with explicit '\n' rather than a raw string literal on purpose. A raw literal's line
+    /// breaks are whatever the source file's line endings are, so on a CRLF checkout the markers came
+    /// out with "\r\n" and on an LF checkout with "\n" — the same helper producing two different wire
+    /// formats depending on how the repository was cloned, which is exactly the kind of difference
+    /// nobody would think to look for. The bytes a model sees are now the same everywhere.
+    /// </summary>
     public static string Wrap(string source, string content) =>
-        $"""
-        <<<EXTERNAL_UNTRUSTED_CONTENT source="{source}">>>
-        {content}
-        <<<END_EXTERNAL_UNTRUSTED_CONTENT>>>
-        """;
+        $"<<<EXTERNAL_UNTRUSTED_CONTENT source=\"{source}\">>>\n{content}\n<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>";
 }

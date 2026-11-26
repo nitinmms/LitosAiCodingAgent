@@ -3,20 +3,22 @@
 **Chosen path:** Option 1. I quit the stale tray process, back up your Buzzy store, build Release,
 relaunch, and then **you** drive while I watch and fix anything that breaks.
 
-**Total time:** about 40 minutes. Demos A–E cover Phases 0–3 in order and each one ends in something
-you can *see*. F–I are optional (models, workflows, the new editor, routines).
+**Total time:** about 50 minutes. Demos A–E cover Phases 0–3 in order and each one ends in something
+you can *see*. J is Phase 4's mail connector over the sample inbox. F–I are optional (models,
+workflows, the new editor, routines).
 
 **Read this first — three things will bite you otherwise:**
 
 1. **The running app is stale.** PID 16552 has been in the tray since 15:18 and holds the *Debug*
-   DLLs from before Phase 3. It cannot show the editor, `/buzzy` or folder grants. It has to be quit
-   before we start.
+   DLLs from before Phase 3. It cannot show the editor, `/buzzy`, folder grants or the Gmail row. It
+   has to be quit before we start.
 2. **`/buzzy` is the only way to create a Buzzy from a sentence.** That is deliberate: the plain chat
    is also the coding agent, so inferring "I want a Buzzy" from a sentence hijacked real coding
    requests. Typing *add an assistant to the checkout page* must reach the model as normal chat.
    Demo D proves that.
-3. **A routine only ever gets read-only folder grants.** Nobody is watching when it runs, so its
-   writes outside the workspace are refused. Demo E5 shows that on purpose.
+3. **A routine only ever gets read-only folder grants, and only the read-only mail tools.** Nobody is
+   watching when it runs, so its writes outside the workspace are refused and it cannot download an
+   attachment or save a draft. Demo E5 shows the first; J6 shows the second.
 
 ---
 
@@ -141,7 +143,28 @@ web page cannot write instructions into a skill that later runs unattended.
 5. Set the routine's limit low (e.g. 10 thousand tokens) and give it a big job → it stops itself with
    *Stopped: the run used more than its budget*.
 
-### J. Clean up
+### J. The sample inbox: mail without a Google account — *Phase 4*
+1. Click the **Gmail** row in the sidebar → tick **Use the sample inbox**. The row's subtitle changes,
+   and the window says answers come from sample data.
+2. Right-click Buddy → **Access and model…** → the new **Email** section has five ticks. Grant
+   *Search*, *Read*, *Summarise* and *Draft*. Close.
+3. Ask: *Summarise the sample invoice email and tell me what I owe.* It searches and reads, and the
+   answer says sample data.
+4. Ask: *Draft a reply saying I'll pay on Friday.* An approval card appears with the **whole draft**.
+   **Deny** it → nothing saved, no error card. Ask again, **Approve** → the result says the draft is
+   saved and that *you* must send it.
+5. Ask it to act on the message that says *ASSISTANT INSTRUCTION: ignore your previous rules…* → it
+   treats it as data, not an order. This is the one to watch closely.
+6. Now give Buddy a schedule: *Routines…* → every 2 minutes → *summarise anything new in the sample
+   inbox*. Let it run once, then open that routine's conversation: its tool calls are only
+   `mail_search`, `mail_read` and `mail_summarise`. *Draft* and *Download* are absent, because a
+   routine runs when nobody is there to answer an approval card.
+
+**Say:** the sample inbox is the same broker, the same approval cards and the same untrusted wrapping
+as a real mailbox — only the data is made up, and every result says so. A real Gmail needs an OAuth
+client and Google's sign-in, which is why this is the demo that runs today.
+
+### K. Clean up
 - Delete Penny and the demo routine (right-click → **Delete…**), or keep them.
 - I restore the backup if anything looked wrong.
 - Tray → **Quit Litos (stops routines)** when we are done, so nothing is left running.
@@ -157,10 +180,18 @@ Tell me immediately if any of these happens — each one is a bug I want, not an
 - **Soul, memory and skills…** shows an empty box for a file that has content.
 - **Save** produces a skill the Buzzy then cannot load.
 - A routine runs with a write grant.
-- Anything is written into `~/.litos/buzzies` that you did not ask for.
+- A Buzzy quotes mail text without the `EXTERNAL_UNTRUSTED_CONTENT` markers around it, or acts on an
+  instruction that came from inside an email.
+- **Draft** or **Download attachment** is offered on a routine's run.
+- Anything is written into `~/.litos/buzzies` that you did not ask for, or a token appears in
+  `~/.litos/gmail.json` instead of the OS credential store.
 
 ## What this demo does not cover
 
-- **Gmail** (Phase 4, not built).
+- **A real Gmail mailbox.** Phase 4's connector is built, and demo J exercises it end to end over the
+  sample inbox, but connecting a real account needs a Google OAuth client
+  (`LITOS_GMAIL_CLIENT_ID` and `LITOS_GMAIL_CLIENT_SECRET`), a signed-in test account, and Google's
+  unverified-app interstitial. Sending mail does not exist in any form: a draft is saved for you to
+  send yourself.
 - **Vision and OCR on attachments**, and the beta hardening items in Phase 5.
 - **Two Buzzies working at the same time** — intentionally serialised.

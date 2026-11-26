@@ -3,43 +3,54 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Litos.Mail;
 
 namespace Litos.Gui.Buzzies;
 
 /// <summary>
-/// A Buzzy's access settings (Implement_Buzzies.md, Phase 3): the folders it may read or change
-/// outside its workspace, and the model it runs on. Each folder is picked with the system dialog and
-/// checked through <see cref="WorkspacePathGuard.CanonicalGrant"/> on the way in, so nothing on the
-/// list is a link or inside the Buzzy's own folder. Changes are saved as they are made; the window
-/// returns the current profile so the sidebar and the next turn use it straight away.
+/// A Buzzy's access settings (Implement_Buzzies.md, Phase 3, extended in Phase 4): the folders it may
+/// read or change outside its workspace, the model it runs on, and whether it may use the mail
+/// connector. Each folder is picked with the system dialog and checked through
+/// <see cref="WorkspacePathGuard.CanonicalGrant"/> on the way in, so nothing on the list is a link or
+/// inside the Buzzy's own folder. Changes are saved as they are made; the window returns the current
+/// profile so the sidebar and the next turn use it straight away.
+///
+/// The mail tools are offered here, and not honestly offered when no mailbox is connected: the row
+/// says so rather than letting the user tick five boxes that would produce nothing.
 /// </summary>
 public sealed class BuzzySettingsWindow : Window
 {
     private static readonly IBrush Dim = new SolidColorBrush(Color.Parse("#9A9A9A"));
     private static readonly IBrush Panel = new SolidColorBrush(Color.Parse("#252526"));
     private static readonly IBrush Warning = new SolidColorBrush(Color.Parse("#D7BA7D"));
+    private static readonly IBrush Working = new SolidColorBrush(Color.Parse("#4EC9B0"));
 
     private readonly BuzzyStore _store;
     private readonly IReadOnlyList<string> _offeredModels;
+    private readonly MailConnection? _mail;
     private readonly StackPanel _grantsPanel = new() { Spacing = 6 };
+    private readonly StackPanel _mailPanel = new() { Spacing = 6 };
     private readonly TextBlock _errorText = new() { FontSize = 11, Foreground = Warning, TextWrapping = TextWrapping.Wrap, IsVisible = false };
     private readonly ComboBox _modelBox = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
 
     private BuzzyProfile _profile;
 
-    public BuzzySettingsWindow() : this(new BuzzyStore(), new BuzzyProfile("buzzy", "Buzzy", "buddy", "#FFC21A", [], DateTimeOffset.Now), [])
+    public BuzzySettingsWindow()
+        : this(new BuzzyStore(), new BuzzyProfile("buzzy", "Buzzy", "buddy", "#FFC21A", [], DateTimeOffset.Now), [])
     {
         // Parameterless constructor for the Avalonia designer/loader.
     }
 
-    public BuzzySettingsWindow(BuzzyStore store, BuzzyProfile profile, IReadOnlyList<string> offeredModels)
+    public BuzzySettingsWindow(
+        BuzzyStore store, BuzzyProfile profile, IReadOnlyList<string> offeredModels, MailConnection? mail = null)
     {
         _store = store;
         _profile = profile;
         _offeredModels = offeredModels;
+        _mail = mail;
 
         Title = $"{profile.Name}: access and model";
-        Width = 640;
+        Width = 660;
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -99,6 +110,19 @@ public sealed class BuzzySettingsWindow : Window
                         },
                     },
                 },
+                new Border
+                {
+                    Background = Panel, CornerRadius = new CornerRadius(8), Padding = new Thickness(12),
+                    Child = new StackPanel
+                    {
+                        Spacing = 6,
+                        Children =
+                        {
+                            new TextBlock { Text = "Email", FontSize = 12, Foreground = Dim },
+                            _mailPanel,
+                        },
+                    },
+                },
                 new TextBlock
                 {
                     Text = "Its shell, if it has one, is not confined to these folders: the approval card on every command is the control.",
@@ -109,10 +133,12 @@ public sealed class BuzzySettingsWindow : Window
         };
 
         RefreshGrants();
+        RefreshMail();
     }
 
-    public static Task<BuzzyProfile?> ShowAsync(Window owner, BuzzyStore store, BuzzyProfile profile, IReadOnlyList<string> offeredModels) =>
-        new BuzzySettingsWindow(store, profile, offeredModels).ShowDialog<BuzzyProfile?>(owner);
+    public static Task<BuzzyProfile?> ShowAsync(
+        Window owner, BuzzyStore store, BuzzyProfile profile, IReadOnlyList<string> offeredModels, MailConnection? mail = null) =>
+        new BuzzySettingsWindow(store, profile, offeredModels, mail).ShowDialog<BuzzyProfile?>(owner);
 
     private void BuildModelChoices()
     {
@@ -246,6 +272,67 @@ public sealed class BuzzySettingsWindow : Window
         }
         RefreshGrants();
     }
+
+    /// <summary>
+    /// The mail tools, one tick each, plus what the connection actually allows. Two things are said
+    /// rather than hidden: with no mailbox connected the boxes are disabled and the reason is
+    /// stated, and drafting is greyed out when Google never granted the compose scope — a tick that
+    /// could not take effect is worse than no tick.
+    /// </summary>
+    private void RefreshMail()
+    {
+        _mailPanel.Children.Clear();
+        var info = _mail?.Info();
+
+        _mailPanel.Children.Add(new TextBlock
+        {
+            Text = info is null
+                ? "No mailbox is connected yet, so email tools can't be granted. Connect Gmail from the Gmail row in the sidebar."
+                : $"Reading from {info.Description}. A routine gets the three read-only tools; downloading an attachment "
+                  + "or saving a draft always asks you first, and a routine can't do either.",
+            FontSize = 11,
+            Foreground = info is null ? Warning : Dim,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        foreach (var (tool, label, needsCompose) in MailChoices)
+        {
+            var box = new CheckBox
+            {
+                Content = label,
+                IsChecked = _profile.Tools.Contains(tool),
+                IsEnabled = info is not null && (!needsCompose || info.CanDraft),
+                Margin = new Thickness(0, 2, 0, 0),
+            };
+            if (info is null)
+                ToolTip.SetTip(box, "Connect a mailbox first (the Gmail row in the sidebar).");
+            else if (needsCompose && !info.CanDraft)
+                ToolTip.SetTip(box, "Reconnect Gmail and allow \"Manage drafts\" to use this.");
+
+            var name = tool;
+            box.IsCheckedChanged += (_, _) =>
+            {
+                try
+                {
+                    _profile = _store.SetTool(_profile.Id, name, box.IsChecked == true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    ShowError($"Couldn't save the email setting: {ex.Message}");
+                }
+            };
+            _mailPanel.Children.Add(box);
+        }
+    }
+
+    private static readonly (string Tool, string Label, bool NeedsCompose)[] MailChoices =
+    [
+        (MailToolNames.Search, "Search the mailbox (mail_search)", false),
+        (MailToolNames.Read, "Read a message in full (mail_read)", false),
+        (MailToolNames.Summarise, "Fetch several messages at once to summarise (mail_summarise)", false),
+        (MailToolNames.DownloadAttachment, "Read an attachment, with my approval each time (mail_download_attachment)", false),
+        (MailToolNames.Draft, "Save a draft reply for me to send, with my approval (mail_draft)", true),
+    ];
 
     private void ShowError(string message)
     {

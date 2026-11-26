@@ -119,6 +119,27 @@ public sealed class BuzzyStore(string? rootDirectory = null)
         return updated;
     }
 
+    /// <summary>
+    /// Turns one tool grant on or off and saves. Needed for tools that didn't exist when a Buzzy was
+    /// created — the Gmail connector's five (Phase 4) — and for any the user simply changed their
+    /// mind about, without hand-editing buzzy.json. Only names in <see cref="BuzzyToolPolicy.Grantable"/>
+    /// can be granted, so this can't be a way to widen a Buzzy past what the policy allows.
+    /// </summary>
+    public BuzzyProfile SetTool(string id, string tool, bool granted)
+    {
+        if (!BuzzyToolPolicy.Grantable.Contains(tool))
+            throw new ArgumentException($"'{tool}' is not a tool a Buzzy can be granted.", nameof(tool));
+
+        var profile = Get(id) ?? throw new InvalidOperationException($"There is no Buzzy called '{id}'.");
+        var tools = profile.Tools.Where(t => t != tool).ToList();
+        if (granted)
+            tools.Add(tool);
+
+        var updated = profile with { Tools = tools };
+        Save(updated);
+        return updated;
+    }
+
     private static StringComparison PathComparison =>
         OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 

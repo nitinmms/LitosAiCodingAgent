@@ -118,11 +118,13 @@ public sealed partial class MainWindow
         // provider reads both files when a turn starts.
     }
 
-    /// <summary>The sidebar's access settings: folder grants and the model this Buzzy runs on.</summary>
+    /// <summary>The sidebar's access settings: folder grants, the model this Buzzy runs on, and
+    /// (Phase 4) whether it may use the mail connector.</summary>
     private async Task EditBuzzyAccessAsync(BuzzyProfile profile)
     {
         var before = _buzzy?.Id == profile.Id ? _buzzy : null;
-        var updated = await BuzzySettingsWindow.ShowAsync(this, Buzzies, Buzzies.Get(profile.Id) ?? profile, await OfferedModelsAsync());
+        var updated = await BuzzySettingsWindow.ShowAsync(
+            this, Buzzies, Buzzies.Get(profile.Id) ?? profile, await OfferedModelsAsync(), Mail);
         if (updated is null)
             return;
 
@@ -137,5 +139,12 @@ public sealed partial class MainWindow
             AddToolLine($"{updated.Name} can now use {string.Join(", ", updated.Folders.Select(g => g.Display))}.");
         if (updated.Model is { } own)
             AddToolLine($"{updated.Name} runs on {own}.");
+        if (updated.Tools.Any(BuzzyToolNames.Mail.Contains))
+        {
+            var info = Mail.Info();
+            AddToolLine(info is null
+                ? $"{updated.Name} may use email, but no mailbox is connected yet (the Gmail row in the sidebar)."
+                : $"{updated.Name} may use email: {info.Description}.");
+        }
     }
 }

@@ -9,6 +9,7 @@ using Litos.Agent.Session;
 using Litos.Agent.Tools;
 using Litos.Gui.Buzzies;
 using Litos.Gui.Buzzies.Routines;
+using Litos.Mail;
 using Litos.Tools.Shell;
 
 namespace Litos.Gui;
@@ -154,6 +155,8 @@ public sealed partial class MainWindow
         routines.Click += (_, _) => ShowRoutines(_buzzy?.Id);
         BuzzySidebar.Children.Add(routines);
 
+        BuzzySidebar.Children.Add(GmailSidebarRow());
+
         BuzzySidebar.Children.Add(new TextBlock
         {
             Text = "To make one by describing the job, type /buzzy in the chat — for example: "
@@ -284,7 +287,12 @@ public sealed partial class MainWindow
         }
         else
         {
-            row.Status.Text = NextRunLabel(id) ?? "Idle";
+            // Say when this Buzzy is granted mail, so "which of my Buzzies can read my inbox" is
+            // answerable from the sidebar rather than only from its settings (Phase 4).
+            var mail = MailLabelFor(Buzzies.Get(id) ?? _buzzy!);
+            row.Status.Text = NextRunLabel(id) is { } next
+                ? mail is null ? next : $"{next} · {mail}"
+                : mail ?? "Idle";
             row.Status.Foreground = DimTextBrush;
         }
     }
@@ -477,15 +485,19 @@ public sealed partial class MainWindow
     /// tools from the same per-turn registry the plain chat gets, and its own system prompt.</summary>
     private (ToolRegistry Registry, AgentLoop Loop) BuildBuzzyLoop(BuzzyProfile profile)
     {
-        var registry = BuzzyToolPolicy.Build(_session.ToolRegistryFactory.Create(), profile, BuzzyToolContext());
+        var registry = BuzzyToolPolicy.Build(_session.ToolRegistryFactory.Create(), profile, BuzzyToolContext(profile));
         var loop = _session.LoopFactory.WithSystemPromptProvider(BuzzyPromptProvider(profile)).Create(_session.ChatProvider, registry);
         return (registry, loop);
     }
 
-    private BuzzyToolContext BuzzyToolContext() => new(
+    private BuzzyToolContext BuzzyToolContext(BuzzyProfile? profile = null) => new(
         Buzzies,
         _session.PendingApprovals,
         // A shell of the Buzzy's own that starts in its workspace, auto-approved underneath because
         // ApprovalRequiredTool has already asked: nothing depends on the process's current directory.
-        workspace => new ShellTool(new GuiApprovalGate(), _session.Config.ShellCommandTimeout, _session.Config.ShellMaxOutputBytes, workspace));
+        workspace => new ShellTool(new GuiApprovalGate(), _session.Config.ShellCommandTimeout, _session.Config.ShellMaxOutputBytes, workspace),
+        Mail: Mail.IsConnected ? Mail : null,
+        MailApproval: Mail.IsConnected
+            ? new PendingMailApproval(_session.PendingApprovals, profile?.Name)
+            : null);
 }

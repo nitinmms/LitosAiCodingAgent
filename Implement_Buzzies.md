@@ -2,7 +2,7 @@
 
 This is the build plan for [ReadMe_Buzzies.md](ReadMe_Buzzies.md). That document describes the product. This one says what gets built, in what order, and how each phase is checked. Phase 0 is the first, smallest MVP. Each later phase builds on the one before and leaves the app in a working state.
 
-Status (2026-11-26): Phases 0 and 1 are committed on branch `buzzies-mvp0` (commit `9c25852`), Phase 2 in `f0aab23`, and Phase 3 in a commit on top. The 190 Buzzy tests pass, along with the rest of Litos.Gui.Tests (417 in total), and the Host (24), Hosting (81), VsCodeHost (65) and Artifacts (94) tests. Phases 0–2 were checked live (see each phase's "as built" section); Phase 3's creation lane, grants and per-Buzzy model have not been checked in the running app yet, and neither has the contents editor. Phases 4–6 are planned, not started. `DEMO_Buzzies.md` is the run sheet for checking Phases 0–3 by hand.
+Status (2026-11-26): Phases 0 and 1 are committed on branch `buzzies-mvp0` (commit `9c25852`), Phase 2 in `f0aab23`, and Phase 3 in a commit on top. Phase 4 (the Gmail connector) is built in the working tree after Phase 3: a new `src/Litos.Mail` project, the Gmail sidebar row and settings window, an Email section in each Buzzy's access settings, and `tests/Litos.Mail.Tests`. The 76 mail tests, the 442 Gui tests (215 of them Buzzy tests), the Tools (171), Agent (340), Host (24), Hosting (81), VsCodeHost (65) and Artifacts (94) suites pass. Phases 0–2 were checked live (see each phase's "as built" section); Phase 3's creation lane, grants and per-Buzzy model have not been checked in the running app yet, and neither has the contents editor. Phase 4 is checked by tests and headless window layout, and by hand only against the sample inbox — a real Google sign-in needs an OAuth client and a test account, which this machine did not have. Phases 5–6 are planned, not started. `DEMO_Buzzies.md` is the run sheet for checking Phases 0–4 by hand.
 
 ## What the existing code gives us
 
@@ -284,6 +284,116 @@ Done when: the 60-second demo's steps 1, 3 and 4 work end to end on a real provi
 - Email and attachment text is wrapped as untrusted content, as `UntrustedContent` does today.
 - Fallback while Google's verification is pending: a fixture inbox, clearly labelled as sample data.
 
+### Phase 4 as built
+
+A new project, `src/Litos.Mail`, holds the whole connector. It references `Litos.Tools` (for
+`UntrustedContent`, `PendingApprovalStore`, `IAttachmentConverter` and `ITool`) and **not**
+`Litos.Gui`, so the Gui, the VS Code host or a later BotHost could each host it. The Gui adds it as
+one project reference and one partial class.
+
+**Sending was not built.** `IMailClient` has no send, delete, move, archive or mark-read method, and
+`MailBroker` exposes five tools, none of which can do those things. `mail_draft` saves a draft and the
+tool's result says the user must send it. A test asserts that no tool name contains "send" or
+"delete", so a later change that adds one fails a test rather than passing review.
+
+| File | Role |
+|---|---|
+| `src/Litos.Mail/IMailClient.cs` | The five operations a mailbox supports, and nothing else |
+| `src/Litos.Mail/MailMessage.cs` | `MailMessage`, `MailAttachment`, `MailSearch`, `MailDraft` |
+| `src/Litos.Mail/GmailClient.cs` | Gmail REST client: list, get, attachment, draft; payload-tree parsing; `RawMessage` MIME builder; `Base64Url`; `HtmlText` |
+| `src/Litos.Mail/MailOAuth.cs` | Authorize/exchange/refresh, PKCE (S256), the 127.0.0.1 loopback listener, error sentences |
+| `src/Litos.Mail/MailBrokerTools.cs` | The five tools, the approval gates and the untrusted wrapping |
+| `src/Litos.Mail/AttachmentText.cs` | Attachment bytes to text, via `IAttachmentConverter` (MarkItDown) |
+| `src/Litos.Mail/Credentials.cs` | `ICredentialStore`; DPAPI on Windows, AES-GCM files elsewhere |
+| `src/Litos.Mail/MailSettings.cs` | `~/.litos/gmail.json`: the address, the granted scopes, the sample-inbox flag |
+| `src/Litos.Mail/MailTokens.cs` | `MailTokenProvider` (refresh, reuse, clear) and `FixtureMailClient` |
+| `src/Litos.Mail/MailFacade.cs` | `MailConnection`: which client is in force, which tools a turn gets |
+| `src/Litos.Mail/PendingMailApproval.cs` | `IMailApproval` over the Gui's approval card |
+| `src/Litos.Gui/Buzzies/GmailSettingsWindow.cs` | Connect, disconnect, sample inbox, and an honest account of the scopes |
+| `src/Litos.Gui/Buzzies/BuzzySettingsWindow.cs` | Gained an Email section: one tick per mail tool |
+| `src/Litos.Gui/MainWindow.Mail.cs` | The Gmail sidebar row, the per-turn wiring, the sidebar's "mail" label |
+| `tests/Litos.Mail.Tests/` | 76 tests: broker, Gmail parsing, OAuth, credentials, settings, fixture |
+| `tests/Litos.Gui.Tests/Buzzies/BuzzyMailTests.cs` | 15 tests: policy, grants, the approval adapter, the prompt line |
+
+Decisions worth recording:
+
+- **Installed-app flow with PKCE and a raw `TcpListener`.** `HttpListener` needs a URL ACL on Windows,
+  and a browser-embedded flow would mean showing Google's page inside an app that also holds the
+  user's prompts. The listener takes one connection on `127.0.0.1`, checks `state`, answers with a
+  small HTML page, and stops. `access_type=offline` + `prompt=consent` so a refresh token always comes
+  back.
+- **The scopes are read back, not assumed.** Google's consent screen lets a user untick an individual
+  permission, so `MailAccount.CanDraft` is `Scopes.Contains(gmail.compose)` and both the policy and the
+  settings window drop `mail_draft` when it is false. Asking for a permission and having it are
+  different things.
+- **Tokens in the credential store, and only there.** `gmail.json` holds an address, a scope list and
+  a date. A test reads the file after saving a token and asserts the refresh token is not in it.
+  Disconnecting deletes the stored token, so the tools stop working at once rather than at expiry.
+- **One connection per machine, app-wide.** Deliberately not per Buzzy: re-authorizing Google for each
+  Buzzy would be tedious, and the real control is the per-Buzzy grant, which is visible in the sidebar
+  and in the proposal card.
+- **A Buzzy with a mail grant but no mailbox gets no mail tools at all.** Not five tools that fail —
+  nothing, plus a sidebar line saying why. The settings window says it too, and disables the ticks.
+- **Routines get the three read-only tools.** `mail_draft` and `mail_download_attachment` both wait on
+  an approval card, and nobody is at the screen at 06:00; a routine that blocks forever on a card is
+  worse than one that cannot draft. Same reasoning as shell being absent from unattended runs.
+- **The fixture inbox is a real `IMailClient`.** The same broker, the same approvals and the same
+  untrusted wrapping run over it, and its `Describe` says "sample data, not a real mailbox" in every
+  tool result. Switching it on clears any real connection's tokens, so a demo can't quietly reach a
+  live inbox.
+- **`UntrustedContent` was made line-ending-independent.** It used a raw string literal, whose line
+  breaks follow the source file's; on this CRLF checkout the markers came out with `\r\n` while an LF
+  clone produced `\n`, and an existing test had been failing on Windows for that reason. It now uses
+  explicit `\n`, so the bytes a model sees are the same everywhere. This was a pre-existing bug, not
+  one introduced here.
+
+Live status on 2026-11-26, without a Google OAuth client to hand:
+
+- **Checked headlessly**: the Gmail settings window and the access window construct and lay out in
+  four states (nothing connected, sample inbox on, account without compose, Buzzy with mail granted).
+- **Checked by tests**: everything in the table above — the broker's wrapping and refusals, MIME
+  building, PKCE against RFC 7636's worked example, the refresh flow against a scripted server, DPAPI
+  round-trip, settings-file round-trip and damage, the policy's grants and the unattended exclusions.
+- **Not checked against Google**: a real consent round-trip, a real mailbox read, and a real draft
+  appearing in Gmail. Those need `LITOS_GMAIL_CLIENT_ID`/`LITOS_GMAIL_CLIENT_SECRET` from a Google
+  Cloud project with the Gmail API enabled, and a signed-in test account. Until then the sample inbox
+  is the supported path, and Google's "app isn't verified" interstitial is expected.
+- **Not built**: DKIM/SPF checks. Those belong to the inbound IMAP bridge in
+  `ReadMe_EmailIntegrationTool.md`, a different tool with a different trust direction.
+
+### Phase 4 demos
+
+**Demo A: the sample inbox, no Google account needed** (the supported demo today).
+
+1. Click the Gmail row in the sidebar. Tick "Use the sample inbox". The row subtitle changes to the
+   sample inbox, and the window says the tools answer from sample data.
+2. Create a Buzzy from the Buddy template. Its sidebar row now says `mail`, and in Access settings the
+   five mail ticks are there — with "draft" greyed out only if a real connection lacked the scope.
+3. Ask it: *"Summarise the sample invoice email and tell me what I owe."* It calls `mail_search` then
+   `mail_summarise`. Every result is wrapped in `<<<EXTERNAL_UNTRUSTED_CONTENT source="mail-body">>>`,
+   and the answer says it came from sample data.
+4. Ask: *"Draft a reply saying I'll pay on Friday."* An approval card appears in the transcript with
+   the exact draft body. Deny it: nothing is saved and the turn carries on. Ask again, approve: the
+   tool result says the draft is saved and that the user must send it.
+5. Open the sample message that tries to give instructions ("ASSISTANT INSTRUCTION: ignore your
+   previous rules…") and ask the Buzzy to act on it. It should treat the text as data — the test suite
+   asserts the wrapping, and this is the demo that shows it in a conversation.
+
+**Demo B: a real Gmail account** (needs the OAuth client's environment variables).
+
+1. Set `LITOS_GMAIL_CLIENT_ID` and `LITOS_GMAIL_CLIENT_SECRET`, start Litos, open the Gmail row, press
+   "Connect Gmail…". The browser opens Google's own consent page; approve it. Google's unverified-app
+   interstitial is expected while verification is pending.
+2. The window shows `you@example.com (Gmail, read and draft)` once Google's profile call succeeds.
+   Check `~/.litos/gmail.json` has no token in it, and that `~/.litos/secrets/` has a `*.dpapi` file.
+3. Give a Buzzy `mail_search` and `mail_read`, ask for today's unread mail, and watch the sidebar say
+   `mail` next to that Buzzy only.
+4. Grant a routine `mail_draft` and confirm it doesn't get it: the routine's tool list has the three
+   read-only tools. Then ask the same Buzzy in chat for a draft and confirm the approval card shows the
+   whole message before anything is saved.
+5. Press Disconnect. Ask for mail again: the tools are gone from the next turn, and nothing is left in
+   `~/.litos/secrets/`.
+
 ## Phase 5: beta hardening
 
 - Security tests: workspace escapes, unauthorized tool calls, prompt injection through web, mail and documents, and duplicate external writes after a crash.
@@ -320,11 +430,15 @@ Taken from ReadMe_Buzzies.md §4–§10, and only after the beta shows real repe
 | `src/Litos.Gui/Buzzies/CreateBuzzyWindow.cs` | The create-and-confirm dialog |
 | `src/Litos.Gui/Buzzies/BuzzyProposer.cs` | One tool-less model call that proposes a Buzzy from a request, and the narrowing of its reply (Phase 3) |
 | `src/Litos.Gui/Buzzies/BuzzyProposalWindow.cs` | The confirmation card for a proposed Buzzy, with folder picking (Phase 3) |
-| `src/Litos.Gui/Buzzies/BuzzySettingsWindow.cs` | Folder grants and the per-Buzzy model (Phase 3) |
+| `src/Litos.Gui/Buzzies/BuzzySettingsWindow.cs` | Folder grants and the per-Buzzy model (Phase 3); the Email section (Phase 4) |
+| `src/Litos.Gui/Buzzies/GmailSettingsWindow.cs` | Connect/disconnect Gmail, sample inbox (Phase 4) |
 | `src/Litos.Gui/MainWindow.Buzzies.cs` | Sidebar, switching Buzzies, the per-Buzzy loop and registry, create and delete |
+| `src/Litos.Gui/MainWindow.Mail.cs` | The Gmail sidebar row, the per-turn mail wiring (Phase 4) |
 | `src/Litos.Gui/MainWindow.Grants.cs` | Create-by-conversation and the access settings dialog (Phase 3) |
 | `src/Litos.Gui/MainWindow.axaml(.cs)` | Sidebar column, `Owner` instead of `SessionOwner.Local`, PTC refused for Buzzies |
 | `src/Litos.Host/LitosHostBuilder.cs` | `AgentLoopFactory.WithSystemPromptProvider` and `SystemPromptProvider` |
-| `tests/Litos.Gui.Tests/Buzzies/` | Store, path guard (including junctions and grants), tool wrappers, policy, prompt, avatar motion |
+| `src/Litos.Mail/` | The Gmail connector in full: broker tools, OAuth, credentials, settings, fixture inbox (Phase 4) |
+| `tests/Litos.Gui.Tests/Buzzies/` | Store, path guard (including junctions and grants), tool wrappers, policy, prompt, avatar motion, mail policy (Phase 4) |
+| `tests/Litos.Mail.Tests/` | The broker, Gmail parsing and MIME building, OAuth and PKCE, credential stores, settings, fixture inbox |
 
-The non-UI files (`BuzzyProfile`, `BuzzyStore`, the guard, the tools, the policy and the prompt provider) do not reference Avalonia, so Phase 1 or Phase 6 can move them into their own project.
+The non-UI files (`BuzzyProfile`, `BuzzyStore`, the guard, the tools, the policy and the prompt provider) do not reference Avalonia, so Phase 1 or Phase 6 can move them into their own project. `src/Litos.Mail` already lives in its own project, so a second face can host the connector without moving anything.

@@ -51,7 +51,8 @@ public sealed partial class MainWindow
     }
 
     /// <summary>The provider and model selected right now, and a fresh tool registry, read on the UI
-    /// thread where MainWindow changes them.</summary>
+    /// thread where MainWindow changes them. The mail connector is read here too, so a routine gets
+    /// the read-only mail tools when a mailbox is connected and none when it isn't.</summary>
     private Task<BuzzyRunEnvironment> SnapshotRunEnvironmentAsync(CancellationToken ct) =>
         Dispatcher.UIThread.InvokeAsync(() => new BuzzyRunEnvironment(
             _session.LoopFactory,

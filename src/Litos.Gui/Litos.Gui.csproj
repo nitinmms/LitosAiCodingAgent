@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -28,6 +28,7 @@
     <ProjectReference Include="..\Litos.Host\Litos.Host.csproj" />
     <ProjectReference Include="..\Litos.Hosting\Litos.Hosting.csproj" />
     <ProjectReference Include="..\Litos.Kernel\Litos.Kernel.csproj" />
+    <ProjectReference Include="..\Litos.Mail\Litos.Mail.csproj" />
     <ProjectReference Include="..\Litos.Tools.Mcp\Litos.Tools.Mcp.csproj" />
   </ItemGroup>
 
