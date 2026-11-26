@@ -38,12 +38,22 @@ public static class ModelContextWindows
     // "o4-mini" and "gpt-4.1" must not be shadowed by a shorter, coarser prefix.
     private static readonly (string Prefix, int ContextLength)[] KnownPrefixes =
     [
-        // Anthropic — modern Claude models span 200K to 1M depending on family/tier.
-        ("claude-haiku", 200_000),
+        // Anthropic — max_input_tokens as Anthropic's own /v1/models reported it on 2026-11-26.
+        // Only reached when that list can't be read (offline, or a model id typed by hand):
+        // AnthropicChatProvider passes the live value first. The 4.6+ and 5.x models are 1M; the
+        // 4.5-and-earlier ones are 200K on the direct API, so those stay at 200K.
         ("claude-3", 200_000),
-        ("claude-opus", 200_000),
-        ("claude-sonnet-4-5", 200_000),
+        ("claude-haiku-4", 200_000),
+        ("claude-haiku", 1_000_000),
+        ("claude-opus-4-6", 1_000_000),
+        ("claude-opus-4-7", 1_000_000),
+        ("claude-opus-4-8", 1_000_000),
+        ("claude-opus-4", 200_000),
+        ("claude-opus", 1_000_000),
+        ("claude-sonnet-4-6", 1_000_000),
+        ("claude-sonnet-4", 200_000),
         ("claude-sonnet", 1_000_000),
+        ("claude-fable", 1_000_000),
 
         // OpenAI reasoning models.
         ("o4-mini", 200_000),

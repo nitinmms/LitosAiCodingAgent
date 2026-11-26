@@ -12,21 +12,48 @@ using LM = Litos.Agent.Messages;
 
 namespace Litos.Providers.Anthropic;
 
-public sealed class AnthropicChatProvider(AnthropicClient client, OpenRouterModelCatalog contextCatalog) : IChatProvider
+/// <param name="modelsHttpClient">Sends ListModelsAsync's direct /v1/models request (the SDK keeps
+/// its own HttpClient private). Null uses one shared client; tests pass their fake handler's.</param>
+public sealed class AnthropicChatProvider(AnthropicClient client, OpenRouterModelCatalog contextCatalog, HttpClient? modelsHttpClient = null) : IChatProvider
 {
+    private static readonly HttpClient SharedModelsHttpClient = new();
+
     public string ProviderName => "anthropic";
 
+    /// <summary>
+    /// Calls GET /v1/models directly rather than through client.Models: Anthropic.SDK 5.10.0's
+    /// model type has no max_input_tokens, and that field is Anthropic's own statement of each
+    /// model's window. It is passed as the native hint, the way Gemini's inputTokenLimit is, so it
+    /// wins over OpenRouter's catalog. That catalog matches few Anthropic ids (it writes
+    /// "claude-opus-5.5" where Anthropic writes "claude-opus-5-5", and has no dated ids), and is
+    /// not always right for the direct API either: it lists claude-sonnet-4-5 at 1M where
+    /// Anthropic reports 200K. Same URL, key and version header as the SDK's own calls.
+    /// </summary>
     public async Task<IReadOnlyList<ModelInfo>> ListModelsAsync(CancellationToken ct)
     {
-        var list = await client.Models.ListModelsAsync(null, null, 100, ct);
-        var models = new List<ModelInfo>(list.Models.Count);
-        foreach (var m in list.Models)
+        var url = string.Format(client.ApiUrlFormat, client.ApiVersion, "models") + "?limit=100";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add("x-api-key", client.Auth.ApiKey);
+        request.Headers.Add("anthropic-version", client.AnthropicVersion);
+        using var response = await (modelsHttpClient ?? SharedModelsHttpClient).SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        var list = await JsonSerializer.DeserializeAsync<AnthropicModelList>(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+
+        var models = new List<ModelInfo>(list?.Data.Count ?? 0);
+        foreach (var m in list?.Data ?? [])
         {
-            var contextLength = await ModelContextResolver.ResolveAsync(contextCatalog, m.Id, nativeHint: null, ct);
-            models.Add(new ModelInfo(m.Id, m.DisplayName, IsDefault: false, ContextLength: contextLength));
+            var contextLength = await ModelContextResolver.ResolveAsync(contextCatalog, m.Id, m.MaxInputTokens, ct);
+            models.Add(new ModelInfo(m.Id, m.DisplayName ?? m.Id, IsDefault: false, ContextLength: contextLength));
         }
         return models;
     }
+
+    private sealed record AnthropicModelList([property: System.Text.Json.Serialization.JsonPropertyName("data")] List<AnthropicModel> Data);
+
+    private sealed record AnthropicModel(
+        [property: System.Text.Json.Serialization.JsonPropertyName("id")] string Id,
+        [property: System.Text.Json.Serialization.JsonPropertyName("display_name")] string? DisplayName,
+        [property: System.Text.Json.Serialization.JsonPropertyName("max_input_tokens")] int? MaxInputTokens);
 
     public async IAsyncEnumerable<AgentEvent> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken ct)
     {

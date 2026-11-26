@@ -28,7 +28,7 @@ public class AnthropicChatProviderTests
         // return null, so ListModelsAsync falls back to ModelContextWindows' static table —
         // deterministic without a second FakeHttpMessageHandler queue to manage per test.
         var contextCatalog = new OpenRouterModelCatalog(new HttpClient(new FakeHttpMessageHandler()) { BaseAddress = new Uri("https://openrouter.ai/api/v1/") });
-        return (new AnthropicChatProvider(client, contextCatalog), handler);
+        return (new AnthropicChatProvider(client, contextCatalog, httpClient), handler);
     }
 
     private static async Task<List<AgentEvent>> DrainAsync(IAsyncEnumerable<AgentEvent> events)
@@ -296,6 +296,64 @@ public class AnthropicChatProviderTests
         Assert.Equal(["claude-3-5-sonnet-20241022", "claude-3-opus-20240229"], models.Select(m => m.Id));
         Assert.Equal(["Claude 3.5 Sonnet", "Claude 3 Opus"], models.Select(m => m.DisplayName));
         Assert.All(models, m => Assert.False(m.IsDefault));
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_SendsAnAuthenticatedGetToTheModelsEndpoint()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""{ "data": [] }"""));
+
+        await provider.ListModelsAsync(CancellationToken.None);
+
+        var request = Assert.Single(handler.CapturedRequests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("https://api.anthropic.com/v1/models?limit=100", request.Uri!.ToString());
+        Assert.Equal("fake-key", request.Headers!["x-api-key"]);
+        Assert.True(request.Headers.ContainsKey("anthropic-version"));
+    }
+
+    /// <summary>The reported bug: claude-opus-5-5 and claude-fable-5-2 compacted at 130K/83K
+    /// because Litos guessed a 200K/128K window. Anthropic's own max_input_tokens now wins —
+    /// including over the static table, which says 200K for claude-sonnet-4-5.</summary>
+    [Fact]
+    public async Task ListModelsAsync_UsesAnthropicsOwnMaxInputTokens()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            {
+              "data": [
+                { "id": "claude-fable-9-9", "display_name": "Claude Fable 9.9", "max_input_tokens": 1000000, "max_tokens": 128000 },
+                { "id": "claude-sonnet-4-5-20250929", "display_name": "Claude Sonnet 4.5", "max_input_tokens": 400000, "max_tokens": 64000 }
+              ]
+            }
+            """));
+
+        var models = await provider.ListModelsAsync(CancellationToken.None);
+
+        Assert.Equal([1_000_000, 400_000], models.Select(m => m.ContextLength));
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_FallsBackToTheTable_WhenMaxInputTokensIsMissing()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(FakeHttpMessageHandler.JsonResponse("""
+            { "data": [ { "id": "claude-opus-4-5-20251101", "display_name": "Claude Opus 4.5" } ] }
+            """));
+
+        var models = await provider.ListModelsAsync(CancellationToken.None);
+
+        Assert.Equal(200_000, Assert.Single(models).ContextLength);
+    }
+
+    [Fact]
+    public async Task ListModelsAsync_ThrowsOnAnErrorResponse()
+    {
+        var (provider, handler) = CreateProvider();
+        handler.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized));
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => provider.ListModelsAsync(CancellationToken.None));
     }
 
     // ---- prompt caching ----
