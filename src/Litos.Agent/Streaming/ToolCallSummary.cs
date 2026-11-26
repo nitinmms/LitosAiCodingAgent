@@ -23,6 +23,7 @@ public static partial class ToolCallSummary
         "skill" => $"Skill {Str(arguments, "name")}",
         "web_search" => $"Search web \"{Str(arguments, "query")}\"",
         "send_file" => $"Send {Str(arguments, "path")}",
+        ReservedToolNames.KernelCode => DescribeKernelCode(arguments),
         _ => toolName,
     };
 
@@ -41,8 +42,49 @@ public static partial class ToolCallSummary
             "shell" => ExitCodeSuffix().Match(result.Text) is { Success: true } m ? $"exit {m.Groups[1].Value}" : "done",
             "skill" => "loaded",
             "web_search" => DescribeWebSearchResultCount(result.Text),
+            ReservedToolNames.KernelCode => DescribeKernelOutput(result.Text),
             _ => FirstLine(result.Text),
         };
+    }
+
+    private const string KernelStateNotePrefix = "[kernel state changed this round: ";
+
+    /// <summary>
+    /// Splits a run_kernel_code result into what the script printed and the trailer the kernel adds
+    /// for the model ("[kernel state changed this round: ...]", Litos.Kernel.Host's ScriptSession),
+    /// so a face can show the trailer apart from (or below) the script's own output. Note is null
+    /// when the result has no trailer.
+    /// </summary>
+    public static (string Output, string? Note) SplitKernelStateNote(string text)
+    {
+        var index = text.LastIndexOf(KernelStateNotePrefix, StringComparison.Ordinal);
+        if (index < 0 || (index > 0 && text[index - 1] != '\n'))
+            return (text.TrimEnd(), null);
+
+        return (text[..index].TrimEnd(), text[index..].Trim());
+    }
+
+    private static string DescribeKernelCode(JsonElement arguments)
+    {
+        var code = Str(arguments, "code").TrimEnd();
+        if (code.Length == 0)
+            return "Run code";
+
+        var lines = CountLines(code);
+        return lines == 1 ? "Run code (1 line)" : $"Run code ({lines} lines)";
+    }
+
+    // A line count, never the output's first line: a script's first printed line is usually a
+    // fragment ("ACTIVITIES:", a bare number, the first file of a listing) that reads as a message
+    // cut off halfway. The full output is one click away in the faces that show results.
+    private static string DescribeKernelOutput(string text)
+    {
+        var (output, _) = SplitKernelStateNote(text);
+        if (output.Length == 0)
+            return "no output";
+
+        var lines = CountLines(output.Replace("\r\n", "\n"));
+        return lines == 1 ? "1 line of output" : $"{lines} lines of output";
     }
 
     private static string Str(JsonElement arguments, string propertyName) =>
@@ -133,10 +175,16 @@ public static partial class ToolCallSummary
     private static int CountNonEmptyLines(string text) =>
         text.Length == 0 ? 0 : text.Split('\n').Count(line => line.Trim().Length > 0);
 
+    // Ends in "…" when more text follows, so a fallback outcome never looks like a sentence that
+    // simply stopped: the reader can tell there is more and where to find it.
     private static string FirstLine(string text)
     {
         var index = text.IndexOf('\n');
-        return index < 0 ? text : text[..index];
+        if (index < 0)
+            return text;
+
+        var first = text[..index].TrimEnd('\r');
+        return text[(index + 1)..].Trim().Length == 0 ? first : first + " …";
     }
 
     [GeneratedRegex(@"\[(\+\d+ -\d+)\]")]

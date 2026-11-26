@@ -77,8 +77,12 @@ public class ToolCallSummaryTests
     // ---- DescribeResult: errors take priority regardless of tool ----
 
     [Fact]
-    public void DescribeResult_IsError_ReturnsFirstLineOfText() =>
-        Assert.Equal("File not found: missing.txt", ToolCallSummary.DescribeResult("read_file", ToolResult.Error("File not found: missing.txt\nmore detail")));
+    public void DescribeResult_IsError_ReturnsFirstLineOfText_MarkedAsContinuing() =>
+        Assert.Equal("File not found: missing.txt …", ToolCallSummary.DescribeResult("read_file", ToolResult.Error("File not found: missing.txt\nmore detail")));
+
+    [Fact]
+    public void DescribeResult_IsError_SingleLine_HasNoEllipsis() =>
+        Assert.Equal("File not found: missing.txt", ToolCallSummary.DescribeResult("read_file", ToolResult.Error("File not found: missing.txt\r\n")));
 
     // ---- DescribeResult: success per tool ----
 
@@ -161,6 +165,57 @@ public class ToolCallSummaryTests
             ToolResult.Ok("Title One — https://a.example\nsnippet one\nTitle Two — https://b.example\nsnippet two\n")));
 
     [Fact]
-    public void DescribeResult_UnknownTool_ReturnsFirstLineOfText() =>
-        Assert.Equal("first line", ToolCallSummary.DescribeResult("hallucinated_tool", ToolResult.Ok("first line\nsecond line")));
+    public void DescribeResult_UnknownTool_ReturnsFirstLineOfText_MarkedAsContinuing() =>
+        Assert.Equal("first line …", ToolCallSummary.DescribeResult("hallucinated_tool", ToolResult.Ok("first line\nsecond line")));
+
+    // ---- run_kernel_code ----
+
+    [Fact]
+    public void DescribeCall_KernelCode_CountsScriptLines() =>
+        Assert.Equal("Run code (3 lines)", ToolCallSummary.DescribeCall("run_kernel_code", Args(new { code = "var a = 1;\nvar b = 2;\nConsole.WriteLine(a + b);\n" })));
+
+    [Fact]
+    public void DescribeCall_KernelCode_SingleLine() =>
+        Assert.Equal("Run code (1 line)", ToolCallSummary.DescribeCall("run_kernel_code", Args(new { code = "1 + 1" })));
+
+    [Fact]
+    public void DescribeCall_KernelCode_BeforeArgumentsArrive() =>
+        Assert.Equal("Run code", ToolCallSummary.DescribeCall("run_kernel_code", Args(new { })));
+
+    /// <summary>The reported bug: a listing's first entry (".git/") used to be the whole outcome.
+    /// The kernel's state trailer must not count as output.</summary>
+    [Fact]
+    public void DescribeResult_KernelCode_CountsOutputLines_NotTheStateTrailer() =>
+        Assert.Equal("3 lines of output", ToolCallSummary.DescribeResult(
+            "run_kernel_code",
+            ToolResult.Ok(".git/\nsrc/\nREADME.md\r\n\n[kernel state changed this round: +variable ls (string, 91 chars)]")));
+
+    [Fact]
+    public void DescribeResult_KernelCode_OneLine() =>
+        Assert.Equal("1 line of output", ToolCallSummary.DescribeResult("run_kernel_code", ToolResult.Ok("3157\r\n")));
+
+    [Fact]
+    public void DescribeResult_KernelCode_OnlyTheTrailer_IsNoOutput() =>
+        Assert.Equal("no output", ToolCallSummary.DescribeResult(
+            "run_kernel_code", ToolResult.Ok("[kernel state changed this round: +variable x (int)]")));
+
+    [Fact]
+    public void SplitKernelStateNote_SeparatesTrailer()
+    {
+        var (output, note) = ToolCallSummary.SplitKernelStateNote("a\nb\r\n\n[kernel state changed this round: +variable x (int)]");
+
+        Assert.Equal("a\nb", output);
+        Assert.Equal("[kernel state changed this round: +variable x (int)]", note);
+    }
+
+    [Fact]
+    public void SplitKernelStateNote_IgnoresTheTextMidLine()
+    {
+        var text = "printed: [kernel state changed this round: not a trailer]";
+
+        var (output, note) = ToolCallSummary.SplitKernelStateNote(text);
+
+        Assert.Equal(text, output);
+        Assert.Null(note);
+    }
 }

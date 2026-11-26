@@ -24,6 +24,12 @@ namespace Litos.Gui;
 /// multiline JSON result (DescribeResult's FirstLine fallback). Instead, an MCP row is a small
 /// collapsed-by-default control: a clickable header (glyph + tool name) that expands, on click,
 /// into the full pretty-printed arguments and result text.
+///
+/// run_kernel_code rows use the same collapsible shape. Its output is whatever the script printed,
+/// often many lines, and the single-line form showed only the first of them, which read as an
+/// agent message cut off halfway. Its header gives line counts ("Run code (14 lines) → 10 lines
+/// of output"); expanded, it shows the script, its full output, and, dimmed, the kernel's
+/// state-change trailer, which is there for the model rather than the user.
 /// </summary>
 internal sealed class ToolCallRow
 {
@@ -34,9 +40,12 @@ internal sealed class ToolCallRow
 
     // Non-null only for built-in-tool rows: their single summary line.
     private readonly TextBlock? _lineText;
-    // Non-null only for MCP rows — built-in-tool rows are a single TextBlock with no header/detail split.
+    // Non-null only for expandable rows (MCP, run_kernel_code) — other built-in-tool rows are a
+    // single TextBlock with no header/detail split.
     private readonly TextBlock? _headerText;
     private readonly TextBlock? _detailText;
+    // The kernel's state-change trailer, shown dimmed under a run_kernel_code row's detail.
+    private readonly TextBlock? _noteText;
     private bool _expanded;
     private ToolResult? _result; // null while running
     // Tracks the glyph/brush RenderRunning/RenderCompleted last drew, so ToggleExpanded can
@@ -60,7 +69,7 @@ internal sealed class ToolCallRow
     /// Raised after an MCP row's expand/collapse toggle changes Root's height — MainWindow hooks
     /// this to re-run its ScrollToEndAfterLayout/NudgeTranscriptLayout workaround (see that
     /// method's own remarks on Avalonia's ScrollViewer extent-staleness bug), the same fix already
-    /// applied after every other TranscriptPanel content change. Never raised for a non-MCP row
+    /// applied after every other TranscriptPanel content change. Never raised for a one-line row
     /// (its Root height never changes after creation).
     /// </summary>
     public event Action? Toggled;
@@ -87,7 +96,7 @@ internal sealed class ToolCallRow
 
     private ToolCallRow(
         string toolName, JsonElement arguments, IBrush runningAndSuccessBrush, IBrush errorBrush,
-        StackPanel panel, TextBlock? lineText, TextBlock? headerText, TextBlock? detailText)
+        StackPanel panel, TextBlock? lineText, TextBlock? headerText, TextBlock? detailText, TextBlock? noteText = null)
     {
         _toolName = toolName;
         _arguments = arguments;
@@ -97,13 +106,14 @@ internal sealed class ToolCallRow
         _lineText = lineText;
         _headerText = headerText;
         _detailText = detailText;
+        _noteText = noteText;
         _slowNotice.Foreground = runningAndSuccessBrush;
         _panel.Children.Add(_slowNotice);
     }
 
     public static ToolCallRow Create(string toolName, JsonElement arguments, IBrush runningAndSuccessBrush, IBrush errorBrush)
     {
-        if (!IsMcpTool(toolName))
+        if (!IsExpandable(toolName))
         {
             var textBlock = NewMonospaceTextBlock();
             textBlock.Foreground = runningAndSuccessBrush;
@@ -125,7 +135,18 @@ internal sealed class ToolCallRow
         panel.Children.Add(header);
         panel.Children.Add(detail);
 
-        var row = new ToolCallRow(toolName, arguments, runningAndSuccessBrush, errorBrush, panel, lineText: null, header, detail);
+        TextBlock? note = null;
+        if (IsKernelTool(toolName))
+        {
+            note = NewMonospaceTextBlock();
+            note.Foreground = runningAndSuccessBrush;
+            note.Opacity = 0.55;
+            note.Margin = new Avalonia.Thickness(16, 0, 4, 4);
+            note.IsVisible = false;
+            panel.Children.Add(note);
+        }
+
+        var row = new ToolCallRow(toolName, arguments, runningAndSuccessBrush, errorBrush, panel, lineText: null, header, detail, note);
         header.PointerPressed += (_, _) => row.ToggleExpanded();
         return row;
     }
@@ -135,6 +156,11 @@ internal sealed class ToolCallRow
     /// other MCP-specific branch in this class. Pure and internal so it's testable without an
     /// Avalonia Application (this codebase has no headless UI test infrastructure).</summary>
     internal static bool IsMcpTool(string toolName) => toolName.StartsWith("mcp__", StringComparison.Ordinal);
+
+    internal static bool IsKernelTool(string toolName) => toolName == ReservedToolNames.KernelCode;
+
+    /// <summary>Rows drawn as a clickable header over a hidden detail block, rather than one line.</summary>
+    internal static bool IsExpandable(string toolName) => IsMcpTool(toolName) || IsKernelTool(toolName);
 
     private static TextBlock NewMonospaceTextBlock() => new()
     {
@@ -285,17 +311,67 @@ internal sealed class ToolCallRow
     {
         _lastGlyph = glyph;
         _lastBrush = brush;
-        _headerText!.Text = $"{glyph} {_toolName} ({(_expanded ? "click to collapse" : "click to expand")})";
+        var hint = _expanded ? "click to collapse" : "click to expand";
+        _headerText!.Text = IsKernelTool(_toolName)
+            ? $"{glyph} {DescribeKernelHeader(_arguments, _result)}  ({hint})"
+            : $"{glyph} {_toolName} ({hint})";
         _headerText.Foreground = brush;
     }
 
     private void RenderMcpDetail()
     {
+        if (_noteText is not null)
+            _noteText.IsVisible = false;
         if (!_expanded)
             return;
 
         _detailText!.Foreground = _lastBrush;
-        _detailText.Text = DescribeMcpDetail(_arguments, _result);
+        if (!IsKernelTool(_toolName))
+        {
+            _detailText.Text = DescribeMcpDetail(_arguments, _result);
+            return;
+        }
+
+        var (detail, note) = DescribeKernelDetail(_arguments, _result);
+        _detailText.Text = detail;
+        if (_noteText is not null && note is not null)
+        {
+            _noteText.Text = note;
+            _noteText.IsVisible = true;
+        }
+    }
+
+    /// <summary>
+    /// A run_kernel_code row's header: the script's size, then once it has finished the outcome
+    /// ToolCallSummary gives it (an output line count, or an error's first line). Pure and internal
+    /// so it's testable without an Avalonia Application.
+    /// </summary>
+    internal static string DescribeKernelHeader(JsonElement arguments, ToolResult? result)
+    {
+        var call = ToolCallSummary.DescribeCall(ReservedToolNames.KernelCode, arguments);
+        return result is null ? call : $"{call} → {ToolCallSummary.DescribeResult(ReservedToolNames.KernelCode, result)}";
+    }
+
+    /// <summary>
+    /// A run_kernel_code row's expanded detail: the script exactly as the model wrote it, then its
+    /// full output once it has finished. The kernel's state-change trailer comes back separately as
+    /// Note, so the row can show it dimmed. Pure and internal so it's testable without an Avalonia
+    /// Application.
+    /// </summary>
+    internal static (string Detail, string? Note) DescribeKernelDetail(JsonElement arguments, ToolResult? result)
+    {
+        var code = arguments.ValueKind == JsonValueKind.Object
+            && arguments.TryGetProperty("code", out var value)
+            && value.ValueKind == JsonValueKind.String
+                ? value.GetString()!.TrimEnd()
+                : "";
+        var codeSection = $"Code:\n{(code.Length > 0 ? code : "(not received yet)")}";
+        if (result is null)
+            return (codeSection, null);
+
+        var (output, note) = ToolCallSummary.SplitKernelStateNote(result.Text);
+        var label = result.IsError ? "Error" : "Output";
+        return ($"{codeSection}\n\n{label}:\n{(output.Length > 0 ? output : "(no output)")}", note);
     }
 
     /// <summary>
