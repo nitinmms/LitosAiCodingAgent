@@ -32,6 +32,12 @@ public sealed class RoutinesWindow : Window
     private readonly StackPanel _runs = new() { Spacing = 6 };
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(30) };
 
+    /// <summary>Stops a rebuild landing on a card the user is still clicking (see the type's docs).</summary>
+    private readonly RoutineRefreshGate _gate = new();
+
+    /// <summary>Set when the window closes, so a deferred rebuild never touches a dead visual tree.</summary>
+    private bool _closed;
+
     public RoutinesWindow() : this(null!, new BuzzyStore(), null, _ => Task.CompletedTask)
     {
         // Parameterless constructor for the Avalonia designer/loader.
@@ -50,7 +56,7 @@ public sealed class RoutinesWindow : Window
         Background = new SolidColorBrush(Color.Parse("#1E1E1E"));
 
         var create = new Button { Content = "+ New routine" };
-        create.Click += async (_, _) => await EditAsync(null);
+        create.Click += async (_, _) => await GatedAsync(() => EditAsync(null));
 
         var header = new StackPanel
         {
@@ -99,9 +105,17 @@ public sealed class RoutinesWindow : Window
             scheduler.Changed += OnChanged;
             Closed += (_, _) =>
             {
+                _closed = true;
                 scheduler.Changed -= OnChanged;
                 _clock.Stop();
             };
+
+            // Re-read on return, instead of waiting up to a whole clock tick for the next one: times,
+            // statuses and "N memories to review" can all have moved on while the window was behind
+            // something else. Background priority so the refresh lands after the activation's own
+            // layout work, rather than rearranging children during it.
+            Activated += (_, _) => Dispatcher.UIThread.Post(Refresh, DispatcherPriority.Background);
+
             _clock.Tick += (_, _) => Refresh();
             _clock.Start();
             Refresh();
@@ -111,8 +125,34 @@ public sealed class RoutinesWindow : Window
     public static void Show(Window owner, RoutineScheduler scheduler, BuzzyStore store, string? preselectBuzzyId, Func<RoutineRun, Task> openRun) =>
         new RoutinesWindow(scheduler, store, preselectBuzzyId, openRun).Show(owner);
 
+    /// <summary>Runs a card action with rebuilds held off, then rebuilds once it is over.</summary>
+    private void Gated(Action action)
+    {
+        _gate.Hold();
+        try { action(); }
+        finally { RebuildIfOutermost(); }
+    }
+
+    private async Task GatedAsync(Func<Task> action)
+    {
+        _gate.Hold();
+        try { await action(); }
+        finally { RebuildIfOutermost(); }
+    }
+
+    private void RebuildIfOutermost()
+    {
+        if (_gate.Release() && !_closed)
+            Refresh();
+    }
+
     private void Refresh()
     {
+        // A change that arrives mid-click waits: rebuilding here would remove the button the user is
+        // still pressing. Whatever the action did is picked up by the rebuild when it ends.
+        if (_closed || !_gate.Request())
+            return;
+
         var buzzies = _store.List().ToDictionary(b => b.Id);
         var db = _scheduler.Database;
         var routines = db.ListRoutines();
@@ -144,26 +184,28 @@ public sealed class RoutinesWindow : Window
         var nextText = !routine.Enabled ? "Paused" : next is { } at ? $"Next: {Friendly(at)}" : "Runs when you press Run now";
 
         var runNow = new Button { Content = "Run now" };
-        runNow.Click += async (_, _) => await _scheduler.RunNowAsync(routine.Id);
+        // RunNowAsync raises Changed from inside this handler. GatedAsync holds the rebuild until the
+        // click is over, so the button being pressed isn't destroyed underneath it.
+        runNow.Click += async (_, _) => await GatedAsync(async () => await _scheduler.RunNowAsync(routine.Id));
         var pause = new Button { Content = routine.Enabled ? "Pause" : "Resume" };
-        pause.Click += (_, _) =>
+        pause.Click += (_, _) => Gated(() =>
         {
             _scheduler.Database.SetEnabled(routine.Id, !routine.Enabled);
             if (!routine.Enabled)
                 _scheduler.Database.SetLastScheduled(routine.Id, DateTimeOffset.UtcNow); // Resuming doesn't make paused-over times due.
             _scheduler.NotifyChanged();
-        };
+        });
         var edit = new Button { Content = "Edit" };
-        edit.Click += async (_, _) => await EditAsync(routine);
+        edit.Click += async (_, _) => await GatedAsync(() => EditAsync(routine));
         var delete = new Button { Content = "Delete" };
-        delete.Click += async (_, _) =>
+        delete.Click += async (_, _) => await GatedAsync(async () =>
         {
             if (await ConfirmationDialog.ShowAsync(this, $"Delete \"{routine.Name}\"?", "This deletes the routine and its run history. Files it saved stay in the Buzzy's workspace."))
             {
                 _scheduler.Database.DeleteRoutine(routine.Id);
                 _scheduler.NotifyChanged();
             }
-        };
+        });
 
         var text = new StackPanel
         {
@@ -189,11 +231,11 @@ public sealed class RoutinesWindow : Window
                 line += $" · v{latest} is available";
                 var upgrade = new Button { Content = $"Use v{latest}" };
                 ToolTip.SetTip(upgrade, $"Run the newer version of \"{routine.SkillName}\" from now on");
-                upgrade.Click += (_, _) =>
+                upgrade.Click += (_, _) => Gated(() =>
                 {
                     _scheduler.Database.SaveRoutine(routine with { SkillVersion = latest });
                     _scheduler.NotifyChanged();
-                };
+                });
                 actions.Insert(0, upgrade);
             }
             text.Children.Insert(2, new TextBlock { Text = line, FontSize = 12, Foreground = latest == 0 ? Bad : Amber, TextWrapping = TextWrapping.Wrap });
@@ -259,11 +301,9 @@ public sealed class RoutinesWindow : Window
         if (run.IsActive)
         {
             var cancel = new Button { Content = "Cancel" };
-            cancel.Click += (_, _) =>
-            {
-                _scheduler.Cancel(run.Id);
-                Refresh();
-            };
+            // Cancel raises no Changed event, so it refreshes explicitly — through the gate, for the
+            // same reason as every other card action.
+            cancel.Click += (_, _) => Gated(() => _scheduler.Cancel(run.Id));
             actions.Children.Add(cancel);
         }
 
@@ -279,8 +319,12 @@ public sealed class RoutinesWindow : Window
     /// this stayed open put it behind this window: the run appeared to do nothing until the user
     /// closed this one. "Open conversation" is a "take me there", so it gets out of the way.
     /// </summary>
-    private async Task OpenConversationAsync(RoutineRun run) =>
+    private async Task OpenConversationAsync(RoutineRun run)
+    {
+        // Not gated: this closes the window, so there is nothing left to rebuild, and holding would
+        // leave the gate open on a closed window.
         await OpenConversationAsync(Close, _openRun, run);
+    }
 
     /// <summary>
     /// Opens a run's conversation with this window out of the way first. Split out as a plain
