@@ -153,6 +153,56 @@ public class PersistedModelSelectionTests : IDisposable
         Assert.Equal(new ModelSelectionSnapshot("anthropic", "model-b", 128_000), selection.Snapshot());
         Assert.Contains("model-b", File.ReadAllText(_scratchConfigFilePath));
     }
+
+    // ---- LastSessionId (Litos.Gui's restart restore) ----
+    // In this class because it already redirects the static ConfigFilePath; a second class doing
+    // the same would race it, since xunit runs test classes in parallel.
+
+    /// <summary>The cross-face case: Litos.VsCodeHost saves the config snapshot it loaded at its own
+    /// startup on every model switch, which must not put back an older LastSessionId.</summary>
+    [Fact]
+    public void SetModel_KeepsTheLastSessionIdTheGuiSavedSinceStartup()
+    {
+        var (selection, _) = Create(Config() with { LastSessionId = "stale-at-startup" });
+        LitosConfig.SaveLastSessionId("gui-session");
+
+        selection.SetModel("model-b", 128_000);
+
+        var saved = LitosConfig.Load();
+        Assert.Equal("gui-session", saved.LastSessionId);
+        Assert.Equal("model-b", saved.DefaultModel);
+    }
+
+    [Fact]
+    public void SaveLastSessionId_ChangesOnlyThatField()
+    {
+        (Config(defaultModel: "model-z") with { LastWorkingDirectory = "/work" }).Save();
+
+        LitosConfig.SaveLastSessionId("abc");
+
+        var saved = LitosConfig.Load();
+        Assert.Equal("abc", saved.LastSessionId);
+        Assert.Equal("model-z", saved.DefaultModel);
+        Assert.Equal("/work", saved.LastWorkingDirectory);
+    }
+
+    [Fact]
+    public void SaveLastSessionId_CreatesTheFile_WhenThereIsNone()
+    {
+        LitosConfig.SaveLastSessionId("abc");
+
+        Assert.Equal("abc", LitosConfig.Load().LastSessionId);
+    }
+
+    [Fact]
+    public void SaveLastSessionId_LeavesAnUnreadableFileAlone()
+    {
+        File.WriteAllText(_scratchConfigFilePath, "{ not json");
+
+        LitosConfig.SaveLastSessionId("abc");
+
+        Assert.Equal("{ not json", File.ReadAllText(_scratchConfigFilePath));
+    }
 }
 
 public class FixedModelSelectionTests

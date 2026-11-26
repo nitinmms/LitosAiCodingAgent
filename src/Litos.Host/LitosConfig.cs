@@ -17,7 +17,11 @@ public sealed record LitosConfig(
     int? StreamIdleTimeoutSeconds = null,
     int? ToolCallIdleTimeoutSeconds = null,
     int? ReadFileMaxBytes = null,
-    int? ShellMaxOutputBytes = null)
+    int? ShellMaxOutputBytes = null,
+    // The session Litos.Gui last had on screen, so a restart reopens it (MainWindow's
+    // RememberCurrentSession / TryLoadSessionToRestoreAsync). Written only by SaveLastSessionId;
+    // Save() keeps the on-disk value, so no face's stale snapshot can undo it.
+    string? LastSessionId = null)
 {
     /// <summary>
     /// Hard wall-clock cap on a single `shell` tool command — see ShellTool's own doc comment
@@ -134,7 +138,8 @@ public sealed record LitosConfig(
             StreamIdleTimeoutSeconds: onDisk?.StreamIdleTimeoutSeconds,
             ToolCallIdleTimeoutSeconds: onDisk?.ToolCallIdleTimeoutSeconds,
             ReadFileMaxBytes: onDisk?.ReadFileMaxBytes,
-            ShellMaxOutputBytes: onDisk?.ShellMaxOutputBytes);
+            ShellMaxOutputBytes: onDisk?.ShellMaxOutputBytes,
+            LastSessionId: onDisk?.LastSessionId);
     }
 
     public string? GetApiKey(string providerName) =>
@@ -180,11 +185,35 @@ public sealed record LitosConfig(
         Environment.GetEnvironmentVariable(name)
         ?? (OperatingSystem.IsWindows() ? Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User) : null);
 
-    public void Save()
+    /// <summary>
+    /// Writes this config, except LastSessionId, which is kept as it is on disk: only
+    /// SaveLastSessionId changes it. Every face saves the snapshot it loaded at its own startup
+    /// (Litos.VsCodeHost does on each model switch), so writing this instance's LastSessionId would
+    /// put back whatever session the Gui had open back then, and the Gui's next start would reopen
+    /// an old session.
+    /// </summary>
+    public void Save() => Write(this with { LastSessionId = LoadFromDisk()?.LastSessionId });
+
+    /// <summary>
+    /// Records <paramref name="sessionId"/> as LastSessionId and changes nothing else in the file,
+    /// so it never overwrites a provider/model another face saved since this process started. An
+    /// unreadable config.json is left alone rather than replaced by one holding only this field.
+    /// </summary>
+    public static void SaveLastSessionId(string sessionId)
+    {
+        var onDisk = LoadFromDisk();
+        if (onDisk is null && File.Exists(ConfigFilePath))
+            return;
+
+        var config = onDisk ?? new LitosConfig(DefaultProvider: "anthropic", DefaultModel: null, LastWorkingDirectory: null, ApiKeys: new Dictionary<string, string>());
+        Write(config with { LastSessionId = sessionId });
+    }
+
+    private static void Write(LitosConfig config)
     {
         var directory = Path.GetDirectoryName(ConfigFilePath)!;
         Directory.CreateDirectory(directory);
-        var json = JsonSerializer.Serialize(this, JsonOptions);
+        var json = JsonSerializer.Serialize(config, JsonOptions);
         File.WriteAllText(ConfigFilePath, json);
     }
 

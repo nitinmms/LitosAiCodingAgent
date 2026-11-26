@@ -17,6 +17,7 @@ using Litos.Agent.Providers;
 using Litos.Agent.Session;
 using Litos.Agent.Streaming;
 using Litos.Agent.Tools;
+using Litos.Host;
 using Litos.Hosting.Files;
 using Litos.Kernel;
 using Litos.Tools.Attachments;
@@ -53,6 +54,9 @@ public sealed partial class MainWindow : Window
     private readonly MainWindowSession _session;
     private Transcript _transcript;
     private string _sessionId = Guid.NewGuid().ToString("n");
+    // What config.json's LastSessionId holds as far as this window knows, so RememberCurrentSession
+    // writes only when the session actually changed.
+    private string? _rememberedSessionId;
     // Populated once ObserveUpdateCheckAsync's startup check completes with a real update; null
     // means either "still checking", "up to date", or "check failed" — HandleUpdateAsync re-checks
     // on demand rather than trusting a possibly-stale/absent cached result for the actual install.
@@ -109,6 +113,7 @@ public sealed partial class MainWindow : Window
     public MainWindow(MainWindowSession session, string workingDirectory, string? resumeSessionId)
     {
         _session = session;
+        _rememberedSessionId = session?.Config.LastSessionId;
         _transcript = Transcript.CreateNew(workingDirectory);
         _mentionIndex = new FileMentionIndex(workingDirectory);
         InitializeComponent();
@@ -193,8 +198,12 @@ public sealed partial class MainWindow : Window
         if (_session.LoopbackServer.StartError is { } loopbackError)
             AddToolLine($"Artifact and file-share links are unavailable this run: {loopbackError}");
 
+        // A relaunch (SelfUpdater, /keys) names its session explicitly and wins; otherwise a plain
+        // start reopens whatever session was on screen when Litos last closed, if it has messages.
         if (resumeSessionId is not null)
             _ = ResumeSessionAsync(resumeSessionId, announce: false);
+        else
+            _ = RestoreLastSessionAsync();
 
         // Fire-and-forget: Program.cs already started this before the window existed (mirrors
         // InitializeMcpAsync's shape) so it may already be complete by the time we get here —
@@ -914,6 +923,7 @@ public sealed partial class MainWindow : Window
                 // session's first turn.
                 RenderTranscriptHistory(_transcript);
                 RefreshContextUsage();
+                RememberCurrentSession();
                 AddToolLine($"Started new session {_sessionId}.");
                 return;
 
@@ -1076,6 +1086,7 @@ public sealed partial class MainWindow : Window
         _transcript = await Transcript.LoadAsync(_session.TranscriptStore, SessionOwner.Local, _sessionId, CancellationToken.None);
         RenderTranscriptHistory(_transcript);
         RefreshContextUsage();
+        RememberCurrentSession();
         AddToolLine($"Branched into new session {_sessionId} ({_transcript.Messages.Count} messages kept).");
     }
 
@@ -1302,12 +1313,88 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task ResumeSessionAsync(string sessionId, bool announce)
     {
-        _sessionId = sessionId;
-        _transcript = await Transcript.LoadAsync(_session.TranscriptStore, SessionOwner.Local, _sessionId, CancellationToken.None);
-        RenderTranscriptHistory(_transcript);
-        RefreshContextUsage();
+        var transcript = await Transcript.LoadAsync(_session.TranscriptStore, SessionOwner.Local, sessionId, CancellationToken.None);
+        ShowSession(sessionId, transcript);
         if (announce)
             AddToolLine($"Resumed session {_sessionId} ({_transcript.Messages.Count} messages).");
+    }
+
+    /// <summary>
+    /// The plain-start path (no relaunch arguments): reopens config.json's LastSessionId when
+    /// TryLoadSessionToRestoreAsync finds it worth reopening. Otherwise the fresh session the
+    /// constructor already set up stays, exactly as a start always looked before this existed,
+    /// and becomes the one remembered, so closing again without sending anything leads to a fresh
+    /// start next time too.
+    /// </summary>
+    private async Task RestoreLastSessionAsync()
+    {
+        var lastSessionId = _session.Config.LastSessionId;
+        var transcript = await TryLoadSessionToRestoreAsync(_session.TranscriptStore, lastSessionId, CancellationToken.None);
+        if (transcript is null)
+        {
+            RememberCurrentSession();
+            return;
+        }
+
+        ShowSession(lastSessionId!, transcript);
+        AddToolLine($"Reopened your last session ({transcript.Messages.Count} messages). Type /new to start a fresh one.");
+    }
+
+    /// <summary>
+    /// The startup decision behind RestoreLastSessionAsync, kept free of the window so it is
+    /// unit-testable. Null — start fresh — when nothing was remembered, when the remembered
+    /// session has no messages (the user closed on an empty /new, or its file is gone: a missing
+    /// file reads as empty, not as an error), or when reading it fails (a damaged transcript
+    /// line). A failed restore must never stop the window from opening as it always did.
+    /// </summary>
+    internal static async Task<Transcript?> TryLoadSessionToRestoreAsync(ITranscriptStore store, string? sessionId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(sessionId))
+            return null;
+
+        try
+        {
+            var transcript = await Transcript.LoadAsync(store, SessionOwner.Local, sessionId, ct);
+            return transcript.Messages.Count > 0 ? transcript : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Saves the session on screen as config.json's LastSessionId, the one a plain restart
+    /// reopens. Called wherever _sessionId changes (startup, /new, /resume, /branch). Best-effort:
+    /// failing to remember must not break the command that switched sessions.
+    /// </summary>
+    private void RememberCurrentSession()
+    {
+        if (_rememberedSessionId == _sessionId)
+            return;
+
+        try
+        {
+            LitosConfig.SaveLastSessionId(_sessionId);
+            _rememberedSessionId = _sessionId;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Next switch tries again; at worst the next start opens a fresh session.
+        }
+    }
+
+    /// <summary>
+    /// Switches the window to an already-loaded session: shared by /resume, a relaunch, and the
+    /// plain-start restore.
+    /// </summary>
+    private void ShowSession(string sessionId, Transcript transcript)
+    {
+        _sessionId = sessionId;
+        _transcript = transcript;
+        RenderTranscriptHistory(_transcript);
+        RefreshContextUsage();
+        RememberCurrentSession();
 
         // A resumed session's own recorded WorkingDirectory only takes effect if it's usable
         // (non-null and still exists on this machine); otherwise the app stays exactly where it
