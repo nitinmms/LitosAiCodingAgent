@@ -45,6 +45,40 @@ public class SelfUpdaterTests
     {
         Assert.True(SelfUpdater.IsNewerVersion("1.0.0", "1.0.1"));
     }
+
+    // What real builds report: the .NET SDK appends "+<commit>" to InformationalVersion, so before
+    // this every installed build read as unparseable and the check said "up to date" forever.
+
+    [Fact]
+    public void IsNewerVersion_True_ForAReleaseBuildWithCommitMetadata()
+    {
+        Assert.True(SelfUpdater.IsNewerVersion("1.0.13+c22f5ee2113f0cc6071d076ae91e20e1e2a369c9", "v1.0.14"));
+    }
+
+    [Fact]
+    public void IsNewerVersion_False_ForTheSameReleaseWithCommitMetadata()
+    {
+        Assert.False(SelfUpdater.IsNewerVersion("1.0.13+c22f5ee2113f0cc6071d076ae91e20e1e2a369c9", "v1.0.13"));
+    }
+
+    /// <summary>The reported case: this machine's install against the published v1.0.13.</summary>
+    [Fact]
+    public void IsNewerVersion_True_ForAPreReleaseBuildWithCommitMetadata()
+    {
+        Assert.True(SelfUpdater.IsNewerVersion("1.0.12-gui-parity+a857e06ada43b55c4751e4ab9bc279e5b2d7b53f", "v1.0.13"));
+    }
+
+    [Fact]
+    public void IsNewerVersion_True_WhenThePreReleaseHasTheSameNumberAsTheRelease()
+    {
+        Assert.True(SelfUpdater.IsNewerVersion("1.0.13-beta", "v1.0.13"));
+    }
+
+    [Fact]
+    public void IsNewerVersion_False_WhenThePreReleaseIsAheadOfTheRelease()
+    {
+        Assert.False(SelfUpdater.IsNewerVersion("1.0.14-beta+abc", "v1.0.13"));
+    }
 }
 
 /// <summary>

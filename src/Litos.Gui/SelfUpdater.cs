@@ -112,16 +112,33 @@ public static partial class SelfUpdater
     /// Pure string comparison, no network/filesystem — same shape as Program.ResolveStartupWorkingDirectory
     /// and MainWindow.ResolveResumeWorkingDirectory, so it's unit-testable without a real release feed.
     /// Tags are "v1.2.3"; a leading "v" is stripped from both sides before comparing via System.Version.
-    /// Any unparseable version (e.g. this build's own "0.0.0" fallback, or a malformed tag) is treated
-    /// as older, never throws — an update check should never crash on a weird tag name.
+    ///
+    /// SemVer build metadata ("+&lt;commit&gt;", which the .NET SDK appends to every
+    /// InformationalVersion, release builds included) and a pre-release label ("-gui-parity") are
+    /// stripped first: System.Version parses neither, and treating every real build as unparseable
+    /// made the check report "up to date" on every install, forever (seen live: 1.0.12-gui-parity
+    /// against the published v1.0.13). A pre-release counts as older than the same release number.
+    /// A version still unparseable after that, or a malformed tag, is "not newer" — never throws.
     /// </summary>
     internal static bool IsNewerVersion(string current, string latestTag)
     {
-        var latest = latestTag.TrimStart('v', 'V');
-        if (!Version.TryParse(current, out var currentVersion) || !Version.TryParse(latest, out var latestVersion))
+        var (currentText, currentIsPreRelease) = SplitVersion(current);
+        var (latestText, latestIsPreRelease) = SplitVersion(latestTag);
+        if (!Version.TryParse(currentText, out var currentVersion) || !Version.TryParse(latestText, out var latestVersion))
             return false;
 
-        return latestVersion > currentVersion;
+        return latestVersion > currentVersion
+            || (latestVersion == currentVersion && currentIsPreRelease && !latestIsPreRelease);
+    }
+
+    private static (string Number, bool IsPreRelease) SplitVersion(string version)
+    {
+        var text = version.Trim().TrimStart('v', 'V');
+        var plus = text.IndexOf('+');
+        if (plus >= 0)
+            text = text[..plus];
+        var dash = text.IndexOf('-');
+        return dash >= 0 ? (text[..dash], true) : (text, false);
     }
 
     /// <summary>
