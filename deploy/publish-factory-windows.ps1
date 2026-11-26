@@ -80,11 +80,17 @@ Copy-Item (Join-Path $setupDir "litos-factory.exe") $outDir
 Copy-Item (Join-Path $setupDir "litos-factory.exe") (Join-Path $outDir "litos-factory-w.exe")
 Set-WindowsSubsystem (Join-Path $outDir "litos-factory-w.exe")
 Copy-Item (Join-Path $trayDir "litos-factory-tray.exe") $outDir
+# Playwright's Node driver for browser checks (Litos.Probe.Web): a folder that a single-file publish
+# can't bundle, found beside the host's executable. Chromium itself is installed per user, not here.
+$driver = Join-Path $hostDir ".playwright"
+# node.exe is kept out of the single file by the host's project (KeepPlaywrightDriverOutOfSingleFile).
+if (-not (Get-ChildItem (Join-Path $driver "node") -Recurse -Filter "node*" -File)) { throw "The host's publish has no Playwright driver: $driver" }
+Copy-Item $driver (Join-Path $outDir ".playwright") -Recurse
 
 # Anything else a single-file publish left beside an executable would be a native library it could
 # not bundle: fail here, not at runtime on someone else's machine.
 foreach ($folder in @($hostDir, $workerDir, $kernelDir, $setupDir, $trayDir)) {
-    $extra = Get-ChildItem $folder -File | Where-Object { $_.Extension -notin '.exe', '.pdb', '.json', '.config', '.xml' }
+    $extra = Get-ChildItem $folder -File | Where-Object { $_.Extension -notin '.exe', '.pdb', '.json', '.config', '.xml', '.ps1' }
     if ($extra) { throw "Publishing left files beside the executable in ${folder}: $($extra.Name -join ', ')" }
 }
 

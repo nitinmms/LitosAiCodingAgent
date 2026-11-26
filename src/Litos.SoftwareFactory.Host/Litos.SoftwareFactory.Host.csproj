@@ -31,4 +31,15 @@
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Playwright's Node driver must stay a real folder beside the executable: a single-file
+       publish with IncludeNativeLibrariesForSelfExtract otherwise bundles node.exe into the host,
+       where Playwright can't start it (deploy/publish-factory-windows.ps1). -->
+  <Target Name="KeepPlaywrightDriverOutOfSingleFile" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Condition="$([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').StartsWith('.playwright'))">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
 </Project>
