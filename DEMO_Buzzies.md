@@ -29,7 +29,11 @@ you can *see*. F–I are optional (models, workflows, the new editor, routines).
 
 ## Before we start (I do this)
 
-- Quit PID 16552 from the tray: **Quit Litos (stops routines)**.
+*Checked already: your two routines — Scout's "Tick test" and "Model report (phase 2 check)" — are
+both **switched off**, so nothing is scheduled and no run is mid-flight. Nothing will be lost by
+quitting, and nothing will fire while we demo.*
+
+- Quit PID 16552 from the tray: **Quit Litos (stops routines)**, or tell me to stop it.
 - Back up `~/.litos/buzzies` to `buzzies-backup-<date>` (folders **and** `buzzies.db`) and record the
   file count and hash, so we can prove the backup is whole.
 - Build Release and relaunch, so what runs is the code we just wrote.
@@ -43,8 +47,8 @@ deletes its own Buzzy at the end.
 
 ### A. The sidebar, and who you are talking to — *Phase 0*
 1. Look at the left column: **Litos chat** (plain coding agent), then **MY BUZZIES**: Buddy, Builder, Scout.
-2. Click **Scout**. The title becomes `LitosAiAgent — Scout`, the transcript is Scout's own, and the
-   PTC button reads **PTC: off for Buzzies**.
+2. Click **Scout**. The title becomes `LitosAiAgent — Scout`, the transcript is Scout's own, the PTC
+   button reads **PTC: off for Buzzies** and is disabled, and the sidebar marks Scout as selected.
 3. Say: *Who are you, and what can you do that the plain chat can't?*
    → It answers as Scout, in Scout's voice, from its own SOUL.md.
 
@@ -53,7 +57,9 @@ deletes its own Buzzy at the end.
 ### B. Two Buzzies, two memories (and it survives a restart) — *Phase 0*
 1. Select **Buddy**, say: *Remember that I like everything as short bullet lists.*
 2. Select **Scout**, say: *Remember that I care most about licence terms.*
-3. **Close the window and relaunch** (no routines yet, so it really closes).
+3. **Close the window and relaunch.** (Closing only hides to the tray if a routine is
+   *switched on* — `HasEnabledRoutines` — so with none on, Close really quits. If it vanishes
+   instead, the tray icon is holding it: right-click it and choose **Quit Litos (stops routines)**.)
 4. Ask Buddy *How would you summarise a long report for me?* → bullet lists.
    Ask Scout the same → prose that leads with licence terms, and it does not know Buddy's preference.
 5. Right-click either → **Open memory file** → plain dated Markdown, e.g. `- 2026-11-26 (chat): …`.
@@ -102,6 +108,8 @@ because nobody is watching.
 4. Change `/model` in the plain chat → Builder keeps its own; Scout moves with it.
 
 ### G. Learn this workflow — *Phase 2*
+*Buddy is used here because action row is Buzzy-only, and this one publishes a link (do H first if
+you would rather watch the editor with a skill already in it).*
 1. **Buddy**: *Write a haiku about bees, save it as poems/bees.md, and publish it as an artifact.*
 2. When it finishes, a row of actions appears under the reply: **Open artifact**, **Remember this
    workflow**, **Repeat every…**.
