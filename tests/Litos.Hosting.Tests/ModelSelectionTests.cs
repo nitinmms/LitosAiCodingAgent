@@ -8,7 +8,14 @@ namespace Litos.Hosting.Tests;
 /// IDisposable to redirect LitosConfig.ConfigFilePath to a scratch file — PersistedModelSelection
 /// saves on every switch, and without the redirect these tests would overwrite the developer's
 /// real ~/.litos/config.json (see Litos.VsCodeHost.Tests' AgentWorkerTests for the incident).
+///
+/// In a collection with FixedModelSelectionTests because both redirect the same <em>static</em>
+/// LitosConfig.ConfigFilePath. xUnit runs different classes in parallel by default, so whichever
+/// test redirected second took the static away from the other, which then wrote into the first
+/// one's scratch file: SaveLastSessionId_LeavesAnUnreadableFileAlone failed only in a full run and
+/// passed on its own or with its own class alone.
 /// </summary>
+[Collection(ConfigFilePathCollection.Name)]
 public class PersistedModelSelectionTests : IDisposable
 {
     private readonly string _originalConfigFilePath = LitosConfig.ConfigFilePath;
@@ -205,6 +212,7 @@ public class PersistedModelSelectionTests : IDisposable
     }
 }
 
+[Collection(ConfigFilePathCollection.Name)]
 public class FixedModelSelectionTests
 {
     [Fact]

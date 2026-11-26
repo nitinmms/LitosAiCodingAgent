@@ -2,7 +2,7 @@
 
 This is the build plan for [ReadMe_Buzzies.md](ReadMe_Buzzies.md). That document describes the product. This one says what gets built, in what order, and how each phase is checked. Phase 0 is the first, smallest MVP. Each later phase builds on the one before and leaves the app in a working state.
 
-Status (2026-11-26): Phases 0 and 1 are committed on branch `buzzies-mvp0` (commit `9c25852`), and Phase 2 in `b0af1d4`. Phase 3 is built and documented, not yet committed. The 174 Buzzy tests pass, along with the rest of Litos.Gui.Tests (401 in total), and the Host, Hosting, VsCodeHost and Artifacts tests. Phases 0–2 were checked live (see each phase's "as built" section); Phase 3 has not been checked in the running app yet. Phases 4–6 are planned, not started.
+Status (2026-11-26): Phases 0 and 1 are committed on branch `buzzies-mvp0` (commit `9c25852`), Phase 2 in `f0aab23`, and Phase 3 in a commit on top. The 190 Buzzy tests pass, along with the rest of Litos.Gui.Tests (417 in total), and the Host (24), Hosting (81), VsCodeHost (65) and Artifacts (94) tests. Phases 0–2 were checked live (see each phase's "as built" section); Phase 3's creation lane, grants and per-Buzzy model have not been checked in the running app yet, and neither has the contents editor. Phases 4–6 are planned, not started. `DEMO_Buzzies.md` is the run sheet for checking Phases 0–3 by hand.
 
 ## What the existing code gives us
 
@@ -241,9 +241,23 @@ Done when: the 60-second demo's steps 1, 3 and 4 work end to end on a real provi
   assertion was a race. It passed on a warm pool and failed reliably when `OneRunPerBuzzy_…` ran on
   its own (found by running that test in isolation). `FakeExecutor` now has `StartedAtLeastAsync`,
   a real signal rather than a delay, and the four affected tests await it. Confirmed by six runs in
-  isolation after the fix, all passing.- **Not in Phase 3:** editing soul, memory and skills *inside* the app. The right-click menu still
-  opens SOUL.md and MEMORY.md in the system editor, and skills are still files in `skills/`. That
-  item stays open.
+  isolation after the fix, all passing.- **Editing soul, memory and skills inside the app.** The sidebar's right-click "Soul, memory and
+  skills…" opens `BuzzyEditorWindow`: Soul, Memory and Skills tabs over the same files the Buzzy
+  reads, with Save, Reload and Revert, and a warning before closing with unsaved edits. The Skills
+  tab lists the folders under `skills/` (including ones written by hand or by "Remember this
+  workflow"), and can create, edit and delete one. `BuzzySkillLibrary` does the reading and writing;
+  it reuses `WorkflowMarkdown.SplitFrontmatter` so the editor parses exactly what the skill tool
+  parses, squeezes the description to one line (a newline or `---` in it would otherwise corrupt the
+  frontmatter while looking fine in the box), and refuses a body that is only whitespace.
+  **Editing is not a re-approval:** a skill's `versions/vN.md` files are left exactly as they were,
+  so a routine pinned to an approved version keeps running that version. "Open soul file" and "Open
+  memory file" are still there for the external editor.
+- **Two bugs found and fixed in the editor before it shipped:** writing text into a `TextBox` raises
+  `TextChanged`, so loading a file marked the window dirty and warned on close of a just-opened
+  window that had nothing to lose (`_loading` suppresses the mark while a load is running). And
+  `Save` wrote both files unconditionally, so if the first read failed the empty boxes would have
+  overwritten SOUL.md with nothing; it now refuses to save before a successful load (`_loaded`).
+  A headless Skia check confirmed that opening and closing the window leaves SOUL.md byte-identical.
 
 ### Phase 3 demos
 

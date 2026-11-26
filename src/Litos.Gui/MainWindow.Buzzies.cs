@@ -84,7 +84,7 @@ public sealed partial class MainWindow
             var row = SidebarRow(avatar, profile.Name, status);
             row.Click += async (_, _) => await SelectBuzzyAsync(Buzzies.Get(profile.Id) ?? profile);
             row.ContextMenu = BuzzyMenu(profile);
-            ToolTip.SetTip(row, $"{profile.Name} · {BuzzyTemplates.Find(profile.Template)?.Role ?? profile.Template}. Right-click for folders, model, soul, memory and workspace.");
+            ToolTip.SetTip(row, $"{profile.Name} · {BuzzyTemplates.Find(profile.Template)?.Role ?? profile.Template}. Right-click to edit its soul, memory and skills, or to set folders and model.");
             _buzzyRows[profile.Id] = new BuzzyRow(row, avatar, status);
             BuzzySidebar.Children.Add(row);
         }
@@ -214,8 +214,10 @@ public sealed partial class MainWindow
             Items =
             {
                 Item("Folders and model…", () => _ = EditBuzzyAccessAsync(profile)),
-                Item("Edit soul (SOUL.md)", () => TryLaunch(Buzzies.SoulPathOf(profile.Id))),
-                Item("Edit memory (MEMORY.md)", () => TryLaunch(Buzzies.MemoryPathOf(profile.Id))),
+                Item("Soul, memory and skills…", () => _ = EditBuzzyContentsAsync(profile)),
+                new Separator(),
+                Item("Open soul file", () => TryLaunch(Buzzies.SoulPathOf(profile.Id))),
+                Item("Open memory file", () => TryLaunch(Buzzies.MemoryPathOf(profile.Id))),
                 Item("Routines…", () => ShowRoutines(profile.Id)),
                 Item("Review proposed memories…", () => _ = ReviewMemoriesAsync(Buzzies.Get(profile.Id) ?? profile)),
                 Item("Open workspace folder", () =>

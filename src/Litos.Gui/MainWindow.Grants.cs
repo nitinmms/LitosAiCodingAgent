@@ -109,6 +109,15 @@ public sealed partial class MainWindow
         await SelectBuzzyAsync(profile);
     }
 
+    /// <summary>The sidebar's soul, memory and skills editor. The files stay the source of truth;
+    /// this is a place to change them that says what each one does.</summary>
+    private async Task EditBuzzyContentsAsync(BuzzyProfile profile)
+    {
+        await BuzzyEditorWindow.ShowAsync(this, Buzzies, Buzzies.Get(profile.Id) ?? profile);
+        // Its soul and memory go into the next prompt, so nothing cached needs clearing: the prompt
+        // provider reads both files when a turn starts.
+    }
+
     /// <summary>The sidebar's access settings: folder grants and the model this Buzzy runs on.</summary>
     private async Task EditBuzzyAccessAsync(BuzzyProfile profile)
     {
