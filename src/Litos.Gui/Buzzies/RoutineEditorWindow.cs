@@ -24,6 +24,10 @@ public sealed class RoutineEditorWindow : Window
     ];
 
     private readonly Routine? _existing;
+
+    // What the form started from: the routine being edited, or a prefilled draft (Repeat every…).
+    private readonly Routine? _source;
+    private readonly CheckBox _followWorkflow = new();
     private readonly IReadOnlyList<BuzzyProfile> _buzzies;
     private readonly ComboBox _buzzy = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBox _name = new() { PlaceholderText = "Morning research" };
@@ -48,34 +52,40 @@ public sealed class RoutineEditorWindow : Window
         // Parameterless constructor for the Avalonia designer/loader.
     }
 
-    public RoutineEditorWindow(Routine? existing, IReadOnlyList<BuzzyProfile> buzzies, string? preselectBuzzyId)
+    public RoutineEditorWindow(Routine? existing, IReadOnlyList<BuzzyProfile> buzzies, string? preselectBuzzyId, Routine? draft = null)
     {
         _existing = existing;
+        _source = existing ?? draft;
         _buzzies = buzzies;
         Title = existing is null ? "New routine" : $"Edit routine — {existing.Name}";
-        Width = 560;
+        Width = 660;
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.Parse("#1E1E1E"));
 
         _buzzy.ItemsSource = buzzies.Select(b => b.Name).ToList();
-        var selectedId = existing?.BuzzyId ?? preselectBuzzyId;
+        var selectedId = _source?.BuzzyId ?? preselectBuzzyId;
         _buzzy.SelectedIndex = Math.Max(0, buzzies.ToList().FindIndex(b => b.Id == selectedId));
-        _buzzy.IsEnabled = existing is null;
+        _buzzy.IsEnabled = _source is null;
         _buzzy.SelectionChanged += (_, _) => RefreshTools();
 
-        if (existing is not null)
+        _followWorkflow.IsVisible = _source?.FollowsWorkflow == true;
+        _followWorkflow.IsChecked = _followWorkflow.IsVisible;
+        _followWorkflow.Content = _source?.FollowsWorkflow == true
+            ? $"Follow the saved workflow \"{_source.SkillName}\" (version {_source.SkillVersion}) each time"
+            : null;
+        if (_source is { } from)
         {
-            _name.Text = existing.Name;
-            _prompt.Text = existing.Prompt;
-            _schedule.SelectedIndex = (int)existing.Trigger;
-            _time.Text = existing.TimeOfDay?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "09:00";
-            _day.SelectedItem = existing.Day ?? DayOfWeek.Friday;
-            _interval.Value = existing.IntervalMinutes ?? 2;
-            _maxMinutes.Value = existing.MaxMinutes;
-            _maxTokens.Value = existing.MaxTokens / 1000;
-            _catchUp.IsChecked = existing.MissedRuns == MissedRunPolicy.CatchUpOnce;
+            _name.Text = from.Name;
+            _prompt.Text = from.Prompt;
+            _schedule.SelectedIndex = (int)from.Trigger;
+            _time.Text = from.TimeOfDay?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "09:00";
+            _day.SelectedItem = from.Day ?? DayOfWeek.Friday;
+            _interval.Value = from.IntervalMinutes ?? 2;
+            _maxMinutes.Value = from.MaxMinutes;
+            _maxTokens.Value = from.MaxTokens / 1000;
+            _catchUp.IsChecked = from.MissedRuns == MissedRunPolicy.CatchUpOnce;
         }
         else
         {
@@ -99,7 +109,7 @@ public sealed class RoutineEditorWindow : Window
                     new TextBlock { Text = Title, FontSize = 18, FontWeight = FontWeight.SemiBold },
                     Label("Buzzy"), _buzzy,
                     Label("Name"), _name,
-                    Label("What should it do each time?"), _prompt,
+                    Label("What should it do each time?"), _prompt, _followWorkflow,
                     Label("When"), _schedule, _whenRow,
                     Label("Limits for each run"),
                     new StackPanel
@@ -133,8 +143,9 @@ public sealed class RoutineEditorWindow : Window
         RefreshTools();
     }
 
-    public static Task<Routine?> ShowAsync(Window owner, Routine? existing, IReadOnlyList<BuzzyProfile> buzzies, string? preselectBuzzyId) =>
-        new RoutineEditorWindow(existing, buzzies, preselectBuzzyId).ShowDialog<Routine?>(owner);
+    /// <param name="draft">A new routine prefilled from elsewhere (Repeat every…), saved as new.</param>
+    public static Task<Routine?> ShowAsync(Window owner, Routine? existing, IReadOnlyList<BuzzyProfile> buzzies, string? preselectBuzzyId, Routine? draft = null) =>
+        new RoutineEditorWindow(existing, buzzies, preselectBuzzyId, draft).ShowDialog<Routine?>(owner);
 
     private RoutineTrigger Trigger => (RoutineTrigger)Math.Max(0, _schedule.SelectedIndex);
 
@@ -159,7 +170,7 @@ public sealed class RoutineEditorWindow : Window
                 _whenRow.Children.Add(Muted("minutes"));
                 break;
         }
-        _whenRow.Children.Add(Muted(Trigger == RoutineTrigger.Manual ? "" : $"({TimeZoneInfo.Local.DisplayName})"));
+        _whenRow.Children.Add(Muted(Trigger == RoutineTrigger.Manual ? "" : TimeZoneInfo.Local.DisplayName));
     }
 
     private void RefreshTools()
@@ -227,7 +238,9 @@ public sealed class RoutineEditorWindow : Window
             CreatedAt: _existing is { } old && old.Trigger == Trigger && old.IntervalMinutes == (Trigger == RoutineTrigger.Interval ? (int?)(int)(_interval.Value ?? 2) : null)
                 ? old.CreatedAt
                 : DateTimeOffset.UtcNow,
-            LastScheduledAt: _existing is null ? null : DateTimeOffset.UtcNow);
+            LastScheduledAt: _existing is null ? null : DateTimeOffset.UtcNow,
+            SkillName: _followWorkflow.IsChecked == true ? _source?.SkillName : null,
+            SkillVersion: _followWorkflow.IsChecked == true ? _source?.SkillVersion : null);
         Close(routine);
     }
 

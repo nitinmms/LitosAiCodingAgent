@@ -8,12 +8,15 @@ namespace Litos.Gui.Buzzies;
 /// <param name="ShellFactory">Makes a shell that starts in the given folder. Null reuses the
 /// shared shell tool, which starts wherever the process happens to be.</param>
 /// <param name="Unattended">A scheduled run, with nobody at the screen: tools that would wait on
-/// an approval card (shell) are left out instead of blocking the run.</param>
+/// an approval card (shell) are left out instead of blocking the run, and write_file can't replace
+/// files an earlier run left (<see cref="NoOverwriteTool"/>).</param>
+/// <param name="Remember">Where remembered notes go; null saves them straight to MEMORY.md as from a chat.</param>
 public sealed record BuzzyToolContext(
     BuzzyStore Store,
     PendingApprovalStore Approvals,
     Func<string, ITool>? ShellFactory = null,
-    bool Unattended = false);
+    bool Unattended = false,
+    RememberMode? Remember = null);
 
 /// <summary>
 /// Builds the tool registry a Buzzy's turn runs with, from the Gui's full per-turn registry:
@@ -59,7 +62,8 @@ public static class BuzzyToolPolicy
 
             var tool = available.Resolve(name);
             if (BuzzyToolNames.PathScoped.Contains(name))
-                tool = new WorkspaceScopedTool(tool, workspace);
+                tool = new WorkspaceScopedTool(
+                    context.Unattended && name == BuzzyToolNames.WriteFile ? new NoOverwriteTool(tool) : tool, workspace);
             else if (name == BuzzyToolNames.Skill)
                 tool = new SkillTool(BuzzySkills.DiscoveryFor(store, profile.Id));
             else if (name == BuzzyToolNames.Shell)
@@ -72,7 +76,7 @@ public static class BuzzyToolPolicy
         }
 
         if (granted.Contains(BuzzyToolNames.Remember))
-            tools.Add(new RememberTool(store.MemoryPathOf(profile.Id)));
+            tools.Add(new RememberTool(profile.Id, store.MemoryPathOf(profile.Id), context.Remember));
 
         return new ToolRegistry(tools);
     }

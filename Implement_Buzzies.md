@@ -2,7 +2,7 @@
 
 This is the build plan for [ReadMe_Buzzies.md](ReadMe_Buzzies.md). That document describes the product. This one says what gets built, in what order, and how each phase is checked. Phase 0 is the first, smallest MVP. Each later phase builds on the one before and leaves the app in a working state.
 
-Status (2026-11-26): Phases 0 and 1 are built on branch `buzzies-mvp0` (not yet committed). The 108 Buzzy tests pass, along with the rest of Litos.Gui.Tests (335 in total), and the Host, Hosting and VsCodeHost tests. Both phases were checked live in the running app (see each phase's "as built" section). Phases 2–6 are planned, not started.
+Status (2026-11-26): Phases 0 and 1 are committed on branch `buzzies-mvp0` (commit `9c25852`). Phase 2 is built and documented but not yet committed. The 144 Buzzy tests pass, along with the rest of Litos.Gui.Tests (371 in total), and the Host, Hosting and VsCodeHost tests. All three phases were checked live (see each phase's "as built" section); Phases 0 and 1 in the running app, Phase 2 partly in code and partly in the window. Phases 3–6 are planned, not started.
 
 ## What the existing code gives us
 
@@ -160,6 +160,27 @@ Not checked live: the routine editor dialog (the test routine was created in cod
 - Memory hygiene: proposed memories show where they came from and need confirmation, and the text of web pages, emails and tool output never becomes trusted instructions.
 
 Done when: the 60-second demo's steps 1, 3 and 4 work end to end on a real provider.
+
+### Phase 2 as built
+
+- **Action row:** after a Buzzy turn with no error and no cancel, the window offers Open artifact (when the turn published one; the first link opens), Remember this workflow, and Repeat every…. The actions apply only to the conversation they belong to.
+- **Remember this workflow:** one tool-less model call (`WorkflowDrafter`, shaped like the existing Reflector) drafts a SKILL.md with Inputs, Steps, Tools, Output, Checks and Limitations. The drafter sees what the user asked, the tool calls (names and shortened arguments) and the final answer. It never sees tool results, and attached documents (the untrusted-content blocks) are replaced by "[attached document]". A web page or file the Buzzy read therefore can't write itself into a skill that later runs unattended. The draft opens in `WorkflowReviewWindow` for editing, with Save workflow or Save and repeat…. If the model call fails, an outline built from the conversation is offered instead.
+- **Versioned skills** (`WorkflowStore`): `skills/<name>/SKILL.md` is always the newest version, so the skill tool and the prompt's skill catalog find it with no special casing. `skills/<name>/versions/vN.md` keeps every version. Names are lower-case and hyphenated, and the description is kept to one line so it can't break the frontmatter.
+- **Pinned versions:** routines gained `SkillName` and `SkillVersion` (buzzies.db schema v2; v1 databases are migrated in place). A pinned run gets that exact version's text in its brief and is told not to load it again with the skill tool. A missing version fails the run with a message saying so. The Routines window shows "Follows workflow X vN" and, when a newer version exists, a Use vN button. Moving to it is the user's click.
+- **Repeat every…** opens the routine editor prefilled with the same request, every Friday at 17:00, pinned to the workflow saved in that conversation if there is one. You can untick the pin.
+- **No overwriting:** in unattended runs, `write_file` is wrapped in `NoOverwriteTool`. It can create files and rewrite ones it created in the same run, but it refuses to replace a file an earlier run left, and says to use a new dated name. `edit_file` still works for deliberate edits.
+- **Memory hygiene:** every MEMORY.md line now records its source ("- 2026-11-26 (chat): …"). In unattended runs, `remember` only proposes (`MemoryProposals`, `memory-proposals.json` per Buzzy, at most 50 waiting). The sidebar row shows "N memories to review", and the right-click menu opens `MemoryReviewWindow` with Keep and Discard. A kept memory is written with "(from routine "…", kept by you)".
+- **Wrap-up before the hard stop** (added after the live check below): at 75% of the token budget or the time limit, an unattended run gets a steering message to stop researching, save what it has as the dated file and finish. The hard stop stays at 100%. The unattended brief and the drafter now both ask for proportionate work: roughly 5 to 15 tool calls for a run.
+
+**Live check (2026-11-26)** on OpenRouter (deepseek-v4.1-flash):
+- **Scout, run in code through the same classes the window uses, because the screen was locked:** a research chat turn ran several web searches and wrote `reports/2026-11-26-three-newest-24gb-mac-open-weight-models.md`. The drafter produced `newest-local-open-weight-models` v1: Inputs as placeholders, 11 concrete steps, checks and limitations, and nothing taken from search results. Two pinned unattended runs of it were stopped by the token budget at 207k and 253k of 200k, and a third at 618k of 600k. That run made 25 web searches; about 307k characters of results built up and were re-sent every round. No file was written. This is what led to the wrap-up rule and the "proportionate" wording above.
+- **Buddy, in the window:** "write a haiku, save it as poems/bees.md and publish it as an artifact". The action row appeared with all three buttons. Remember this workflow drafted `haiku-artifact-publisher`, and the review window showed name, version, description, steps and tools used. Save and repeat… opened the editor prefilled (Friday 17:00, pin ticked), and Create showed the routine in Routines as "Follows workflow … v1, Next: tomorrow 17:00". Run now succeeded in about 23 seconds with 37.6k tokens. It wrote new `poems/bees-2026-11-26.md` and `.html` files, left the original `bees.md` untouched, and published a new artifact.
+- **Found and fixed during the check:**
+  - Clicking a Buzzy in the first seconds after start-up let the plain chat's background session restore land on top of it, so the Buzzy showed (and recorded as its own) the plain chat's session. The restore now leaves a selected Buzzy alone and is remembered for when you switch back. `ResumeSessionAsync` drops a load whose owner changed meanwhile.
+  - The reply's last line could render below the action row.
+  - The routine editor showed the time zone in double brackets and cut off "thousand tokens at most".
+- **Also seen:** the built-in artifact-design skill tells the model to write its HTML in a temp folder. The workspace guard refused, and Buddy saved and published it from its workspace instead. That's the intended outcome, but the skill's wording should say "workspace" when it's used by a Buzzy.
+- **Machine sleep:** the locked machine entered Modern Standby during one run. Timers count awake time only, so that run picked up after wake and was ended by its time limit. Phase 5 should mark a run caught by sleep as interrupted on wake.
 
 ## Phase 3: conversational creation and folder grants
 

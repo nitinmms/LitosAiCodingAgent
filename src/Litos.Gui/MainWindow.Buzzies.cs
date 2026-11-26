@@ -198,6 +198,7 @@ public sealed partial class MainWindow
                 Item("Edit soul (SOUL.md)", () => TryLaunch(Buzzies.SoulPathOf(profile.Id))),
                 Item("Edit memory (MEMORY.md)", () => TryLaunch(Buzzies.MemoryPathOf(profile.Id))),
                 Item("Routines…", () => ShowRoutines(profile.Id)),
+                Item("Review proposed memories…", () => _ = ReviewMemoriesAsync(Buzzies.Get(profile.Id) ?? profile)),
                 Item("Open workspace folder", () =>
                 {
                     Directory.CreateDirectory(Buzzies.WorkspaceOf(profile.Id));
@@ -253,6 +254,12 @@ public sealed partial class MainWindow
         {
             row.Status.Text = "Working…";
             row.Status.Foreground = WorkingBrush;
+        }
+        else if (PendingMemoryCount(id) is > 0 and var pending)
+        {
+            // Routines proposed memories: say so until the user reviews them (right-click menu).
+            row.Status.Text = pending == 1 ? "1 memory to review" : $"{pending} memories to review";
+            row.Status.Foreground = HoneyBrush;
         }
         else
         {

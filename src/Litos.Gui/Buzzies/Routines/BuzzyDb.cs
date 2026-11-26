@@ -13,7 +13,7 @@ namespace Litos.Gui.Buzzies.Routines;
 /// </summary>
 public sealed class BuzzyDb
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
 
     private readonly string _connectionString;
 
@@ -45,6 +45,19 @@ public sealed class BuzzyDb
             return;
 
         using var transaction = connection.BeginTransaction();
+        if (version < 1)
+            CreateVersion1(connection, transaction);
+        if (version < 2)
+        {
+            // Phase 2: a routine can follow a saved workflow, pinned to one version.
+            Execute(connection, "ALTER TABLE routines ADD COLUMN skill_name TEXT;", transaction);
+            Execute(connection, "ALTER TABLE routines ADD COLUMN skill_version INTEGER;", transaction);
+        }
+        Execute(connection, $"PRAGMA user_version = {SchemaVersion};", transaction);
+        transaction.Commit();
+    }
+
+    private static void CreateVersion1(SqliteConnection connection, SqliteTransaction transaction) =>
         Execute(connection, """
             CREATE TABLE IF NOT EXISTS routines (
                 id TEXT PRIMARY KEY,
@@ -85,9 +98,6 @@ public sealed class BuzzyDb
             CREATE INDEX IF NOT EXISTS ix_runs_status ON routine_runs(status);
             CREATE INDEX IF NOT EXISTS ix_runs_buzzy ON routine_runs(buzzy_id, queued_at);
             """, transaction);
-        Execute(connection, $"PRAGMA user_version = {SchemaVersion};", transaction);
-        transaction.Commit();
-    }
 
     // ---- Routines ------------------------------------------------------------------------------
 
@@ -96,22 +106,25 @@ public sealed class BuzzyDb
         using var connection = Open();
         Execute(connection, """
             INSERT INTO routines (id, buzzy_id, name, prompt, trigger, time_of_day, day_of_week, interval_minutes,
-                                  time_zone, enabled, max_minutes, max_tokens, missed_runs, created_at, last_scheduled_at)
+                                  time_zone, enabled, max_minutes, max_tokens, missed_runs, created_at, last_scheduled_at,
+                                  skill_name, skill_version)
             VALUES ($id, $buzzy, $name, $prompt, $trigger, $time, $day, $interval, $zone, $enabled, $maxMinutes,
-                    $maxTokens, $missed, $created, $lastScheduled)
+                    $maxTokens, $missed, $created, $lastScheduled, $skill, $skillVersion)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name, prompt = excluded.prompt, trigger = excluded.trigger,
                 time_of_day = excluded.time_of_day, day_of_week = excluded.day_of_week,
                 interval_minutes = excluded.interval_minutes, time_zone = excluded.time_zone,
                 enabled = excluded.enabled, max_minutes = excluded.max_minutes, max_tokens = excluded.max_tokens,
-                missed_runs = excluded.missed_runs, last_scheduled_at = excluded.last_scheduled_at;
+                missed_runs = excluded.missed_runs, last_scheduled_at = excluded.last_scheduled_at,
+                skill_name = excluded.skill_name, skill_version = excluded.skill_version;
             """, null,
             ("$id", routine.Id), ("$buzzy", routine.BuzzyId), ("$name", routine.Name), ("$prompt", routine.Prompt),
             ("$trigger", routine.Trigger.ToString()), ("$time", routine.TimeOfDay?.ToString("HH:mm", CultureInfo.InvariantCulture)),
             ("$day", routine.Day is { } d ? (int)d : null), ("$interval", routine.IntervalMinutes),
             ("$zone", routine.TimeZoneId), ("$enabled", routine.Enabled ? 1 : 0), ("$maxMinutes", routine.MaxMinutes),
             ("$maxTokens", routine.MaxTokens), ("$missed", routine.MissedRuns.ToString()), ("$created", Iso(routine.CreatedAt)),
-            ("$lastScheduled", routine.LastScheduledAt is { } at ? Iso(at) : null));
+            ("$lastScheduled", routine.LastScheduledAt is { } at ? Iso(at) : null),
+            ("$skill", routine.SkillName), ("$skillVersion", routine.SkillVersion));
     }
 
     public Routine? GetRoutine(string id) =>
@@ -254,7 +267,9 @@ public sealed class BuzzyDb
                 MaxTokens: reader.GetInt32(reader.GetOrdinal("max_tokens")),
                 MissedRuns: Enum.Parse<MissedRunPolicy>(reader.GetString(reader.GetOrdinal("missed_runs"))),
                 CreatedAt: ParseIso(reader.GetString(reader.GetOrdinal("created_at"))),
-                LastScheduledAt: NullableString(reader, "last_scheduled_at") is { } at ? ParseIso(at) : null));
+                LastScheduledAt: NullableString(reader, "last_scheduled_at") is { } at ? ParseIso(at) : null,
+                SkillName: NullableString(reader, "skill_name"),
+                SkillVersion: NullableInt(reader, "skill_version")));
         }
 
         return routines;

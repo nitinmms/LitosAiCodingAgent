@@ -138,17 +138,17 @@ public class RememberToolTests
         var memory = Path.Combine(temp.Path, "MEMORY.md");
         File.WriteAllText(memory, "# Memory\n\n");
 
-        var result = await new RememberTool(memory, new FixedClock()).InvokeAsync(Args.Of(new { note = "Prefers bullet lists.\nAlways." }), default);
+        var result = await new RememberTool("scout", memory, clock: new FixedClock()).InvokeAsync(Args.Of(new { note = "Prefers bullet lists.\nAlways." }), default);
 
         Assert.False(result.IsError);
-        Assert.EndsWith($"- 2026-11-26: Prefers bullet lists. Always.{Environment.NewLine}", File.ReadAllText(memory));
+        Assert.EndsWith($"- 2026-11-26 (chat): Prefers bullet lists. Always.{Environment.NewLine}", File.ReadAllText(memory));
     }
 
     [Fact]
     public async Task RefusesEmptyAndOverlongNotes()
     {
         using var temp = new TempDir();
-        var tool = new RememberTool(Path.Combine(temp.Path, "MEMORY.md"));
+        var tool = new RememberTool("scout", Path.Combine(temp.Path, "MEMORY.md"));
 
         Assert.True((await tool.InvokeAsync(Args.Of(new { note = " " }), default)).IsError);
         Assert.True((await tool.InvokeAsync(Args.Of(new { note = new string('x', RememberTool.MaxNoteLength + 1) }), default)).IsError);
@@ -161,7 +161,7 @@ public class RememberToolTests
         var memory = Path.Combine(temp.Path, "MEMORY.md");
         File.WriteAllText(memory, new string('x', RememberTool.MaxMemoryBytes + 1));
 
-        var result = await new RememberTool(memory).InvokeAsync(Args.Of(new { note = "one more" }), default);
+        var result = await new RememberTool("scout", memory).InvokeAsync(Args.Of(new { note = "one more" }), default);
 
         Assert.True(result.IsError);
         Assert.Contains("full", result.Text);

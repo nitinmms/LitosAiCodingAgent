@@ -106,6 +106,8 @@ public sealed partial class MainWindow
         var (title, body) = run.Status == RunStatus.Succeeded
             ? ($"{profile.Name} finished \"{name}\"", run.Summary ?? "Done. Click to see what it did.")
             : ($"{profile.Name} couldn't finish \"{name}\"", run.Error ?? "The run failed. Click to see what happened.");
+        if (PendingMemoryCount(profile.Id) > 0)
+            body += " It has memories waiting for your review (right-click it in the sidebar).";
         ShowToast(title, body, profile.Color, () => _ = OpenRunAsync(run));
     }
 

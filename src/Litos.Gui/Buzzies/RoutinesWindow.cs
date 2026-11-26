@@ -174,8 +174,32 @@ public sealed class RoutinesWindow : Window
                 new TextBlock { Text = routine.Prompt, TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12, Foreground = new SolidColorBrush(Color.Parse("#C8C8C8")) },
             },
         };
+
+        List<Button> actions = [runNow, pause, edit, delete];
+        if (routine.FollowsWorkflow)
+        {
+            // A routine stays on the workflow version the user approved; moving it is the user's click.
+            var latest = new Workflows.WorkflowStore(_store).LatestVersion(routine.BuzzyId, routine.SkillName!);
+            var line = $"Follows workflow \"{routine.SkillName}\" v{routine.SkillVersion}";
+            if (latest == 0)
+                line += " · that workflow is missing, so runs will fail until you edit this routine";
+            else if (latest > routine.SkillVersion)
+            {
+                line += $" · v{latest} is available";
+                var upgrade = new Button { Content = $"Use v{latest}" };
+                ToolTip.SetTip(upgrade, $"Run the newer version of \"{routine.SkillName}\" from now on");
+                upgrade.Click += (_, _) =>
+                {
+                    _scheduler.Database.SaveRoutine(routine with { SkillVersion = latest });
+                    _scheduler.NotifyChanged();
+                };
+                actions.Insert(0, upgrade);
+            }
+            text.Children.Insert(2, new TextBlock { Text = line, FontSize = 12, Foreground = latest == 0 ? Bad : Amber, TextWrapping = TextWrapping.Wrap });
+        }
+
         var buttons = new WrapPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        foreach (var button in new[] { runNow, pause, edit, delete })
+        foreach (var button in actions)
         {
             button.Margin = new Thickness(4, 0, 0, 4);
             buttons.Children.Add(button);

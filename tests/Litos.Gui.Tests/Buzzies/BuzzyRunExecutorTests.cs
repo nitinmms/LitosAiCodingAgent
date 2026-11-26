@@ -109,7 +109,63 @@ public sealed class BuzzyRunExecutorTests : IDisposable
 
         Assert.Equal(RunStatus.Failed, outcome.Status);
         Assert.Contains("budget", outcome.Error);
-        Assert.True(_provider.Requests.Count <= 2);
+        // Over budget after round 2, which still asked for a tool: it gets that one final round,
+        // and round 3, still asking for tools, is stopped.
+        Assert.Equal(3, _provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task OverBudget_TheFinalRoundsSaveStillHappens_AndAReplyWithoutToolsSucceeds()
+    {
+        var save = Json(new { path = "reports/late.md", content = "what I had" });
+        _provider.Enqueue(
+            new ToolCallCompleted("c1", "write_file", save),
+            new MessageCompleted(ChatMessage.Assistant([new ToolUseBlock("c1", "write_file", save)]), new UsageInfo(12_000, 500)));
+        _provider.Enqueue(
+            new TextDelta("Saved reports/late.md."),
+            new MessageCompleted(ChatMessage.Assistant([new TextBlock("Saved reports/late.md.")]), new UsageInfo(13_000, 100)));
+
+        var outcome = await Executor().RunAsync(Request(Routines.Manual(_builder.Id, Now) with { MaxTokens = 10_000 }), default);
+
+        Assert.Equal(RunStatus.Succeeded, outcome.Status);
+        Assert.Equal(["reports/late.md"], outcome.Outputs);
+        Assert.True(File.Exists(Path.Combine(_store.WorkspaceOf(_builder.Id), "reports", "late.md")));
+    }
+
+    [Fact]
+    public async Task AWriteThatFails_IsNotListedAsSaved()
+    {
+        File.WriteAllText(Path.Combine(_store.WorkspaceOf(_builder.Id), "old.md"), "earlier run");
+        var overwrite = Json(new { path = "old.md", content = "new" });
+        _provider.Enqueue(
+            new ToolCallCompleted("c1", "write_file", overwrite),
+            new MessageCompleted(ChatMessage.Assistant([new ToolUseBlock("c1", "write_file", overwrite)]), new UsageInfo(1, 1)));
+        _provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("Couldn't save.")]), new UsageInfo(1, 1)));
+
+        var outcome = await Executor().RunAsync(Request(), default);
+
+        Assert.Empty(outcome.Outputs); // refused by the no-overwrite rule, so nothing was saved
+        Assert.Equal("earlier run", File.ReadAllText(Path.Combine(_store.WorkspaceOf(_builder.Id), "old.md")));
+    }
+
+    [Fact]
+    public async Task NearTheBudget_TheRunIsToldToWrapUp_AndFinishesWithAResult()
+    {
+        var search = Json(new { path = "notes/draft.md", content = "partial" });
+        // Round 1 uses 80% of a 10k budget and asks for a tool; round 2 should carry the wrap-up note.
+        _provider.Enqueue(
+            new ToolCallCompleted("c1", "write_file", search),
+            new MessageCompleted(ChatMessage.Assistant([new ToolUseBlock("c1", "write_file", search)]), new UsageInfo(7_500, 500)));
+        _provider.Enqueue(
+            new TextDelta("Saved notes/draft.md with what I had."),
+            new MessageCompleted(ChatMessage.Assistant([new TextBlock("Saved notes/draft.md with what I had.")]), new UsageInfo(1_000, 100)));
+
+        var outcome = await Executor().RunAsync(Request(Routines.Manual(_builder.Id, Now) with { MaxTokens = 10_000 }), default);
+
+        Assert.Equal(RunStatus.Succeeded, outcome.Status);
+        Assert.Equal(["notes/draft.md"], outcome.Outputs);
+        var second = string.Join("\n", _provider.Requests[1].Messages.SelectMany(m => m.Content).OfType<TextBlock>().Select(t => t.Text));
+        Assert.Contains("Stop researching now", second);
     }
 
     [Fact]
@@ -142,6 +198,51 @@ public sealed class BuzzyRunExecutorTests : IDisposable
 
         Assert.Equal(RunStatus.Failed, outcome.Status);
         Assert.Equal("rate limited", outcome.Error);
+    }
+
+    [Fact]
+    public async Task PinnedWorkflowMissing_FailsWithoutCallingTheProvider()
+    {
+        var routine = Routines.Manual(_builder.Id, Now) with { SkillName = "gone", SkillVersion = 4 };
+
+        var outcome = await Executor().RunAsync(Request(routine), default);
+
+        Assert.Equal(RunStatus.Failed, outcome.Status);
+        Assert.Contains("\"gone\" version 4", outcome.Error);
+        Assert.Empty(_provider.Requests);
+    }
+
+    [Fact]
+    public async Task PinnedWorkflow_IsSentAsTheVersionPinned_NotTheNewest()
+    {
+        var workflows = new Litos.Gui.Buzzies.Workflows.WorkflowStore(_store);
+        workflows.Save(_builder.Id, "notes", "Nightly notes", "## Steps\n1. OLD STEP.", Now);
+        workflows.Save(_builder.Id, "notes", "Nightly notes", "## Steps\n1. NEW STEP.", Now);
+        _provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("ok")]), new UsageInfo(1, 1)));
+
+        await Executor().RunAsync(Request(Routines.Manual(_builder.Id, Now) with { SkillName = "notes", SkillVersion = 1 }), default);
+
+        var sent = string.Join("\n", _provider.Requests[0].Messages.SelectMany(m => m.Content).OfType<TextBlock>().Select(t => t.Text));
+        Assert.Contains("OLD STEP", sent);
+        Assert.DoesNotContain("NEW STEP", sent);
+    }
+
+    [Fact]
+    public async Task RememberDuringARun_IsOnlyProposed()
+    {
+        var args = Json(new { note = "The user prefers PDFs." });
+        _provider.Enqueue(
+            new ToolCallCompleted("c1", "remember", args),
+            new MessageCompleted(ChatMessage.Assistant([new ToolUseBlock("c1", "remember", args)]), new UsageInfo(1, 1)));
+        _provider.Enqueue(new MessageCompleted(ChatMessage.Assistant([new TextBlock("done")]), new UsageInfo(1, 1)));
+        var memoryBefore = File.ReadAllText(_store.MemoryPathOf(_builder.Id));
+
+        await Executor().RunAsync(Request(), default);
+
+        Assert.Equal(memoryBefore, File.ReadAllText(_store.MemoryPathOf(_builder.Id)));
+        var proposal = Assert.Single(new MemoryProposals(_store).List(_builder.Id));
+        Assert.Equal("The user prefers PDFs.", proposal.Note);
+        Assert.Equal("routine \"Nightly notes\"", proposal.Source);
     }
 
     [Fact]

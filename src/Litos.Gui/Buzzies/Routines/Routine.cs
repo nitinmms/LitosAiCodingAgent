@@ -11,6 +11,7 @@ public enum MissedRunPolicy { Skip, CatchUpOnce }
 /// A task a Buzzy repeats without the user retyping it (Implement_Buzzies.md, Phase 1). Stored in
 /// buzzies.db. <see cref="LastScheduledAt"/> is the latest occurrence the scheduler has already
 /// dealt with (run, queued or recorded as missed), so nothing before it is ever considered again.
+/// <see cref="SkillName"/> and <see cref="SkillVersion"/> pin a saved workflow (Phase 2).
 /// </summary>
 public sealed record Routine(
     string Id,
@@ -27,8 +28,14 @@ public sealed record Routine(
     int MaxTokens,
     MissedRunPolicy MissedRuns,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? LastScheduledAt = null)
+    DateTimeOffset? LastScheduledAt = null,
+    string? SkillName = null,
+    int? SkillVersion = null)
 {
+    /// <summary>True when the routine follows a saved workflow (Phase 2's Remember This Workflow),
+    /// pinned to the version the user approved: a newer version is used only once the user moves it.</summary>
+    public bool FollowsWorkflow => SkillName is not null && SkillVersion is >= 1;
+
     public const int DefaultMaxMinutes = 10;
     public const int DefaultMaxTokens = 200_000;
     public const int MinIntervalMinutes = 1;

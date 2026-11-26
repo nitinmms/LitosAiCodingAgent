@@ -526,6 +526,9 @@ public sealed partial class MainWindow : Window
         // A Buzzy runs with its own allowlisted, workspace-confined tools and its own prompt, and
         // never in kernel mode (the kernel's code runs ungated, outside the workspace guard).
         var buzzyTurn = _buzzy;
+        // For the action row offered after a Buzzy turn that went well (Implement_Buzzies.md, Phase 2).
+        var turnWentWell = true;
+        var publishedLinks = new List<string>();
         if (buzzyTurn is not null)
         {
             (_session.ToolRegistry, _session.Loop) = BuildBuzzyLoop(buzzyTurn);
@@ -573,6 +576,8 @@ public sealed partial class MainWindow : Window
                         break;
                     case ToolCallResult result:
                         CompleteToolCallRow(result.CallId, result.Result);
+                        if (buzzyTurn is not null)
+                            CollectArtifactLinks(result, publishedLinks);
                         // Live meter during a tool-heavy turn (parity with the VS Code extension's
                         // client-side estimate). AgentLoop appends this result to the transcript
                         // only after yielding it, so it's counted here explicitly.
@@ -586,6 +591,7 @@ public sealed partial class MainWindow : Window
                         SkipToolCallRow(skipped.CallId, skipped.Reason);
                         break;
                     case ErrorOccurred error:
+                        turnWentWell = false;
                         HideWorkingIndicator();
                         FinalizeReasoningText();
                         FinalizeAssistantText();
@@ -604,10 +610,12 @@ public sealed partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            turnWentWell = false;
             AddToolLine("[turn aborted]");
         }
         catch (Exception ex)
         {
+            turnWentWell = false;
             // Providers normally report failures via a yielded ErrorOccurred event (handled
             // above), but not every failure surfaces that way — e.g. OpenRouterChatProvider's
             // EnsureSuccessStatusCode() throws HttpRequestException straight out of the streaming
@@ -634,6 +642,10 @@ public sealed partial class MainWindow : Window
             // row callback from this turn rather than racing it and leaving a timer running.
             Dispatcher.UIThread.Post(StopToolRowTimers);
         }
+
+        // Posted, like the turn's own text updates, so the row lands after the reply's last line.
+        if (buzzyTurn is not null && turnWentWell)
+            Dispatcher.UIThread.Post(() => AddWorkflowActions(buzzyTurn, text, publishedLinks));
     }
 
     /// <summary>
@@ -1345,7 +1357,12 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task ResumeSessionAsync(string sessionId, bool announce)
     {
-        var transcript = await Transcript.LoadAsync(_session.TranscriptStore, ActiveOwner, sessionId, CancellationToken.None);
+        var owner = ActiveOwner;
+        var transcript = await Transcript.LoadAsync(_session.TranscriptStore, owner, sessionId, CancellationToken.None);
+        // Switched to another Buzzy (or back to the plain chat) while it loaded: this session
+        // belongs to the owner that asked for it, so don't show it under a different one.
+        if (ActiveOwner != owner)
+            return;
         ShowSession(sessionId, transcript);
         if (announce)
             AddToolLine($"Resumed session {_sessionId} ({_transcript.Messages.Count} messages).");
@@ -1362,6 +1379,16 @@ public sealed partial class MainWindow : Window
     {
         var lastSessionId = _session.Config.LastSessionId;
         var transcript = await TryLoadSessionToRestoreAsync(_session.TranscriptStore, lastSessionId, CancellationToken.None);
+
+        // The user picked a Buzzy while this was loading: leave the Buzzy on screen, and let the
+        // plain chat reopen this session when they switch back to it.
+        if (_buzzy is not null)
+        {
+            if (transcript is not null)
+                _litosSessionId = lastSessionId;
+            return;
+        }
+
         if (transcript is null)
         {
             RememberCurrentSession();
