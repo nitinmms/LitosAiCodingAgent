@@ -33,5 +33,6 @@ internal static class SlashCommands
         new("/update", "Check for and install an update"),
         new("/ptc", "Turn Programmatic Tool Calling on or off for this session"),
         new("/ptc-reset", "Restart the PTC kernel (when PTC is on)"),
+        new("/buzzy", "Create a Buzzy from a description of what it should do"),
     ];
 }

@@ -75,6 +75,7 @@ public class RoutineSchedulerTests
 
         h.Clock.Advance(TimeSpan.FromDays(2) + TimeSpan.FromHours(3));
         await h.TickAndSettleAsync();
+        await h.Executor.StartedAtLeastAsync(1);
 
         Assert.Equal(1, h.Executor.StartedCount);
         var runs = h.Db.ListRecentRuns(scout.Id, 10);
@@ -98,6 +99,7 @@ public class RoutineSchedulerTests
 
         h.Scheduler.EndInteractive(scout.Id);
         await h.TickAndSettleAsync();
+        await h.Executor.StartedAtLeastAsync(1);
         Assert.Equal(1, h.Executor.StartedCount);
     }
 
@@ -115,6 +117,9 @@ public class RoutineSchedulerTests
         await h.Scheduler.RunNowAsync(a.Id);
         await h.Scheduler.RunNowAsync(b.Id);
         await h.Scheduler.TickAsync();
+        // The first run is claimed on the tick, then enters the executor on the thread pool, so wait
+        // for it rather than assuming it has started by the time the tick returns.
+        await h.Executor.StartedAtLeastAsync(1);
         Assert.Equal(1, h.Executor.StartedCount);
         Assert.NotNull(h.Scheduler.RunningFor(scout.Id));
 
@@ -139,6 +144,7 @@ public class RoutineSchedulerTests
         }
 
         await h.Scheduler.TickAsync();
+        await h.Executor.StartedAtLeastAsync(2);
 
         Assert.Equal(2, h.Executor.StartedCount);
         foreach (var request in h.Executor.Started.ToList())

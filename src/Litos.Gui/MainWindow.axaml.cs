@@ -17,6 +17,7 @@ using Litos.Agent.Providers;
 using Litos.Agent.Session;
 using Litos.Agent.Streaming;
 using Litos.Agent.Tools;
+using Litos.Gui.Buzzies;
 using Litos.Host;
 using Litos.Hosting.Files;
 using Litos.Kernel;
@@ -245,7 +246,12 @@ public sealed partial class MainWindow : Window
     private void UpdateProviderModelText()
     {
         ProviderText.Text = _session.ProviderName;
-        ModelText.Text = string.IsNullOrEmpty(_session.Model) ? "(no model)" : _session.Model;
+        // With a Buzzy selected, say which model its turns actually run on: its own when it has one
+        // (Phase 3), otherwise the global one /model controls.
+        var model = _buzzy is { HasOwnModel: true } buzzy
+            ? BuzzyModels.Resolve(buzzy.Model, _session.Model)
+            : _session.Model;
+        ModelText.Text = string.IsNullOrEmpty(model) ? "(no model)" : model;
     }
 
     private static readonly IBrush ContextUsageNormalBrush = DimTextBrush;
@@ -464,6 +470,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+
         if (RejectIfNoModel() || RejectIfBuzzyBusy())
         {
             // Keep what they typed: nothing was sent, so nothing should be lost.
@@ -529,9 +536,18 @@ public sealed partial class MainWindow : Window
         // For the action row offered after a Buzzy turn that went well (Implement_Buzzies.md, Phase 2).
         var turnWentWell = true;
         var publishedLinks = new List<string>();
+        string? buzzyModel = null;
+        int? buzzyContext = null;
         if (buzzyTurn is not null)
         {
             (_session.ToolRegistry, _session.Loop) = BuildBuzzyLoop(buzzyTurn);
+            // Its own model, when it has one (Phase 3); the loop itself is provider-bound, so this
+            // only changes the model id and the window to plan with.
+            if (buzzyTurn.HasOwnModel)
+            {
+                buzzyModel = BuzzyModels.Resolve(buzzyTurn.Model, _session.Model);
+                buzzyContext = BuzzyModels.ContextLength(buzzyTurn.Model, _session.ContextLength);
+            }
             SetBuzzyWorking(buzzyTurn.Id, true);
         }
         else if (_transcript.KernelModeEnabled && IsPtcAvailable)
@@ -549,7 +565,8 @@ public sealed partial class MainWindow : Window
         try
         {
             await foreach (var evt in _session.Loop.RunTurnAsync(
-                ActiveOwner, _sessionId, _transcript, _session.Model, turnContent, _turnCts.Token, steering.Reader, _session.ContextLength))
+                ActiveOwner, _sessionId, _transcript, buzzyModel ?? _session.Model, turnContent, _turnCts.Token, steering.Reader,
+                buzzyContext ?? _session.ContextLength))
             {
                 switch (evt)
                 {
@@ -1026,6 +1043,14 @@ public sealed partial class MainWindow : Window
             case "/ptc-reset":
             case "/kernel-reset":
                 await HandleKernelResetAsync();
+                return;
+
+            case "/buzzy":
+                // The only way a message can start a Buzzy-creation proposal. Deliberately a command
+                // rather than inferred from what the user typed: the plain chat is the coding agent,
+                // so guessing intent from a sentence hijacked real requests ("add an assistant to the
+                // checkout page"). An explicit command can be stated as an invariant and tested.
+                await HandleBuzzyCommandAsync(argument);
                 return;
 
             default:

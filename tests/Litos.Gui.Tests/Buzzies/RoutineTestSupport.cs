@@ -45,6 +45,7 @@ internal sealed class ScriptedChatProvider : IChatProvider
 internal sealed class FakeExecutor : IBuzzyRunExecutor
 {
     private readonly Dictionary<string, TaskCompletionSource<RunOutcome>> _gates = [];
+    private readonly List<(int Count, TaskCompletionSource Signal)> _startWaiters = [];
     private readonly Lock _lock = new();
 
     /// <summary>When true, each run waits for <see cref="Complete"/>; otherwise it succeeds at once.</summary>
@@ -52,12 +53,34 @@ internal sealed class FakeExecutor : IBuzzyRunExecutor
 
     public List<RunRequest> Started { get; } = [];
 
+    /// <summary>Completes once at least <paramref name="count"/> runs have entered the executor.
+    /// A run is registered in the scheduler synchronously but enters the executor on the thread
+    /// pool, so reading <see cref="StartedCount"/> straight after a tick is a race: it passed on a
+    /// warm pool and failed when the suite ran one test on its own.</summary>
+    public Task StartedAtLeastAsync(int count)
+    {
+        lock (_lock)
+        {
+            if (Started.Count >= count)
+                return Task.CompletedTask;
+            var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _startWaiters.Add((count, signal));
+            return signal.Task;
+        }
+    }
+
     public async Task<RunOutcome> RunAsync(RunRequest request, CancellationToken ct)
     {
         TaskCompletionSource<RunOutcome>? gate = null;
         lock (_lock)
         {
             Started.Add(request);
+            for (var i = _startWaiters.Count - 1; i >= 0; i--)
+                if (Started.Count >= _startWaiters[i].Count)
+                {
+                    _startWaiters[i].Signal.TrySetResult();
+                    _startWaiters.RemoveAt(i);
+                }
             if (Hold)
                 _gates[request.SessionId] = gate = new TaskCompletionSource<RunOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
         }

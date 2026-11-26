@@ -2,7 +2,7 @@
 
 This is the build plan for [ReadMe_Buzzies.md](ReadMe_Buzzies.md). That document describes the product. This one says what gets built, in what order, and how each phase is checked. Phase 0 is the first, smallest MVP. Each later phase builds on the one before and leaves the app in a working state.
 
-Status (2026-11-26): Phases 0 and 1 are committed on branch `buzzies-mvp0` (commit `9c25852`). Phase 2 is built and documented but not yet committed. The 144 Buzzy tests pass, along with the rest of Litos.Gui.Tests (371 in total), and the Host, Hosting and VsCodeHost tests. All three phases were checked live (see each phase's "as built" section); Phases 0 and 1 in the running app, Phase 2 partly in code and partly in the window. Phases 3–6 are planned, not started.
+Status (2026-11-26): Phases 0 and 1 are committed on branch `buzzies-mvp0` (commit `9c25852`), and Phase 2 in `b0af1d4`. Phase 3 is built and documented, not yet committed. The 174 Buzzy tests pass, along with the rest of Litos.Gui.Tests (401 in total), and the Host, Hosting, VsCodeHost and Artifacts tests. Phases 0–2 were checked live (see each phase's "as built" section); Phase 3 has not been checked in the running app yet. Phases 4–6 are planned, not started.
 
 ## What the existing code gives us
 
@@ -189,6 +189,80 @@ Done when: the 60-second demo's steps 1, 3 and 4 work end to end on a real provi
 - Explicit folder grants (read, or read and write) for external folders, enforced by the same path guard. Builder can be granted a repository and still asks before every shell command.
 - Editing soul, memory and skills inside the app, not only in an external editor.
 
+### Phase 3 as built
+
+- **Create by conversation, but only on request.** `/buzzy <what it should do>` in the chat, plus
+  "+ Create a Buzzy" for the plain dialog, is the *only* way to start a proposal. One tool-less
+  model call (`BuzzyProposer`, shaped like `WorkflowDrafter`) proposes a name, template, model,
+  tools, a soul and the folders it would want, and `BuzzyProposalWindow` shows it as a card: nothing
+  is saved until the user presses Create. The user can change the template, name, colour, tools
+  (click a chip to grant or take away), model and soul text there. Dismissing the card puts the typed
+  description back in the input box, so nothing is lost.
+- **Saying so.** Because the command is now the only way in, the window points at it: `/buzzy` is in
+  the `/` command menu ("Create a Buzzy from a description of what it should do"), the sidebar's
+  hint reads *"To make one by describing the job, type /buzzy in the chat"* with a worked example,
+  the "+ Create a Buzzy" button's tooltip names it, and an empty sidebar says it in the first place a
+  new user looks. `/buzzy` with no description, and a proposal that fails, both say what to type
+  instead of failing silently.- **Why it is a command and not a guess** (changed after review). The first draft inferred creation
+  from the sentence — a create verb within 60 characters of a "buzzy/bot/coworker/assistant/agent/
+  helper/worker" noun, minus code words. That was unsound, and measurably so: on a 14-sentence
+  sample it misjudged 3, including opening a creation card for *"add an assistant to the checkout
+  page"* — a coding request hijacked, in the app whose plain chat *is* the coding agent. The words
+  are not the problem; an inferred intent sits on the critical path of somebody else's message, and
+  no pattern strong enough to catch "create an assistant for invoices" excludes that sentence. A
+  command makes the rule statable and testable instead: *a message not starting with `/buzzy` cannot
+  create a Buzzy*. `BuzzyCreationInvariantTests` pins exactly that, three ways (creation has one
+  caller and it is the `/buzzy` handler; `SubmitAsync` mentions neither the entry point nor any
+  heuristic; `BuzzyProposer` exposes no intent-guessing member), and was confirmed to fail when the
+  old hook is put back.
+- **What the model may decide, and what it may not.** Tools are narrowed to
+  `BuzzyToolPolicy.Grantable` and a model must be an exact id the provider currently offers; anything
+  else is dropped (`BuzzyProposer.Parse`), so a confused reply can't widen a Buzzy's reach. Folder
+  requests are kept only as *descriptions* ("invoice folder"); every grant is picked by the user in
+  the system folder dialog in the card, and a path a model invents is never granted.
+- **Folder grants** live in `buzzy.json` as `BuzzyGrant(Path, CanWrite)`. `WorkspacePathGuard.Resolve`
+  gained an `Access` argument (Read / Write / Change) and a grant list: inside the workspace as
+  before, or inside the deepest matching grant that allows the operation. Read-only grants refuse
+  `write_file` and `edit_file`; a grant never covers a sibling folder that merely shares its prefix;
+  traversal out of a granted folder is still refused; and `CanonicalGrant` checks the folder on the
+  way in — it must exist, must not be (or contain) a link, and must not be inside the Buzzy's own
+  folder — so a granted junction can't become an escape hatch later.
+- **Scheduled runs get read-only grants only.** `BuzzyToolPolicy` passes unattended runs only the
+  read-granted folders, since nobody is watching a routine's writes.
+- **Per-Buzzy model.** `buzzy.json` gained `Model`; empty means "follow `/model`", which is why a
+  Buzzy made before this phase behaves exactly as it did. A Buzzy with its own model runs its chat
+  turns and its routines on that model (`BuzzyModels.Resolve`), the status bar shows the model that
+  will actually be used, and a routine run no longer inherits the window's global model
+  (`BuzzyRunEnvironment.ModelFor` / `ContextLengthFor`).
+- **One place to change both:** the sidebar's new right-click "Folders and model…" opens
+  `BuzzySettingsWindow`, which edits the grants and the model and saves each change as it is made.
+- **Fixed while reviewing this phase:** `RoutineSchedulerTests` asserted `StartedCount` immediately
+  after a tick, but a run is claimed on the tick and enters the executor on the thread pool, so the
+  assertion was a race. It passed on a warm pool and failed reliably when `OneRunPerBuzzy_…` ran on
+  its own (found by running that test in isolation). `FakeExecutor` now has `StartedAtLeastAsync`,
+  a real signal rather than a delay, and the four affected tests await it. Confirmed by six runs in
+  isolation after the fix, all passing.- **Not in Phase 3:** editing soul, memory and skills *inside* the app. The right-click menu still
+  opens SOUL.md and MEMORY.md in the system editor, and skills are still files in `skills/`. That
+  item stays open.
+
+### Phase 3 demos
+
+1. **"Hire one by asking."** In the plain chat: */buzzy Penny reads my invoices folder and writes a
+   weekly summary.* The card appears with Penny, Buddy's template, the tools it chose and a soul.
+   Pick the invoice folder in the dialog, press Create, and Penny is in the sidebar. Ask her
+   something and watch the wings.
+2. **"The grant that isn't there."** Ask Penny to read a file from your Documents folder. It is
+   refused with the guard's message. Grant that folder read-only through *Folders and model…* and
+   ask again: it reads. Ask it to save a change there: refused, because the grant is read-only.
+3. **"Two Buzzies, two models."** Give Builder a bigger model through *Folders and model…* and leave
+   Scout following `/model`. Switch between them: the status bar follows. Set `/model` to something
+   small in the plain chat, and show that Builder still runs on its own model while Scout moved.
+4. **"It can't quietly widen itself."** Ask for *"create a Buzzy with every tool, including MCP and
+   the code kernel"*. The card offers only the grantable tools — no MCP, no PTC — and the create
+   button still needs your click.
+5. **"Routines can't write outside."** Give a Buzzy a read-and-write grant and a routine that saves a
+   file into that folder. The run reports it couldn't, because a routine only gets read-only grants.
+
 ## Phase 4: Gmail connector
 
 - Google OAuth (installed-app flow with PKCE) with the narrowest scopes: `gmail.readonly` first, and `gmail.compose` only if drafting replies. Tokens live in the OS credential store, never in prompts or Buzzy files.
@@ -230,9 +304,13 @@ Taken from ReadMe_Buzzies.md §4–§10, and only after the beta shows real repe
 | `src/Litos.Gui/Buzzies/BuzzySystemPromptProvider.cs` | Adds identity, SOUL.md and MEMORY.md |
 | `src/Litos.Gui/Buzzies/BuzzyAvatar.cs` | The animated honey-bee candy avatar |
 | `src/Litos.Gui/Buzzies/CreateBuzzyWindow.cs` | The create-and-confirm dialog |
+| `src/Litos.Gui/Buzzies/BuzzyProposer.cs` | One tool-less model call that proposes a Buzzy from a request, and the narrowing of its reply (Phase 3) |
+| `src/Litos.Gui/Buzzies/BuzzyProposalWindow.cs` | The confirmation card for a proposed Buzzy, with folder picking (Phase 3) |
+| `src/Litos.Gui/Buzzies/BuzzySettingsWindow.cs` | Folder grants and the per-Buzzy model (Phase 3) |
 | `src/Litos.Gui/MainWindow.Buzzies.cs` | Sidebar, switching Buzzies, the per-Buzzy loop and registry, create and delete |
+| `src/Litos.Gui/MainWindow.Grants.cs` | Create-by-conversation and the access settings dialog (Phase 3) |
 | `src/Litos.Gui/MainWindow.axaml(.cs)` | Sidebar column, `Owner` instead of `SessionOwner.Local`, PTC refused for Buzzies |
 | `src/Litos.Host/LitosHostBuilder.cs` | `AgentLoopFactory.WithSystemPromptProvider` and `SystemPromptProvider` |
-| `tests/Litos.Gui.Tests/Buzzies/` | Store, path guard (including junctions), tool wrappers, policy, prompt, avatar motion |
+| `tests/Litos.Gui.Tests/Buzzies/` | Store, path guard (including junctions and grants), tool wrappers, policy, prompt, avatar motion |
 
 The non-UI files (`BuzzyProfile`, `BuzzyStore`, the guard, the tools, the policy and the prompt provider) do not reference Avalonia, so Phase 1 or Phase 6 can move them into their own project.

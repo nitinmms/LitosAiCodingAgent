@@ -23,8 +23,9 @@ public interface IBuzzyRunExecutor
     Task<RunOutcome> RunAsync(RunRequest request, CancellationToken ct);
 }
 
-/// <summary>What a run is executed with, snapshotted when it starts: the provider and model the
-/// user has selected at that moment, and the same per-turn tool registry the window builds.</summary>
+/// <summary>What a run is executed with, snapshotted when it starts: the provider and the global
+/// model the user has selected at that moment, and the same per-turn tool registry the window
+/// builds. A Buzzy with a model of its own runs on that instead (see <see cref="ModelFor"/>).</summary>
 public sealed record BuzzyRunEnvironment(
     AgentLoopFactory LoopFactory,
     ToolRegistry AvailableTools,
@@ -32,7 +33,14 @@ public sealed record BuzzyRunEnvironment(
     string Model,
     int ContextLength,
     ITranscriptStore Transcripts,
-    BuzzyToolContext Tools);
+    BuzzyToolContext Tools)
+{
+    /// <summary>The model this Buzzy's run uses: its own when it chose one (Phase 3), else the
+    /// global one. The provider is whatever the window has selected, as before.</summary>
+    public string ModelFor(BuzzyProfile profile) => BuzzyModels.Resolve(profile.Model, Model);
+
+    public int ContextLengthFor(BuzzyProfile profile) => BuzzyModels.ContextLength(profile.Model, ContextLength);
+}
 
 /// <summary>
 /// Runs a routine as an ordinary Buzzy turn in a fresh session of its own, reviewable afterwards
@@ -55,7 +63,8 @@ public sealed partial class BuzzyRunExecutor(Func<CancellationToken, Task<BuzzyR
     public async Task<RunOutcome> RunAsync(RunRequest request, CancellationToken ct)
     {
         var env = await environment(ct);
-        if (string.IsNullOrEmpty(env.Model))
+        var model = env.ModelFor(request.Profile);
+        if (string.IsNullOrEmpty(model))
             return new RunOutcome(RunStatus.Failed, null, "No model is selected. Pick one with /model, then run it again.", 0, 0, []);
 
         var profile = request.Profile;
@@ -112,8 +121,8 @@ public sealed partial class BuzzyRunExecutor(Func<CancellationToken, Task<BuzzyR
         try
         {
             await foreach (var evt in loop.RunTurnAsync(
-                profile.Owner, request.SessionId, transcript, env.Model, BriefFor(routine, request.StartedAt, workflow), linked.Token,
-                steering.Reader, env.ContextLength > 0 ? env.ContextLength : null))
+                profile.Owner, request.SessionId, transcript, model, BriefFor(routine, request.StartedAt, workflow), linked.Token,
+                steering.Reader, env.ContextLengthFor(profile) is var context && context > 0 ? context : null))
             {
                 switch (evt)
                 {

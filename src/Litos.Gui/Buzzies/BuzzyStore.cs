@@ -57,20 +57,70 @@ public sealed class BuzzyStore(string? rootDirectory = null)
     public BuzzyProfile? Get(string id) => IsValidId(id) ? TryLoad(id) : null;
 
     /// <summary>Creates the Buzzy's folder, SOUL.md, an empty MEMORY.md and its workspace, then
-    /// saves buzzy.json last, so a half-created folder never shows up in <see cref="List"/>.</summary>
-    public BuzzyProfile Create(BuzzyTemplate template, string name, string color, DateTimeOffset now)
+    /// saves buzzy.json last, so a half-created folder never shows up in <see cref="List"/>.
+    /// <paramref name="tools"/>, <paramref name="model"/> and <paramref name="soul"/> are what the
+    /// user confirmed, when they edited the template's own defaults (Phase 3): a proposal from a
+    /// conversation, or the create dialog's own choices. Null means the template's.</summary>
+    public BuzzyProfile Create(
+        BuzzyTemplate template,
+        string name,
+        string color,
+        DateTimeOffset now,
+        IReadOnlyList<string>? tools = null,
+        string? model = null,
+        string? soul = null)
     {
         var displayName = string.IsNullOrWhiteSpace(name) ? template.Name : name.Trim();
         var id = UniqueId(Slugify(displayName));
-        var profile = new BuzzyProfile(id, displayName, template.Id, color, template.Tools, now);
+        var profile = new BuzzyProfile(id, displayName, template.Id, color, tools ?? template.Tools, now, Model: model);
 
         Directory.CreateDirectory(WorkspaceOf(id));
         Directory.CreateDirectory(SkillsOf(id));
-        File.WriteAllText(SoulPathOf(id), $"# {displayName}\n\n{template.Soul.Trim()}\n", Utf8NoBom);
+        var identity = string.IsNullOrWhiteSpace(soul) ? template.Soul : soul;
+        File.WriteAllText(SoulPathOf(id), $"# {displayName}\n\n{identity.Trim()}\n", Utf8NoBom);
         File.WriteAllText(MemoryPathOf(id), "# Memory\n\n", Utf8NoBom);
         Save(profile);
         return profile;
     }
+
+    /// <summary>Adds a folder grant, or replaces the one for the same folder, and saves. Returns the
+    /// updated profile so the caller keeps the copy it holds in step.</summary>
+    public BuzzyProfile Grant(string id, string folder, bool canWrite)
+    {
+        var profile = Get(id) ?? throw new InvalidOperationException($"There is no Buzzy called '{id}'.");
+        var kept = profile.Folders
+            .Where(g => !string.Equals(g.Path, folder, PathComparison))
+            .Append(new BuzzyGrant(folder, canWrite))
+            .OrderBy(g => g.Path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var updated = profile with { Grants = kept };
+        Save(updated);
+        return updated;
+    }
+
+    /// <summary>Removes a folder grant and saves.</summary>
+    public BuzzyProfile RevokeGrant(string id, string folder)
+    {
+        var profile = Get(id) ?? throw new InvalidOperationException($"There is no Buzzy called '{id}'.");
+        var updated = profile with
+        {
+            Grants = [.. profile.Folders.Where(g => !string.Equals(g.Path, folder, PathComparison))],
+        };
+        Save(updated);
+        return updated;
+    }
+
+    /// <summary>The Buzzy's chosen model, persisted; null clears it back to the global model.</summary>
+    public BuzzyProfile SetModel(string id, string? model)
+    {
+        var profile = Get(id) ?? throw new InvalidOperationException($"There is no Buzzy called '{id}'.");
+        var updated = profile with { Model = string.IsNullOrWhiteSpace(model) ? null : model.Trim() };
+        Save(updated);
+        return updated;
+    }
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
     public void Save(BuzzyProfile profile)
     {

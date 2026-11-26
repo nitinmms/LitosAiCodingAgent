@@ -3,6 +3,17 @@ using Litos.Agent.Session;
 namespace Litos.Gui.Buzzies;
 
 /// <summary>
+/// An explicit grant of access to one folder outside a Buzzy's workspace (Implement_Buzzies.md,
+/// Phase 3). Read grants let its file tools read files there; write grants let them create and
+/// change them. The path is stored canonical when the grant is made, so a later rename of the
+/// target simply stops matching rather than resolving somewhere else.
+/// </summary>
+public sealed record BuzzyGrant(string Path, bool CanWrite)
+{
+    public string Display => $"{Path} ({(CanWrite ? "read and write" : "read only")})";
+}
+
+/// <summary>
 /// One Buzzy's settings, stored as <c>buzzy.json</c> in its own folder (Implement_Buzzies.md,
 /// Phase 0). The single writable source of a Buzzy's configuration until Phase 1 moves it to
 /// SQLite. Its identity (SOUL.md) and memory (MEMORY.md) live beside it as Markdown, since people
@@ -15,12 +26,41 @@ public sealed record BuzzyProfile(
     string Color,
     IReadOnlyList<string> Tools,
     DateTimeOffset CreatedAt,
-    string? LastSessionId = null)
+    string? LastSessionId = null,
+    IReadOnlyList<BuzzyGrant>? Grants = null,
+    string? Model = null)
 {
     /// <summary>Where this Buzzy's sessions live in the shared transcript store, apart from the
     /// plain Litos chat (<see cref="SessionOwner.Local"/>) and from every other Buzzy.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public SessionOwner Owner => new($"buzzy-{Id}");
+
+    /// <summary>The folders it may reach outside its workspace; empty when it was never granted any.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<BuzzyGrant> Folders => Grants ?? [];
+
+    /// <summary>True when its own model choice is in force, rather than the global one.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasOwnModel => !string.IsNullOrWhiteSpace(Model);
+}
+
+/// <summary>
+/// Which model a Buzzy runs on (Implement_Buzzies.md, Phase 3). A Buzzy with no choice of its own
+/// follows the global one, so /model still moves every Buzzy that never picked for itself, and a
+/// routine never runs on a model the user can't see in the status bar.
+/// </summary>
+public static class BuzzyModels
+{
+    /// <summary>Its own model when it has one, else the global model.</summary>
+    public static string Resolve(string? buzzyModel, string globalModel) =>
+        string.IsNullOrWhiteSpace(buzzyModel) ? globalModel : buzzyModel!;
+
+    /// <summary>The context window to plan with: resolved from its own model when it has one, else
+    /// the global one already resolved for the current session.</summary>
+    public static int ContextLength(string? buzzyModel, int globalContextLength) =>
+        string.IsNullOrWhiteSpace(buzzyModel)
+            ? globalContextLength
+            : Litos.Agent.Providers.ModelContextWindows.Resolve(buzzyModel);
 }
 
 /// <summary>A starting point for a new Buzzy: its role, colour, tools and first SOUL.md.</summary>

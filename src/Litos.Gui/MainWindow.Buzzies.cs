@@ -84,9 +84,23 @@ public sealed partial class MainWindow
             var row = SidebarRow(avatar, profile.Name, status);
             row.Click += async (_, _) => await SelectBuzzyAsync(Buzzies.Get(profile.Id) ?? profile);
             row.ContextMenu = BuzzyMenu(profile);
-            ToolTip.SetTip(row, $"{profile.Name} · {BuzzyTemplates.Find(profile.Template)?.Role ?? profile.Template}. Right-click for soul, memory and workspace.");
+            ToolTip.SetTip(row, $"{profile.Name} · {BuzzyTemplates.Find(profile.Template)?.Role ?? profile.Template}. Right-click for folders, model, soul, memory and workspace.");
             _buzzyRows[profile.Id] = new BuzzyRow(row, avatar, status);
             BuzzySidebar.Children.Add(row);
+        }
+
+        if (_buzzyRows.Count == 0)
+        {
+            // The one place a new user first meets Buzzies: say how to make one, both ways.
+            BuzzySidebar.Children.Add(new TextBlock
+            {
+                Text = "No Buzzies yet. Type /buzzy in the chat and describe the job — for example: "
+                     + "/buzzy read my invoice folder and write a weekly summary.",
+                FontSize = 11,
+                Foreground = HoneyBrush,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(10, 2, 10, 2),
+            });
         }
 
         var create = new Button
@@ -109,6 +123,7 @@ public sealed partial class MainWindow
                 },
             },
         };
+        ToolTip.SetTip(create, "Pick a template, name and colour. To describe the job instead, type /buzzy in the chat.");
         create.Click += async (_, _) => await CreateBuzzyAsync();
         BuzzySidebar.Children.Add(create);
 
@@ -141,7 +156,10 @@ public sealed partial class MainWindow
 
         BuzzySidebar.Children.Add(new TextBlock
         {
-            Text = "Each Buzzy has its own memory, sessions and workspace folder. Its wings beat while it works, in a chat or a routine.",
+            Text = "To make one by describing the job, type /buzzy in the chat — for example: "
+                 + "/buzzy read my invoice folder and write a weekly summary.\n\n"
+                 + "Each Buzzy has its own memory, sessions and workspace folder. Its wings beat while it works, "
+                 + "in a chat or a routine.",
             FontSize = 11,
             Foreground = DimTextBrush,
             TextWrapping = TextWrapping.Wrap,
@@ -195,6 +213,7 @@ public sealed partial class MainWindow
         {
             Items =
             {
+                Item("Folders and model…", () => _ = EditBuzzyAccessAsync(profile)),
                 Item("Edit soul (SOUL.md)", () => TryLaunch(Buzzies.SoulPathOf(profile.Id))),
                 Item("Edit memory (MEMORY.md)", () => TryLaunch(Buzzies.MemoryPathOf(profile.Id))),
                 Item("Routines…", () => ShowRoutines(profile.Id)),

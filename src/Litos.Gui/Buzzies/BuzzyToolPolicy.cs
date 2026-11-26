@@ -53,6 +53,9 @@ public static class BuzzyToolPolicy
         var store = context.Store;
         var workspace = store.WorkspaceOf(profile.Id);
         var granted = profile.Tools.Where(Grantable.Contains).Concat(AlwaysGranted).ToHashSet();
+        // Folder grants the user made explicitly. Unattended runs keep the read ones only: a routine
+        // must not change files in a folder nobody is watching (Implement_Buzzies.md, Phase 3).
+        var folders = context.Unattended ? [.. profile.Folders.Where(g => !g.CanWrite)] : profile.Folders;
         var tools = new List<ITool>();
 
         foreach (var name in available.Schemas.Select(s => s.Name))
@@ -63,7 +66,8 @@ public static class BuzzyToolPolicy
             var tool = available.Resolve(name);
             if (BuzzyToolNames.PathScoped.Contains(name))
                 tool = new WorkspaceScopedTool(
-                    context.Unattended && name == BuzzyToolNames.WriteFile ? new NoOverwriteTool(tool) : tool, workspace);
+                    context.Unattended && name == BuzzyToolNames.WriteFile ? new NoOverwriteTool(tool) : tool,
+                    workspace, folders);
             else if (name == BuzzyToolNames.Skill)
                 tool = new SkillTool(BuzzySkills.DiscoveryFor(store, profile.Id));
             else if (name == BuzzyToolNames.Shell)
