@@ -14,6 +14,10 @@ namespace Litos.Gui.Buzzies;
 /// looks and behaves the same on Windows and macOS and needs no extra packages; it doesn't take
 /// focus, closes itself after a while, and clicking it runs <c>onClick</c> (opening the run).
 /// Several stack upwards.
+///
+/// Clicking closes every toast first, then hands focus back to Litos: a toast is topmost and does
+/// not activate, so when the window it opened was coming back from the tray it would otherwise
+/// reappear underneath the toast that was just clicked.
 /// </summary>
 public sealed class ToastWindow : Window
 {
@@ -84,8 +88,15 @@ public sealed class ToastWindow : Window
 
         PointerPressed += (_, _) =>
         {
+            // Closed before the action runs, so whatever it shows is not hidden behind a topmost toast.
+            var main = (Application.Current?.ApplicationLifetime as
+                Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+            if (main is not null)
+                DismissToastsAndActivate(main);
+            else
+                Close();
+
             onClick?.Invoke();
-            Close();
         };
 
         _autoClose = new DispatcherTimer { Interval = lifetime ?? TimeSpan.FromSeconds(12) };
@@ -102,6 +113,23 @@ public sealed class ToastWindow : Window
             Open.Remove(this);
             Restack();
         };
+    }
+
+    /// <summary>
+    /// Closes every open toast and brings <paramref name="window"/> to the front. A toast is topmost
+    /// and never activates, so a window shown from the tray while one is up comes back behind it,
+    /// leaving the user looking at the toast they just clicked and no chat.
+    /// </summary>
+    private static void DismissToastsAndActivate(Window window)
+    {
+        foreach (var toast in Open.ToArray())
+            toast.Close();
+
+        if (!window.IsVisible)
+            window.Show();
+        if (window.WindowState == WindowState.Minimized)
+            window.WindowState = WindowState.Normal;
+        window.Activate();
     }
 
     /// <summary>Keeps open toasts stacked upwards from the bottom-right of the working area.</summary>

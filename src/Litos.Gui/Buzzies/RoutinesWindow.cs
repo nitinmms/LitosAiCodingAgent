@@ -12,7 +12,8 @@ namespace Litos.Gui.Buzzies;
 /// Every Buzzy's routines with their schedule and next run, Run now / Pause / Edit / Delete, and
 /// the recent runs with what they produced, Open conversation and Cancel (Implement_Buzzies.md,
 /// Phase 1). Live: it redraws whenever the scheduler reports a change, and every 30 seconds so the
-/// "next run" and "running for" times stay current. Not modal, so it can stay open beside the chat.
+/// "next run" and "running for" times stay current. Non-modal, so it can stay open beside the chat
+/// — but "Open conversation" closes it first (see <see cref="OpenConversationAsync"/>).
 /// </summary>
 public sealed class RoutinesWindow : Window
 {
@@ -252,7 +253,7 @@ public sealed class RoutinesWindow : Window
         if (run.SessionId is not null && run.Status != RunStatus.Queued)
         {
             var open = new Button { Content = "Open conversation" };
-            open.Click += async (_, _) => await _openRun(run);
+            open.Click += async (_, _) => await OpenConversationAsync(run);
             actions.Children.Add(open);
         }
         if (run.IsActive)
@@ -270,6 +271,26 @@ public sealed class RoutinesWindow : Window
         grid.Children.Add(body);
         grid.Children.Add(At(actions, 1));
         return new Border { Background = CardBrush, CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 8), Child = grid };
+    }
+
+    /// <summary>
+    /// Opens a run's conversation, closing this window first. The chat lives in the window this one
+    /// was shown over, and an owned window always sits above its owner, so loading the session while
+    /// this stayed open put it behind this window: the run appeared to do nothing until the user
+    /// closed this one. "Open conversation" is a "take me there", so it gets out of the way.
+    /// </summary>
+    private async Task OpenConversationAsync(RoutineRun run) =>
+        await OpenConversationAsync(Close, _openRun, run);
+
+    /// <summary>
+    /// Opens a run's conversation with this window out of the way first. Split out as a plain
+    /// <c>Action</c> rather than taking the window so the ordering — close, *then* load — is testable
+    /// without constructing an Avalonia <c>Window</c>, which needs a windowing platform.
+    /// </summary>
+    internal static async Task OpenConversationAsync(Action closeWindow, Func<RoutineRun, Task> openRun, RoutineRun run)
+    {
+        closeWindow();
+        await openRun(run);
     }
 
     private async Task EditAsync(Routine? routine)
