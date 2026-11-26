@@ -170,6 +170,8 @@ public sealed partial class MainWindow : Window
         CommandMenuButton.Click += (_, _) => OpenCommandMenu(openedByTyping: false);
         _commandMenu.Accepted += entry => _ = OnCommandMenuAcceptedAsync(entry);
         _mentionPopup.Accepted += entry => OnMentionAccepted(entry);
+        InitializeRoutines();
+        RebuildBuzzySidebar();
 
         // Fire-and-forget, not awaited/blocked on: the window must close instantly regardless of
         // how long MCP child-process teardown takes (previously this blocked the UI thread for up
@@ -177,8 +179,12 @@ public sealed partial class MainWindow : Window
         // was connected — worse with more servers enabled, since McpToolProvider.ShutdownAsync
         // disposes them one at a time). A lingering child process for a few seconds after the
         // window is gone is harmless — mirrors how most desktop apps close.
-        Closing += (_, _) =>
+        Closing += (_, e) =>
         {
+            // With routines on, the close button hides to the tray instead (Implement_Buzzies.md, Phase 1).
+            if (TryHideToTray(e))
+                return;
+            ShutdownRoutines();
             _ = _session.McpRefreshService.StopAsync(CancellationToken.None);
             _ = _session.McpToolProvider.ShutdownAsync();
             _ = _session.LoopbackServer.StopAsync();
@@ -289,6 +295,14 @@ public sealed partial class MainWindow : Window
 
     private void RefreshKernelToggleButton()
     {
+        KernelToggleButton.IsEnabled = _buzzy is null;
+        if (_buzzy is not null)
+        {
+            KernelToggleText.Text = BuzzyPtcLabel;
+            KernelToggleText.Foreground = DimTextBrush;
+            return;
+        }
+
         var (label, isOn) = PtcStatusLabel(IsPtcAvailable, _transcript.KernelModeEnabled);
         KernelToggleText.Text = label;
         KernelToggleText.Foreground = isOn ? PtcOnBrush : DimTextBrush;
@@ -309,8 +323,15 @@ public sealed partial class MainWindow : Window
     /// show. The state is persisted per chat session via a "kernel_toggle" TranscriptEntry (§5.3),
     /// not a global preference — /new starts back at the OFF default.
     /// </summary>
-    private Task ShowPtcWindowAsync() =>
-        PtcWindow.ShowAsync(this, _transcript.KernelModeEnabled, IsPtcAvailable, SetPtcEnabledAsync);
+    private Task ShowPtcWindowAsync()
+    {
+        if (_buzzy is not null)
+        {
+            AddToolLine("Programmatic Tool Calling is off for Buzzies: kernel code runs outside the Buzzy's workspace limits.");
+            return Task.CompletedTask;
+        }
+        return PtcWindow.ShowAsync(this, _transcript.KernelModeEnabled, IsPtcAvailable, SetPtcEnabledAsync);
+    }
 
     private async Task<bool> SetPtcEnabledAsync(bool enabled)
     {
@@ -319,7 +340,7 @@ public sealed partial class MainWindow : Window
 
         // Persisted first: if the write throws (PtcWindow reports it), the in-memory state hasn't
         // changed, so the session and the file still agree.
-        await _session.TranscriptStore.AppendAsync(SessionOwner.Local, _sessionId, TranscriptEntry.KernelToggle(enabled), CancellationToken.None);
+        await _session.TranscriptStore.AppendAsync(ActiveOwner, _sessionId, TranscriptEntry.KernelToggle(enabled), CancellationToken.None);
         _transcript.SetKernelModeEnabled(enabled);
         RefreshKernelToggleButton();
         AddToolLine(enabled
@@ -354,7 +375,8 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task ShowContextBreakdownAsync()
     {
-        var systemPrompt = await _session.SystemPromptProvider.BuildAsync(_session.ToolRegistry, _transcript.WorkingDirectory, CancellationToken.None);
+        var promptProvider = _buzzy is null ? _session.SystemPromptProvider : BuzzyPromptProvider(_buzzy);
+        var systemPrompt = await promptProvider.BuildAsync(_session.ToolRegistry, _transcript.WorkingDirectory, CancellationToken.None);
         var snapshot = ContextBreakdown.Compute(_transcript, systemPrompt, _session.ToolRegistry.Schemas);
         await ViewContextWindow.ShowAsync(this, snapshot, _session.ContextLength);
     }
@@ -442,7 +464,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (RejectIfNoModel())
+        if (RejectIfNoModel() || RejectIfBuzzyBusy())
         {
             // Keep what they typed: nothing was sent, so nothing should be lost.
             InputBox.Text = text;
@@ -501,7 +523,15 @@ public sealed partial class MainWindow : Window
             AddToolLine("Programmatic Tool Calling is on for this session but unavailable in this build — running without it.");
         }
 
-        if (_transcript.KernelModeEnabled && IsPtcAvailable)
+        // A Buzzy runs with its own allowlisted, workspace-confined tools and its own prompt, and
+        // never in kernel mode (the kernel's code runs ungated, outside the workspace guard).
+        var buzzyTurn = _buzzy;
+        if (buzzyTurn is not null)
+        {
+            (_session.ToolRegistry, _session.Loop) = BuildBuzzyLoop(buzzyTurn);
+            SetBuzzyWorking(buzzyTurn.Id, true);
+        }
+        else if (_transcript.KernelModeEnabled && IsPtcAvailable)
         {
             var bridgedTools = _session.ToolRegistryFactory.Create();
             _session.ToolRegistry = new ToolRegistry([new KernelCodeTool(bridgedTools.Schemas)]);
@@ -516,7 +546,7 @@ public sealed partial class MainWindow : Window
         try
         {
             await foreach (var evt in _session.Loop.RunTurnAsync(
-                SessionOwner.Local, _sessionId, _transcript, _session.Model, turnContent, _turnCts.Token, steering.Reader, _session.ContextLength))
+                ActiveOwner, _sessionId, _transcript, _session.Model, turnContent, _turnCts.Token, steering.Reader, _session.ContextLength))
             {
                 switch (evt)
                 {
@@ -593,7 +623,9 @@ public sealed partial class MainWindow : Window
             HideWorkingIndicator();
             steering.Writer.TryComplete();
             _currentSteeringWriter = null;
-            ChangeDirectoryButton.IsEnabled = true;
+            if (buzzyTurn is not null)
+                SetBuzzyWorking(buzzyTurn.Id, false);
+            ChangeDirectoryButton.IsEnabled = _buzzy is null;
             SendButton.Content = "Send";
             StatusBarWorkingIndicator.IsVisible = false;
             _turnCts?.Dispose();
@@ -676,7 +708,7 @@ public sealed partial class MainWindow : Window
             var kernelSession = _session.KernelSessionManager!.GetOrCreate(
                 _sessionId,
                 workingDirectory,
-                sid => _session.TranscriptStore.GetScratchDirectory(SessionOwner.Local, sid));
+                sid => _session.TranscriptStore.GetScratchDirectory(ActiveOwner, sid));
             return kernelSession.RunAsync(code, ct);
         };
     }
@@ -1064,7 +1096,7 @@ public sealed partial class MainWindow : Window
     private async Task HandleBranchAsync()
     {
         var entries = new List<TranscriptEntry>();
-        await foreach (var entry in _session.TranscriptStore.ReadAsync(SessionOwner.Local, _sessionId, CancellationToken.None))
+        await foreach (var entry in _session.TranscriptStore.ReadAsync(ActiveOwner, _sessionId, CancellationToken.None))
             entries.Add(entry);
 
         var userTurns = FindBranchPoints(entries);
@@ -1081,9 +1113,9 @@ public sealed partial class MainWindow : Window
         // +1: BranchAsync's uptoEntryIndex is exclusive ("keep the first N entries"), but picking
         // a message means "branch right after what I said here" — the picked user turn itself
         // must stay in the new session, not just everything strictly before it.
-        var newSessionId = await _session.TranscriptStore.BranchAsync(SessionOwner.Local, _sessionId, picked.EntryIndex + 1, CancellationToken.None);
+        var newSessionId = await _session.TranscriptStore.BranchAsync(ActiveOwner, _sessionId, picked.EntryIndex + 1, CancellationToken.None);
         _sessionId = newSessionId;
-        _transcript = await Transcript.LoadAsync(_session.TranscriptStore, SessionOwner.Local, _sessionId, CancellationToken.None);
+        _transcript = await Transcript.LoadAsync(_session.TranscriptStore, ActiveOwner, _sessionId, CancellationToken.None);
         RenderTranscriptHistory(_transcript);
         RefreshContextUsage();
         RememberCurrentSession();
@@ -1150,7 +1182,7 @@ public sealed partial class MainWindow : Window
             // synthetic summary message is appended (JSONL is append-only — the original messages
             // stay on disk, but Transcript.LoadAsync treats the summary as a checkpoint on replay
             // and skips them on the next /resume — see LoadAsync's remarks).
-            await _session.TranscriptStore.AppendAsync(SessionOwner.Local, _sessionId, TranscriptEntry.FromMessage(_transcript.Messages[0]), CancellationToken.None);
+            await _session.TranscriptStore.AppendAsync(ActiveOwner, _sessionId, TranscriptEntry.FromMessage(_transcript.Messages[0]), CancellationToken.None);
 
             RenderTranscriptHistory(_transcript);
             RefreshContextUsage();
@@ -1282,7 +1314,7 @@ public sealed partial class MainWindow : Window
 
     private async Task HandleResumeAsync(string? argument)
     {
-        var sessions = await _session.TranscriptStore.ListSessionsAsync(SessionOwner.Local, CancellationToken.None);
+        var sessions = await _session.TranscriptStore.ListSessionsAsync(ActiveOwner, CancellationToken.None);
 
         var pickedId = argument;
         if (pickedId is null)
@@ -1313,7 +1345,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task ResumeSessionAsync(string sessionId, bool announce)
     {
-        var transcript = await Transcript.LoadAsync(_session.TranscriptStore, SessionOwner.Local, sessionId, CancellationToken.None);
+        var transcript = await Transcript.LoadAsync(_session.TranscriptStore, ActiveOwner, sessionId, CancellationToken.None);
         ShowSession(sessionId, transcript);
         if (announce)
             AddToolLine($"Resumed session {_sessionId} ({_transcript.Messages.Count} messages).");
@@ -1347,14 +1379,18 @@ public sealed partial class MainWindow : Window
     /// file reads as empty, not as an error), or when reading it fails (a damaged transcript
     /// line). A failed restore must never stop the window from opening as it always did.
     /// </summary>
-    internal static async Task<Transcript?> TryLoadSessionToRestoreAsync(ITranscriptStore store, string? sessionId, CancellationToken ct)
+    internal static Task<Transcript?> TryLoadSessionToRestoreAsync(ITranscriptStore store, string? sessionId, CancellationToken ct) =>
+        TryLoadSessionToRestoreAsync(store, SessionOwner.Local, sessionId, ct);
+
+    /// <summary>The same decision for any owner — a Buzzy reopens its own last session with it.</summary>
+    internal static async Task<Transcript?> TryLoadSessionToRestoreAsync(ITranscriptStore store, SessionOwner owner, string? sessionId, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(sessionId))
             return null;
 
         try
         {
-            var transcript = await Transcript.LoadAsync(store, SessionOwner.Local, sessionId, ct);
+            var transcript = await Transcript.LoadAsync(store, owner, sessionId, ct);
             return transcript.Messages.Count > 0 ? transcript : null;
         }
         catch (Exception)
@@ -1370,6 +1406,12 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void RememberCurrentSession()
     {
+        if (_buzzy is not null)
+        {
+            RememberBuzzySession();
+            return;
+        }
+
         if (_rememberedSessionId == _sessionId)
             return;
 

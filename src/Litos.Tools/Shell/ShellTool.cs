@@ -5,7 +5,10 @@ using Litos.Agent.Tools;
 
 namespace Litos.Tools.Shell;
 
-public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTimeout = null, int? maxOutputBytes = null) : ITool
+/// <param name="workingDirectory">Where commands start. Null keeps the old behaviour — the
+/// process's current directory — which every face relied on before Litos.Gui's Buzzies needed a
+/// shell that starts in its own workspace regardless of where the rest of the app is.</param>
+public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTimeout = null, int? maxOutputBytes = null, string? workingDirectory = null) : ITool
 {
     private readonly int _maxOutputBytes = maxOutputBytes ?? OutputTruncation.DefaultMaxBytes;
 
@@ -92,6 +95,8 @@ public sealed class ShellTool(IToolApprovalGate approvalGate, TimeSpan? hardTime
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        if (workingDirectory is not null)
+            startInfo.WorkingDirectory = workingDirectory;
 
         if (!OperatingSystem.IsWindows() && LoginShellPath.Value is { } loginPath)
             startInfo.Environment["PATH"] = loginPath;

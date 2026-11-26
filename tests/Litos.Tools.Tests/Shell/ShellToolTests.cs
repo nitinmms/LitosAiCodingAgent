@@ -68,6 +68,26 @@ public class ShellToolTests
     }
 
     [Fact]
+    public async Task InvokeAsync_WithWorkingDirectory_StartsThere_NotInTheProcessDirectory()
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "litos-shell-cwd-" + Guid.NewGuid().ToString("n"))).FullName;
+        try
+        {
+            var tool = new ShellTool(new FakeApprovalGate { Decision = ApprovalDecision.Approve }, workingDirectory: folder);
+            var command = OperatingSystem.IsWindows() ? "cd" : "pwd";
+
+            var result = await tool.InvokeAsync(JsonDocument.Parse($"{{\"command\":\"{command}\"}}").RootElement, CancellationToken.None);
+
+            Assert.Contains(Path.GetFileName(folder), result.Text);
+            Assert.NotEqual(folder, Directory.GetCurrentDirectory());
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Description_PointsModelToSearchCode_InsteadOfShellingOutForSearch()
     {
         var tool = new ShellTool(new FakeApprovalGate());

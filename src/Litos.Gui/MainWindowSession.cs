@@ -67,6 +67,9 @@ public sealed class MainWindowSession(
     public GuiLoopbackServer LoopbackServer { get; } = loopbackServer;
     public AgentLoopFactory LoopFactory { get; } = loopFactory;
 
+    /// <summary>The Buzzies on this machine (~/.litos/buzzies), shown in MainWindow's sidebar.</summary>
+    public Litos.Gui.Buzzies.BuzzyStore BuzzyStore { get; init; } = new();
+
     /// <summary>
     /// Rebuilds a fresh ToolRegistry snapshot (static tools + every IToolSource's current tools,
     /// including MCP) — called by MainWindow.SubmitAsync immediately before every turn so a server

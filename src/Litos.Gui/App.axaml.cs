@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 
@@ -19,7 +20,12 @@ public sealed class App : Application
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            // The main window decides when Litos ends: hidden to the tray it is still open, and a
+            // routine's notification window left on screen must not keep the app alive after Quit.
+            desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
             desktop.MainWindow = new MainWindow(Session, WorkingDirectory, ResumeSessionId);
+        }
 
         base.OnFrameworkInitializationCompleted();
     }

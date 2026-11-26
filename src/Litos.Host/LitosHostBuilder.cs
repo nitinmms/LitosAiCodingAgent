@@ -174,4 +174,13 @@ public sealed class AgentLoopFactory(
     /// </summary>
     public AgentLoop Create(IChatProvider provider, ToolRegistry tools, Func<string, CancellationToken, Task<ToolResult>>? kernelRunner) =>
         new(provider, tools, store, accountant, systemPromptProvider, compactor, config?.StreamIdleTimeout, config?.ToolCallIdleTimeout, kernelRunner);
+
+    /// <summary>The system prompt this factory's loops are built with — exposed so a caller can wrap
+    /// it (see <see cref="WithSystemPromptProvider"/>) rather than resolve a second copy from DI.</summary>
+    public ISystemPromptProvider SystemPromptProvider => systemPromptProvider;
+
+    /// <summary>A factory identical to this one except for its system prompt — e.g. Litos.Gui's
+    /// Buzzies, whose turns carry their own identity and memory but otherwise run as ordinary turns.</summary>
+    public AgentLoopFactory WithSystemPromptProvider(ISystemPromptProvider replacement) =>
+        new(store, accountant, replacement, compactor, config);
 }
