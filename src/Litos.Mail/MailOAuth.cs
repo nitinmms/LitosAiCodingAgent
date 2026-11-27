@@ -65,7 +65,10 @@ public static class MailOAuth
                 // worse than one that asks once.
                 "access_type=offline",
                 "prompt=consent",
-                "include_granted_scopes=true",
+                // No include_granted_scopes: with it Google folds every scope granted before into
+                // the new token, so a user who unticked drafting and reconnected still got
+                // gmail.compose back (first live test, 2026-11-27). Litos asks for exactly the set it
+                // wants each time, and revokes first when that set shrinks (see RevokeAsync).
                 "state=" + Uri.EscapeDataString(state),
                 "code_challenge=" + Pkce.Challenge(verifier),
                 "code_challenge_method=S256",
@@ -142,6 +145,30 @@ public static class MailOAuth
         }
         // Google omits the refresh token on a refresh: keep the one we have.
         return tokens.RefreshToken is null ? tokens with { RefreshToken = refreshToken } : tokens;
+    }
+
+    public const string RevokeEndpoint = "https://oauth2.googleapis.com/revoke";
+
+    /// <summary>Asks Google to withdraw Litos's access (the whole grant, not just this token), so
+    /// Disconnect also removes Litos from the user's Google Account and a reconnect with fewer
+    /// scopes really ends up with fewer. Returns whether Google confirmed it; an already-revoked or
+    /// expired token counts as done. Never throws for a network failure: the caller still forgets
+    /// the token locally, and the user can remove access from their Google Account.</summary>
+    public static async Task<bool> RevokeAsync(string token, HttpClient http, CancellationToken ct)
+    {
+        try
+        {
+            using var content = new FormUrlEncodedContent(new Dictionary<string, string> { ["token"] = token });
+            using var response = await http.PostAsync(RevokeEndpoint, content, ct);
+            if (response.IsSuccessStatusCode)
+                return true;
+            // Google answers 400 invalid_token for a token that is already revoked or expired.
+            return ErrorCode(await response.Content.ReadAsStringAsync(ct)) == "invalid_token";
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
     }
 
     private static async Task<MailTokens> PostAsync(Dictionary<string, string> form, HttpClient http, CancellationToken ct)

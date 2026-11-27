@@ -165,6 +165,38 @@ public class MailOAuthTests
     }
 
     [Fact]
+    public async Task Revoke_PostsTheTokenToGooglesRevokeEndpoint()
+    {
+        var handler = new ScriptedHandler((_, _) => Responses.Json("{}"));
+
+        Assert.True(await MailOAuth.RevokeAsync("refresh-1", new HttpClient(handler), default));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("POST", request.Method);
+        Assert.Equal(MailOAuth.RevokeEndpoint, request.Url);
+        Assert.Equal("token=refresh-1", request.Body);
+    }
+
+    [Fact]
+    public async Task Revoke_AnAlreadyRevokedToken_CountsAsDone()
+    {
+        var handler = new ScriptedHandler((_, _) => Responses.Json(
+            """{"error":"invalid_token","error_description":"Token expired or revoked"}""", HttpStatusCode.BadRequest));
+
+        Assert.True(await MailOAuth.RevokeAsync("old", new HttpClient(handler), default));
+    }
+
+    [Fact]
+    public async Task Revoke_OtherFailures_ReportFalse_WithoutThrowing()
+    {
+        var failing = new ScriptedHandler((_, _) => throw new HttpRequestException("offline"));
+        var refused = new ScriptedHandler((_, _) => Responses.Json("{}", HttpStatusCode.InternalServerError));
+
+        Assert.False(await MailOAuth.RevokeAsync("t", new HttpClient(failing), default));
+        Assert.False(await MailOAuth.RevokeAsync("t", new HttpClient(refused), default));
+    }
+
+    [Fact]
     public void BuiltInClient_IsTheLitosDesktopClientId()
     {
         Assert.EndsWith(".apps.googleusercontent.com", BuiltInGmailClient.ClientId);
@@ -226,6 +258,8 @@ public class MailOAuthTests
             Assert.Contains("code_challenge=", readOnly.Url);
             Assert.Contains("state=", readOnly.Url);
             Assert.Contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A", readOnly.Url);
+            // Without this, Google would fold earlier grants (drafting) back into a read-only reconnect.
+            Assert.DoesNotContain("include_granted_scopes", readOnly.Url);
 
             await cancel.CancelAsync();
             await Assert.ThrowsAsync<MailAccessException>(() => readOnly.Completion.WaitAsync(TimeSpan.FromSeconds(10)));

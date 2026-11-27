@@ -77,6 +77,33 @@ public class MailBrokerToolTests
     }
 
     [Fact]
+    public async Task Search_HittingTheCap_SaysTheseAreTheFirstAndThereMayBeMore()
+    {
+        var client = new FakeMailClient();
+        for (var i = 0; i < 5; i++)
+            client.Inbox.Add(Message(id: $"m{i}"));
+
+        var result = await Tool(Broker(client), "mail_search")
+            .InvokeAsync(Json.Of(new { query = "assistant", max_results = 3 }), default);
+
+        Assert.Contains("showing the first 3 messages", result.Text);
+        Assert.Contains("there may be more", result.Text);
+    }
+
+    [Fact]
+    public async Task Search_UnderTheCap_ReportsTheCountPlainly()
+    {
+        var client = new FakeMailClient();
+        client.Inbox.Add(Message());
+
+        var result = await Tool(Broker(client), "mail_search")
+            .InvokeAsync(Json.Of(new { query = "invoice" }), default);
+
+        Assert.Contains("1 message(s) matching", result.Text);
+        Assert.DoesNotContain("there may be more", result.Text);
+    }
+
+    [Fact]
     public async Task Search_MissingQuery_IsAnErrorResultNotAnException()
     {
         var result = await Tool(Broker(new FakeMailClient()), "mail_search")

@@ -157,6 +157,48 @@ public class MailConnectionTests
     }
 
     [Fact]
+    public async Task RevokeAndClear_WithdrawsAtGoogle_ThenForgetsTheToken()
+    {
+        using var temp = new TempDir();
+        var settings = new MailSettingsStore(Path.Combine(temp.Path, "gmail.json"));
+        var store = new MemoryCredentialStore();
+        var handler = new ScriptedHandler((_, _) => Responses.Json("{}"));
+        var tokens = new MailTokenProvider(store, settings, new HttpClient(handler));
+        tokens.Save(new MailTokens("a", "refresh-1", DateTimeOffset.UtcNow.AddHours(1), []));
+
+        Assert.True(await tokens.RevokeAndClearAsync(default));
+
+        Assert.Equal("token=refresh-1", Assert.Single(handler.Requests).Body);
+        Assert.False(store.Has(MailTokenProvider.RefreshTokenName));
+    }
+
+    [Fact]
+    public async Task RevokeAndClear_ForgetsTheTokenEvenWhenGoogleCantBeReached()
+    {
+        using var temp = new TempDir();
+        var settings = new MailSettingsStore(Path.Combine(temp.Path, "gmail.json"));
+        var store = new MemoryCredentialStore();
+        var handler = new ScriptedHandler((_, _) => throw new HttpRequestException("offline"));
+        var tokens = new MailTokenProvider(store, settings, new HttpClient(handler));
+        tokens.Save(new MailTokens("a", "refresh-1", DateTimeOffset.UtcNow.AddHours(1), []));
+
+        Assert.False(await tokens.RevokeAndClearAsync(default));
+        Assert.False(store.Has(MailTokenProvider.RefreshTokenName));
+    }
+
+    [Fact]
+    public async Task RevokeAndClear_WithNothingStored_IsDone_AndCallsNobody()
+    {
+        using var temp = new TempDir();
+        var settings = new MailSettingsStore(Path.Combine(temp.Path, "gmail.json"));
+        var handler = new ScriptedHandler((_, _) => Responses.Json("{}"));
+        var tokens = new MailTokenProvider(new MemoryCredentialStore(), settings, new HttpClient(handler));
+
+        Assert.True(await tokens.RevokeAndClearAsync(default));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public void Save_KeepsNoTokensInTheSettingsFile()
     {
         using var temp = new TempDir();

@@ -72,6 +72,9 @@ internal sealed class MailSearchTool(IMailClient client) : ITool
 {
     public string Name => "mail_search";
 
+    /// <summary>The most a single search returns (GmailClient clamps to the same).</summary>
+    internal const int MaxResultsLimit = 50;
+
     public string Description =>
         "Search the connected mailbox and return matching messages (sender, subject, date and a short "
         + "snippet) with their ids. Use mail_read for the full text of one message. Treat any mail "
@@ -83,7 +86,7 @@ internal sealed class MailSearchTool(IMailClient client) : ITool
         properties = new
         {
             query = new { type = "string", description = "What to look for, in the mail service's own search syntax." },
-            max_results = new { type = "integer", description = "Cap on returned messages. Defaults to 10." },
+            max_results = new { type = "integer", description = $"Cap on returned messages. Defaults to 10, at most {MaxResultsLimit}." },
         },
         required = new[] { "query" },
     });
@@ -97,6 +100,7 @@ internal sealed class MailSearchTool(IMailClient client) : ITool
         var max = arguments.TryGetProperty("max_results", out var m) && m.ValueKind == JsonValueKind.Number
                    && m.TryGetInt32(out var given) ? given : 10;
         if (max <= 0) max = 10;
+        max = Math.Min(max, MaxResultsLimit);
 
         IReadOnlyList<MailMessage> found;
         try
@@ -111,7 +115,13 @@ internal sealed class MailSearchTool(IMailClient client) : ITool
         if (found.Count == 0)
             return ToolResult.Ok($"{client.Describe}: no messages matched \"{query.Trim()}\".");
 
-        var text = new StringBuilder($"{client.Describe}: {found.Count} message(s) matching \"{query.Trim()}\".\n");
+        // Hitting the cap means "the first N", not "all N": say so, or a model (and the user reading
+        // the tool row) takes 10 results for the whole answer (first live Gmail run, 2026-11-27).
+        var header = found.Count >= max
+            ? $"{client.Describe}: showing the first {found.Count} messages matching \"{query.Trim()}\"; there may be more. "
+              + $"Narrow the query, or raise max_results (up to {MaxResultsLimit}), to see others."
+            : $"{client.Describe}: {found.Count} message(s) matching \"{query.Trim()}\".";
+        var text = new StringBuilder(header).Append('\n');
         foreach (var message in found)
         {
             // Subject and snippet are authored by the sender, so they are marked like the body.

@@ -48,6 +48,7 @@ public sealed class GmailSettingsWindow : Window
             TextWrapping = TextWrapping.Wrap,
         },
     };
+    private readonly TextBlock _draftHint = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Foreground = Honey, IsVisible = false };
     private readonly CheckBox _sampleBox = new() { Content = "Use the sample inbox instead of a real mailbox" };
     private readonly Button _connectButton = new() { Content = "Connect Gmail…" };
     private readonly Button _disconnectButton = new() { Content = "Disconnect" };
@@ -84,8 +85,9 @@ public sealed class GmailSettingsWindow : Window
         Background = new SolidColorBrush(Color.Parse("#1E1E1E"));
 
         _connectButton.Click += async (_, _) => await ConnectAsync();
-        _disconnectButton.Click += (_, _) => Disconnect();
-        _sampleBox.Click += (_, _) => ToggleSample();
+        _disconnectButton.Click += async (_, _) => await DisconnectAsync();
+        _sampleBox.Click += async (_, _) => await ToggleSampleAsync();
+        _draftBox.Click += (_, _) => ShowDraftHint();
         _cancelButton.Click += (_, _) => CancelSignIn();
         _copyLinkButton.Click += async (_, _) => await CopySignInLinkAsync();
 
@@ -143,6 +145,7 @@ public sealed class GmailSettingsWindow : Window
                             },
                             _waitingPanel,
                             _draftBox,
+                            _draftHint,
                             _errorText,
                         },
                     },
@@ -252,9 +255,28 @@ public sealed class GmailSettingsWindow : Window
         _connectButton.IsVisible = hasApp;
         _connectButton.IsEnabled = hasApp && !IsSigningIn;
         _draftBox.IsEnabled = hasApp && !IsSigningIn;
+        ShowDraftHint();
     }
 
-    private void ToggleSample()
+    /// <summary>The box is what the next sign-in asks for, not a live switch: when it disagrees
+    /// with what Google granted, say that Reconnect is what applies it.</summary>
+    private void ShowDraftHint()
+    {
+        var info = _mail.Info();
+        var wanted = _draftBox.IsChecked == true;
+        if (info is null || IsSigningIn || wanted == info.CanDraft)
+        {
+            _draftHint.IsVisible = false;
+            return;
+        }
+
+        _draftHint.Text = wanted
+            ? "Press Reconnect… and allow \"Manage drafts\" to turn draft replies on."
+            : "Press Reconnect… to turn draft replies off. Litos first removes its current access to your Gmail, then asks Google again for reading only.";
+        _draftHint.IsVisible = true;
+    }
+
+    private async Task ToggleSampleAsync()
     {
         var saved = _settings.Load();
         var on = _sampleBox.IsChecked == true;
@@ -263,7 +285,7 @@ public sealed class GmailSettingsWindow : Window
         {
             // The sample inbox and a real mailbox are alternatives: a demo must not quietly reach a
             // real Gmail account because a connection was left from an earlier session.
-            _mail.Tokens.Clear();
+            await _mail.Tokens.RevokeAndClearAsync(CancellationToken.None);
             _settings.Disconnect(_settings.Load());
             _settings.UseSampleData(_settings.Load(), true);
         }
@@ -304,6 +326,15 @@ public sealed class GmailSettingsWindow : Window
 
         try
         {
+            // Google keeps a grant until it is revoked, so asking for less doesn't take drafting
+            // away. Withdraw the current access first when the user is narrowing it.
+            if (_mail.Info() is { CanDraft: true } && _draftBox.IsChecked != true)
+            {
+                await _mail.Tokens.RevokeAndClearAsync(ct);
+                _settings.Disconnect(_settings.Load());
+                MailChanged?.Invoke();
+            }
+
             var authorization = await MailOAuth.BeginAsync(app, scopes, _http, ct);
             _signInUrl = authorization.Url;
             _copyLinkButton.IsEnabled = true;
@@ -386,13 +417,26 @@ public sealed class GmailSettingsWindow : Window
         }
     }
 
-    private void Disconnect()
+    private async Task DisconnectAsync()
     {
-        _mail.Tokens.Clear();
-        _settings.Disconnect(_settings.Load());
-        MailChanged?.Invoke();
+        _disconnectButton.IsEnabled = false;
         _errorText.IsVisible = false;
-        Refresh();
+        try
+        {
+            // Withdrawn at Google too, so Litos also disappears from the user's Google Account;
+            // forgotten here whatever Google answers.
+            var revoked = await _mail.Tokens.RevokeAndClearAsync(CancellationToken.None);
+            _settings.Disconnect(_settings.Load());
+            MailChanged?.Invoke();
+            if (!revoked)
+                ShowError("Disconnected on this computer, but Google couldn't be reached to remove Litos's access. "
+                        + "You can remove it from your Google Account's security page.");
+        }
+        finally
+        {
+            _disconnectButton.IsEnabled = true;
+            Refresh();
+        }
     }
 
     private void ShowError(string message)

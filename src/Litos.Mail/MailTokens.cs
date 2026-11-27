@@ -57,6 +57,23 @@ public sealed class MailTokenProvider
         _current = null;
     }
 
+    /// <summary>Withdraws Litos's access at Google (best effort) and then forgets the token here,
+    /// whatever Google answered. Returns whether Google confirmed the revocation, so the caller can
+    /// tell the user to remove access from their Google Account when it couldn't be reached.</summary>
+    public async Task<bool> RevokeAndClearAsync(CancellationToken ct)
+    {
+        var refresh = _store.Read(RefreshTokenName);
+        try
+        {
+            // Nothing stored means nothing to withdraw: that counts as done.
+            return refresh is not { Length: > 0 } || await MailOAuth.RevokeAsync(refresh, _http, ct);
+        }
+        finally
+        {
+            Clear();
+        }
+    }
+
     /// <summary>A usable access token, refreshed if the current one is near expiry. Null when Gmail
     /// is not connected at all (no refresh token stored), which the tools report as "not connected".</summary>
     public async Task<string?> AccessTokenAsync(CancellationToken ct)
