@@ -176,6 +176,19 @@ public class MailBrokerToolTests
     }
 
     [Fact]
+    public async Task Attachment_MatchesOnTheStableId_AndFetchesWithTheProvidersHandle()
+    {
+        var client = new FakeMailClient();
+        client.Inbox.Add(Message(attachments: [new MailAttachment("part-1", "s.pdf", "text/plain", 40, FetchId: "fresh-handle")]));
+
+        var result = await Tool(Broker(client, new FakeApproval()), "mail_download_attachment")
+            .InvokeAsync(Json.Of(new { message_id = "m1", attachment_id = "part-1" }), default);
+
+        Assert.False(result.IsError);
+        Assert.Equal(("m1", "fresh-handle"), Assert.Single(client.AttachmentRequests));
+    }
+
+    [Fact]
     public async Task Attachment_WithNoApprovalSupplied_IsRefusedRatherThanAllowed()
     {
         // Fail-closed: a caller that forgot to wire an approval card must not get silent downloads.

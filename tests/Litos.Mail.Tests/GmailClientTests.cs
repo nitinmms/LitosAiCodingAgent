@@ -54,6 +54,7 @@ public class GmailClientTests
                 ]
               },
               {
+                "partId": "1",
                 "mimeType": "application/pdf",
                 "filename": "invoice.pdf",
                 "body": {"attachmentId": "ANGjdJ8", "size": 48210}
@@ -62,6 +63,25 @@ public class GmailClientTests
           }
         }
         """;
+
+    [Fact]
+    public async Task Attachment_IdIsStableAcrossReads_EvenThoughGmailsAttachmentIdIsNot()
+    {
+        // Gmail hands back a fresh attachmentId on every messages.get. The id the model sees must not
+        // move, and the fetch must use the newest attachmentId.
+        var reads = 0;
+        var handler = new ScriptedHandler((_, _) =>
+            Responses.Json(MessageJson.Replace("ANGjdJ8", $"ANGjdJ8-read{++reads}")));
+        var client = Client(handler);
+
+        var first = (await client.GetAsync("18f0a", default))!.Attachments![0];
+        var second = (await client.GetAsync("18f0a", default))!.Attachments![0];
+
+        Assert.Equal("part-1", first.Id);
+        Assert.Equal(first.Id, second.Id);
+        Assert.NotEqual(first.FetchHandle, second.FetchHandle);
+        Assert.Equal("ANGjdJ8-read2", second.FetchHandle);
+    }
 
     [Fact]
     public async Task Get_ReadsHeadersBodyAndAttachments()
@@ -78,7 +98,8 @@ public class GmailClientTests
         Assert.Equal("<abc@example.com>", message.InternetMessageId);
         Assert.Equal("Please find the invoice attached.", message.Body);
         var attachment = Assert.Single(message.Attachments!);
-        Assert.Equal("ANGjdJ8", attachment.Id);
+        Assert.Equal("part-1", attachment.Id);
+        Assert.Equal("ANGjdJ8", attachment.FetchHandle);
         Assert.Equal("invoice.pdf", attachment.FileName);
         Assert.Equal(48210, attachment.SizeBytes);
     }

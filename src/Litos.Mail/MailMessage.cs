@@ -23,7 +23,17 @@ public sealed record MailMessage(
 }
 
 /// <summary>An attachment named in a message. Its bytes are fetched separately, behind approval.</summary>
-public sealed record MailAttachment(string Id, string FileName, string MediaType, long SizeBytes);
+/// <param name="Id">A stable id the model can quote back: the same on every read of the message.</param>
+/// <param name="FetchId">The provider's handle for fetching the bytes, when that differs from
+/// <paramref name="Id"/>. Gmail's <c>attachmentId</c> is regenerated on every <c>messages.get</c>, so
+/// it can't be the id a later tool call matches on (first live Gmail run, 2026-11-27: every download
+/// was refused as "not on that message"); Gmail attachments are identified by MIME <c>partId</c>
+/// instead, and the fresh <c>attachmentId</c> rides along here. Null means "fetch by Id".</param>
+public sealed record MailAttachment(string Id, string FileName, string MediaType, long SizeBytes, string? FetchId = null)
+{
+    /// <summary>What to pass to <see cref="IMailClient.GetAttachmentAsync"/>.</summary>
+    public string FetchHandle => FetchId ?? Id;
+}
 
 /// <summary>A search the model asked for, in the provider's own query language plus a cap.</summary>
 public sealed record MailSearch(string Query, int MaxResults = 10);

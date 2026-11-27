@@ -16,7 +16,8 @@ public interface IMailClient
 
     Task<MailMessage?> GetAsync(string id, CancellationToken ct);
 
-    /// <summary>Attachment bytes, or null when the message or attachment no longer exists.</summary>
+    /// <summary>Attachment bytes, or null when the message or attachment no longer exists.
+    /// <paramref name="attachmentId"/> is <see cref="MailAttachment.FetchHandle"/> from a fresh read.</summary>
     Task<byte[]?> GetAttachmentAsync(string messageId, string attachmentId, CancellationToken ct);
 
     /// <summary>Creates a draft. Never sends: a draft sits in the mailbox for the user to review.</summary>

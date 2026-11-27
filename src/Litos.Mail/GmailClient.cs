@@ -233,11 +233,15 @@ public sealed class GmailClient(HttpClient http, Func<CancellationToken, Task<st
         if (!string.IsNullOrEmpty(fileName) && part.TryGetProperty("body", out var attachmentBody)
             && attachmentBody.TryGetProperty("attachmentId", out var attachmentId))
         {
+            // partId ("1", "0.2") is stable across reads; attachmentId is not (see MailAttachment).
+            var fetchId = attachmentId.GetString() ?? "";
+            var partId = Field(part, "partId");
             attachments.Add(new MailAttachment(
-                attachmentId.GetString() ?? "",
+                string.IsNullOrEmpty(partId) ? fetchId : "part-" + partId,
                 fileName,
                 mimeType,
-                attachmentBody.TryGetProperty("size", out var size) && size.TryGetInt64(out var bytes) ? bytes : 0));
+                attachmentBody.TryGetProperty("size", out var size) && size.TryGetInt64(out var bytes) ? bytes : 0,
+                fetchId));
             return ("", "");
         }
 

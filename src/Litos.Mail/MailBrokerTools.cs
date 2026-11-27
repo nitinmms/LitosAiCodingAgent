@@ -301,7 +301,7 @@ internal sealed class MailAttachmentTool(IMailClient client, IMailApproval appro
                     ct))
                 return ToolResult.Ok(ApprovalText.Denied);
 
-            var bytes = await client.GetAttachmentAsync(message.Id, attachment.Id, ct);
+            var bytes = await client.GetAttachmentAsync(message.Id, attachment.FetchHandle, ct);
             if (bytes is null)
                 return ToolResult.Error("That attachment could not be fetched; it may have been removed.");
 
