@@ -8,6 +8,13 @@
     <InternalsVisibleTo Include="Litos.Mail.Tests" />
   </ItemGroup>
 
+  <!-- The built-in Gmail client's secret (see BuiltInGmailClient.cs): supplied at build time as
+       -p:LitosGmailClientSecret=... or an environment variable of the same name, never committed.
+       Without it the build simply has no built-in Gmail client. -->
+  <ItemGroup Condition="'$(LitosGmailClientSecret)' != ''">
+    <AssemblyMetadata Include="LitosGmailClientSecret" Value="$(LitosGmailClientSecret)" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

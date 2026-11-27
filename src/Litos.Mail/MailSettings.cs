@@ -96,6 +96,7 @@ public sealed record MailSettings(
     MailAccount? Connection = null,
     bool UseFixtureData = false)
 {
-    /// <summary>The OAuth client in force: the environment's, else the saved one.</summary>
-    public MailOAuthClient? EffectiveApp => MailOAuthClient.FromEnvironment() ?? App;
+    /// <summary>The OAuth client in force: the environment's, else the one saved in gmail.json,
+    /// else the one built into this copy of Litos (<see cref="BuiltInGmailClient"/>).</summary>
+    public MailOAuthClient? EffectiveApp => MailOAuthClient.FromEnvironment() ?? App ?? BuiltInGmailClient.Client;
 }

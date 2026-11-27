@@ -48,6 +48,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           LITOS_VERSION: ${{ github.ref_name }}
+          # The built-in Gmail client's secret (src/Litos.Mail/BuiltInGmailClient.cs), read by
+          # MSBuild as the LitosGmailClientSecret property.
+          LitosGmailClientSecret: ${{ secrets.LITOS_GMAIL_CLIENT_SECRET }}
         run: |
           VERSION="${LITOS_VERSION#v}"
           LITOS_VERSION="$VERSION" ./deploy/publish-macos.sh ${{ matrix.runtime }}

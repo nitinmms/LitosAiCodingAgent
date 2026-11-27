@@ -24,6 +24,10 @@ jobs:
 
       - name: Publish win-x64
         shell: pwsh
+        env:
+          # The built-in Gmail client's secret (src/Litos.Mail/BuiltInGmailClient.cs). MSBuild reads
+          # it as the LitosGmailClientSecret property; an unset secret just builds without it.
+          LitosGmailClientSecret: ${{ secrets.LITOS_GMAIL_CLIENT_SECRET }}
         run: |
           $version = "${{ github.ref_name }}" -replace '^v', ''
           foreach ($project in @("src/Litos.Gui/Litos.Gui.csproj", "src/Litos.Kernel.Host/Litos.Kernel.Host.csproj")) {

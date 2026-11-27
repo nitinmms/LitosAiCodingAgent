@@ -165,6 +165,40 @@ public class MailOAuthTests
     }
 
     [Fact]
+    public void BuiltInClient_IsTheLitosDesktopClientId()
+    {
+        Assert.EndsWith(".apps.googleusercontent.com", BuiltInGmailClient.ClientId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BuiltInClient_WithoutASecretAtBuildTime_IsAbsent(string? secret)
+    {
+        // A build from the public repo has no secret: no built-in client, rather than one that
+        // fails at Google's token endpoint.
+        Assert.Null(BuiltInGmailClient.Create(secret));
+    }
+
+    [Fact]
+    public void BuiltInClient_WithASecret_UsesTheBuiltInIdAndTheTrimmedSecret()
+    {
+        var client = BuiltInGmailClient.Create("  s3cret \n");
+
+        Assert.Equal(BuiltInGmailClient.ClientId, client!.ClientId);
+        Assert.Equal("s3cret", client.ClientSecret);
+    }
+
+    [Fact]
+    public void EffectiveApp_PrefersTheSavedClient_OverTheBuiltInOne()
+    {
+        var saved = new MailOAuthClient("developer-client", "developer-secret");
+
+        Assert.Same(saved, new MailSettings(App: saved).EffectiveApp);
+    }
+
+    [Fact]
     public void ErrorSentence_HandlesAJsonBodyThatIsNotJson()
     {
         var sentence = MailOAuth.ErrorSentence("<html>nope</html>", HttpStatusCode.BadGateway);
