@@ -30,6 +30,10 @@ public sealed class AttachHandler(IAttachmentConverter converter)
 {
     public const long MaxAttachmentBytes = AttachmentLimits.MaxFileBytes;
 
+    /// <summary>The same converter, for other paths that turn document bytes into text (the Buzzy
+    /// mail tools read email attachments through it).</summary>
+    public IAttachmentConverter Converter { get; } = converter;
+
     /// <summary>The warning shown instead of attaching something over <see cref="MaxAttachmentBytes"/>,
     /// or null when <paramref name="length"/> is within it.</summary>
     internal static string? SizeLimitWarning(string displayName, long length) =>

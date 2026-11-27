@@ -499,5 +499,8 @@ public sealed partial class MainWindow
         Mail: Mail.IsConnected ? Mail : null,
         MailApproval: Mail.IsConnected
             ? new PendingMailApproval(_session.PendingApprovals, profile?.Name)
-            : null);
+            : null,
+        // Without it every PDF or Word attachment came back as "no document converter is available
+        // this run" (first live Gmail run, 2026-11-27).
+        Converter: _session.AttachHandler.Converter);
 }
