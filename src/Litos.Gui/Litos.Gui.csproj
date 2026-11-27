@@ -29,6 +29,7 @@
     <ProjectReference Include="..\Litos.Hosting\Litos.Hosting.csproj" />
     <ProjectReference Include="..\Litos.Kernel\Litos.Kernel.csproj" />
     <ProjectReference Include="..\Litos.Mail\Litos.Mail.csproj" />
+    <ProjectReference Include="..\Litos.Office\Litos.Office.csproj" />
     <ProjectReference Include="..\Litos.Tools.Mcp\Litos.Tools.Mcp.csproj" />
   </ItemGroup>
 

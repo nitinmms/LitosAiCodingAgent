@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Learning by Example for Buzzies (docs/LearningBuzzies_ExcelDesign.md): reading, checking,
+       transforming and writing Excel workbooks with fixed, typed operations. Deliberately free of
+       Litos.Agent, Litos.Tools and Avalonia, so everything here is plain testable code, and not
+       referenced by the Litos.Kernel* projects (single-file size). -->
+
+  <ItemGroup>
+    <!-- ClosedXML is MIT. DocumentFormat.OpenXml is pinned to the version ManagedCode.MarkItDown
+         already brings into Litos.Gui, so the two unify instead of downgrading (NU1605). -->
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.4.1" />
+    <!-- ClosedXML accepts SixLabors.Fonts [1.0, 3.0). 1.x is Apache-2.0; 2.x is the Six Labors
+         Split License (commercial terms). Pinned so an update can't switch the licence silently. -->
+    <PackageReference Include="SixLabors.Fonts" Version="1.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Litos.Office.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

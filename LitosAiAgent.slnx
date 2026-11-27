@@ -11,6 +11,7 @@
     <Project Path="src/Litos.Kernel.Host/Litos.Kernel.Host.csproj" />
     <Project Path="src/Litos.Kernel.Wire/Litos.Kernel.Wire.csproj" />
     <Project Path="src/Litos.Mail/Litos.Mail.csproj" />
+    <Project Path="src/Litos.Office/Litos.Office.csproj" />
     <Project Path="src/Litos.Persistence/Litos.Persistence.csproj" />
     <Project Path="src/Litos.Probe.Web.Cli/Litos.Probe.Web.Cli.csproj" />
     <Project Path="src/Litos.Probe.Web.Core/Litos.Probe.Web.Core.csproj" />
@@ -42,6 +43,7 @@
     <Project Path="tests/Litos.Hosting.Tests/Litos.Hosting.Tests.csproj" />
     <Project Path="tests/Litos.Kernel.Tests/Litos.Kernel.Tests.csproj" />
     <Project Path="tests/Litos.Mail.Tests/Litos.Mail.Tests.csproj" />
+    <Project Path="tests/Litos.Office.Tests/Litos.Office.Tests.csproj" />
     <Project Path="tests/Litos.Persistence.Tests/Litos.Persistence.Tests.csproj" />
     <Project Path="tests/Litos.Probe.Web.IntegrationTests/Litos.Probe.Web.IntegrationTests.csproj" />
     <Project Path="tests/Litos.Probe.Web.Tests/Litos.Probe.Web.Tests.csproj" />
