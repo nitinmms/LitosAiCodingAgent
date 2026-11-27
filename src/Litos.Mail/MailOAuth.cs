@@ -28,7 +28,9 @@ public static class MailOAuth
     public const string AuthorizeEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
     public const string TokenEndpoint = "https://oauth2.googleapis.com/token";
 
-    private static readonly TimeSpan AuthorizationTimeout = TimeSpan.FromMinutes(5);
+    // Long enough for a first-time user to read Google's unverified-app warning and the consent
+    // screen; five minutes proved too short in the first live sign-in.
+    private static readonly TimeSpan AuthorizationTimeout = TimeSpan.FromMinutes(15);
 
     /// <summary>
     /// Starts an authorization: opens the loopback listener, builds the consent URL, and returns it
@@ -223,97 +225,187 @@ internal static class Pkce
 }
 
 /// <summary>
-/// The one-shot loopback redirect. It accepts a single connection, reads the request line, answers
-/// with a small page telling the user to go back to Litos, and hands the <c>code</c> back. The
-/// <c>state</c> is checked before the code is trusted, so a stray request from another process on
-/// this machine cannot feed us someone else's authorization code.
+/// The loopback redirect. It keeps accepting connections until one is Google's genuine callback —
+/// a GET of <see cref="CallbackPath"/> carrying the expected <c>state</c> — answers it with a small
+/// page telling the user to go back to Litos, and hands the <c>code</c> back.
+///
+/// Anything else that reaches the port is answered and ignored, never allowed to end the sign-in:
+/// browsers open speculative connections, try <c>https://</c> first, ask for <c>/favicon.ico</c>,
+/// and another process on this machine can connect too. An earlier version accepted exactly one
+/// connection and stopped listening if it wasn't the callback, so the real redirect then met
+/// "connection refused" (first live sign-in, 2026-11-27). Each connection is handled on its own,
+/// so an idle one can't hold up the real one. The <c>state</c> check also means a stray request
+/// can't feed us someone else's authorization code.
 /// </summary>
 internal static class LoopbackRedirect
 {
+    public const string CallbackPath = "/oauth2/callback";
+
     /// <summary>Binds 127.0.0.1 on an OS-assigned port and returns the listener with Google's
     /// redirect URI for it.</summary>
     public static (TcpListener Listener, string RedirectUri) Start()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start(backlog: 4);
+        listener.Start(backlog: 16);
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        return (listener, $"http://127.0.0.1:{port}/oauth2/callback");
+        return (listener, $"http://127.0.0.1:{port}{CallbackPath}");
     }
 
     /// <summary>Waits for the consent page to come back and extracts the code. A refusal
-    /// (<c>error=access_denied</c>) is reported as what happened rather than as a timeout.</summary>
+    /// (<c>error=access_denied</c>) is reported as what happened rather than as a timeout.
+    /// Returns once the callback has been answered; the caller stops the listener.</summary>
     public static async Task<string> WaitForCodeAsync(TcpListener listener, string expectedState, CancellationToken ct)
     {
-        using var client = await AcceptAsync(listener, ct);
-        var request = await ReadRequestLineAsync(client, ct);
-        var query = QueryOf(request);
-
-        await WritePageAsync(client, query.ContainsKey("code"), ct);
-
-        if (query.TryGetValue("error", out var error))
-            throw new MailAccessException(error == "access_denied"
-                ? "The Google sign-in was cancelled, so Gmail is not connected."
-                : $"Google reported \"{error}\" during the sign-in, so Gmail is not connected.");
-        if (!query.TryGetValue("code", out var code) || string.IsNullOrWhiteSpace(code))
-            throw new MailAccessException("The Google sign-in came back without a code, so Gmail is not connected.");
-        if (!query.TryGetValue("state", out var state) || state != expectedState)
-            throw new MailAccessException("The Google sign-in came back with an unexpected state, so it was ignored as a possible forgery.");
-
-        return code;
-    }
-
-    private static async Task<TcpClient> AcceptAsync(TcpListener listener, CancellationToken ct)
-    {
+        var outcome = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var accepting = AcceptLoopAsync(listener, expectedState, outcome, stop.Token);
         try
         {
-            return await listener.AcceptTcpClientAsync(ct);
+            return await outcome.Task.WaitAsync(ct);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (!outcome.Task.IsCompleted)
         {
             throw new MailAccessException(
-                ct.IsCancellationRequested
-                    ? "The Google sign-in was cancelled, so Gmail is not connected."
-                    : "The Google sign-in was not completed in time. Try connecting Gmail again.");
+                "The Google sign-in was cancelled or not finished in time, so Gmail is not connected. "
+                + "Press Connect Gmail again and finish in the new browser tab.");
+        }
+        finally
+        {
+            stop.Cancel();
+            await accepting;
         }
     }
 
-    private static async Task<string> ReadRequestLineAsync(TcpClient client, CancellationToken ct)
+    private static async Task AcceptLoopAsync(
+        TcpListener listener, string expectedState, TaskCompletionSource<string> outcome, CancellationToken ct)
     {
-        await using var stream = client.GetStream();
-        var buffer = new byte[4096];
-        var read = await stream.ReadAsync(buffer, ct);
-        var request = Encoding.ASCII.GetString(buffer, 0, read);
-        // "GET /oauth2/callback?code=...&state=... HTTP/1.1"
-        var line = request.Split("\r\n", StringSplitOptions.None)[0];
-        var parts = line.Split(' ');
-        return parts.Length >= 2 ? parts[1] : "/";
+        var handlers = new List<Task>();
+        while (!ct.IsCancellationRequested && !outcome.Task.IsCompleted)
+        {
+            TcpClient client;
+            try
+            {
+                client = await listener.AcceptTcpClientAsync(ct);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException)
+            {
+                break;
+            }
+            handlers.Add(HandleAsync(client, expectedState, outcome, ct));
+        }
+        await Task.WhenAll(handlers);
     }
 
-    private static Dictionary<string, string> QueryOf(string path)
+    /// <summary>One connection. Never throws: whatever a stray connection does, the sign-in keeps
+    /// waiting for the real callback.</summary>
+    private static async Task HandleAsync(
+        TcpClient client, string expectedState, TaskCompletionSource<string> outcome, CancellationToken ct)
+    {
+        using (client)
+        {
+            try
+            {
+                var stream = client.GetStream();
+                var target = await ReadRequestTargetAsync(stream, ct);
+                if (target is null)
+                    return; // not HTTP at all (a TLS probe, an empty pre-connection): just close it
+
+                var queryStart = target.IndexOf('?');
+                var path = queryStart < 0 ? target : target[..queryStart];
+                if (path != CallbackPath)
+                {
+                    await WriteResponseAsync(stream, "404 Not Found", "", ct);
+                    return;
+                }
+
+                var query = QueryOf(target);
+                if (!query.TryGetValue("state", out var state) || state != expectedState)
+                {
+                    // Not this sign-in's callback (an old tab, or a forgery): say so, keep waiting.
+                    await WriteResponseAsync(stream, "400 Bad Request", Page(
+                        "This sign-in link is out of date.",
+                        "Go back to Litos and use the browser tab that its latest Connect Gmail opened."), ct);
+                    return;
+                }
+
+                if (query.TryGetValue("error", out var error))
+                {
+                    await WriteResponseAsync(stream, "200 OK", Page("Gmail sign-in didn't finish.", "Go back to Litos to try again."), ct);
+                    outcome.TrySetException(new MailAccessException(error == "access_denied"
+                        ? "The Google sign-in was cancelled, so Gmail is not connected."
+                        : $"Google reported \"{error}\" during the sign-in, so Gmail is not connected."));
+                    return;
+                }
+
+                if (!query.TryGetValue("code", out var code) || string.IsNullOrWhiteSpace(code))
+                {
+                    await WriteResponseAsync(stream, "200 OK", Page("Gmail sign-in didn't finish.", "Go back to Litos to try again."), ct);
+                    outcome.TrySetException(new MailAccessException("The Google sign-in came back without a code, so Gmail is not connected."));
+                    return;
+                }
+
+                await WriteResponseAsync(stream, "200 OK", Page("Litos is connected to Gmail.", "You can close this tab and go back to Litos."), ct);
+                outcome.TrySetResult(code);
+            }
+            catch (Exception)
+            {
+                // A connection that breaks, stalls until the sign-in ends, or sends garbage is
+                // simply dropped.
+            }
+        }
+    }
+
+    /// <summary>The request target of a GET ("/oauth2/callback?code=…"), or null when the
+    /// connection isn't a plain-HTTP GET. Reads until the end of the request line, since TCP can
+    /// deliver it in pieces.</summary>
+    private static async Task<string?> ReadRequestTargetAsync(NetworkStream stream, CancellationToken ct)
+    {
+        var buffer = new byte[8192];
+        var length = 0;
+        while (length < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(length), ct);
+            if (read == 0)
+                break;
+            length += read;
+            if (buffer.AsSpan(0, length).IndexOf("\r\n"u8) >= 0)
+                break;
+        }
+
+        var text = Encoding.ASCII.GetString(buffer, 0, length);
+        var end = text.IndexOf("\r\n", StringComparison.Ordinal);
+        if (end < 0)
+            return null;
+        // "GET /oauth2/callback?code=...&state=... HTTP/1.1"
+        var parts = text[..end].Split(' ');
+        return parts.Length == 3 && parts[0] == "GET" && parts[1].StartsWith('/') ? parts[1] : null;
+    }
+
+    private static Dictionary<string, string> QueryOf(string target)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        var start = path.IndexOf('?');
+        var start = target.IndexOf('?');
         if (start < 0)
             return result;
 
-        foreach (var pair in path[(start + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var pair in target[(start + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
             var eq = pair.IndexOf('=');
             if (eq <= 0)
                 continue;
-            result[Uri.UnescapeDataString(pair[..eq])] = Uri.UnescapeDataString(pair[(eq + 1)..].Replace('+', ' '));
+            // '+' means space in a query string; it has to be decoded before %2B becomes a real '+'.
+            result[Uri.UnescapeDataString(pair[..eq].Replace('+', ' '))] = Uri.UnescapeDataString(pair[(eq + 1)..].Replace('+', ' '));
         }
         return result;
     }
 
-    private static async Task WritePageAsync(TcpClient client, bool ok, CancellationToken ct)
+    private static string Page(string heading, string text) =>
+        $"<html><body style=\"font-family:sans-serif\"><h2>{heading}</h2><p>{text}</p></body></html>";
+
+    private static async Task WriteResponseAsync(NetworkStream stream, string status, string body, CancellationToken ct)
     {
-        var body = ok
-            ? "<html><body style=\"font-family:sans-serif\"><h2>Litos is connected to Gmail.</h2><p>You can close this tab and go back to Litos.</p></body></html>"
-            : "<html><body style=\"font-family:sans-serif\"><h2>Gmail sign-in didn't finish.</h2><p>Go back to Litos to try again.</p></body></html>";
         var bytes = Encoding.UTF8.GetBytes(body);
-        var head = $"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {bytes.Length}\r\nConnection: close\r\n\r\n";
-        await using var stream = client.GetStream();
+        var head = $"HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {bytes.Length}\r\nConnection: close\r\n\r\n";
         await stream.WriteAsync(Encoding.ASCII.GetBytes(head), ct);
         await stream.WriteAsync(bytes, ct);
         await stream.FlushAsync(ct);
