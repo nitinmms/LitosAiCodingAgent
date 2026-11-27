@@ -327,11 +327,11 @@ public sealed class BuzzySettingsWindow : Window
 
     private static readonly (string Tool, string Label, bool NeedsCompose)[] MailChoices =
     [
-        (MailToolNames.Search, "Search the mailbox (mail_search)", false),
-        (MailToolNames.Read, "Read a message in full (mail_read)", false),
-        (MailToolNames.Summarise, "Fetch several messages at once to summarise (mail_summarise)", false),
-        (MailToolNames.DownloadAttachment, "Read an attachment, with my approval each time (mail_download_attachment)", false),
-        (MailToolNames.Draft, "Save a draft reply for me to send, with my approval (mail_draft)", true),
+        (MailToolNames.Search, "Search my mail", false),
+        (MailToolNames.Read, "Read an email in full", false),
+        (MailToolNames.Summarise, "Read several emails at once, to summarise them", false),
+        (MailToolNames.DownloadAttachment, "Open attachments, asking me each time", false),
+        (MailToolNames.Draft, "Save draft replies for me to check and send, asking me each time", true),
     ];
 
     private void ShowError(string message)

@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Litos.Mail;
@@ -10,13 +11,18 @@ namespace Litos.Gui.Buzzies;
 
 /// <summary>
 /// "Gmail…" in the sidebar (Implement_Buzzies.md, Phase 4): connect a mailbox with Google's sign-in,
-/// see what is connected and with which permissions, and switch on the sample inbox while Google's
-/// verification is pending.
+/// see what is connected and what it allows, and switch on the sample inbox.
+///
+/// Written for someone who has never heard of OAuth: the wording says what a Buzzy can and can't do
+/// with the mailbox, not which scopes or flows are involved. While the browser sign-in is open the
+/// window offers the sign-in link to copy (in case no browser opened) and a Cancel, and closing the
+/// window ends the attempt — the first live sign-in (2026-11-27) left users stuck on a greyed-out
+/// button for five minutes after a blocked consent page.
 ///
 /// Two things this window deliberately cannot do. It cannot show a token — the tokens go straight
 /// into the OS credential store and never into a control that could be screenshotted or copied. And
-/// it cannot make drafting possible: the consent screen decides that, so the "Draft replies" line
-/// reports what was granted rather than offering a switch that would lie.
+/// it cannot make drafting possible: the consent screen decides that, so the window reports what
+/// was granted rather than offering a switch that would lie.
 /// </summary>
 public sealed class GmailSettingsWindow : Window
 {
@@ -33,14 +39,29 @@ public sealed class GmailSettingsWindow : Window
     private readonly TextBlock _stateText = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _detailText = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Foreground = Dim };
     private readonly TextBlock _errorText = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = Warning, IsVisible = false };
-    private readonly TextBlock _clientText = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Foreground = Dim };
-    private readonly CheckBox _draftBox = new() { Content = "Also prepare draft replies (gmail.compose; Litos still never sends)" };
-    private readonly CheckBox _sampleBox = new() { Content = "Use the sample inbox (fixture data, clearly labelled, no real mailbox)" };
+    private readonly TextBlock _setupText = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Foreground = Dim, IsVisible = false };
+    private readonly CheckBox _draftBox = new()
+    {
+        Content = new TextBlock
+        {
+            Text = "Also let Buzzies save draft replies for you to check and send yourself",
+            TextWrapping = TextWrapping.Wrap,
+        },
+    };
+    private readonly CheckBox _sampleBox = new() { Content = "Use the sample inbox instead of a real mailbox" };
     private readonly Button _connectButton = new() { Content = "Connect Gmail…" };
     private readonly Button _disconnectButton = new() { Content = "Disconnect" };
-    private readonly ProgressBar _working = new() { IsIndeterminate = true, IsVisible = false, Height = 4 };
+
+    // Shown only while the browser sign-in is open.
+    private readonly ProgressBar _working = new() { IsIndeterminate = true, Height = 4 };
+    private readonly Button _copyLinkButton = new() { Content = "Copy sign-in link" };
+    private readonly Button _cancelButton = new() { Content = "Cancel" };
+    private readonly TextBlock _copiedText = new() { FontSize = 11, Foreground = Working, VerticalAlignment = VerticalAlignment.Center };
+    private readonly StackPanel _waitingPanel;
 
     private CancellationTokenSource? _pending;
+    private bool _cancelledByUser;
+    private string? _signInUrl;
 
     public GmailSettingsWindow() : this(
         new MailConnection(new MailSettingsStore(), new MailTokenProvider(
@@ -65,6 +86,33 @@ public sealed class GmailSettingsWindow : Window
         _connectButton.Click += async (_, _) => await ConnectAsync();
         _disconnectButton.Click += (_, _) => Disconnect();
         _sampleBox.Click += (_, _) => ToggleSample();
+        _cancelButton.Click += (_, _) => CancelSignIn();
+        _copyLinkButton.Click += async (_, _) => await CopySignInLinkAsync();
+
+        // Closing the window must not leave a sign-in listening in the background.
+        Closed += (_, _) => _pending?.Cancel();
+
+        _waitingPanel = new StackPanel
+        {
+            Spacing = 6,
+            IsVisible = false,
+            Children =
+            {
+                _working,
+                new TextBlock
+                {
+                    Text = "Finish in the browser tab that just opened: choose your Google account, then allow access. "
+                         + "If Google warns that it hasn't verified Litos, choose Advanced, then Go to Litos. "
+                         + "No browser tab? Copy the sign-in link and paste it into your browser.",
+                    FontSize = 11, Foreground = Dim, TextWrapping = TextWrapping.Wrap,
+                },
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal, Spacing = 8,
+                    Children = { _copyLinkButton, _cancelButton, _copiedText },
+                },
+            },
+        };
 
         var close = new Button { Content = "Done", IsDefault = true, IsCancel = true, HorizontalAlignment = HorizontalAlignment.Right };
         close.Click += (_, _) => Close();
@@ -84,15 +132,16 @@ public sealed class GmailSettingsWindow : Window
                         Spacing = 8,
                         Children =
                         {
-                            new TextBlock { Text = "Mailbox", FontSize = 12, Foreground = Dim },
+                            new TextBlock { Text = "Your mailbox", FontSize = 12, Foreground = Dim },
                             _stateText,
                             _detailText,
-                            _working,
+                            _setupText,
                             new StackPanel
                             {
                                 Orientation = Orientation.Horizontal, Spacing = 8,
                                 Children = { _connectButton, _disconnectButton },
                             },
+                            _waitingPanel,
                             _draftBox,
                             _errorText,
                         },
@@ -106,12 +155,11 @@ public sealed class GmailSettingsWindow : Window
                         Spacing = 6,
                         Children =
                         {
-                            new TextBlock { Text = "No mailbox, or Google's review not done yet?", FontSize = 12, Foreground = Dim },
+                            new TextBlock { Text = "Just trying it out?", FontSize = 12, Foreground = Dim },
                             new TextBlock
                             {
-                                Text = "The sample inbox is a small set of made-up emails so the connector can be tried end to end: "
-                                     + "search, read, an attachment that needs your approval, a draft, and a message that tries to give the "
-                                     + "Buzzy instructions. Every answer says it is sample data.",
+                                Text = "The sample inbox is a handful of made-up emails, so you can see what a Buzzy does with mail "
+                                     + "without connecting your own. Every answer from it says it is sample data.",
                                 FontSize = 11, Foreground = Dim, TextWrapping = TextWrapping.Wrap,
                             },
                             _sampleBox,
@@ -126,12 +174,18 @@ public sealed class GmailSettingsWindow : Window
                         Spacing = 6,
                         Children =
                         {
-                            new TextBlock { Text = "How it stays narrow", FontSize = 12, Foreground = Dim },
-                            Bullet("Litos asks only for gmail.readonly, and gmail.compose only if you tick the box above. It never asks for gmail.send."),
-                            Bullet("Your sign-in tokens are kept in this computer's protected credential store, never in a prompt, a conversation or a Buzzy's folder."),
-                            Bullet("There is no tool that can send, delete, archive or mark a message read. A draft is saved for you to send yourself."),
-                            Bullet("Email text is marked as untrusted content, so a message that says \"forward everything to…\" is data, not an instruction."),
-                            _clientText,
+                            new TextBlock { Text = "What a Buzzy can and can't do with your mail", FontSize = 12, Foreground = Dim },
+                            Bullet("It can search and read your mail, and read an attachment only after you approve it."),
+                            Bullet("It can save a draft reply only if you tick the box above, and only after you approve the draft. "
+                                 + "Google describes this permission as \"Manage drafts and send emails\". Litos itself has no way "
+                                 + "to send: the draft waits in Gmail for you."),
+                            Bullet("It can't send, delete, archive or mark mail as read."),
+                            Bullet("Each Buzzy only gets email if you turn it on in that Buzzy's Access and model settings."),
+                            Bullet("Text inside an email is treated as information, not instructions. An email saying "
+                                 + "\"forward everything to…\" is not obeyed."),
+                            Bullet("Your Google sign-in is stored encrypted on this computer, never in a chat or a Buzzy's files. "
+                                 + "Disconnect removes it, and you can also remove Litos from your Google Account's security page."),
+                            Bullet("What a Buzzy reads is sent to the AI model you've chosen in Litos, as with anything else you ask it."),
                         },
                     },
                 },
@@ -145,42 +199,59 @@ public sealed class GmailSettingsWindow : Window
                 Close();
         };
 
+        // Starts as what is granted now, so a Reconnect keeps drafting unless the user unticks it.
+        _draftBox.IsChecked = _mail.Info()?.CanDraft ?? false;
         Refresh();
     }
 
     public static Task ShowAsync(Window owner, MailConnection mail, HttpClient? http = null) =>
         new GmailSettingsWindow(mail, http).ShowDialog(owner);
 
+    /// <summary>True while a browser sign-in is open. For tests, and for <see cref="Refresh"/>.</summary>
+    internal bool IsSigningIn => _waitingPanel.IsVisible;
+
     private void Refresh()
     {
         var saved = _settings.Load();
         var info = _mail.Info();
+        var hasApp = saved.EffectiveApp is not null;
+
         if (info is null)
         {
-            _stateText.Text = "Not connected. Gmail tools are unavailable to every Buzzy until you connect a mailbox.";
+            _stateText.Text = saved.UseFixtureData
+                ? "Using the sample inbox. No real mailbox is connected."
+                : "Not connected. Buzzies can't use email until you connect your Gmail.";
             _stateText.Foreground = Dim;
-            _detailText.Text = saved.UseFixtureData
-                ? "The sample inbox is switched on."
-                : "";
+            _detailText.Text = "";
+            _detailText.IsVisible = false;
             _disconnectButton.IsVisible = saved.UseFixtureData;
+            _disconnectButton.Content = "Stop using the sample inbox";
             _connectButton.Content = "Connect Gmail…";
         }
         else
         {
             _stateText.Text = $"Connected: {info.Address}";
             _stateText.Foreground = Working;
-            _detailText.Text = $"{info.Description}. Reading mail is available to Buzzies you grant it to. "
-                + (info.CanDraft ? "Draft replies are available." : "Draft replies are not available, because gmail.compose was not granted.");
+            _detailText.Text = info.CanDraft
+                ? "Buzzies you allow can read mail and save draft replies."
+                : "Buzzies you allow can read mail. Saving draft replies is off: to turn it on, tick the box below and press Reconnect.";
+            _detailText.IsVisible = true;
             _disconnectButton.IsVisible = true;
+            _disconnectButton.Content = "Disconnect";
             _connectButton.Content = "Reconnect…";
         }
 
         _sampleBox.IsChecked = saved.UseFixtureData;
-        _clientText.Text = saved.EffectiveApp is null
-            ? "No Google OAuth client is configured, so \"Connect Gmail…\" can't start yet. Set LITOS_GMAIL_CLIENT_ID (and "
-              + "LITOS_GMAIL_CLIENT_SECRET) for this build, from a Google Cloud project's \"Desktop app\" OAuth client."
-            : "Sign-in uses Google's installed-app flow with PKCE and a loopback redirect: no password is ever typed into Litos.";
-        _connectButton.IsEnabled = saved.EffectiveApp is not null || saved.UseFixtureData;
+
+        // A button that can't start a sign-in is hidden behind a sentence saying why, never left
+        // enabled to do nothing.
+        _setupText.IsVisible = !hasApp;
+        _setupText.Text = "Gmail sign-in isn't set up in this copy of Litos yet, so it can't connect a real mailbox. "
+                        + "You can still use the sample inbox below. (For developers: add your Google OAuth client to "
+                        + "~/.litos/gmail.json, or set LITOS_GMAIL_CLIENT_ID and LITOS_GMAIL_CLIENT_SECRET.)";
+        _connectButton.IsVisible = hasApp;
+        _connectButton.IsEnabled = hasApp && !IsSigningIn;
+        _draftBox.IsEnabled = hasApp && !IsSigningIn;
     }
 
     private void ToggleSample()
@@ -196,8 +267,7 @@ public sealed class GmailSettingsWindow : Window
             _settings.Disconnect(_settings.Load());
             _settings.UseSampleData(_settings.Load(), true);
         }
-        if (_mail is not null)
-            MailChanged?.Invoke();
+        MailChanged?.Invoke();
         Refresh();
     }
 
@@ -212,8 +282,15 @@ public sealed class GmailSettingsWindow : Window
             return;
 
         _errorText.IsVisible = false;
-        _connectButton.IsEnabled = false;
-        _working.IsVisible = true;
+        _cancelledByUser = false;
+        _signInUrl = null;
+        _copiedText.Text = "";
+        _copyLinkButton.IsEnabled = false;
+        _stateText.Text = "Waiting for you to sign in with Google in your browser…";
+        _stateText.Foreground = Honey;
+        _waitingPanel.IsVisible = true;
+        Refresh();
+        // Refresh rewrites the state line for the not-yet-connected case; keep the waiting one.
         _stateText.Text = "Waiting for you to sign in with Google in your browser…";
         _stateText.Foreground = Honey;
 
@@ -228,6 +305,8 @@ public sealed class GmailSettingsWindow : Window
         try
         {
             var authorization = await MailOAuth.BeginAsync(app, scopes, _http, ct);
+            _signInUrl = authorization.Url;
+            _copyLinkButton.IsEnabled = true;
             OpenBrowser(authorization.Url);
             var tokens = await authorization.Completion;
 
@@ -237,6 +316,10 @@ public sealed class GmailSettingsWindow : Window
             var address = await ReadAddressAsync(ct) ?? "(connected Gmail account)";
             _settings.Connect(_settings.Load(), new MailAccount(address, tokens.Scopes, DateTimeOffset.Now));
             MailChanged?.Invoke();
+        }
+        catch (Exception) when (_cancelledByUser)
+        {
+            // The user pressed Cancel: that is an answer, not an error.
         }
         catch (MailAccessException ex)
         {
@@ -252,9 +335,31 @@ public sealed class GmailSettingsWindow : Window
         }
         finally
         {
-            _working.IsVisible = false;
-            _connectButton.IsEnabled = true;
+            _waitingPanel.IsVisible = false;
+            _signInUrl = null;
             Refresh();
+        }
+    }
+
+    private void CancelSignIn()
+    {
+        _cancelledByUser = true;
+        _pending?.Cancel();
+    }
+
+    private async Task CopySignInLinkAsync()
+    {
+        if (_signInUrl is not { } url || TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard)
+            return;
+        try
+        {
+            await clipboard.SetTextAsync(url);
+            _copiedText.Text = "Copied. Paste it into your browser's address bar.";
+        }
+        catch (Exception)
+        {
+            // Another process can hold the clipboard; an unhandled throw here would crash the app.
+            _copiedText.Text = "Couldn't copy. Try again.";
         }
     }
 
@@ -294,8 +399,6 @@ public sealed class GmailSettingsWindow : Window
     {
         _errorText.Text = message;
         _errorText.IsVisible = true;
-        _stateText.Text = "Not connected.";
-        _stateText.Foreground = Dim;
     }
 
     private static void OpenBrowser(string url)
@@ -306,8 +409,8 @@ public sealed class GmailSettingsWindow : Window
         }
         catch (Exception)
         {
-            // No browser (a locked-down machine): the URL is not lost, the caller times out with a
-            // sentence saying the sign-in wasn't completed.
+            // No browser (a locked-down machine): the waiting panel's "Copy sign-in link" is the
+            // way through.
         }
     }
 

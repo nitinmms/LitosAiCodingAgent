@@ -135,6 +135,36 @@ public class MailOAuthTests
     }
 
     [Fact]
+    public async Task Refresh_ExpiredOrRevoked_SaysGoogleSignedOutAndToReconnect()
+    {
+        // Testing-mode Google clients expire refresh tokens after 7 days; the user must read that as
+        // routine, with the fix, rather than as Google's bare "invalid_grant".
+        var handler = new ScriptedHandler((_, _) => Responses.Json(
+            """{"error":"invalid_grant","error_description":"Token has been expired or revoked."}""",
+            HttpStatusCode.BadRequest));
+
+        var ex = await Assert.ThrowsAsync<MailAccessException>(() => MailOAuth.RefreshAsync(
+            new MailOAuthClient("id", "secret"), "old-refresh", new HttpClient(handler), default));
+
+        Assert.Equal(MailOAuth.SignedOutSentence, ex.Message);
+        Assert.Contains("Reconnect", ex.Message);
+    }
+
+    [Fact]
+    public async Task Refresh_OtherFailures_KeepGooglesOwnSentence()
+    {
+        var handler = new ScriptedHandler((_, _) => Responses.Json(
+            """{"error":"invalid_client","error_description":"The OAuth client was not found."}""",
+            HttpStatusCode.Unauthorized));
+
+        var ex = await Assert.ThrowsAsync<MailAccessException>(() => MailOAuth.RefreshAsync(
+            new MailOAuthClient("id", "secret"), "old-refresh", new HttpClient(handler), default));
+
+        Assert.Contains("invalid_client", ex.Message);
+        Assert.Contains("not found", ex.Message);
+    }
+
+    [Fact]
     public void ErrorSentence_HandlesAJsonBodyThatIsNotJson()
     {
         var sentence = MailOAuth.ErrorSentence("<html>nope</html>", HttpStatusCode.BadGateway);

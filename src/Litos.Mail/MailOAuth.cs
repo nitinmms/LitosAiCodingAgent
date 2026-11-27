@@ -9,8 +9,10 @@ namespace Litos.Mail;
 /// <summary>
 /// Google OAuth for the Gmail connector (Implement_Buzzies.md, Phase 4): the installed-app flow with
 /// PKCE, a loopback redirect and the narrowest scopes that do the job — <c>gmail.readonly</c> first,
-/// and <c>gmail.compose</c> only when the user wants drafted replies. Nothing here ever sends mail:
-/// <c>gmail.compose</c> creates drafts, and <c>gmail.send</c> is deliberately never requested.
+/// and <c>gmail.compose</c> only when the user wants drafted replies. Note that Google's
+/// <c>gmail.compose</c> also permits sending (its consent line is "Manage drafts and send emails"):
+/// that Litos never sends is enforced by <see cref="IMailClient"/> having no send method, not by
+/// the scope.
 ///
 /// The redirect is a loopback listener on an ephemeral 127.0.0.1 port, which is what Google's
 /// "Desktop app" client type expects and needs no inbound port opening to the network. Its single
@@ -127,7 +129,17 @@ public static class MailOAuth
         if (!string.IsNullOrEmpty(app.ClientSecret))
             form["client_secret"] = app.ClientSecret;
 
-        var tokens = await PostAsync(form, http, ct);
+        MailTokens tokens;
+        try
+        {
+            tokens = await PostAsync(form, http, ct);
+        }
+        catch (MailAccessException ex) when (ex.Data[OAuthErrorKey] is "invalid_grant")
+        {
+            // Google's own sentence here ("Token has been expired or revoked.") doesn't say what to
+            // do. In Testing mode this happens every 7 days, so it has to read as routine.
+            throw new MailAccessException(SignedOutSentence, ex);
+        }
         // Google omits the refresh token on a refresh: keep the one we have.
         return tokens.RefreshToken is null ? tokens with { RefreshToken = refreshToken } : tokens;
     }
@@ -149,7 +161,11 @@ public static class MailOAuth
         {
             var text = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
-                throw new MailAccessException(ErrorSentence(text, response.StatusCode));
+            {
+                var failure = new MailAccessException(ErrorSentence(text, response.StatusCode));
+                failure.Data[OAuthErrorKey] = ErrorCode(text);
+                throw failure;
+            }
 
             using var document = JsonDocument.Parse(text);
             var root = document.RootElement;
@@ -165,6 +181,27 @@ public static class MailOAuth
                 Field(root, "refresh_token"),
                 DateTimeOffset.UtcNow.AddSeconds(expiresIn),
                 scopes);
+        }
+    }
+
+    /// <summary>Where a token-endpoint failure records Google's error code (e.g. "invalid_grant").</summary>
+    internal const string OAuthErrorKey = "oauth_error";
+
+    /// <summary>What a stored sign-in that Google no longer accepts tells the user and the model.</summary>
+    public const string SignedOutSentence =
+        "Google has signed Litos out of Gmail. This happens every 7 days while Litos is in Google's testing stage, "
+        + "or when access is removed from your Google Account. Open Gmail in the Litos sidebar and press Reconnect.";
+
+    internal static string? ErrorCode(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return Field(document.RootElement, "error");
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
